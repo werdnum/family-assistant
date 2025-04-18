@@ -15,12 +15,15 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.d
 engine = create_async_engine(DATABASE_URL, echo=False) # Set echo=True for debugging SQL
 metadata = MetaData()
 
-# Define the key-value table
-key_value_store = Table(
-    "key_value_store",
+# Define the notes table (replaces key_value_store)
+notes_table = Table(
+    "notes",
     metadata,
-    Column("key", String, primary_key=True),
-    Column("value", String, nullable=False),
+    Column("id", BigInteger, primary_key=True, autoincrement=True), # Auto-incrementing ID
+    Column("title", String, nullable=False, unique=True, index=True), # Unique title (like the old key)
+    Column("content", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)),
+    Column("updated_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)),
 )
 
 # Define the message history table
@@ -42,12 +45,14 @@ async def init_db():
         await conn.run_sync(metadata.create_all)
         logger.info("Database schema initialized.")
 
-async def get_all_key_values() -> dict[str, str]:
-    """Retrieves all key-value pairs from the store."""
+async def get_all_notes() -> List[Dict[str, str]]:
+    """Retrieves all notes (title and content) from the store."""
     async with engine.connect() as conn:
-        result = await conn.execute(select(key_value_store))
+        stmt = select(notes_table.c.title, notes_table.c.content).order_by(notes_table.c.title)
+        result = await conn.execute(stmt)
         rows = result.fetchall()
-        return {row.key: row.value for row in rows}
+        # Return as a list of dicts for easier iteration
+        return [{"title": row.title, "content": row.content} for row in rows]
 
 async def add_message_to_history(
     chat_id: int, message_id: int, timestamp: datetime, role: str, content: str
@@ -101,38 +106,44 @@ async def get_message_by_id(chat_id: int, message_id: int) -> Optional[Dict[str,
 # async def prune_history(max_age: timedelta): ...
 
 
-async def add_or_update_key_value(key: str, value: str):
-    """Adds a new key-value pair or updates the value if the key exists."""
+async def add_or_update_note(title: str, content: str):
+    """Adds a new note or updates the content if the title exists."""
     async with engine.connect() as conn:
-        # Check if key exists
-        select_stmt = select(key_value_store).where(key_value_store.c.key == key)
+        # Check if title exists
+        select_stmt = select(notes_table).where(notes_table.c.title == title)
         result = await conn.execute(select_stmt)
-        exists = result.fetchone()
+        existing_note = result.fetchone()
 
-        if exists:
-            # Update existing key
+        now = datetime.now(timezone.utc)
+        if existing_note:
+            # Update existing note
             stmt = (
-                update(key_value_store)
-                .where(key_value_store.c.key == key)
-                .values(value=value)
+                update(notes_table)
+                .where(notes_table.c.title == title)
+                .values(content=content, updated_at=now)
             )
-            logger.info(f"Updating key: {key}")
+            logger.info(f"Updating note: {title}")
         else:
-            # Insert new key-value pair
-            stmt = insert(key_value_store).values(key=key, value=value)
-            logger.info(f"Inserting new key: {key}")
+            # Insert new note
+            stmt = insert(notes_table).values(
+                title=title,
+                content=content,
+                created_at=now,
+                updated_at=now
+            )
+            logger.info(f"Inserting new note: {title}")
 
         await conn.execute(stmt)
         await conn.commit()
 
-async def delete_key_value(key: str):
-    """Deletes a key-value pair."""
+async def delete_note(title: str) -> bool:
+    """Deletes a note by its title."""
     async with engine.connect() as conn:
-        stmt = key_value_store.delete().where(key_value_store.c.key == key)
+        stmt = notes_table.delete().where(notes_table.c.title == title)
         result = await conn.execute(stmt)
         await conn.commit()
         if result.rowcount > 0:
-            logger.info(f"Deleted key: {key}")
+            logger.info(f"Deleted note: {title}")
             return True
-        logger.warning(f"Key not found for deletion: {key}")
+        logger.warning(f"Note not found for deletion: {title}")
         return False
