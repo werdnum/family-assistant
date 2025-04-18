@@ -148,13 +148,36 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     logger.info(f"Received message from chat_id {chat_id}: {user_message}")
 
+    messages = []
+    # Check if the message is a reply
+    if update.message.reply_to_message:
+        replied_message = update.message.reply_to_message
+        # Determine the role of the replied-to message
+        # Simplistic assumption: if it's from the bot, role is 'assistant', otherwise 'user'
+        # A more robust solution might involve storing message history with roles
+        if replied_message.from_user.id == context.bot.id:
+            role = "assistant"
+        else:
+            role = "user"
+        if replied_message.text: # Only include if it has text content
+             messages.append({"role": role, "content": replied_message.text})
+        elif replied_message.caption: # Include caption if it's media
+             messages.append({"role": role, "content": replied_message.caption})
+
+
+    # Add the current user message
+    messages.append({"role": "user", "content": user_message})
+
+    # TODO: Implement fetching more history if it's not a reply (e.g., from chat_data or DB)
+
     try:
         # Send typing action using context manager
         async with typing_notifications(context, chat_id):
-            # Get response from LLM via processing module
-            llm_response = await get_llm_response(user_message, args.model)
+            # Get response from LLM via processing module, passing the message list
+            llm_response = await get_llm_response(messages, args.model)
 
         if llm_response:
+            # Reply to the original message to maintain context in the Telegram chat
             await update.message.reply_text(llm_response)
         else:
             await update.message.reply_text("Sorry, I couldn't process that.")

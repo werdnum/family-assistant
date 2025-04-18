@@ -1,16 +1,23 @@
 import logging
 
+from typing import List, Dict, Any
 from litellm import acompletion
 
 logger = logging.getLogger(__name__)
 
-async def get_llm_response(user_message: str, model: str) -> str | None:
+async def get_llm_response(messages: List[Dict[str, Any]], model: str) -> str | None:
     """
-    Sends the user message to the specified LLM model via LiteLLM/OpenRouter
+    Sends the conversation history to the specified LLM model via LiteLLM/OpenRouter
     and returns the response content.
+
+    Args:
+        messages: A list of message dictionaries, e.g., [{"role": "user", "content": "..."}]
+        model: The identifier of the LLM model to use.
+
+    Returns:
+        The response content string from the LLM, or None if an error occurs.
     """
-    messages = [{"role": "user", "content": user_message}]
-    logger.info(f"Sending message to LLM ({model}): {user_message}")
+    logger.info(f"Sending {len(messages)} messages to LLM ({model}). Last message: {messages[-1]['content'][:100]}...")
 
     try:
         response = await acompletion(
