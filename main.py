@@ -29,9 +29,12 @@ from telegram.ext import (
     # PicklePersistence, # No longer needed for history
     filters,
 )
+import uvicorn # Import uvicorn
 
 # Assuming processing.py contains the LLM interaction logic
 from processing import get_llm_response
+# Import the FastAPI app
+from web_server import app as fastapi_app
 # Import storage functions
 from storage import (
     init_db, get_all_notes, add_message_to_history, # Renamed get_all_key_values
@@ -330,11 +333,11 @@ async def shutdown_handler(signal_name: str):
     """Initiates graceful shutdown."""
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
     shutdown_event.set()
-    if application:
-        await application.stop()
-        # Wait a moment for stop() to complete before shutting down
-        await asyncio.sleep(1)
-        await application.shutdown()
+    # The shutdown_event.set() will trigger the cleanup in main_async
+    # We just need to ensure the event is set.
+    if not shutdown_event.is_set():
+        shutdown_event.set()
+    # The actual stopping of application/server happens in main_async's wait block
 
 def reload_config_handler(signum, frame):
     """Handles SIGHUP for config reloading (placeholder)."""
@@ -378,11 +381,39 @@ async def main_async() -> None:
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     logger.info("Bot started and polling.")
 
+    # --- Uvicorn Server Setup ---
+    config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
+    server = uvicorn.Server(config)
+
+    # Run Telegram bot polling and Uvicorn server concurrently
+    telegram_task = asyncio.create_task(application.updater.start_polling(allowed_updates=Update.ALL_TYPES))
+    web_server_task = asyncio.create_task(server.serve())
+
+    logger.info("Bot started polling. Web server running on http://0.0.0.0:8000")
+
     # Wait until shutdown signal is received
     await shutdown_event.wait()
 
-    logger.info("Polling stopped. Final shutdown.")
-    # Shutdown is handled by the signal handler now
+    logger.info("Shutdown signal received. Stopping services...")
+
+    # Stop polling first
+    await application.updater.stop()
+    logger.info("Telegram polling stopped.")
+
+    # Signal Uvicorn to shut down gracefully
+    server.should_exit = True
+    # Wait for Uvicorn to finish
+    await web_server_task
+    logger.info("Web server stopped.")
+
+    # Cancel the polling task explicitly if it hasn't finished (should have by now)
+    if not telegram_task.done():
+        telegram_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await telegram_task
+
+    logger.info("All services stopped. Final shutdown.")
+    # Application shutdown is handled by the signal handler
 
 def main() -> None:
     """Sets up the event loop and signal handlers."""
