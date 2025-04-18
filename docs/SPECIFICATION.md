@@ -33,9 +33,10 @@ The system will consist of the following core components:
 
 *   **Interaction Layer:** Manages communication across Telegram, Email, and Web interfaces. It receives user input, forwards it for processing, and delivers responses/updates back to the user via the appropriate channel.
 *   **Processing Layer:**
-    *   Utilizes a Large Language Model (LLM) (e.g., Claude, GPT) to understand natural language requests, extract information from ingested data, generate summaries/briefs, and formulate responses.
-    *   Leverages MCP tools provided by connected servers to perform actions or retrieve external context.
-    *   Includes specific logic for parsing structured data where possible (e.g., calendar invites, specific email formats) to complement LLM extraction.
+    *   Utilizes a Large Language Model (LLM) (e.g., Claude, GPT) via LiteLLM to understand natural language requests, extract information from ingested data, generate summaries/briefs, and formulate responses.
+    *   Manages the definition and execution logic for tools (like `add_or_update_note`) that the LLM can use.
+    *   Leverages MCP tools provided by connected servers to perform actions or retrieve external context (Future).
+    *   Includes specific logic for parsing structured data where possible (e.g., calendar invites, specific email formats) to complement LLM extraction (Future).
 *   **Data Store:** A central repository (a structured database, e.g., PostgreSQL or SQLite, accessed via **SQLAlchemy**) storing:
     *   Events (calendar items, deadlines)
     *   Facts/Memories (user-provided info, ingested details)
