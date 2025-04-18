@@ -153,6 +153,10 @@ The system will consist of the following core components:
 *   Implement the **Processing Layer** with basic LLM forwarding using **LiteLLM** and **OpenRouter**.
 *   Set up the core application structure using `python-telegram-bot`.
 *   LLM model selection configurable via command-line arguments.
-*   API keys managed via environment variables (`.env` file).
+*   API keys and configuration (allowed chat IDs, developer chat ID) managed via environment variables (`.env` file).
+*   Basic access control based on `ALLOWED_CHAT_IDS`.
+*   Error handling with logging and optional notification to `DEVELOPER_CHAT_ID`.
+*   Graceful shutdown on `SIGINT`/`SIGTERM`.
+*   Placeholder for config reload on `SIGHUP`.
 *   No database, calendar integration, reminders, or MCP features implemented initially.
 
