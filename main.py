@@ -12,6 +12,7 @@ import os
 import signal
 import sys
 import traceback
+import yaml # Import yaml
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
@@ -52,12 +53,13 @@ HISTORY_MAX_AGE_HOURS = 24 # Only include messages from the last X hours
 application: Optional[Application] = None
 ALLOWED_CHAT_IDS: list[int] = []
 DEVELOPER_CHAT_ID: Optional[int] = None
+PROMPTS: Dict[str, str] = {} # Global dict to hold loaded prompts
 shutdown_event = asyncio.Event()
 
 # --- Configuration Loading ---
 def load_config():
-    """Loads configuration from environment variables."""
-    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID
+    """Loads configuration from environment variables and prompts.yaml."""
+    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS
     load_dotenv()  # Load environment variables from .env file
 
     chat_ids_str = os.getenv("ALLOWED_CHAT_IDS", "")
@@ -83,6 +85,23 @@ def load_config():
     else:
         logger.warning("DEVELOPER_CHAT_ID not set. Error notifications will not be sent.")
         DEVELOPER_CHAT_ID = None
+
+    # Load prompts from YAML file
+    try:
+        with open("prompts.yaml", "r", encoding="utf-8") as f:
+            loaded_prompts = yaml.safe_load(f)
+            if isinstance(loaded_prompts, dict):
+                PROMPTS = loaded_prompts
+                logger.info("Successfully loaded prompts from prompts.yaml")
+            else:
+                logger.error("Failed to load prompts: prompts.yaml is not a valid dictionary.")
+                PROMPTS = {} # Reset to empty if loading fails
+    except FileNotFoundError:
+        logger.error("prompts.yaml not found. Using default prompt structures.")
+        PROMPTS = {} # Ensure PROMPTS is initialized
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing prompts.yaml: {e}")
+        PROMPTS = {} # Reset to empty on parsing error
 
 # --- Argument Parsing ---
 parser = argparse.ArgumentParser(description="Family Assistant Bot")
@@ -203,15 +222,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     llm_response = None
     try:
-        # --- Inject Notes Context ---
+        # --- Prepare System Prompt with Notes Context ---
+        system_prompt_template = PROMPTS.get("system_prompt", "{notes_context}") # Default if not found
+        notes_context_str = ""
         all_notes = await get_all_notes()
+
         if all_notes:
-            notes_context_str = "Relevant notes:\n"
+            notes_list_str = ""
+            note_item_format = PROMPTS.get("note_item_format", "- {title}: {content}")
             for note in all_notes:
-                notes_context_str += f"- {note['title']}: {note['content']}\n"
-            # Prepend as a system message
-            messages.insert(0, {"role": "system", "content": notes_context_str.strip()})
-            logger.info("Prepended notes context to LLM prompt.")
+                notes_list_str += note_item_format.format(title=note['title'], content=note['content']) + "\n"
+
+            notes_context_header_template = PROMPTS.get("notes_context_header", "Relevant notes:\n{notes_list}")
+            notes_context_str = notes_context_header_template.format(notes_list=notes_list_str.strip())
+            logger.info("Prepared notes context.")
+
+        # Insert the formatted system prompt
+        final_system_prompt = system_prompt_template.format(notes_context=notes_context_str).strip()
+        if final_system_prompt: # Only insert if there's content
+            messages.insert(0, {"role": "system", "content": final_system_prompt})
+            logger.info("Prepended system prompt to LLM messages.")
 
         # Send typing action using context manager
         async with typing_notifications(context, chat_id):

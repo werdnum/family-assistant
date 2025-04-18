@@ -1,0 +1,15 @@
+# Prompts used by the Family Assistant Bot
+
+# System prompt prepended to the conversation history.
+# Use {notes_context} where the formatted notes should be inserted.
+system_prompt: |
+  You are a helpful family assistant. Be concise and friendly.
+  {notes_context}
+
+# Format for the context block when notes are present.
+# Use {notes_list} where the bulleted list of notes goes.
+notes_context_header: "Relevant notes:\n{notes_list}"
+
+# Format for each individual note item in the list.
+# Use {title} and {content}.
+note_item_format: "- {title}: {content}"
