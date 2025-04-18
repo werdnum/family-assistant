@@ -79,15 +79,3 @@ if __name__ == "__main__":
     import uvicorn
     logger.info("Starting Uvicorn server for testing...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
-
-```
-
-**3. Create HTML Templates**
-
-Create a directory named `templates` in your project root.
-
-**`templates/index.html`:**
-
-```html
-templates/index.html
-<<<<<<< SEARCH
