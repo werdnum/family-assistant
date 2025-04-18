@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from sqlalchemy import (
-    MetaData, Table, Column, String, select, insert, update, BigInteger,
+    MetaData, Table, Column, String, select, insert, update, BigInteger, Integer, # Added Integer
     DateTime, Text, desc
 )
 from sqlalchemy.ext.asyncio import create_async_engine
