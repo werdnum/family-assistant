@@ -6,3 +6,4 @@ sqlalchemy[asyncio]>=2.0.0 # Ensure asyncio support is installed
 # psycopg2-binary # Sync driver for PostgreSQL (if needed elsewhere)
 asyncpg>=0.29.0 # Async driver for PostgreSQL
 apscheduler>=3.10.0
+PyYAML>=6.0 # For loading prompts.yaml
