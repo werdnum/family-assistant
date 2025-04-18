@@ -4,7 +4,9 @@ import asyncio # Added import
 from typing import List, Dict, Any, Optional, Callable
 
 from litellm import acompletion
-from litellm.types.completion import ChatCompletionMessage
+# Use ChatCompletionMessageParam as suggested by the error, or rely on inference
+# Let's try the suggestion first.
+from litellm.types.completion import ChatCompletionMessageParam
 
 # Import storage function for the tool
 import storage
@@ -106,7 +108,8 @@ async def get_llm_response(
             tool_choice="auto" if TOOLS_DEFINITION else None, # Let LLM decide if/which tool to use
         )
 
-        response_message: Optional[ChatCompletionMessage] = response.choices[0].message if response.choices else None
+        # Adjust type hint based on the import change
+        response_message: Optional[ChatCompletionMessageParam] = response.choices[0].message if response.choices else None
 
         if not response_message:
             logger.warning(f"LLM response structure unexpected or empty: {response}")
