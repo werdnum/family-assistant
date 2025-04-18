@@ -158,8 +158,8 @@ The system will consist of the following core components:
 *   Error handling with logging and optional notification to `DEVELOPER_CHAT_ID`.
 *   Graceful shutdown on `SIGINT`/`SIGTERM`.
 *   Placeholder for config reload on `SIGHUP`.
-*   Basic key-value storage implemented using SQLAlchemy.
-*   Key-value pairs are fetched and included in the context sent to the LLM.
+*   Basic notes storage implemented using SQLAlchemy (table: `notes` with `id`, `title`, `content`, timestamps).
+*   Notes (title and content) are fetched and included in the context sent to the LLM.
 *   Message history (user and assistant messages) is stored in the database using SQLAlchemy.
 *   Recent message history is fetched from the database to provide context for LLM queries.
 *   Replied-to messages are fetched from the database to provide specific context.
