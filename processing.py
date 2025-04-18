@@ -18,6 +18,31 @@ AVAILABLE_FUNCTIONS = {
     "add_or_update_note": storage.add_or_update_note
 }
 
+# Define tools in the format LiteLLM expects (OpenAI format)
+TOOLS_DEFINITION = [
+    {
+        "type": "function",
+        "function": {
+            "name": "add_or_update_note",
+            "description": "Add a new note or update an existing note with the given title. Use this to remember information provided by the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "The unique title of the note.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content of the note.",
+                    },
+                },
+                "required": ["title", "content"],
+            },
+        },
+    }
+]
+
 async def execute_function_call(tool_call: Any) -> Dict[str, Any]:
     """Executes a function call requested by the LLM."""
     function_name = tool_call.function.name
@@ -53,32 +78,32 @@ async def execute_function_call(tool_call: Any) -> Dict[str, Any]:
 
 async def get_llm_response(
     messages: List[Dict[str, Any]],
-    model: str,
-    tools: Optional[List[Dict[str, Any]]] = None
+    model: str
+    # tools parameter removed
 ) -> str | None:
     """
-    Sends the conversation history (and optionally tools) to the LLM,
+    Sends the conversation history (and tools) to the LLM,
     handles potential tool calls, and returns the final response content.
 
     Args:
         messages: A list of message dictionaries.
         model: The identifier of the LLM model.
-        tools: A list of tool definitions for the LLM.
 
     Returns:
         The final response content string from the LLM, or None if an error occurs.
     """
     logger.info(f"Sending {len(messages)} messages to LLM ({model}). Last message: {messages[-1]['content'][:100]}...")
-    if tools:
-        logger.info(f"Providing {len(tools)} tools to LLM.")
+    # Use the locally defined TOOLS_DEFINITION
+    if TOOLS_DEFINITION:
+        logger.info(f"Providing {len(TOOLS_DEFINITION)} tools to LLM.")
 
     try:
         # --- First LLM Call ---
         response = await acompletion(
             model=model,
             messages=messages,
-            tools=tools,
-            tool_choice="auto" if tools else None, # Let LLM decide if/which tool to use
+            tools=TOOLS_DEFINITION, # Use local definition
+            tool_choice="auto" if TOOLS_DEFINITION else None, # Let LLM decide if/which tool to use
         )
 
         response_message: Optional[ChatCompletionMessage] = response.choices[0].message if response.choices else None
