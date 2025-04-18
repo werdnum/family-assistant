@@ -19,7 +19,7 @@ metadata = MetaData()
 notes_table = Table(
     "notes",
     metadata,
-    Column("id", BigInteger, primary_key=True, autoincrement=True), # Auto-incrementing ID
+    Column("id", Integer, primary_key=True, autoincrement=True), # Use Integer for SQLite autoincrement
     Column("title", String, nullable=False, unique=True, index=True), # Unique title (like the old key)
     Column("content", Text, nullable=False),
     Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)),
