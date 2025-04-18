@@ -2,7 +2,7 @@ python-telegram-bot[job-queue]>=21.0,<22.0
 litellm>=1.38.1
 python-dotenv>=1.0.0
 sqlalchemy[asyncio]>=2.0.0 # Ensure asyncio support is installed
-# aiosqlite>=0.19.0 # Async driver for SQLite (default)
+aiosqlite>=0.19.0 # Async driver for SQLite (default)
 # psycopg2-binary # Sync driver for PostgreSQL (if needed elsewhere)
 asyncpg>=0.29.0 # Async driver for PostgreSQL
 apscheduler>=3.10.0
