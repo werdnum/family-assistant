@@ -31,6 +31,8 @@ from telegram.ext import (
 
 # Assuming processing.py contains the LLM interaction logic
 from processing import get_llm_response
+# Import storage functions
+from storage import init_db, get_all_key_values
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -191,6 +193,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     llm_response = None
     try:
+        # --- Inject Key-Value Store Context ---
+        key_values = await get_all_key_values()
+        if key_values:
+            kv_context_str = "Relevant information:\n"
+            for key, value in key_values.items():
+                kv_context_str += f"- {key}: {value}\n"
+            # Prepend as a system message or part of the first user message
+            # Option 1: Prepend as system message (if supported well by model)
+            messages.insert(0, {"role": "system", "content": kv_context_str.strip()})
+            # Option 2: Modify first user message (less ideal)
+            # if messages and messages[0]["role"] == "user":
+            #     messages[0]["content"] = kv_context_str + "\nUser query: " + messages[0]["content"]
+            # else: # Or insert if no user message yet (shouldn't happen here)
+            #     messages.insert(0, {"role": "user", "content": kv_context_str + "\nUser query: " + user_message})
+            logger.info("Prepended key-value context to LLM prompt.")
         # Send typing action using context manager
         async with typing_notifications(context, chat_id):
             # Get response from LLM via processing module, passing the message list
@@ -305,6 +322,9 @@ async def main_async() -> None:
 
     # Register error handler
     application.add_error_handler(error_handler)
+
+    # Initialize database schema
+    await init_db()
 
     # Initialize application (loads persistence, etc.)
     await application.initialize()

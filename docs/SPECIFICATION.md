@@ -158,5 +158,7 @@ The system will consist of the following core components:
 *   Error handling with logging and optional notification to `DEVELOPER_CHAT_ID`.
 *   Graceful shutdown on `SIGINT`/`SIGTERM`.
 *   Placeholder for config reload on `SIGHUP`.
-*   No database, calendar integration, reminders, or MCP features implemented initially.
+*   Basic key-value storage implemented using SQLAlchemy (SQLite default).
+*   Key-value pairs are fetched and included in the context sent to the LLM.
+*   No calendar integration, reminders, or MCP features implemented initially.
 
