@@ -25,14 +25,17 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
-    PicklePersistence, # Import persistence
+    # PicklePersistence, # No longer needed for history
     filters,
 )
 
 # Assuming processing.py contains the LLM interaction logic
 from processing import get_llm_response
 # Import storage functions
-from storage import init_db, get_all_key_values
+from storage import (
+    init_db, get_all_key_values, add_message_to_history,
+    get_recent_history, get_message_by_id
+)
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -161,35 +164,42 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     logger.info(f"Received message from chat_id {chat_id}: {user_message}")
 
     messages: List[Dict[str, Any]] = []
-    history: List[tuple[datetime, str, str]] = context.chat_data.setdefault("message_history", [])
     now = datetime.now(timezone.utc)
+    user_message_timestamp = update.message.date or now # Use message timestamp if available
 
     # Check if the message is a reply
     if update.message.reply_to_message:
-        replied_message = update.message.reply_to_message
-        # Determine the role of the replied-to message
-        if replied_message.from_user.id == context.bot.id:
-            role = "assistant"
+        replied_msg_id = update.message.reply_to_message.message_id
+        # Fetch the replied-to message from the database
+        replied_db_message = await get_message_by_id(chat_id, replied_msg_id)
+        if replied_db_message:
+            messages.append(replied_db_message)
+            logger.debug(f"Added replied-to message {replied_msg_id} to context.")
         else:
-            role = "user"
-        content = replied_message.text or replied_message.caption
-        if content:
-             messages.append({"role": role, "content": content})
-        # Optional: Could try to fetch more context around the replied message from history here
+            # Fallback if not in DB (e.g., very old message) - use the text directly
+            replied_message = update.message.reply_to_message
+            if replied_message.from_user.id == context.bot.id:
+                role = "assistant"
+            else:
+                role = "user"
+            content = replied_message.text or replied_message.caption
+            if content:
+                messages.append({"role": role, "content": content})
+                logger.warning(f"Replied-to message {replied_msg_id} not found in DB, using direct content.")
+        # Optional: Could fetch *more* history around the replied message here
     else:
-        # If not a reply, add recent history within the time limit
-        cutoff_time = now - timedelta(hours=HISTORY_MAX_AGE_HOURS)
-        recent_relevant_history = []
-        for timestamp, role, content in reversed(history):
-            if timestamp < cutoff_time:
-                break
-            recent_relevant_history.append({"role": role, "content": content})
-            if len(recent_relevant_history) >= MAX_HISTORY_MESSAGES:
-                break
-        messages.extend(reversed(recent_relevant_history)) # Add in chronological order
+        # If not a reply, add recent history from DB
+        history_messages = await get_recent_history(
+            chat_id,
+            limit=MAX_HISTORY_MESSAGES,
+            max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS)
+        )
+        messages.extend(history_messages)
+        logger.debug(f"Added {len(history_messages)} recent messages from DB history.")
 
     # Add the current user message
-    messages.append({"role": "user", "content": user_message})
+    current_user_message_content = {"role": "user", "content": user_message}
+    messages.append(current_user_message_content)
 
     llm_response = None
     try:
@@ -227,23 +237,32 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Re-raise the exception so the error handler catches it
         raise
     finally:
-        # --- Update History ---
-        # Add user message
-        history.append((now, "user", user_message))
-        # Add bot response if successful
-        if llm_response:
-            history.append((datetime.now(timezone.utc), "assistant", llm_response))
-
-        # Prune history: Keep roughly the last day's messages, but also limit total size
-        cutoff_time = now - timedelta(hours=HISTORY_MAX_AGE_HOURS)
-        # Keep at least MAX_HISTORY_MESSAGES * 2 (user+bot) + current pair, max ~50 entries total for safety
-        max_entries = max(MAX_HISTORY_MESSAGES * 2 + 2, 50)
-        history[:] = [
-            entry for entry in history if entry[0] >= cutoff_time
-        ][-max_entries:]
-        context.chat_data["message_history"] = history
-        # Mark for persistence (PicklePersistence updates automatically, but good practice if changing)
-        context.application.mark_data_for_update_persistence(chat_ids=[chat_id])
+        # --- Store messages in DB ---
+        try:
+            # Store user message
+            await add_message_to_history(
+                chat_id=chat_id,
+                message_id=update.message.message_id,
+                timestamp=user_message_timestamp,
+                role="user",
+                content=user_message
+            )
+            # Store bot response if successful
+            if llm_response:
+                # We don't have the bot's message_id easily here without sending the reply first
+                # For simplicity, using a placeholder or negative ID, or could refactor to store after reply
+                # Using user's message_id + 1 as a pseudo-ID for now, might collide but unlikely for context
+                bot_message_pseudo_id = update.message.message_id + 1
+                await add_message_to_history(
+                    chat_id=chat_id,
+                    message_id=bot_message_pseudo_id, # Placeholder ID
+                    timestamp=datetime.now(timezone.utc),
+                    role="assistant",
+                    content=llm_response
+                )
+        except Exception as db_err:
+            logger.error(f"Failed to store message history in DB: {db_err}", exc_info=True)
+            # Optionally notify developer about DB error
 
 
 async def error_handler(update: object, context: CallbackContext) -> None:
@@ -306,13 +325,13 @@ async def main_async() -> None:
     logger.info(f"Using model: {args.model}")
 
     # --- Persistence Setup ---
-    # Simple file-based persistence for chat_data, user_data, bot_data
-    persistence = PicklePersistence(filepath="bot_persistence.pkl")
+    # Persistence is no longer used for history, but could be kept for user/bot data if needed
+    # persistence = PicklePersistence(filepath="bot_persistence.pkl")
 
     application = (
         ApplicationBuilder()
         .token(args.telegram_token)
-        .persistence(persistence)
+        # .persistence(persistence) # Removed persistence
         .build()
     )
 
