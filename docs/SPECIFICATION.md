@@ -147,3 +147,12 @@ The system will consist of the following core components:
 *   **Task Scheduling:** System cron, `APScheduler` (Python), node-cron (Node.js), or platform-specific schedulers (AWS EventBridge, Google Cloud Scheduler).
 *   **MCP:** Utilize MCP SDKs (e.g., `mcp` for Python) to interact with MCP servers. Consider potentially exposing some of the assistant's own data (like memories) via a custom MCP server for other tools to use.
 
+## 9. Initial Implementation (Phase 1)
+
+*   Focus on the **Telegram Interface** as the primary interaction point.
+*   Implement the **Processing Layer** with basic LLM forwarding using **LiteLLM** and **OpenRouter**.
+*   Set up the core application structure using `python-telegram-bot`.
+*   LLM model selection configurable via command-line arguments.
+*   API keys managed via environment variables (`.env` file).
+*   No database, calendar integration, reminders, or MCP features implemented initially.
+

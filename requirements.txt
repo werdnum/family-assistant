@@ -1,0 +1,7 @@
+python-telegram-bot[job-queue]>=21.0,<22.0
+litellm>=1.38.1
+python-dotenv>=1.0.0
+sqlalchemy>=2.0.0
+psycopg2-binary # Or appropriate driver for your DB if not PostgreSQL
+apscheduler>=3.10.0
+openrouter-provider # Required by litellm for openrouter
