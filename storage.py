@@ -135,12 +135,13 @@ async def add_or_update_note(title: str, content: str):
             )
             logger.info(f"Updating note: {title}")
         else:
-            # Insert new note
+            # Insert new note - omit 'id' to allow autoincrement
             stmt = insert(notes_table).values(
                 title=title,
                 content=content,
                 created_at=now,
                 updated_at=now
+                # id is handled by autoincrement
             )
             logger.info(f"Inserting new note: {title}")
 
