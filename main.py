@@ -37,8 +37,9 @@ from processing import get_llm_response
 from web_server import app as fastapi_app
 # Import storage functions
 from storage import (
-    init_db, get_all_notes, add_message_to_history, # Renamed get_all_key_values
-    get_recent_history, get_message_by_id
+    init_db, get_all_notes, add_message_to_history,
+    get_recent_history, get_message_by_id,
+    add_or_update_note # Import the function to be used as a tool
 )
 
 # --- Logging Configuration ---
@@ -136,6 +137,32 @@ if not args.openrouter_api_key:
 
 # Set OpenRouter API key for LiteLLM
 os.environ["OPENROUTER_API_KEY"] = args.openrouter_api_key
+
+# --- Tool Definitions ---
+# Define tools in the format LiteLLM expects (OpenAI format)
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "add_or_update_note",
+            "description": "Add a new note or update an existing note with the given title. Use this to remember information provided by the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "The unique title of the note.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content of the note.",
+                    },
+                },
+                "required": ["title", "content"],
+            },
+        },
+    }
+]
 
 # --- Helper Functions & Context Managers ---
 @contextlib.asynccontextmanager
@@ -248,11 +275,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # Send typing action using context manager
         async with typing_notifications(context, chat_id):
-            # Get response from LLM via processing module, passing the message list
-            llm_response = await get_llm_response(messages, args.model)
+            # Get response from LLM via processing module, passing messages and tools
+            llm_response = await get_llm_response(messages, args.model, tools=tools)
 
         if llm_response:
             # Reply to the original message to maintain context in the Telegram chat
+            # The llm_response here is the final response after potential tool calls
             await update.message.reply_text(llm_response)
         else:
             await update.message.reply_text("Sorry, I couldn't process that.")

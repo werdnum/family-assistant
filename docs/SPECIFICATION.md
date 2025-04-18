@@ -166,5 +166,6 @@ The system will consist of the following core components:
 *   Recent message history is fetched from the database to provide context for LLM queries.
 *   Replied-to messages are fetched from the database to provide specific context.
 *   A basic web UI (FastAPI + Jinja2) for managing notes is included.
+*   LLM can use a tool (`add_or_update_note`) to save information to the notes database.
 *   No calendar integration, reminders, or MCP features implemented initially.
 
