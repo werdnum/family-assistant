@@ -2,13 +2,18 @@ import argparse
 import asyncio
 import contextlib
 import html
+import argparse
+import asyncio
+import contextlib
+import html
 import json
 import logging
 import os
 import signal
 import sys
 import traceback
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Dict, Any
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -20,6 +25,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    PicklePersistence, # Import persistence
     filters,
 )
 
@@ -32,6 +38,10 @@ logging.basicConfig(
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# --- Constants ---
+MAX_HISTORY_MESSAGES = 5 # Number of recent messages to include (excluding current)
+HISTORY_MAX_AGE_HOURS = 24 # Only include messages from the last X hours
 
 # --- Global Variables ---
 application: Optional[Application] = None
@@ -148,28 +158,38 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     logger.info(f"Received message from chat_id {chat_id}: {user_message}")
 
-    messages = []
+    messages: List[Dict[str, Any]] = []
+    history: List[tuple[datetime, str, str]] = context.chat_data.setdefault("message_history", [])
+    now = datetime.now(timezone.utc)
+
     # Check if the message is a reply
     if update.message.reply_to_message:
         replied_message = update.message.reply_to_message
         # Determine the role of the replied-to message
-        # Simplistic assumption: if it's from the bot, role is 'assistant', otherwise 'user'
-        # A more robust solution might involve storing message history with roles
         if replied_message.from_user.id == context.bot.id:
             role = "assistant"
         else:
             role = "user"
-        if replied_message.text: # Only include if it has text content
-             messages.append({"role": role, "content": replied_message.text})
-        elif replied_message.caption: # Include caption if it's media
-             messages.append({"role": role, "content": replied_message.caption})
-
+        content = replied_message.text or replied_message.caption
+        if content:
+             messages.append({"role": role, "content": content})
+        # Optional: Could try to fetch more context around the replied message from history here
+    else:
+        # If not a reply, add recent history within the time limit
+        cutoff_time = now - timedelta(hours=HISTORY_MAX_AGE_HOURS)
+        recent_relevant_history = []
+        for timestamp, role, content in reversed(history):
+            if timestamp < cutoff_time:
+                break
+            recent_relevant_history.append({"role": role, "content": content})
+            if len(recent_relevant_history) >= MAX_HISTORY_MESSAGES:
+                break
+        messages.extend(reversed(recent_relevant_history)) # Add in chronological order
 
     # Add the current user message
     messages.append({"role": "user", "content": user_message})
 
-    # TODO: Implement fetching more history if it's not a reply (e.g., from chat_data or DB)
-
+    llm_response = None
     try:
         # Send typing action using context manager
         async with typing_notifications(context, chat_id):
@@ -189,6 +209,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Sorry, something went wrong while processing your request.")
         # Re-raise the exception so the error handler catches it
         raise
+    finally:
+        # --- Update History ---
+        # Add user message
+        history.append((now, "user", user_message))
+        # Add bot response if successful
+        if llm_response:
+            history.append((datetime.now(timezone.utc), "assistant", llm_response))
+
+        # Prune history: Keep roughly the last day's messages, but also limit total size
+        cutoff_time = now - timedelta(hours=HISTORY_MAX_AGE_HOURS)
+        # Keep at least MAX_HISTORY_MESSAGES * 2 (user+bot) + current pair, max ~50 entries total for safety
+        max_entries = max(MAX_HISTORY_MESSAGES * 2 + 2, 50)
+        history[:] = [
+            entry for entry in history if entry[0] >= cutoff_time
+        ][-max_entries:]
+        context.chat_data["message_history"] = history
+        # Mark for persistence (PicklePersistence updates automatically, but good practice if changing)
+        context.application.mark_data_for_update_persistence(chat_ids=[chat_id])
+
 
 async def error_handler(update: object, context: CallbackContext) -> None:
     """Log the error and send a telegram message to notify the developer."""
@@ -249,7 +288,16 @@ async def main_async() -> None:
     global application
     logger.info(f"Using model: {args.model}")
 
-    application = ApplicationBuilder().token(args.telegram_token).build()
+    # --- Persistence Setup ---
+    # Simple file-based persistence for chat_data, user_data, bot_data
+    persistence = PicklePersistence(filepath="bot_persistence.pkl")
+
+    application = (
+        ApplicationBuilder()
+        .token(args.telegram_token)
+        .persistence(persistence)
+        .build()
+    )
 
     # Register handlers
     application.add_handler(CommandHandler("start", start))
