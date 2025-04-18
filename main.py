@@ -138,32 +138,6 @@ if not args.openrouter_api_key:
 # Set OpenRouter API key for LiteLLM
 os.environ["OPENROUTER_API_KEY"] = args.openrouter_api_key
 
-# --- Tool Definitions ---
-# Define tools in the format LiteLLM expects (OpenAI format)
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "add_or_update_note",
-            "description": "Add a new note or update an existing note with the given title. Use this to remember information provided by the user.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "The unique title of the note.",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The content of the note.",
-                    },
-                },
-                "required": ["title", "content"],
-            },
-        },
-    }
-]
-
 # --- Helper Functions & Context Managers ---
 @contextlib.asynccontextmanager
 async def typing_notifications(context: ContextTypes.DEFAULT_TYPE, chat_id: int, action: str = ChatAction.TYPING):
@@ -275,8 +249,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # Send typing action using context manager
         async with typing_notifications(context, chat_id):
-            # Get response from LLM via processing module, passing messages and tools
-            llm_response = await get_llm_response(messages, args.model, tools=tools)
+            # Get response from LLM via processing module (no longer passing tools)
+            llm_response = await get_llm_response(messages, args.model)
 
         if llm_response:
             # Reply to the original message to maintain context in the Telegram chat
