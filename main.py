@@ -12,9 +12,13 @@ import os
 import signal
 import sys
 import traceback
-import yaml # Import yaml
+import yaml
+import mcp # Import MCP
+from mcp import ClientSession, StdioServerParameters # MCP specifics
+from mcp.client.stdio import stdio_client # MCP stdio client
+from contextlib import AsyncExitStack # For managing multiple async contexts
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple # Added Tuple
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -59,6 +63,10 @@ ALLOWED_CHAT_IDS: list[int] = []
 DEVELOPER_CHAT_ID: Optional[int] = None
 PROMPTS: Dict[str, str] = {} # Global dict to hold loaded prompts
 shutdown_event = asyncio.Event()
+mcp_sessions: Dict[str, ClientSession] = {} # Stores active MCP client sessions {server_id: session}
+mcp_tools: List[Dict[str, Any]] = [] # Stores discovered MCP tools in OpenAI format
+tool_name_to_server_id: Dict[str, str] = {} # Maps MCP tool names to their server_id
+mcp_exit_stack = AsyncExitStack() # Manages MCP server process lifecycles
 
 # --- Configuration Loading ---
 def load_config():
@@ -248,9 +256,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             logger.info("Prepended system prompt to LLM messages.")
 
         # Send typing action using context manager
+        # Combine local tools and MCP tools
+        # Ensure processing.TOOLS_DEFINITION is accessible or imported
+        from processing import TOOLS_DEFINITION as local_tools_definition
+        all_tools = local_tools_definition + mcp_tools
+        logger.debug(f"Providing {len(all_tools)} total tools to LLM ({len(local_tools_definition)} local, {len(mcp_tools)} MCP).")
+
         async with typing_notifications(context, chat_id):
-            # Get response from LLM via processing module (no longer passing tools)
-            llm_response = await get_llm_response(messages, args.model)
+            # Get response from LLM via processing module, passing all available tools
+            llm_response = await get_llm_response(messages, args.model, all_tools)
 
         if llm_response:
             # Reply to the original message to maintain context in the Telegram chat
@@ -336,10 +350,12 @@ async def shutdown_handler(signal_name: str):
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
     shutdown_event.set()
     # The shutdown_event.set() will trigger the cleanup in main_async
-    # We just need to ensure the event is set.
     if not shutdown_event.is_set():
         shutdown_event.set()
-    # The actual stopping of application/server happens in main_async's wait block
+    # Close MCP sessions via the exit stack
+    logger.info("Closing MCP server connections...")
+    await mcp_exit_stack.aclose()
+    logger.info("MCP server connections closed.")
 
 def reload_config_handler(signum, frame):
     """Handles SIGHUP for config reloading (placeholder)."""
@@ -374,6 +390,8 @@ async def main_async() -> None:
 
     # Initialize database schema
     await init_db()
+    # Load MCP config and connect to servers
+    await load_mcp_config_and_connect()
 
     # Initialize application (loads persistence, etc.)
     await application.initialize()
@@ -415,7 +433,7 @@ async def main_async() -> None:
             await telegram_task
 
     logger.info("All services stopped. Final shutdown.")
-    # Application shutdown is handled by the signal handler
+    # Application shutdown is handled by the signal handler which calls shutdown_handler
 
 def main() -> None:
     """Sets up the event loop and signal handlers."""
@@ -436,14 +454,15 @@ def main() -> None:
     try:
         logger.info("Starting application...")
         loop.run_until_complete(main_async())
-    except (KeyboardInterrupt, SystemExit):
-        logger.warning("Received KeyboardInterrupt/SystemExit, initiating shutdown.")
+    except (KeyboardInterrupt, SystemExit) as ex:
+        logger.warning(f"Received {type(ex).__name__}, initiating shutdown.")
         # Ensure shutdown runs if loop was interrupted directly
         if not shutdown_event.is_set():
-             loop.run_until_complete(shutdown_handler("KeyboardInterrupt/SystemExit"))
+             # Run the async shutdown handler within the loop
+             loop.run_until_complete(shutdown_handler(type(ex).__name__))
     finally:
-        logger.info("Closing event loop.")
-        # Cancel remaining tasks if any (should be handled by shutdown_handler mostly)
+        logger.info("Cleaning up remaining tasks and closing event loop.")
+        # Cancel remaining tasks if any (should be handled by shutdown_handler mostly, but good practice)
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         if tasks:
             logger.info(f"Cancelling {len(tasks)} outstanding tasks.")

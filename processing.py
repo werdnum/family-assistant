@@ -6,10 +6,13 @@ from typing import List, Dict, Any, Optional, Callable
 from litellm import acompletion
 # Use ChatCompletionMessageParam as suggested by the error, or rely on inference
 # Let's try the suggestion first.
-from litellm.types.completion import ChatCompletionMessageParam
+from litellm.types.completion import ChatCompletionMessageParam, ToolCall
 
 # Import storage function for the tool
 import storage
+# Import MCP session management from main
+# Assuming main.py defines these globally or makes them accessible
+from main import mcp_sessions, tool_name_to_server_id
 
 logger = logging.getLogger(__name__)
 
@@ -45,43 +48,101 @@ TOOLS_DEFINITION = [
     }
 ]
 
-async def execute_function_call(tool_call: Any) -> Dict[str, Any]:
-    """Executes a function call requested by the LLM."""
+async def execute_function_call(tool_call: ToolCall) -> Dict[str, Any]:
+    """Executes a function call requested by the LLM, checking local and MCP tools."""
     function_name = tool_call.function.name
-    function_to_call = AVAILABLE_FUNCTIONS.get(function_name)
-    function_args = json.loads(tool_call.function.arguments)
-
-    if not function_to_call:
-        logger.error(f"Unknown function requested by LLM: {function_name}")
+    try:
+        function_args = json.loads(tool_call.function.arguments)
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse arguments for tool call {function_name}: {tool_call.function.arguments}")
         return {
             "tool_call_id": tool_call.id,
             "role": "tool",
             "name": function_name,
-            "content": f"Error: Function '{function_name}' not found.",
+            "content": f"Error: Invalid arguments format for {function_name}.",
         }
 
-    logger.info(f"Executing tool call: {function_name} with args {function_args}")
-    try:
-        # Note: Assumes the function is async. If not, adjust execution.
-        await function_to_call(**function_args)
-        function_response_content = f"Successfully executed {function_name}."
-        logger.info(f"Tool call {function_name} successful.")
-    except Exception as e:
-        logger.error(f"Error executing tool {function_name}: {e}", exc_info=True)
-        function_response_content = f"Error executing function '{function_name}': {e}"
+    # Check if it's a local tool first
+    local_function_to_call = AVAILABLE_FUNCTIONS.get(function_name)
+    if local_function_to_call:
+        logger.info(f"Executing local tool call: {function_name} with args {function_args}")
+        try:
+            await local_function_to_call(**function_args)
+            function_response_content = f"Successfully executed {function_name}."
+            logger.info(f"Local tool call {function_name} successful.")
+        except Exception as e:
+            logger.error(f"Error executing local tool {function_name}: {e}", exc_info=True)
+            function_response_content = f"Error executing function '{function_name}': {e}"
+        return {
+            "tool_call_id": tool_call.id,
+            "role": "tool",
+            "name": function_name,
+            "content": function_response_content,
+        }
 
+    # If not local, check if it's an MCP tool
+    server_id = tool_name_to_server_id.get(function_name)
+    if server_id:
+        session = mcp_sessions.get(server_id)
+        if session:
+            logger.info(f"Executing MCP tool call: {function_name} on server '{server_id}' with args {function_args}")
+            try:
+                # Progress reporting can be added here if needed using _meta/progressToken
+                mcp_result = await session.call_tool(name=function_name, arguments=function_args)
+
+                # Process MCP result content (list of TextContent, ImageContent, etc.)
+                # For now, just concatenate text parts. Handle other types as needed.
+                response_parts = []
+                if mcp_result.content:
+                    for content_item in mcp_result.content:
+                        if hasattr(content_item, 'text') and content_item.text:
+                            response_parts.append(content_item.text)
+                        # Add handling for other content types (image, audio, resource) if necessary
+                        # elif hasattr(content_item, 'uri'): # Example for resource
+                        #    response_parts.append(f"Resource available at {content_item.uri}")
+
+                function_response_content = "\n".join(response_parts) if response_parts else "Tool executed successfully."
+
+                if mcp_result.isError:
+                    logger.error(f"MCP tool call {function_name} on server '{server_id}' returned an error: {function_response_content}")
+                    # Prepend error indication for clarity to LLM
+                    function_response_content = f"Error executing tool '{function_name}': {function_response_content}"
+                else:
+                    logger.info(f"MCP tool call {function_name} on server '{server_id}' successful.")
+
+            except Exception as e:
+                logger.error(f"Error calling MCP tool {function_name} on server '{server_id}': {e}", exc_info=True)
+                function_response_content = f"Error calling MCP tool '{function_name}': {e}"
+            return {
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": function_response_content,
+            }
+        else:
+            logger.error(f"Found server_id '{server_id}' for tool '{function_name}', but no active session found.")
+            function_response_content = f"Error: Session for tool '{function_name}' not available."
+            return {
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": function_response_content,
+            }
+
+    # If not local and not MCP, it's unknown
+    logger.error(f"Unknown function requested by LLM: {function_name}")
     return {
         "tool_call_id": tool_call.id,
         "role": "tool",
         "name": function_name,
-        "content": function_response_content,
+        "content": f"Error: Function or tool '{function_name}' not found.",
     }
 
 
 async def get_llm_response(
     messages: List[Dict[str, Any]],
-    model: str
-    # tools parameter removed
+    model: str,
+    all_tools: List[Dict[str, Any]] # Accept the combined tool list
 ) -> str | None:
     """
     Sends the conversation history (and tools) to the LLM,
@@ -95,17 +156,17 @@ async def get_llm_response(
         The final response content string from the LLM, or None if an error occurs.
     """
     logger.info(f"Sending {len(messages)} messages to LLM ({model}). Last message: {messages[-1]['content'][:100]}...")
-    # Use the locally defined TOOLS_DEFINITION
-    if TOOLS_DEFINITION:
-        logger.info(f"Providing {len(TOOLS_DEFINITION)} tools to LLM.")
+    # Use the provided list of all tools
+    if all_tools:
+        logger.info(f"Providing {len(all_tools)} tools to LLM.")
 
     try:
         # --- First LLM Call ---
         response = await acompletion(
             model=model,
             messages=messages,
-            tools=TOOLS_DEFINITION, # Use local definition
-            tool_choice="auto" if TOOLS_DEFINITION else None, # Let LLM decide if/which tool to use
+            tools=all_tools, # Use combined list
+            tool_choice="auto" if all_tools else None, # Let LLM decide if/which tool to use
         )
 
         # Adjust type hint based on the import change
@@ -131,12 +192,22 @@ async def get_llm_response(
 
             # --- Second LLM Call ---
             logger.info("Sending updated messages back to LLM after tool execution.")
+            # Send tool list again in case the LLM needs to chain calls, though less common
             second_response = await acompletion(
                 model=model,
                 messages=messages,
-                # No tools needed for the second call, we just want the summary
+                tools=all_tools,
+                tool_choice="auto" if all_tools else None,
             )
             second_response_message = second_response.choices[0].message if second_response.choices else None
+
+            # --- Handle potential second-level tool calls (optional, adds complexity) ---
+            # If second_response_message contains tool_calls, you'd repeat the
+            # tool execution logic here. For simplicity, we assume the second call
+            # is primarily for summarizing the first tool's result.
+            # If second_response_message.tool_calls:
+            #    logger.info("LLM requested further tool calls after initial execution.")
+            #    # ... recursive call or loop ...
 
             if second_response_message and second_response_message.content:
                 final_content = second_response_message.content.strip()
