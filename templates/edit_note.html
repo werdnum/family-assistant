@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ "Edit Note" if note else "Add Note" }}</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        label { display: block; margin-bottom: 0.5em; font-weight: bold; }
+        input[type="text"], textarea { width: 100%; padding: 8px; margin-bottom: 1em; border: 1px solid #ccc; box-sizing: border-box; }
+        textarea { min-height: 200px; font-family: monospace; }
+        .buttons button { padding: 10px 15px; margin-right: 10px; }
+    </style>
+</head>
+<body>
+    <h1>{{ "Edit Note" if note else "Add New Note" }}</h1>
+
+    <form action="/notes/save" method="post">
+        {% if note %}
+        <input type="hidden" name="original_title" value="{{ note.title }}">
+        {% endif %}
+        <div>
+            <label for="title">Title:</label>
+            <input type="text" id="title" name="title" value="{{ note.title if note else '' }}" required>
+        </div>
+        <div>
+            <label for="content">Content:</label>
+            <textarea id="content" name="content" required>{{ note.content if note else '' }}</textarea>
+        </div>
+        <div class="buttons">
+            <button type="submit">Save Note</button>
+            <a href="/"><button type="button">Cancel</button></a>
+        </div>
+    </form>
+
+</body>
+</html>

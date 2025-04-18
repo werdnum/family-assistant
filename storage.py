@@ -88,6 +88,17 @@ async def get_recent_history(
         # Reverse to get chronological order for the LLM
         return [{"role": row.role, "content": row.content} for row in reversed(rows)]
 
+async def get_note_by_title(title: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a specific note by its title."""
+    async with engine.connect() as conn:
+        stmt = select(notes_table.c.title, notes_table.c.content).where(notes_table.c.title == title)
+        result = await conn.execute(stmt)
+        row = result.fetchone()
+        if row:
+            # Use ._mapping to access columns by name easily
+            return row._mapping
+        return None
+
 async def get_message_by_id(chat_id: int, message_id: int) -> Optional[Dict[str, Any]]:
     """Retrieves a specific message by its chat and message ID."""
     async with engine.connect() as conn:

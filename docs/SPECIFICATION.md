@@ -21,10 +21,11 @@ Family members who need a centralized way to manage shared information and recei
 *   **Email (Secondary):**
     *   Users can forward emails (e.g., confirmations, invites) to a dedicated address for ingestion.
     *   The assistant might send certain notifications or summaries via email (TBD).
-*   **Web (Secondary):** A web interface could provide:
-    *   A dashboard view of upcoming events, reminders, etc.
-    *   An alternative way to interact with the assistant (chat interface).
-    *   Configuration options (TBD).
+*   **Web (Secondary):** A web interface provides:
+    *   A simple UI to view, add, edit, and delete notes stored in the database.
+    *   (Future) A dashboard view of upcoming events, reminders, etc.
+    *   (Future) An alternative way to interact with the assistant (chat interface).
+    *   (Future) Configuration options.
 
 ## 3. Architecture Overview
 
@@ -164,5 +165,6 @@ The system will consist of the following core components:
 *   Message history (user and assistant messages) is stored in the database using SQLAlchemy.
 *   Recent message history is fetched from the database to provide context for LLM queries.
 *   Replied-to messages are fetched from the database to provide specific context.
+*   A basic web UI (FastAPI + Jinja2) for managing notes is included.
 *   No calendar integration, reminders, or MCP features implemented initially.
 
