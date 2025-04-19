@@ -79,9 +79,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_TOOL_BIN_DIR=/uv/bin \
     UV_TOOL_DIR=/uv/tools \
-    UV_CACHE_DIR=/uv-cache \
-    # Add uv tool bin, deno bin, and default path to PATH
-    PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
+    UV_CACHE_DIR=/uv-cache
+
+# Update PATH separately
+# Add uv tool bin, deno bin, and default path to PATH
+ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 
 # --- Copy Application Code ---
 # Copy the rest of the application code and configuration
