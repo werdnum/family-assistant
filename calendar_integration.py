@@ -106,6 +106,7 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
 
 async def fetch_upcoming_events() -> List[Dict[str, Any]]:
     """Connects to CalDAV and fetches upcoming events using direct URLs or name discovery."""
+    logger.debug(f"Attempting CalDAV fetch. URL: {CALDAV_URL}, User: {CALDAV_USERNAME}, URLs configured: {bool(CALDAV_CALENDAR_URLS)}, Names configured: {bool(CALDAV_CALENDAR_NAMES)}")
     # Check if base connection details are present
     if not all([CALDAV_URL, CALDAV_USERNAME, CALDAV_PASSWORD]):
         logger.warning("Core CalDAV connection details (URL, USERNAME, PASSWORD) missing. Skipping calendar fetch.")
@@ -173,6 +174,7 @@ async def fetch_upcoming_events() -> List[Dict[str, Any]]:
             end_date = start_date + timedelta(days=16) # Search up to 16 days out
 
             logger.info(f"Searching for events between {start_date} and {end_date} in {len(target_calendars)} calendar(s).")
+            logger.debug(f"Target calendar URLs/objects: {[getattr(c, 'url', str(c)) for c in target_calendars]}")
 
             fetch_tasks = []
             for calendar in target_calendars:
@@ -195,12 +197,18 @@ async def fetch_upcoming_events() -> List[Dict[str, Any]]:
                     try:
                         # Event data might be fetched lazily, ensure it's loaded
                         # The structure might differ slightly based on library version/implementation
+                        event_url = getattr(event, 'url', 'N/A')
+                        logger.debug(f"Fetching data for event: {event_url}")
                         event_data = await event.data() # Assuming data needs await
+                        logger.debug(f"Raw event data for {event_url}:\n{event_data[:500]}...") # Log first 500 chars
                         parsed = parse_event(event_data)
                         if parsed:
+                            logger.debug(f"Successfully parsed event {event_url}: {parsed}")
                             all_events.append(parsed)
+                        else:
+                            logger.warning(f"Failed to parse event data for {event_url}. Skipping.")
                     except (DAVError, NotFoundError, Exception) as event_err:
-                         logger.error(f"Error processing individual event {getattr(event, 'url', 'N/A')}: {event_err}", exc_info=True)
+                         logger.error(f"Error processing individual event {event_url}: {event_err}", exc_info=True)
 
 
     except DAVError as e:
@@ -211,9 +219,16 @@ async def fetch_upcoming_events() -> List[Dict[str, Any]]:
         return []
 
     # Sort events by start time
-    all_events.sort(key=lambda x: x["start"])
+    try:
+        # Ensure start times are comparable (handle potential mix of date/datetime if necessary)
+        all_events.sort(key=lambda x: x["start"])
+        logger.debug("Sorted events by start time.")
+    except TypeError as sort_err:
+        logger.error(f"Error sorting events, possibly due to mixed date/datetime types without tzinfo: {sort_err}")
+        # Proceed with unsorted events or handle differently if needed
 
     logger.info(f"Fetched and parsed {len(all_events)} events.")
+    logger.debug(f"Final list of parsed events before formatting: {all_events}")
     return all_events
 
 # --- Formatting for Prompt ---
@@ -261,6 +276,9 @@ def format_events_for_prompt(events: List[Dict[str, Any]], prompts: Dict[str, st
 
     today_tomorrow_str = "\n".join(today_tomorrow_events) if today_tomorrow_events else prompts.get("no_events_today_tomorrow", "None")
     next_two_weeks_str = "\n".join(limited_next_two_weeks) if limited_next_two_weeks else prompts.get("no_events_next_two_weeks", "None")
+
+    logger.debug(f"Formatted 'Today & Tomorrow' events string:\n{today_tomorrow_str}")
+    logger.debug(f"Formatted 'Next 2 Weeks' events string:\n{next_two_weeks_str}")
 
     return today_tomorrow_str, next_two_weeks_str
 
