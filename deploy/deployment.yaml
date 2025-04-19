@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: family-assistant-deployment
+  name: family-assistant # Simplified name
   labels:
     app: family-assistant
 spec:
@@ -22,7 +22,7 @@ spec:
         - containerPort: 8000 # Port exposed by the application
         envFrom:
         - secretRef:
-            name: family-assistant-secrets # Reference the primary secret (API keys, etc.)
+            name: family-assistant # Reference the renamed secret
         env: # Inject DB credentials and construct the URL
         - name: POSTGRES_USER
           valueFrom:
