@@ -10,10 +10,12 @@ from sqlalchemy import (
     select,
     insert,
     update,
+    delete, # Add delete
     BigInteger,
-    Integer,  # Added Integer
+    Integer,
     DateTime,
     Text,
+    JSON,  # Added JSON for payload
     desc,
 )
 from sqlalchemy.ext.asyncio import create_async_engine
