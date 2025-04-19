@@ -530,8 +530,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if llm_response:
             # Reply to the original message to maintain context in the Telegram chat
             # The llm_response here is the final response after potential tool calls
-            # Use legacy Markdown for more lenient parsing of LLM output
-            await update.message.reply_text(llm_response, parse_mode=ParseMode.MARKDOWN)
+            # Use legacy Markdown for more lenient parsing of LLM output,
+            # escaping only the necessary characters for this mode.
+            escaped_response = escape_markdown(llm_response, version=1)
+            await update.message.reply_text(escaped_response, parse_mode=ParseMode.MARKDOWN)
         else:
             await update.message.reply_text("Sorry, I couldn't process that.")
             logger.warning("Received empty response from LLM.")
