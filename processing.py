@@ -6,7 +6,8 @@ from typing import List, Dict, Any, Optional, Callable
 from litellm import acompletion
 # Use ChatCompletionMessageParam as suggested by the error, or rely on inference
 # Let's try the suggestion first.
-from litellm.types.completion import ChatCompletionMessageParam, ToolCall
+# Removed ToolCall import due to ImportError
+from litellm.types.completion import ChatCompletionMessageParam
 
 # Import storage function for the tool
 import storage
@@ -48,7 +49,8 @@ TOOLS_DEFINITION = [
     }
 ]
 
-async def execute_function_call(tool_call: ToolCall) -> Dict[str, Any]:
+# Changed type hint from ToolCall to Any to resolve ImportError
+async def execute_function_call(tool_call: Any) -> Dict[str, Any]:
     """Executes a function call requested by the LLM, checking local and MCP tools."""
     function_name = tool_call.function.name
     try:
