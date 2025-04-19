@@ -11,3 +11,5 @@ uvicorn[standard]>=0.29.0 # ASGI server
 jinja2>=3.1.4 # HTML templating
 python-multipart
 mcp>=1.5.0 # Model Context Protocol SDK
+caldav>=1.2.0 # CalDAV client library
+vobject>=0.9.6 # For parsing VCALENDAR data
