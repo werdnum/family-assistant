@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
+from fastapi import Response # Added Response
 
 # Import storage functions - adjust path if needed
 import storage
@@ -93,6 +94,36 @@ async def delete_note_post(request: Request, title: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found for deletion")
     return RedirectResponse(url="/", status_code=303)  # Redirect back to list
+
+
+@app.post("/webhook/mail")
+async def handle_mail_webhook(request: Request):
+    """
+    Receives incoming email via webhook (expects multipart/form-data).
+    Logs the received form data for now.
+    """
+    logger.info("Received POST request on /webhook/mail")
+    try:
+        form_data = await request.form()
+        # Log the form data keys and potentially values (be careful with sensitive data in logs)
+        log_data = {key: form_data.get(key) for key in form_data.keys()}
+        logger.info(f"Mail webhook form data received: {log_data}")
+
+        # --- Placeholder for future processing ---
+        # Example: Extract specific fields
+        # sender = form_data.get('sender')
+        # subject = form_data.get('subject')
+        # body_plain = form_data.get('body-plain')
+        # attachments = form_data.getlist('attachments') # Use getlist for multiple files
+
+        # TODO: Add logic here to parse/store email content or trigger LLM processing
+        # -----------------------------------------
+
+        return Response(status_code=200, content="Email received.")
+    except Exception as e:
+        logger.error(f"Error processing mail webhook: {e}", exc_info=True)
+        # Return 500, Mailgun might retry
+        raise HTTPException(status_code=500, detail="Failed to process incoming email")
 
 
 # --- Uvicorn Runner (for standalone testing) ---
