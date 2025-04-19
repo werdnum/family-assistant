@@ -14,11 +14,15 @@ WORKDIR /app
 # --- Install Python Dependencies ---
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements.txt .
-# Install Python dependencies using uv
-RUN uv pip install --system --no-cache -r requirements.txt
+# Create a virtual environment
+RUN uv venv /app/.venv
+# Install Python dependencies into the virtual environment
+# Note: uv pip install automatically detects and uses .venv in the current dir if it exists
+# We don't need --system anymore.
+RUN uv pip install --no-cache -r requirements.txt
 
 # --- Install MCP Tools ---
-# Install Python MCP tools using uv tool install
+# Install Python MCP tools using uv tool install (these go into /uv/tools, separate from the venv)
 # These will be available via `uvx` or directly if UV_TOOL_BIN_DIR is in PATH
 RUN uv tool install mcp-server-time
 RUN uv tool install mcp-server-fetch
@@ -56,6 +60,5 @@ COPY templates/ ./templates/
 # Expose the port the web server listens on
 EXPOSE 8000
 
-# Define the default command to run the application
-# Assumes main.py handles configuration loading (e.g., from .env)
-CMD ["python", "main.py"]
+# Define the default command to run the application using the venv's python
+CMD ["/app/.venv/bin/python", "main.py"]
