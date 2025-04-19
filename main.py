@@ -54,6 +54,9 @@ from storage import (
     get_recent_history,
     get_message_by_id,
     add_or_update_note,  # Import the function to be used as a tool
+    # Task Queue imports
+    dequeue_task,
+    update_task_status,
 )
 
 # Import calendar functions
@@ -76,6 +79,7 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 MAX_HISTORY_MESSAGES = 5  # Number of recent messages to include (excluding current)
 HISTORY_MAX_AGE_HOURS = 24  # Only include messages from the last X hours
+TASK_POLLING_INTERVAL = 5 # Seconds to wait between polling for tasks
 
 # --- Global Variables ---
 application: Optional[Application] = None
@@ -97,6 +101,87 @@ processing_tasks: Dict[int, asyncio.Task] = {}
 mcp_tools: List[Dict[str, Any]] = []  # Stores discovered MCP tools in OpenAI format
 tool_name_to_server_id: Dict[str, str] = {}  # Maps MCP tool names to their server_id
 mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
+
+
+# --- Task Queue Handler Registry ---
+# Maps task_type strings to async handler functions
+# Handler functions should accept the task payload as an argument
+# Example: async def handle_my_task(payload: Any): ...
+TASK_HANDLERS: Dict[str, callable] = {}
+
+# Example Task Handler (can be moved elsewhere later)
+async def handle_log_message(payload: Any):
+    """Simple task handler that logs the received payload."""
+    logger.info(f"[Task Worker] Handling log_message task. Payload: {payload}")
+    # Simulate some work
+    await asyncio.sleep(1)
+    # In a real handler, you might interact with APIs, DB, etc.
+    # If this function raises an exception, the task will be marked 'failed'.
+
+# Register the example handler
+TASK_HANDLERS["log_message"] = handle_log_message
+logger.info(f"Registered task handlers: {list(TASK_HANDLERS.keys())}")
+
+
+# --- Task Queue Worker ---
+async def task_worker_loop(worker_id: str):
+    """Continuously polls for and processes tasks."""
+    logger.info(f"Task worker {worker_id} started.")
+    task_types_handled = list(TASK_HANDLERS.keys())
+
+    while not shutdown_event.is_set():
+        task = None
+        try:
+            # Dequeue a task of a type this worker handles
+            task = await dequeue_task(worker_id, task_types_handled)
+
+            if task:
+                logger.info(f"Worker {worker_id} processing task {task['task_id']} (type: {task['task_type']})")
+                handler = TASK_HANDLERS.get(task["task_type"])
+
+                if handler:
+                    try:
+                        # Execute the handler with the payload
+                        await handler(task["payload"])
+                        # Mark task as done if handler completes successfully
+                        await update_task_status(task["task_id"], "done")
+                        logger.info(f"Worker {worker_id} completed task {task['task_id']}")
+                    except Exception as handler_exc:
+                        logger.error(
+                            f"Worker {worker_id} failed task {task['task_id']} due to handler error: {handler_exc}",
+                            exc_info=True,
+                        )
+                        # Mark task as failed
+                        await update_task_status(
+                            task["task_id"], "failed", error=str(handler_exc)
+                        )
+                else:
+                    # This shouldn't happen if dequeue_task respects task_types
+                    logger.error(
+                        f"Worker {worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
+                    )
+                    await update_task_status(
+                        task["task_id"],
+                        "failed",
+                        error=f"No handler registered for type {task['task_type']}",
+                    )
+
+            else:
+                # No task found, wait before polling again
+                await asyncio.sleep(TASK_POLLING_INTERVAL)
+
+        except asyncio.CancelledError:
+            logger.info(f"Task worker {worker_id} received cancellation signal.")
+            # If a task was being processed, try to mark it as pending again?
+            # Or rely on lock expiry/manual intervention for now.
+            # For simplicity, we just exit.
+            break # Exit the loop cleanly on cancellation
+        except Exception as e:
+            logger.error(f"Task worker {worker_id} encountered an error: {e}", exc_info=True)
+            # If an error occurs during dequeue or status update, wait before retrying
+            await asyncio.sleep(TASK_POLLING_INTERVAL * 2) # Longer sleep after error
+
+    logger.info(f"Task worker {worker_id} stopped.")
 
 
 # --- Configuration Loading ---
@@ -887,8 +972,11 @@ async def main_async() -> None:
     # Run Uvicorn server concurrently (polling is already running)
     # telegram_task = asyncio.create_task(application.updater.start_polling(allowed_updates=Update.ALL_TYPES)) # Removed duplicate start_polling
     web_server_task = asyncio.create_task(server.serve())
-
     logger.info("Web server running on http://0.0.0.0:8000") # Updated log message
+
+    # Start the task queue worker
+    worker_id = f"worker-{uuid.uuid4()}"
+    task_worker = asyncio.create_task(task_worker_loop(worker_id))
 
     # Wait until shutdown signal is received
     await shutdown_event.wait()
@@ -906,10 +994,12 @@ async def main_async() -> None:
     logger.info("Web server stopped.")
 
     # Polling task cancellation is handled by application.updater.stop() and application.shutdown()
-    # No need to manually cancel telegram_task anymore.
+    # Task worker cancellation is handled by the main shutdown_handler.
+    # No need to manually cancel telegram_task or task_worker anymore.
 
     logger.info("All services stopped. Final shutdown.")
     # Application shutdown is handled by the signal handler which calls shutdown_handler
+
 
 
 def main() -> None:
