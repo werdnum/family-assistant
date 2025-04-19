@@ -33,6 +33,7 @@ from telegram.ext import (
     # PicklePersistence, # No longer needed for history
     filters,
 )
+import telegramify_markdown # Import the new library
 from telegram.helpers import escape_markdown
 import uvicorn  # Import uvicorn
 
@@ -530,10 +531,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if llm_response:
             # Reply to the original message to maintain context in the Telegram chat
             # The llm_response here is the final response after potential tool calls
-            # Use legacy Markdown for more lenient parsing of LLM output,
-            # escaping only the necessary characters for this mode.
-            escaped_response = escape_markdown(llm_response, version=1)
-            await update.message.reply_text(escaped_response, parse_mode=ParseMode.MARKDOWN)
+            # Convert the LLM's markdown response to Telegram's MarkdownV2 format
+            try:
+                converted_markdown = telegramify_markdown.markdownify(llm_response)
+                await update.message.reply_text(converted_markdown, parse_mode=ParseMode.MARKDOWN_V2)
+            except Exception as md_err: # Catch potential errors during conversion
+                logger.error(f"Failed to convert markdown: {md_err}. Sending plain text.", exc_info=True)
+                # Fallback to sending plain text if conversion fails
+                await update.message.reply_text(llm_response)
         else:
             await update.message.reply_text("Sorry, I couldn't process that.")
             logger.warning("Received empty response from LLM.")
