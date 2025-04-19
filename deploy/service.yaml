@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: family-assistant-service
+spec:
+  selector:
+    app: family-assistant # Selects pods with this label (matches the Deployment's template labels)
+  ports:
+    - protocol: TCP
+      port: 80       # Port the service will listen on within the cluster
+      targetPort: 8000 # Port the container is listening on
+  type: ClusterIP # Default type, exposes service within the cluster
+  # Use LoadBalancer or NodePort for external access if needed,
+  # requires cloud provider support or specific cluster setup.
+  # type: LoadBalancer
+  # type: NodePort
