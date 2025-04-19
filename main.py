@@ -392,7 +392,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.warning(f"Ignoring message from unauthorized chat_id {chat_id}")
         return
 
-    logger.info(f"Received message from chat_id {chat_id}: {user_message}")
+    logger.info(f"Received message from chat_id {chat_id}: {user_message_text}") # Fix variable name
 
     messages: List[Dict[str, Any]] = []
     now = datetime.now(timezone.utc)
