@@ -117,9 +117,11 @@ The system will consist of the following core components:
     *   Answer questions based on stored notes.
 *   **Message History:** Store conversation history per chat in the `message_history` table and use recent history as context for the LLM.
 *   **MCP Tool Integration:** Leverage connected MCP servers (Time, Browser, Fetch, Brave Search) to perform actions requested by the LLM based on user prompts.
-*   **(Future) Calendar Integration:**
-    *   Read events from specified shared family calendars.
-    *   Add/update events on the main family calendar.
+*   **Calendar Integration (Read-Only):**
+    *   Reads upcoming events (today, tomorrow, next 14 days) from specified CalDAV calendars (configured via `.env`).
+    *   Provides formatted event list as context within the system prompt to the LLM.
+*   **(Future) Calendar Integration (Write):**
+    *   Add/update events on the main family calendar via CalDAV.
 *   **(Future) Reminders:**
     *   Set reminders via natural language (stored on a dedicated calendar).
     *   Receive notifications for due reminders.
@@ -133,17 +135,20 @@ The system will consist of the following core components:
 *   Implemented Tables:
     *   `notes`: Stores user-created notes (id, title, content, created\_at, updated\_at). Title is unique.
     *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content).
+*   External Data:
+    *   Calendar events are fetched live via CalDAV and are *not* stored in the local database.
 *   (Future) Potential Tables:
-    *   `events`: Calendar items, deadlines.
+    *   `events`: Could potentially cache calendar items or store locally managed events/deadlines.
     *   `users`: Family member details, preferences.
     *   `tasks`: Status of scheduled/background tasks.
 *   Entries store metadata like timestamps and roles (`message_history`). Source information is implicitly Telegram or Web UI for notes currently.
 
-## 7. Potential Data Sources & Actions
+## 7. Data Sources & Actions
 
-*   **Calendar APIs:** Google Calendar, Microsoft Outlook Calendar via Graph API, CalDAV (for both main events and the dedicated **Reminders Calendar**).
+*   **CalDAV:** Used for reading events from configured calendars (e.g., iCloud, Nextcloud).
+*   **(Future) Calendar APIs:** Google Calendar, Microsoft Outlook Calendar via Graph API.
 *   **Weather APIs:** e.g., OpenWeatherMap, NWS API (possibly accessed via MCP).
-*   **Email Server:** IMAP for fetching, SMTP for sending, or using a service like Mailgun/SendGrid.
+*   **(Future) Email Server:** IMAP for fetching, SMTP for sending, or using a service like Mailgun/SendGrid.
 *   **Package Tracking APIs:** e.g., EasyPost, Shippo (possibly via MCP).
 *   **MCP Servers:** Standardized interfaces to external tools and data sources (e.g., Home Assistant, Git repositories, custom databases, web search).
 *   **Direct user input** via supported interfaces.
@@ -156,6 +161,7 @@ The system will consist of the following core components:
 *   **Configuration:** Environment variables (`.env`), YAML (`prompts.yaml`), JSON (`mcp_config.json`).
 *   **MCP:** Uses the `mcp` Python SDK to connect to and interact with MCP servers defined in `mcp_config.json`.
 *   **Containerization:** **Docker** with `uv` for Python package management and `npm` for Node.js-based MCP tools.
+*   **Calendar Library:** `caldav` for CalDAV interaction, `vobject` for parsing event data.
 *   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used.
 
 ## 9. Current Implementation Status (as of 2025-04-19)
@@ -194,8 +200,8 @@ The following features from the specification are currently implemented:
 
 **Features Not Yet Implemented:**
 
-*   Calendar Integration (reading/writing events).
-*   Reminders (setting/notifying).
+*   Calendar Integration (writing events via CalDAV).
+*   Reminders (setting/notifying - likely requires a dedicated reminder calendar and write access).
 *   Email Ingestion.
 *   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks).
 *   Advanced Web UI features (dashboard, chat).

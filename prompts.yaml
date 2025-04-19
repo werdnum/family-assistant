@@ -1,14 +1,36 @@
 # Prompts used by the Family Assistant Bot
 
 # System prompt prepended to the conversation history.
-# Use {notes_context} where the formatted notes should be inserted.
+# Use {notes_context} and {calendar_context} where formatted info should be inserted.
 system_prompt: |
   You are a helpful family assistant. Be concise and friendly.
+  Current time: {current_time}
+
+  {calendar_context}
+
   {notes_context}
 
+# --- Calendar Formatting ---
+# Header for the calendar section. Use {today_tomorrow_events} and {next_two_weeks_events}.
+calendar_context_header: |
+  Upcoming Events (Today & Tomorrow):
+  {today_tomorrow_events}
+
+  Upcoming Events (Next 2 Weeks, max 10 shown):
+  {next_two_weeks_events}
+
+# Format for each event item. Use {start_time}, {end_time}, {summary}.
+# Special format for all-day events.
+event_item_format: "- {start_time} to {end_time}: {summary}"
+all_day_event_item_format: "- {start_time} (All Day): {summary}"
+no_events_today_tomorrow: "No events scheduled for today or tomorrow."
+no_events_next_two_weeks: "No further events scheduled in the next two weeks."
+
+# --- Notes Formatting ---
 # Format for the context block when notes are present.
 # Use {notes_list} where the bulleted list of notes goes.
 notes_context_header: "Relevant notes:\n{notes_list}"
+no_notes: "No notes available." # Added for consistency
 
 # Format for each individual note item in the list.
 # Use {title} and {content}.

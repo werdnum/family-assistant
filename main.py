@@ -45,6 +45,8 @@ from storage import (
     get_recent_history, get_message_by_id,
     add_or_update_note # Import the function to be used as a tool
 )
+# Import calendar functions
+import calendar_integration
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -62,6 +64,7 @@ application: Optional[Application] = None
 ALLOWED_CHAT_IDS: list[int] = []
 DEVELOPER_CHAT_ID: Optional[int] = None
 PROMPTS: Dict[str, str] = {} # Global dict to hold loaded prompts
+CALDAV_CONFIG: Dict[str, Any] = {} # To store CalDAV settings
 shutdown_event = asyncio.Event()
 mcp_sessions: Dict[str, ClientSession] = {} # Stores active MCP client sessions {server_id: session}
 mcp_tools: List[Dict[str, Any]] = [] # Stores discovered MCP tools in OpenAI format
@@ -71,9 +74,10 @@ mcp_exit_stack = AsyncExitStack() # Manages MCP server process lifecycles
 # --- Configuration Loading ---
 def load_config():
     """Loads configuration from environment variables and prompts.yaml."""
-    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS
+    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALDAV_CONFIG
     load_dotenv()  # Load environment variables from .env file
 
+    # --- Telegram Config ---
     chat_ids_str = os.getenv("ALLOWED_CHAT_IDS", "")
     if chat_ids_str:
         try:
@@ -114,6 +118,28 @@ def load_config():
     except yaml.YAMLError as e:
         logger.error(f"Error parsing prompts.yaml: {e}")
         PROMPTS = {} # Reset to empty on parsing error
+
+    # --- CalDAV Config ---
+    caldav_url = os.getenv("CALDAV_URL")
+    caldav_user = os.getenv("CALDAV_USERNAME")
+    caldav_pass = os.getenv("CALDAV_PASSWORD")
+    caldav_names_str = os.getenv("CALDAV_CALENDAR_NAMES")
+    caldav_names = [name.strip() for name in caldav_names_str.split(',')] if caldav_names_str else []
+
+    if caldav_url and caldav_user and caldav_pass and caldav_names:
+        CALDAV_CONFIG = {
+            "url": caldav_url,
+            "username": caldav_user,
+            "password": caldav_pass, # Note: Storing password directly is not ideal for production
+            "calendar_names": caldav_names,
+        }
+        logger.info(f"Loaded CalDAV configuration for {len(caldav_names)} calendar(s).")
+        # Pass config to calendar_integration module if needed (currently uses getenv directly)
+        # calendar_integration.set_config(CALDAV_CONFIG)
+    else:
+        logger.warning("CalDAV configuration incomplete in .env file. Calendar features will be disabled.")
+        CALDAV_CONFIG = {}
+
 
 # --- MCP Configuration Loading & Connection ---
 async def load_mcp_config_and_connect():
@@ -301,11 +327,35 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     llm_response = None
     try:
-        # --- Prepare System Prompt with Notes Context ---
-        system_prompt_template = PROMPTS.get("system_prompt", "{notes_context}") # Default if not found
+        # --- Prepare System Prompt Context ---
+        system_prompt_template = PROMPTS.get("system_prompt", "You are a helpful assistant.") # Default prompt
+
+        # 1. Current Time
+        current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+        # 2. Calendar Context
+        calendar_context_str = ""
+        if CALDAV_CONFIG: # Only fetch if configured
+            try:
+                logger.info("Fetching calendar events...")
+                upcoming_events = await calendar_integration.fetch_upcoming_events()
+                today_events_str, future_events_str = calendar_integration.format_events_for_prompt(upcoming_events, PROMPTS)
+                calendar_header_template = PROMPTS.get("calendar_context_header", "{today_tomorrow_events}\n{next_two_weeks_events}")
+                calendar_context_str = calendar_header_template.format(
+                    today_tomorrow_events=today_events_str,
+                    next_two_weeks_events=future_events_str
+                ).strip()
+                logger.info("Prepared calendar context.")
+            except Exception as cal_err:
+                logger.error(f"Failed to fetch or format calendar events: {cal_err}", exc_info=True)
+                calendar_context_str = "Error retrieving calendar events."
+        else:
+             logger.debug("CalDAV not configured, skipping calendar context.")
+             calendar_context_str = "Calendar integration not configured." # Inform LLM
+
+        # 3. Notes Context
         notes_context_str = ""
         all_notes = await get_all_notes()
-
         if all_notes:
             notes_list_str = ""
             note_item_format = PROMPTS.get("note_item_format", "- {title}: {content}")
@@ -315,12 +365,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             notes_context_header_template = PROMPTS.get("notes_context_header", "Relevant notes:\n{notes_list}")
             notes_context_str = notes_context_header_template.format(notes_list=notes_list_str.strip())
             logger.info("Prepared notes context.")
+        else:
+            notes_context_str = PROMPTS.get("no_notes", "No notes available.")
 
-        # Insert the formatted system prompt
-        final_system_prompt = system_prompt_template.format(notes_context=notes_context_str).strip()
+        # --- Assemble Final System Prompt ---
+        final_system_prompt = system_prompt_template.format(
+            current_time=current_time_str,
+            calendar_context=calendar_context_str,
+            notes_context=notes_context_str
+        ).strip()
+
         if final_system_prompt: # Only insert if there's content
             messages.insert(0, {"role": "system", "content": final_system_prompt})
             logger.info("Prepended system prompt to LLM messages.")
+        else:
+            logger.warning("Generated empty system prompt.")
+
 
         # Send typing action using context manager
         # Combine local tools and MCP tools
