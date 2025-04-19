@@ -5,16 +5,27 @@
       "args": ["mcp-server-time", "--local-timezone=Australia/Sydney"]
     },
     "browser": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest", "--headless", "--browser", "chromium"]
+      "command": "deno",
+      "args": [
+        "run",
+        "-A",
+        "npm:@playwright/mcp@latest",
+        "--headless",
+        "--browser",
+        "chromium"
+       ]
     },
     "fetch": {
       "command": "uvx",
       "args": ["mcp-server-fetch"]
     },
     "brave": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "command": "deno",
+      "args": [
+        "run",
+        "-A",
+        "npm:@modelcontextprotocol/server-brave-search"
+      ],
       "env": {
         "BRAVE_API_KEY": "$BRAVE_API_KEY"
       }
