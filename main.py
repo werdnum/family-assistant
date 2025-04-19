@@ -427,8 +427,29 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         messages.extend(history_messages)
         logger.debug(f"Added {len(history_messages)} recent messages from DB history.")
 
-    # Add the current user message
-    current_user_message_content = {"role": "user", "content": user_message}
+    # --- Prepare current user message with sender/forward context ---
+    user = update.effective_user
+    user_name = user.first_name if user else "Unknown User"
+    forward_context = ""
+    if update.message.forward_origin:
+        origin = update.message.forward_origin
+        original_sender_name = "Unknown Sender"
+        if origin.sender_user:
+            original_sender_name = origin.sender_user.first_name or "User"
+        elif origin.sender_chat:
+            original_sender_name = origin.sender_chat.title or "Chat/Channel"
+        # Consider adding origin.type for more context if needed
+
+        forward_context = f"(forwarded from {original_sender_name}) "
+        logger.debug(f"Message was forwarded from {original_sender_name}")
+
+    formatted_user_content = f"Message from {user_name}: {forward_context}{user_message}"
+
+    # Add the formatted current user message
+    current_user_message_content = {
+        "role": "user",
+        "content": formatted_user_content,
+    }
     messages.append(current_user_message_content)
 
     llm_response = None
@@ -555,12 +576,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # --- Store messages in DB ---
         try:
             # Store user message
+            # Store user message (using the *formatted* content sent to LLM)
             await add_message_to_history(
                 chat_id=chat_id,
                 message_id=update.message.message_id,
                 timestamp=user_message_timestamp,
                 role="user",
-                content=user_message,
+                content=formatted_user_content, # Store the formatted content
             )
             # Store bot response if successful
             if llm_response:
