@@ -49,15 +49,15 @@ from storage import (
 import calendar_integration
 
 # --- Logging Configuration ---
-# Set root logger level to DEBUG to capture detailed logs
+# Set root logger level back to INFO
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.DEBUG
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 # Keep external libraries less verbose unless needed
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.INFO)
 logging.getLogger("apscheduler").setLevel(logging.INFO)
-logging.getLogger("caldav").setLevel(logging.INFO) # Set caldav lib logging level if needed
+logging.getLogger("caldav").setLevel(logging.INFO) # Keep caldav at INFO unless specific issues arise
 logger = logging.getLogger(__name__)
 
 # --- Constants ---
@@ -140,7 +140,6 @@ def load_config():
             "calendar_urls": caldav_urls, # Store the list of specific calendar URLs
         }
         logger.info(f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s).")
-        logger.debug(f"CALDAV_CONFIG loaded: {CALDAV_CONFIG}") # Log the loaded config
         # Pass config to calendar_integration module if needed (currently uses getenv directly)
         # calendar_integration.set_config(CALDAV_CONFIG)
     else:
@@ -377,7 +376,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     next_two_weeks_events=future_events_str
                 ).strip()
                 logger.info("Prepared calendar context.")
-                logger.debug(f"Final calendar context string:\n{calendar_context_str}")
             except Exception as cal_err:
                 logger.error(f"Failed to fetch or format calendar events: {cal_err}", exc_info=True)
                 calendar_context_str = "Error retrieving calendar events."
@@ -419,7 +417,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Ensure processing.TOOLS_DEFINITION is accessible or imported
         from processing import TOOLS_DEFINITION as local_tools_definition
         all_tools = local_tools_definition + mcp_tools
-        logger.debug(f"Providing {len(all_tools)} total tools to LLM ({len(local_tools_definition)} local, {len(mcp_tools)} MCP).")
+        # logger.debug(f"Providing {len(all_tools)} total tools to LLM ({len(local_tools_definition)} local, {len(mcp_tools)} MCP).") # Removed debug log
 
         async with typing_notifications(context, chat_id):
             # Get response from LLM via processing module, passing all available tools and MCP state
