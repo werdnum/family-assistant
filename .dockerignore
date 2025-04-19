@@ -1,0 +1,44 @@
+# Ignore files related to development environment and secrets
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Ignore Git files
+.git/
+.gitignore
+
+# Ignore Docker specific files
+# We explicitly copy Dockerfile, so no need to ignore it here generally,
+# but good practice if context might include others accidentally.
+# .dockerignore # Don't ignore self
+# Dockerfile
+
+# Ignore IDE/editor files
+.idea/
+.vscode/
+*.swp
+*~
+
+# Ignore cache/build files
+.cache/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+/uv-cache/ # If using UV_CACHE_DIR=/uv-cache in Dockerfile
+
+# Ignore other sensitive files or large directories
+# e.g., local_database.db
+# e.g., large_media_files/
