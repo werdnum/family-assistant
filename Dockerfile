@@ -5,7 +5,6 @@ FROM ghcr.io/astral-sh/uv:debian-slim AS base
 # Using --mount for caching apt downloads
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-    npm \
     curl \
     unzip \
     && \
@@ -55,15 +54,15 @@ RUN ARCHITECTURE="" && \
 RUN uv tool install mcp-server-time
 RUN uv tool install mcp-server-fetch
 
-# Install Node.js MCP tools globally using npm
-RUN npm install -g @playwright/mcp@latest
-RUN npm install -g @modelcontextprotocol/server-brave-search
+# Install Node.js MCP tools globally using Deno
+RUN deno install --global -A npm:@playwright/mcp@latest
+RUN deno install --global -A npm:@modelcontextprotocol/server-brave-search
 
-# Install Playwright Chromium browser and its dependencies
+# Install Playwright Chromium browser and its dependencies using Deno
 # Using --with-deps is crucial for installing necessary OS libraries
 # Running this after installing @playwright/mcp
 RUN --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked \
-    npx playwright install --with-deps chromium
+    deno run -A npm:playwright install --with-deps chromium
 
 # --- Configure Environment ---
 # Set environment variables
