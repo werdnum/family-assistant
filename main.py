@@ -77,7 +77,7 @@ application: Optional[Application] = None
 ALLOWED_CHAT_IDS: list[int] = []
 DEVELOPER_CHAT_ID: Optional[int] = None
 PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
-CALDAV_CONFIG: Dict[str, Any] = {}  # To store CalDAV settings
+CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
 shutdown_event = asyncio.Event()
 mcp_sessions: Dict[str, ClientSession] = (
     {}
@@ -90,7 +90,7 @@ mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
 # --- Configuration Loading ---
 def load_config():
     """Loads configuration from environment variables and prompts.yaml."""
-    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALDAV_CONFIG
+    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG # Renamed global
     load_dotenv()  # Load environment variables from .env file
 
     # --- Telegram Config ---
@@ -143,35 +143,44 @@ def load_config():
         logger.error(f"Error parsing prompts.yaml: {e}")
         PROMPTS = {}  # Reset to empty on parsing error
 
-    # --- CalDAV Config ---
-    caldav_url = os.getenv("CALDAV_URL")  # Base URL still needed for connection
+    # --- Calendar Config (CalDAV & iCal) ---
+    CALENDAR_CONFIG = {} # Initialize the combined config dict
+    caldav_enabled = False
+    ical_enabled = False
+
+    # CalDAV settings
     caldav_user = os.getenv("CALDAV_USERNAME")
     caldav_pass = os.getenv("CALDAV_PASSWORD")
-    caldav_urls_str = os.getenv("CALDAV_CALENDAR_URLS")  # Read the new variable
-    caldav_urls = (
-        [url.strip() for url in caldav_urls_str.split(",")] if caldav_urls_str else []
-    )
+    caldav_urls_str = os.getenv("CALDAV_CALENDAR_URLS")
+    caldav_urls = [url.strip() for url in caldav_urls_str.split(',')] if caldav_urls_str else []
 
-    # Check if essential connection details are provided
-    # If using specific URLs, CALDAV_URL is optional.
     if caldav_user and caldav_pass and caldav_urls:
-        CALDAV_CONFIG = {
-            # Include base URL only if provided, might not be needed by calendar_integration now
-            "url": caldav_url if caldav_url else None,
+        CALENDAR_CONFIG["caldav"] = {
             "username": caldav_user,
-            "password": caldav_pass, # Note: Storing password directly is not ideal for production
-            "calendar_urls": caldav_urls, # Store the list of specific calendar URLs
+            "password": caldav_pass,
+            "calendar_urls": caldav_urls,
         }
+        caldav_enabled = True
         logger.info(f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s).")
-        # Pass config to calendar_integration module if needed (currently uses getenv directly)
-        # calendar_integration.set_config(CALDAV_CONFIG)
-    elif caldav_url and caldav_user and caldav_pass and not caldav_urls:
-         # Fallback or alternative mode: If base URL and names are provided (requires calendar_integration changes)
-         logger.warning("CALDAV_CALENDAR_URLS not set. Calendar name discovery mode is not fully supported.")
-         CALDAV_CONFIG = {} # Disable for now unless name discovery is reimplemented
     else:
-        logger.warning("CalDAV configuration incomplete in .env file (USERNAME, PASSWORD, and CALDAV_CALENDAR_URLS required). Calendar features will be disabled.")
-        CALDAV_CONFIG = {}
+        logger.info("CalDAV configuration incomplete or disabled (requires USERNAME, PASSWORD, CALENDAR_URLS).")
+
+    # iCal settings
+    ical_urls_str = os.getenv("ICAL_URLS")
+    ical_urls = [url.strip() for url in ical_urls_str.split(',')] if ical_urls_str else []
+
+    if ical_urls:
+        CALENDAR_CONFIG["ical"] = {
+            "urls": ical_urls,
+        }
+        ical_enabled = True
+        logger.info(f"Loaded iCal configuration for {len(ical_urls)} URL(s).")
+    else:
+        logger.info("iCal configuration incomplete or disabled (requires ICAL_URLS).")
+
+    if not caldav_enabled and not ical_enabled:
+        logger.warning("No calendar sources (CalDAV or iCal) are configured. Calendar features will be disabled.")
+        CALENDAR_CONFIG = {} # Ensure it's empty if nothing is enabled
 
 
 # --- MCP Configuration Loading & Connection ---
@@ -432,10 +441,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # 2. Calendar Context
         calendar_context_str = ""
-        if CALDAV_CONFIG:  # Only fetch if configured
+        if CALENDAR_CONFIG:  # Check the renamed config dict
             try:
                 logger.info("Fetching calendar events...")
-                upcoming_events = await calendar_integration.fetch_upcoming_events()
+                # Pass the config to the fetch function
+                upcoming_events = await calendar_integration.fetch_upcoming_events(CALENDAR_CONFIG)
                 today_events_str, future_events_str = (
                     calendar_integration.format_events_for_prompt(
                         upcoming_events, PROMPTS
@@ -458,7 +468,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 # Include the specific error in the context for the LLM
                 calendar_context_str = f"Error retrieving calendar events: {str(cal_err)}"
         else:
-            logger.debug("CalDAV not configured, skipping calendar context.")
+            logger.debug("No calendars configured, skipping calendar context.")
             calendar_context_str = "Calendar integration not configured."  # Inform LLM
 
         # 3. Notes Context

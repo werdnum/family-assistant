@@ -118,9 +118,10 @@ The system will consist of the following core components:
 *   **Message History:** Store conversation history per chat in the `message_history` table and use recent history as context for the LLM.
 *   **MCP Tool Integration:** Leverage connected MCP servers (Time, Browser, Fetch, Brave Search) to perform actions requested by the LLM based on user prompts.
 *   **Calendar Integration (Read-Only):**
-    *   Reads upcoming events (today, tomorrow, next 14 days) from specified CalDAV calendars.
-    *   Configuration via `.env`: Requires `CALDAV_URL` (base server), `CALDAV_USERNAME`, `CALDAV_PASSWORD`, and `CALDAV_CALENDAR_URLS` (comma-separated list of direct URLs to the specific calendars).
-    *   Provides formatted event list as context within the system prompt to the LLM.
+    *   Reads upcoming events (today, tomorrow, next 14 days) from configured calendar sources.
+    *   Supports **CalDAV** calendars via direct URLs. Configuration via `.env`: Requires `CALDAV_USERNAME`, `CALDAV_PASSWORD`, and `CALDAV_CALENDAR_URLS` (comma-separated list of direct URLs). `CALDAV_URL` is optional.
+    *   Supports **iCalendar** URLs (`.ics`). Configuration via `.env`: Requires `ICAL_URLS` (comma-separated list of URLs).
+    *   Provides a combined, sorted list of events as context within the system prompt to the LLM.
 *   **(Future) Calendar Integration (Write):**
     *   Add/update events on the main family calendar via CalDAV.
 *   **(Future) Reminders:**
@@ -146,7 +147,8 @@ The system will consist of the following core components:
 
 ## 7. Data Sources & Actions
 
-*   **CalDAV:** Used for reading events from configured calendars (e.g., iCloud, Nextcloud).
+*   **CalDAV:** Used for reading events from configured calendars (e.g., iCloud, Nextcloud) via direct calendar URLs.
+*   **iCalendar URLs:** Used for reading events from public or private `.ics` URLs.
 *   **(Future) Calendar APIs:** Google Calendar, Microsoft Outlook Calendar via Graph API.
 *   **Weather APIs:** e.g., OpenWeatherMap, NWS API (possibly accessed via MCP).
 *   **(Future) Email Server:** IMAP for fetching, SMTP for sending, or using a service like Mailgun/SendGrid.
@@ -162,7 +164,7 @@ The system will consist of the following core components:
 *   **Configuration:** Environment variables (`.env`), YAML (`prompts.yaml`), JSON (`mcp_config.json`).
 *   **MCP:** Uses the `mcp` Python SDK to connect to and interact with MCP servers defined in `mcp_config.json`.
 *   **Containerization:** **Docker** with `uv` for Python package management and `npm` for Node.js-based MCP tools.
-*   **Calendar Library:** `caldav` for CalDAV interaction, `vobject` for parsing event data. Supports connection via base URL and specific calendar URLs.
+*   **Calendar Libraries:** `caldav` for CalDAV interaction, `vobject` for parsing VCALENDAR data (used by both CalDAV and iCal), `httpx` for fetching iCal URLs.
 *   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used.
 
 ## 9. Current Implementation Status (as of 2025-04-19)
@@ -187,7 +189,7 @@ The following features from the specification are currently implemented:
 *   **LLM Context:**
     *   System prompt includes:
         *   Current time.
-        *   Upcoming calendar events fetched via CalDAV (today, tomorrow, next 14 days).
+        *   Upcoming calendar events fetched from configured CalDAV and iCal sources (today, tomorrow, next 14 days).
         *   Context from the `notes` table.
     *   Recent message history (from `message_history`) is included.
     *   Replied-to messages (fetched from `message_history`) are included.
