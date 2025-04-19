@@ -70,13 +70,14 @@ RUN --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked \
 # - PYTHONUNBUFFERED: Ensures Python output (like logs) is sent straight to terminal
 # - UV_TOOL_BIN_DIR/UV_TOOL_DIR: Standard locations for uv tools
 # - UV_CACHE_DIR: Explicit cache location for uv operations
-# - PATH: Ensure uv tool binaries and globally installed npm packages are findable
+# - PATH: Ensure uv tool binaries and Deno bin directory are findable
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_TOOL_BIN_DIR=/uv/bin \
     UV_TOOL_DIR=/uv/tools \
     UV_CACHE_DIR=/uv-cache \
-    PATH="${UV_TOOL_BIN_DIR}:/usr/local/bin:${PATH}"
+    # Add uv tool bin, deno bin, and default path
+    PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 
 # --- Copy Application Code ---
 # Copy the rest of the application code and configuration
