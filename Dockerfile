@@ -58,9 +58,9 @@ RUN ARCHITECTURE="" && \
 RUN uv tool install mcp-server-time
 RUN uv tool install mcp-server-fetch
 
-# Install Node.js MCP tools globally using Deno
-RUN deno install --global -A npm:@playwright/mcp@latest
-RUN deno install --global -A npm:@modelcontextprotocol/server-brave-search
+# Install Node.js MCP tools globally using Deno, providing explicit names
+RUN deno install --global -A --name playwright-mcp npm:@playwright/mcp@latest
+RUN deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
 
 # Install Playwright Chromium browser and its dependencies using Deno
 # Using --with-deps is crucial for installing necessary OS libraries
