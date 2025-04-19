@@ -1,9 +1,9 @@
 # Prompts used by the Family Assistant Bot
 
 # System prompt prepended to the conversation history.
-# Use {notes_context} and {calendar_context} where formatted info should be inserted.
+# Use {notes_context}, {calendar_context}, and {user_name} where formatted info should be inserted.
 system_prompt: |
-  You are a helpful family assistant. Be concise and friendly.
+  You are a helpful family assistant interacting with {user_name}. Be concise and friendly.
   Current time: {current_time}
 
   {calendar_context}
