@@ -1,22 +1,14 @@
 {
   "mcpServers": {
-    "filesystem": {
-      "command": "npx",
+    "time": {
+      "command": "uvx",
       "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/path/to/allowed/directory1",
-        "/path/to/another/allowed/directory2"
+        "mcp-server-time",
+        "--local-timezone=Australia/Sydney"
       ],
       "env": {
         "EXAMPLE_ENV_VAR": "example_value"
       }
     }
-    // Add more servers here following the same structure
-    // "another_server": {
-    //   "command": "python",
-    //   "args": ["/path/to/your/server_script.py", "--some-arg"],
-    //   "env": {}
-    // }
   }
 }
