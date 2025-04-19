@@ -152,23 +152,25 @@ def load_config():
         [url.strip() for url in caldav_urls_str.split(",")] if caldav_urls_str else []
     )
 
-    # Check if essential connection details and the list of URLs are provided
-    if caldav_url and caldav_user and caldav_pass and caldav_urls:
+    # Check if essential connection details are provided
+    # If using specific URLs, CALDAV_URL is optional.
+    if caldav_user and caldav_pass and caldav_urls:
         CALDAV_CONFIG = {
-            "url": caldav_url,  # Base URL for the client connection
+            # Include base URL only if provided, might not be needed by calendar_integration now
+            "url": caldav_url if caldav_url else None,
             "username": caldav_user,
-            "password": caldav_pass,  # Note: Storing password directly is not ideal for production
-            "calendar_urls": caldav_urls,  # Store the list of specific calendar URLs
+            "password": caldav_pass, # Note: Storing password directly is not ideal for production
+            "calendar_urls": caldav_urls, # Store the list of specific calendar URLs
         }
-        logger.info(
-            f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s)."
-        )
+        logger.info(f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s).")
         # Pass config to calendar_integration module if needed (currently uses getenv directly)
         # calendar_integration.set_config(CALDAV_CONFIG)
+    elif caldav_url and caldav_user and caldav_pass and not caldav_urls:
+         # Fallback or alternative mode: If base URL and names are provided (requires calendar_integration changes)
+         logger.warning("CALDAV_CALENDAR_URLS not set. Calendar name discovery mode is not fully supported.")
+         CALDAV_CONFIG = {} # Disable for now unless name discovery is reimplemented
     else:
-        logger.warning(
-            "CalDAV configuration incomplete in .env file (URL, USERNAME, PASSWORD, CALDAV_CALENDAR_URLS required). Calendar features will be disabled."
-        )
+        logger.warning("CalDAV configuration incomplete in .env file (USERNAME, PASSWORD, and CALDAV_CALENDAR_URLS required). Calendar features will be disabled.")
         CALDAV_CONFIG = {}
 
 
