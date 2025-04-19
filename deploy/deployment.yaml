@@ -22,10 +22,23 @@ spec:
         - containerPort: 8000 # Port exposed by the application
         envFrom:
         - secretRef:
-            name: family-assistant-secrets # Reference the secret created earlier
-        volumeMounts:
-        - name: data-volume # Mount path for the database file
-          mountPath: /data
+            name: family-assistant-secrets # Reference the primary secret (API keys, etc.)
+        env: # Inject DB credentials and construct the URL
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: ml-bot.mlbot.storage-cluster.credentials.postgresql.acid.zalan.do # Zalando secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ml-bot.mlbot.storage-cluster.credentials.postgresql.acid.zalan.do # Zalando secret
+              key: password
+        - name: DATABASE_URL # Construct the final URL
+          value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@storage-cluster.postgres.svc.cluster.local/mlbot"
+        # volumeMounts: # Removed volume mount for SQLite
+        # - name: data-volume
+        #   mountPath: /data
         # Optional: Define resource requests and limits
         # resources:
         #   requests:
@@ -34,12 +47,12 @@ spec:
         #   limits:
         #     memory: "512Mi"
         #     cpu: "500m"
-      volumes:
-      - name: data-volume # Define the volume
-        emptyDir: {} # IMPORTANT: Use emptyDir for testing. Replace with PersistentVolumeClaim for production SQLite!
-        # Example for PVC:
-        # persistentVolumeClaim:
-        #   claimName: family-assistant-data-pvc
+      # volumes: # Removed volume definition for SQLite
+      # - name: data-volume
+      #   emptyDir: {}
+      #   # Example for PVC:
+      #   # persistentVolumeClaim:
+      #   #   claimName: family-assistant-data-pvc
       # Optional: Add imagePullSecrets if your container registry is private
       # imagePullSecrets:
       # - name: my-registry-secret
