@@ -510,6 +510,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     current_user_message_content = {
         "role": "user",
         "content": final_message_content_parts, # Content is now a list
+        "name": user_name, # Add the user's name to the message metadata
     }
     messages.append(current_user_message_content)
 
