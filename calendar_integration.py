@@ -1,3 +1,4 @@
+import asyncio # Import asyncio for run_in_executor
 import logging
 import os
 from datetime import datetime, date, timedelta, time # Added time
@@ -100,36 +101,34 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Failed to parse VCALENDAR data: {e}\nData: {event_data[:200]}...", exc_info=True)
         return None
 
-# --- Core Function ---
+# --- Core Synchronous Function (to be run in executor) ---
 
-# ... (other imports and helper functions remain the same) ...
-
-async def fetch_upcoming_events() -> List[Dict[str, Any]]:
-    """Connects to CalDAV and fetches upcoming events using direct URLs or name discovery."""
-    # Check if base connection details are present
-    if not all([CALDAV_URL, CALDAV_USERNAME, CALDAV_PASSWORD]):
-        logger.warning("Core CalDAV connection details (URL, USERNAME, PASSWORD) missing. Skipping calendar fetch.")
-        return []
-    # Check if *either* URLs or Names are provided
-    if not CALDAV_CALENDAR_URLS and not CALDAV_CALENDAR_NAMES:
-        logger.warning("Neither CALDAV_CALENDAR_URLS nor CALDAV_CALENDAR_NAMES are configured. Skipping calendar fetch.")
-        return []
-
+def _fetch_events_sync(
+    base_url: str,
+    username: str,
+    password: str,
+    calendar_urls: List[str],
+    calendar_names: List[str]
+) -> List[Dict[str, Any]]:
+    """Synchronous function to connect to CalDAV and fetch events."""
+    logger.debug("Executing synchronous CalDAV fetch.")
     all_events = []
     target_calendars = []
+
     try:
-        async with caldav.AsyncDAVClient(
-            url=CALDAV_URL, # Use the base URL for the client connection
-            username=CALDAV_USERNAME,
-            password=CALDAV_PASSWORD,
+        # Use the synchronous client
+        with caldav.DAVClient(
+            url=base_url,
+            username=username,
+            password=password,
         ) as client:
             # --- Determine target calendars ---
-            if CALDAV_CALENDAR_URLS:
-                logger.info(f"Using specified calendar URLs: {CALDAV_CALENDAR_URLS}")
-                for url in CALDAV_CALENDAR_URLS:
+            if calendar_urls:
+                logger.info(f"Using specified calendar URLs: {calendar_urls}")
+                for url in calendar_urls:
                     try:
-                        # Get calendar object directly using its URL
-                        calendar = await client.calendar(url=url)
+                        # Get calendar object directly using its URL (synchronous)
+                        calendar = client.calendar(url=url)
                         target_calendars.append(calendar)
                         logger.info(f"Successfully accessed calendar at URL: {url}")
                     except (DAVError, NotFoundError) as e:
@@ -137,17 +136,17 @@ async def fetch_upcoming_events() -> List[Dict[str, Any]]:
                     except Exception as e:
                          logger.error(f"Unexpected error accessing calendar URL '{url}': {e}", exc_info=True)
 
-            elif CALDAV_CALENDAR_NAMES:
-                # Fallback to discovering calendars by name (original logic)
-                logger.info(f"Using calendar names for discovery: {CALDAV_CALENDAR_NAMES}")
-                principal = await client.principal()
-                all_principal_calendars = await principal.calendars()
-                target_calendar_names_set = set(CALDAV_CALENDAR_NAMES)
+            elif calendar_names:
+                # Fallback to discovering calendars by name (synchronous)
+                logger.info(f"Using calendar names for discovery: {calendar_names}")
+                principal = client.principal()
+                all_principal_calendars = principal.calendars()
+                target_calendar_names_set = set(calendar_names)
 
                 for cal in all_principal_calendars:
                     try:
-                        # Attempt to get display name, fallback to URL parsing
-                        cal_name = await cal.get_property("displayname") if hasattr(cal, 'get_property') else str(cal.url).split('/')[-2]
+                        # Attempt to get display name, fallback to URL parsing (synchronous)
+                        cal_name = cal.get_property("displayname") if hasattr(cal, 'get_property') else str(cal.url).split('/')[-2]
                         if cal_name in target_calendar_names_set:
                             target_calendars.append(cal)
                             logger.info(f"Found target calendar by name: {cal_name} ({cal.url})")
@@ -158,71 +157,95 @@ async def fetch_upcoming_events() -> List[Dict[str, Any]]:
                     except Exception as e:
                         logger.error(f"Unexpected error processing calendar {cal.url} during name discovery: {e}", exc_info=True)
             else:
-                # This case should be caught by the initial check, but added for safety
                 logger.error("No calendar URLs or names provided.")
                 return []
-
 
             if not target_calendars:
                 logger.error("No target calendars could be accessed or found.")
                 return []
 
             # --- Fetch events from target calendars ---
-            # Define date range: Today to 16 days from now (covers today, tomorrow, and next 14 days)
             start_date = date.today()
             end_date = start_date + timedelta(days=16) # Search up to 16 days out
-
             logger.info(f"Searching for events between {start_date} and {end_date} in {len(target_calendars)} calendar(s).")
 
-            fetch_tasks = []
             for calendar in target_calendars:
-                # Use search method (date_search is deprecated) for fetching events in the range
-                # Note: caldav library async support might need specific handling.
-                # Assuming search method is awaitable or runs in executor.
-                # The `caldav` library's async support might require careful handling.
-                # Let's assume `calendar.search` works correctly with async client.
-                fetch_tasks.append(calendar.search(start=start_date, end=end_date, event=True, expand=False)) # expand=False might be needed for recurring
+                try:
+                    # Use search method (synchronous)
+                    results = calendar.search(start=start_date, end=end_date, event=True, expand=False)
+                    logger.debug(f"Found {len(results)} potential events in calendar {calendar.url}")
 
-            results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
-
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error(f"Error fetching events from a calendar: {result}", exc_info=result)
-                    continue # Skip this calendar's results
-
-                # Process fetched events
-                for event in result:
-                    try:
-                        # Event data might be fetched lazily, ensure it's loaded
-                        # The structure might differ slightly based on library version/implementation
-                        event_url = getattr(event, 'url', 'N/A')
-                        event_data = await event.data() # Assuming data needs await
-                        parsed = parse_event(event_data)
-                        if parsed:
-                            all_events.append(parsed)
-                        else:
-                            logger.warning(f"Failed to parse event data for {event_url}. Skipping.")
-                    except (DAVError, NotFoundError, Exception) as event_err:
-                         logger.error(f"Error processing individual event {event_url}: {event_err}", exc_info=True)
-
+                    # Process fetched events
+                    for event in results:
+                        try:
+                            event_url = getattr(event, 'url', 'N/A')
+                            event_data = event.data # Access data synchronously
+                            parsed = parse_event(event_data)
+                            if parsed:
+                                all_events.append(parsed)
+                            else:
+                                logger.warning(f"Failed to parse event data for {event_url}. Skipping.")
+                        except (DAVError, NotFoundError, Exception) as event_err:
+                             logger.error(f"Error processing individual event {event_url}: {event_err}", exc_info=True)
+                except (DAVError, NotFoundError) as search_err:
+                    logger.error(f"Error searching calendar {calendar.url}: {search_err}")
+                except Exception as search_exc:
+                    logger.error(f"Unexpected error searching calendar {calendar.url}: {search_exc}", exc_info=True)
 
     except DAVError as e:
         logger.error(f"CalDAV connection or authentication error: {e}", exc_info=True)
         return [] # Return empty list on connection failure
     except Exception as e:
-        logger.error(f"Unexpected error during CalDAV fetch: {e}", exc_info=True)
+        logger.error(f"Unexpected error during synchronous CalDAV fetch: {e}", exc_info=True)
         return []
 
     # Sort events by start time
     try:
-        # Ensure start times are comparable (handle potential mix of date/datetime if necessary)
         all_events.sort(key=lambda x: x["start"])
     except TypeError as sort_err:
         logger.error(f"Error sorting events, possibly due to mixed date/datetime types without tzinfo: {sort_err}")
-        # Proceed with unsorted events or handle differently if needed
 
-    logger.info(f"Fetched and parsed {len(all_events)} events.")
+    logger.info(f"Synchronously fetched and parsed {len(all_events)} events.")
     return all_events
+
+
+# --- Async Wrapper Function ---
+
+async def fetch_upcoming_events() -> List[Dict[str, Any]]:
+    """Async wrapper to run the synchronous CalDAV fetch in an executor."""
+    logger.debug("Entering async fetch_upcoming_events wrapper.")
+    # Check if base connection details are present
+    if not all([CALDAV_URL, CALDAV_USERNAME, CALDAV_PASSWORD]):
+        logger.warning("Core CalDAV connection details (URL, USERNAME, PASSWORD) missing. Skipping calendar fetch.")
+        return []
+    # Check if *either* URLs or Names are provided
+    if not CALDAV_CALENDAR_URLS and not CALDAV_CALENDAR_NAMES:
+        logger.warning("Neither CALDAV_CALENDAR_URLS nor CALDAV_CALENDAR_NAMES are configured. Skipping calendar fetch.")
+    # Check if *either* URLs or Names are provided
+    if not CALDAV_CALENDAR_URLS and not CALDAV_CALENDAR_NAMES:
+        logger.warning("Neither CALDAV_CALENDAR_URLS nor CALDAV_CALENDAR_NAMES are configured. Skipping calendar fetch.")
+        return []
+
+    loop = asyncio.get_running_loop()
+    try:
+        # Run the synchronous blocking code in the default executor
+        logger.debug("Scheduling synchronous CalDAV fetch in executor.")
+        all_events = await loop.run_in_executor(
+            None, # Use default executor (ThreadPoolExecutor)
+            _fetch_events_sync, # The function to run
+            # Arguments for _fetch_events_sync:
+            CALDAV_URL,
+            CALDAV_USERNAME,
+            CALDAV_PASSWORD,
+            CALDAV_CALENDAR_URLS,
+            CALDAV_CALENDAR_NAMES
+        )
+        logger.debug(f"Executor task finished, returned {len(all_events)} events.")
+        return all_events
+    except Exception as e:
+        # Catch errors during scheduling or execution in executor
+        logger.error(f"Error running CalDAV fetch in executor: {e}", exc_info=True)
+        return []
 
 # --- Formatting for Prompt ---
 
@@ -279,14 +302,18 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
     # Re-assign config vars after loading .env
+    # Re-assign config vars after loading .env for testing
     CALDAV_URL = os.getenv("CALDAV_URL")
     CALDAV_USERNAME = os.getenv("CALDAV_USERNAME")
     CALDAV_PASSWORD = os.getenv("CALDAV_PASSWORD")
-    CALDAV_CALENDAR_NAMES_STR = os.getenv("CALDAV_CALENDAR_NAMES")
+    CALDAV_CALENDAR_URLS_STR = os.getenv("CALDAV_CALENDAR_URLS")
+    CALDAV_CALENDAR_URLS = [url.strip() for url in CALDAV_CALENDAR_URLS_STR.split(',')] if CALDAV_CALENDAR_URLS_STR else []
+    CALDAV_CALENDAR_NAMES_STR = os.getenv("CALDAV_CALENDAR_NAMES") # Keep for potential testing
     CALDAV_CALENDAR_NAMES = [name.strip() for name in CALDAV_CALENDAR_NAMES_STR.split(',')] if CALDAV_CALENDAR_NAMES_STR else []
 
+
     async def run_test():
-        print("Fetching events...")
+        print("Fetching events (async wrapper)...")
         events = await fetch_upcoming_events()
         print(f"\nFetched {len(events)} events.")
 
