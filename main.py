@@ -77,6 +77,11 @@ logging.getLogger("caldav").setLevel(
 )  # Keep caldav at INFO unless specific issues arise
 logger = logging.getLogger(__name__)
 
+# --- Events for coordination ---
+shutdown_event = asyncio.Event()
+new_task_event = asyncio.Event() # Event to notify worker of immediate tasks
+
+
 # --- Constants ---
 MAX_HISTORY_MESSAGES = 5  # Number of recent messages to include (excluding current)
 HISTORY_MAX_AGE_HOURS = 24  # Only include messages from the last X hours
@@ -88,7 +93,7 @@ ALLOWED_CHAT_IDS: list[int] = []
 DEVELOPER_CHAT_ID: Optional[int] = None
 PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
 CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
-shutdown_event = asyncio.Event()
+# shutdown_event moved higher up
 from collections import defaultdict # Add defaultdict
 
 mcp_sessions: Dict[str, ClientSession] = (
@@ -125,7 +130,7 @@ logger.info(f"Registered task handlers: {list(TASK_HANDLERS.keys())}")
 
 
 # --- Task Queue Worker ---
-async def task_worker_loop(worker_id: str):
+async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
     """Continuously polls for and processes tasks."""
     logger.info(f"Task worker {worker_id} started.")
     task_types_handled = list(TASK_HANDLERS.keys())
@@ -168,8 +173,20 @@ async def task_worker_loop(worker_id: str):
                     )
 
             else:
-                # No task found, wait before polling again
-                await asyncio.sleep(TASK_POLLING_INTERVAL)
+                # No task found, wait for the polling interval OR the wake-up event
+                try:
+                    logger.debug(f"Worker {worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)...")
+                    # Wait for the event to be set, with a timeout
+                    await asyncio.wait_for(
+                        wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL
+                    )
+                    # If wait_for completes without timeout, the event was set
+                    logger.debug(f"Worker {worker_id}: Woken up by event.")
+                    wake_up_event.clear() # Reset the event for the next notification
+                except asyncio.TimeoutError:
+                    # Event didn't fire, timeout reached, proceed to next polling cycle
+                    logger.debug(f"Worker {worker_id}: Wait timed out, continuing poll cycle.")
+                    pass # Continue the loop normally after timeout
 
         except asyncio.CancelledError:
             logger.info(f"Task worker {worker_id} received cancellation signal.")
@@ -975,9 +992,9 @@ async def main_async() -> None:
     web_server_task = asyncio.create_task(server.serve())
     logger.info("Web server running on http://0.0.0.0:8000") # Updated log message
 
-    # Start the task queue worker
+    # Start the task queue worker, passing the notification event
     worker_id = f"worker-{uuid.uuid4()}"
-    task_worker = asyncio.create_task(task_worker_loop(worker_id))
+    task_worker = asyncio.create_task(task_worker_loop(worker_id, new_task_event))
 
     # Wait until shutdown signal is received
     await shutdown_event.wait()
