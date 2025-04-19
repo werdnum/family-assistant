@@ -221,10 +221,10 @@ def _fetch_events_sync(
 async def fetch_upcoming_events() -> List[Dict[str, Any]]:
     """Async wrapper to run the synchronous CalDAV fetch in an executor."""
     logger.debug("Entering async fetch_upcoming_events wrapper.")
-    # Check if base connection details are present
-    if not all([CALDAV_URL, CALDAV_USERNAME, CALDAV_PASSWORD]):
+    # Check if essential authentication details are present
+    if not all([CALDAV_USERNAME, CALDAV_PASSWORD]):
         logger.warning(
-            "Core CalDAV connection details (URL, USERNAME, PASSWORD) missing. Skipping calendar fetch."
+            "Essential CalDAV connection details (USERNAME, PASSWORD) missing. Skipping calendar fetch."
         )
         return []
     # Check if *either* URLs or Names are provided
