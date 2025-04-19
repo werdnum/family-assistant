@@ -11,9 +11,8 @@ from litellm.types.completion import ChatCompletionMessageParam
 
 # Import storage function for the tool
 import storage
-# Import MCP session management from main
-# Assuming main.py defines these globally or makes them accessible
-from main import mcp_sessions, tool_name_to_server_id
+# MCP state (mcp_sessions, tool_name_to_server_id) will be passed as arguments
+# Removed: from main import mcp_sessions, tool_name_to_server_id
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +49,12 @@ TOOLS_DEFINITION = [
 ]
 
 # Changed type hint from ToolCall to Any to resolve ImportError
-async def execute_function_call(tool_call: Any) -> Dict[str, Any]:
+# Added mcp_sessions and tool_name_to_server_id as parameters
+async def execute_function_call(
+    tool_call: Any,
+    mcp_sessions: Dict[str, Any], # Using Any for ClientSession to avoid MCP import here
+    tool_name_to_server_id: Dict[str, str]
+) -> Dict[str, Any]:
     """Executes a function call requested by the LLM, checking local and MCP tools."""
     function_name = tool_call.function.name
     try:
@@ -141,10 +145,13 @@ async def execute_function_call(tool_call: Any) -> Dict[str, Any]:
     }
 
 
+# Added mcp_sessions and tool_name_to_server_id as parameters
 async def get_llm_response(
     messages: List[Dict[str, Any]],
     model: str,
-    all_tools: List[Dict[str, Any]] # Accept the combined tool list
+    all_tools: List[Dict[str, Any]], # Accept the combined tool list
+    mcp_sessions: Dict[str, Any], # Using Any for ClientSession to avoid MCP import here
+    tool_name_to_server_id: Dict[str, str]
 ) -> str | None:
     """
     Sends the conversation history (and tools) to the LLM,
@@ -186,8 +193,11 @@ async def get_llm_response(
             # Append the assistant's response message (containing the tool calls)
             messages.append(response_message.model_dump()) # Use model_dump for pydantic v2+
 
-            # Execute all tool calls
-            tool_responses = await asyncio.gather(*(execute_function_call(tc) for tc in tool_calls))
+            # Execute all tool calls, passing the MCP state
+            tool_responses = await asyncio.gather(*(
+                execute_function_call(tc, mcp_sessions, tool_name_to_server_id)
+                for tc in tool_calls
+            ))
 
             # Append tool responses to the message history
             messages.extend(tool_responses)

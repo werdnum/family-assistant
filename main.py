@@ -263,8 +263,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.debug(f"Providing {len(all_tools)} total tools to LLM ({len(local_tools_definition)} local, {len(mcp_tools)} MCP).")
 
         async with typing_notifications(context, chat_id):
-            # Get response from LLM via processing module, passing all available tools
-            llm_response = await get_llm_response(messages, args.model, all_tools)
+            # Get response from LLM via processing module, passing all available tools and MCP state
+            llm_response = await get_llm_response(
+                messages,
+                args.model,
+                all_tools,
+                mcp_sessions, # Pass the MCP sessions dict
+                tool_name_to_server_id # Pass the tool name mapping
+            )
 
         if llm_response:
             # Reply to the original message to maintain context in the Telegram chat
