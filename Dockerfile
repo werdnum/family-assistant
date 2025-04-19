@@ -5,11 +5,13 @@ FROM ghcr.io/astral-sh/uv:debian-slim AS base
 # Using --mount for caching apt downloads
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \ # Add CA certificates
+    # Add CA certificates for HTTPS communication
+    ca-certificates \
     curl \
     unzip \
     && \
-    update-ca-certificates && \ # Ensure certificates are updated
+    # Ensure certificates are updated after installing the package
+    update-ca-certificates && \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
