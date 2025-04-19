@@ -6,9 +6,6 @@
         "mcp-server-time",
         "--local-timezone=Australia/Sydney"
       ],
-      "env": {
-        "EXAMPLE_ENV_VAR": "example_value"
-      }
     },
     "browser": {
       "command": "npx",
@@ -23,7 +20,10 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-brave-search"
-      ]
+      ],
+      "env": {
+      	"BRAVE_API_KEY": "$BRAVE_API_KEY"
+      }
     }
   }
 }
