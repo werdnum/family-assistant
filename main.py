@@ -464,8 +464,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         forward_context = f"(forwarded from {original_sender_name}) "
         logger.debug(f"Message was forwarded from {original_sender_name}")
 
-    # Include text message/caption in the formatted content
-    formatted_user_text_content = f"Message from {user_name}: {forward_context}{user_message_text}".strip()
+    # Remove the "Message from..." prefix. The role "user" already indicates the source.
+    # Keep the forward context if present.
+    formatted_user_text_content = f"{forward_context}{user_message_text}".strip()
     text_content_part = {"type": "text", "text": formatted_user_text_content}
 
     # --- Handle Photo Attachment ---
