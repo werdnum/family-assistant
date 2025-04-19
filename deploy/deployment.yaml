@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: family-assistant-deployment
+  labels:
+    app: family-assistant
+spec:
+  replicas: 1 # Start with one replica
+  selector:
+    matchLabels:
+      app: family-assistant
+  template:
+    metadata:
+      labels:
+        app: family-assistant
+    spec:
+      containers:
+      - name: family-assistant
+        image: containers.alexsmith.dev/family-assistant:latest # Your specified image
+        imagePullPolicy: Always # Or IfNotPresent, depending on your tagging strategy
+        ports:
+        - containerPort: 8000 # Port exposed by the application
+        envFrom:
+        - secretRef:
+            name: family-assistant-secrets # Reference the secret created earlier
+        volumeMounts:
+        - name: data-volume # Mount path for the database file
+          mountPath: /data
+        # Optional: Define resource requests and limits
+        # resources:
+        #   requests:
+        #     memory: "256Mi"
+        #     cpu: "250m"
+        #   limits:
+        #     memory: "512Mi"
+        #     cpu: "500m"
+      volumes:
+      - name: data-volume # Define the volume
+        emptyDir: {} # IMPORTANT: Use emptyDir for testing. Replace with PersistentVolumeClaim for production SQLite!
+        # Example for PVC:
+        # persistentVolumeClaim:
+        #   claimName: family-assistant-data-pvc
+      # Optional: Add imagePullSecrets if your container registry is private
+      # imagePullSecrets:
+      # - name: my-registry-secret
