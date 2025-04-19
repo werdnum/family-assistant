@@ -80,11 +80,12 @@ The system will consist of the following core components:
     *   "Add dentist appointment on June 5th at 10 AM." (Adds event to main calendar)
     *   "What was the flight number for the trip we booked?" (Requires prior ingestion into memories)
     *   "Turn on the living room lights." (Requires MCP integration with Home Assistant)
+    *   Sending a photo with "What plant is this?"
 
 ### 4.2 Ingestion Interaction
-*   **Trigger:** User forwards an email, shares a calendar event, uploads a file (via Web?), or sends specific formatted info via chat.
+*   **Trigger:** User forwards an email, shares a calendar event, uploads a file (via Web?), sends specific formatted info via chat, or sends a photo/document intended purely for logging/memory.
 *   **Process:**
-    1.  **Interaction Layer** (or dedicated ingestion service) receives the data.
+    1.  **Interaction Layer** (or dedicated ingestion service) receives the data. Note: Image attachments in regular messages are handled by Direct Interaction.
     2.  **Processing Layer** attempts to parse structured data first (if applicable format is known, e.g., `.ics` files).
     3.  If parsing fails or data is unstructured (e.g., plain email body), the **LLM** is used to extract key information (dates, times, event names, confirmation numbers, etc.).
     4.  Extracted/parsed information is structured and saved to the `memories` table in the **Data Store**, linked to the source and timestamp. If it's clearly a calendar event, it might also be added directly to the main calendar.
@@ -202,6 +203,7 @@ The following features from the specification are currently implemented:
         *   Discovers tools provided by connected MCP servers.
         *   Makes both local and MCP tools available to the LLM.
         *   Executes MCP tool calls requested by the LLM.
+*   **Image Handling:** Processes photos attached to Telegram messages and sends them to the LLM.
 *   **Containerization:** **Dockerfile** provided for building an image with all dependencies (Python via `uv`, Node.js via `npm`, Playwright browser).
 
 **Features Not Yet Implemented:**
