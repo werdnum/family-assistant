@@ -77,13 +77,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_TOOL_BIN_DIR=/uv/bin \
     UV_TOOL_DIR=/uv/tools \
     UV_CACHE_DIR=/uv-cache \
-    # Add uv tool bin and default npm global bin to PATH
     PATH="${UV_TOOL_BIN_DIR}:/usr/local/bin:${PATH}"
 
 # --- Copy Application Code ---
 # Copy the rest of the application code and configuration
 COPY main.py processing.py storage.py web_server.py calendar_integration.py ./
-COPY prompts.yaml mcp_config.json ./ # Removed .env from this line
+COPY prompts.yaml mcp_config.json ./
 COPY templates/ ./templates/
 
 # --- Runtime Configuration ---
