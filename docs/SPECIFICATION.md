@@ -21,11 +21,14 @@ Family members who need a centralized way to manage shared information and recei
 *   **Email (Secondary):**
     *   Users can forward emails (e.g., confirmations, invites) to a dedicated address for ingestion.
     *   The assistant might send certain notifications or summaries via email (TBD).
-*   **Web (Secondary):** A web interface provides:
-    *   A simple UI to view, add, edit, and delete notes stored in the database.
+*   **Web (Secondary):** A web interface (implemented using FastAPI and Jinja2) provides:
+    *   A UI to view, add, edit, and delete notes stored in the database.
     *   (Future) A dashboard view of upcoming events, reminders, etc.
     *   (Future) An alternative way to interact with the assistant (chat interface).
     *   (Future) Configuration options.
+*   **Email (Future):**
+    *   Users can forward emails (e.g., confirmations, invites) to a dedicated address for ingestion.
+    *   The assistant might send certain notifications or summaries via email.
 
 ## 3. Architecture Overview
 
@@ -42,10 +45,11 @@ The system will consist of the following core components:
     *   Facts/Memories (user-provided info, ingested details)
     *   User profiles and preferences
     *   System configuration
-    *   Logs of interactions and ingested data (including source, timestamps).
-    *   *Note: Reminders are stored on a dedicated calendar, not in this database.*
-*   **MCP Integration Layer:** Connects to various MCP servers (e.g., Home Assistant, Git, Databases) to provide extended context and actions (tools) to the LLM. This allows the assistant to interact with other systems in a standardized way.
-*   **Task Scheduler:** Manages cron jobs or scheduled tasks for:
+    *   Logs of interactions (`message_history` table).
+    *   Notes (`notes` table).
+    *   *Note: Reminders are intended to be stored on a dedicated calendar, not in this database.*
+*   **MCP Integration Layer:** Connects to MCP servers defined in `mcp_config.json` (e.g., Time, Browser, Fetch, Brave Search). Discovers available tools, provides them to the LLM, and executes requested MCP tool calls.
+*   **Task Scheduler (Future):** Manages cron jobs or scheduled tasks for:
     *   Periodic data ingestion (e.g., checking main calendars, weather APIs).
     *   Checking the reminder calendar for due items.
     *   Proactive updates (e.g., generating and sending the daily brief).
@@ -107,29 +111,33 @@ The system will consist of the following core components:
 ## 5. Key Features
 
 *   **Daily Brief:** Customizable morning update including main calendar, reminder calendar, weather, and potentially package/mail info.
-*   **Calendar Integration:**
-    *   Read events from specified shared family calendars (e.g., Google Calendar, CalDAV).
-    *   Add/update events on the main family calendar based on user requests or ingested data.
-*   **Reminders:**
-    *   Set time-based or date-based reminders via natural language, **which are stored on a dedicated family reminders calendar**.
-    *   Receive notifications for due reminders (triggered by checking the calendar).
-*   **Information Storage & Retrieval:**
-    *   Store key facts, dates (birthdays, anniversaries), preferences, and notes provided by users or ingested into the `memories` table.
-    *   Answer questions based on this stored information ("When is Grandma's birthday?", "What's the wifi password?").
-*   **Email Ingestion:** Process information from emails forwarded to a specific address, storing relevant details in the `memories` table.
-*   **External Data Integration:** Fetch and incorporate data like weather forecasts (potentially via MCP).
-*   **MCP Integrations:** Leverage MCP servers to interact with other systems like Home Assistant (controlling lights, checking sensors), query specific databases, interact with version control, etc., based on user requests.
+*   **Information Storage & Retrieval (Notes):**
+    *   Store notes provided by users via the `add_or_update_note` tool or the Web UI into the `notes` table.
+    *   Provide notes as context to the LLM.
+    *   Answer questions based on stored notes.
+*   **Message History:** Store conversation history per chat in the `message_history` table and use recent history as context for the LLM.
+*   **MCP Tool Integration:** Leverage connected MCP servers (Time, Browser, Fetch, Brave Search) to perform actions requested by the LLM based on user prompts.
+*   **(Future) Calendar Integration:**
+    *   Read events from specified shared family calendars.
+    *   Add/update events on the main family calendar.
+*   **(Future) Reminders:**
+    *   Set reminders via natural language (stored on a dedicated calendar).
+    *   Receive notifications for due reminders.
+*   **(Future) Email Ingestion:** Process information from forwarded emails.
+*   **(Future) External Data Integration:** Fetch data like weather forecasts directly or via MCP.
 
 ## 6. Data Store Design Considerations
 
 *   A structured relational database (e.g., SQLite, PostgreSQL) is recommended for easier querying and management.
 *   Database interactions will be managed using **SQLAlchemy** as the ORM.
-*   Potential Tables:
-    *   `events`: Calendar items, deadlines (title, start\_time, end\_time, description, source, user\_id, created\_at, updated\_at). *Note: This might primarily mirror an external calendar.*
-    *   `memories`: Facts, notes, ingested data snippets (content, source, type, relevance\_date, user\_id, created\_at).
-    *   `users`: Family member details, preferences, notification settings (e.g., Telegram chat ID).
+*   Implemented Tables:
+    *   `notes`: Stores user-created notes (id, title, content, created\_at, updated\_at). Title is unique.
+    *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content).
+*   (Future) Potential Tables:
+    *   `events`: Calendar items, deadlines.
+    *   `users`: Family member details, preferences.
     *   `tasks`: Status of scheduled/background tasks.
-*   Entries should store metadata: source (email, telegram, calendar API, user input, MCP server), timestamp of creation/update, relevant dates/times.
+*   Entries store metadata like timestamps and roles (`message_history`). Source information is implicitly Telegram or Web UI for notes currently.
 
 ## 7. Potential Data Sources & Actions
 
@@ -142,31 +150,54 @@ The system will consist of the following core components:
 
 ## 8. Technology Considerations (High-Level)
 
-*   **LLM:** Model choice (e.g., Claude series, GPT series) will impact cost, performance, and capabilities (context window size, function calling/tool use). Consider using a library like `litellm` for flexibility.
-*   **Backend:** Python is a strong candidate due to libraries like `python-telegram-bot`, `SQLAlchemy`, `APScheduler`, `mcp`, and numerous API clients. Node.js is also viable.
-*   **Database & ORM:** SQLite or PostgreSQL, accessed via **SQLAlchemy**.
-*   **Hosting:** Options range from self-hosting, cloud VMs (AWS EC2, GCP Compute Engine), container platforms (Docker, Kubernetes), or serverless platforms (potentially challenging for stateful components like the bot listener/scheduler), or specialized platforms like Val.town.
-*   **Task Scheduling:** System cron, `APScheduler` (Python), node-cron (Node.js), or platform-specific schedulers (AWS EventBridge, Google Cloud Scheduler).
-*   **MCP:** Utilize MCP SDKs (e.g., `mcp` for Python) to interact with MCP servers. Consider potentially exposing some of the assistant's own data (like memories) via a custom MCP server for other tools to use.
+*   **LLM:** Configurable model via command-line argument, accessed through **LiteLLM** and **OpenRouter**. Supports tool use (function calling).
+*   **Backend:** **Python** using `python-telegram-bot` for Telegram interaction, `FastAPI` and `uvicorn` for the web server.
+*   **Database & ORM:** **SQLite** (default) or **PostgreSQL** (supported via connection string), accessed via **SQLAlchemy** (async).
+*   **Configuration:** Environment variables (`.env`), YAML (`prompts.yaml`), JSON (`mcp_config.json`).
+*   **MCP:** Uses the `mcp` Python SDK to connect to and interact with MCP servers defined in `mcp_config.json`.
+*   **Containerization:** **Docker** with `uv` for Python package management and `npm` for Node.js-based MCP tools.
+*   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used.
 
-## 9. Initial Implementation (Phase 1)
+## 9. Current Implementation Status (as of 2025-04-19)
 
-*   Focus on the **Telegram Interface** as the primary interaction point.
-*   Implement the **Processing Layer** with basic LLM forwarding using **LiteLLM** and **OpenRouter**.
-*   Set up the core application structure using `python-telegram-bot`.
-*   LLM model selection configurable via command-line arguments.
-*   API keys and core configuration (allowed chat IDs, developer chat ID) managed via environment variables (`.env` file).
-*   Prompt templates (system prompt, notes format) managed via `prompts.yaml`.
-*   Basic access control based on `ALLOWED_CHAT_IDS`.
-*   Error handling with logging and optional notification to `DEVELOPER_CHAT_ID`.
-*   Graceful shutdown on `SIGINT`/`SIGTERM`.
-*   Placeholder for config reload on `SIGHUP`.
-*   Basic notes storage implemented using SQLAlchemy (table: `notes` with `id`, `title`, `content`, timestamps).
-*   Notes (title and content) are fetched and included in the context sent to the LLM.
-*   Message history (user and assistant messages) is stored in the database using SQLAlchemy.
-*   Recent message history is fetched from the database to provide context for LLM queries.
-*   Replied-to messages are fetched from the database to provide specific context.
-*   A basic web UI (FastAPI + Jinja2) for managing notes is included.
-*   LLM can use a tool (`add_or_update_note`) to save information to the notes database.
-*   No calendar integration, reminders, or MCP features implemented initially.
+The following features from the specification are currently implemented:
+
+*   **Telegram Interface:** Primary interaction point using `python-telegram-bot`.
+*   **Processing Layer:**
+    *   LLM interaction via **LiteLLM** and **OpenRouter**.
+    *   LLM model configurable via command-line argument.
+    *   Handles LLM tool calls (function calling).
+*   **Configuration:**
+    *   API keys, chat IDs, DB URL via environment variables (`.env`).
+    *   Prompts via `prompts.yaml`.
+    *   MCP server definitions via `mcp_config.json`.
+*   **Access Control:** Based on `ALLOWED_CHAT_IDS`.
+*   **Error Handling:** Logging and optional notification to `DEVELOPER_CHAT_ID`.
+*   **Lifecycle Management:** Graceful shutdown (`SIGINT`/`SIGTERM`), placeholder config reload (`SIGHUP`).
+*   **Data Storage (SQLAlchemy with SQLite/PostgreSQL):**
+    *   `notes` table for storing notes (id, title, content, timestamps).
+    *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content).
+*   **LLM Context:**
+    *   System prompt includes context from the `notes` table.
+    *   Recent message history (from `message_history`) is included.
+    *   Replied-to messages (fetched from `message_history`) are included.
+*   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
+*   **Tools:**
+    *   Local tool `add_or_update_note` available to the LLM for saving notes to the database.
+    *   **MCP Integration:**
+        *   Loads server configurations from `mcp_config.json`.
+        *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search) using the `mcp` library.
+        *   Discovers tools provided by connected MCP servers.
+        *   Makes both local and MCP tools available to the LLM.
+        *   Executes MCP tool calls requested by the LLM.
+*   **Containerization:** **Dockerfile** provided for building an image with all dependencies (Python via `uv`, Node.js via `npm`, Playwright browser).
+
+**Features Not Yet Implemented:**
+
+*   Calendar Integration (reading/writing events).
+*   Reminders (setting/notifying).
+*   Email Ingestion.
+*   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks).
+*   Advanced Web UI features (dashboard, chat).
+*   User profiles/preferences table.
 
