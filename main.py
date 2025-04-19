@@ -491,10 +491,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             logger.info("Successfully processed and base64 encoded the photo.")
         except Exception as img_err:
             logger.error(f"Failed to process photo: {img_err}", exc_info=True)
-            # Optionally inform the user or just proceed without the image
-            await update.message.reply_text("Sorry, I had trouble processing the image.")
-            # Don't add the photo part if processing failed
-            photo_content_part = None
+            # Inform the user about the failure
+            await update.message.reply_text(
+                "Sorry, I encountered an error trying to process the attached image. "
+                "Please try again or send the text without the image."
+            )
+            # Bail out of the handler for this message
+            return
 
 
     # --- Assemble final message content (text + optional image) ---
