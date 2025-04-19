@@ -21,7 +21,7 @@ RUN uv venv /app/.venv
 # We don't need --system anymore.
 # Using --mount for caching pip downloads/builds
 RUN --mount=type=cache,target=/root/.cache/pip \
-    uv pip install --no-cache -r requirements.txt
+    uv pip install -r requirements.txt # Removed --no-cache
 
 # --- Install MCP Tools ---
 # Install Python MCP tools using uv tool install (these go into /uv/tools, separate from the venv)
