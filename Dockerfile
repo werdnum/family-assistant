@@ -19,7 +19,9 @@ RUN uv venv /app/.venv
 # Install Python dependencies into the virtual environment
 # Note: uv pip install automatically detects and uses .venv in the current dir if it exists
 # We don't need --system anymore.
-RUN uv pip install --no-cache -r requirements.txt
+# Using --mount for caching pip downloads/builds
+RUN --mount=type=cache,target=/root/.cache/pip \
+    uv pip install --no-cache -r requirements.txt
 
 # --- Install MCP Tools ---
 # Install Python MCP tools using uv tool install (these go into /uv/tools, separate from the venv)
