@@ -735,11 +735,8 @@ async def main_async() -> None:
     await web_server_task
     logger.info("Web server stopped.")
 
-    # Cancel the polling task explicitly if it hasn't finished (should have by now)
-    if not telegram_task.done():
-        telegram_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await telegram_task
+    # Polling task cancellation is handled by application.updater.stop() and application.shutdown()
+    # No need to manually cancel telegram_task anymore.
 
     logger.info("All services stopped. Final shutdown.")
     # Application shutdown is handled by the signal handler which calls shutdown_handler
