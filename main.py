@@ -212,7 +212,12 @@ async def load_mcp_config_and_connect():
 
     logger.info(f"Found {len(mcp_server_configs)} MCP server configurations.")
 
-    for server_id, server_conf in mcp_server_configs.items():
+    async def _connect_and_discover_mcp(server_id: str, server_conf: Dict[str, Any]) -> Tuple[Optional[ClientSession], List[Dict[str, Any]], Dict[str, str]]:
+        """Connects to a single MCP server, discovers tools, and returns results."""
+        discovered_tools = []
+        tool_map = {}
+        session = None
+
         command = server_conf.get("command")
         args = server_conf.get("args", [])
         env_config = server_conf.get("env")  # Original env config from JSON
@@ -246,37 +251,23 @@ async def load_mcp_config_and_connect():
         # --- End environment variable resolution ---
 
         if not command:
-            logger.error(f"Skipping MCP server '{server_id}': 'command' is missing.")
-            continue
+            logger.error(f"MCP server '{server_id}': 'command' is missing.")
+            return None, [], {}
 
-        logger.info(f"Attempting to connect to MCP server '{server_id}'...")
+        logger.info(f"Attempting connection and discovery for MCP server '{server_id}'...")
         try:
-            # Use the resolved environment variables
-            server_params = StdioServerParameters(
-                command=command, args=args, env=resolved_env
-            )
-            # Use the exit stack to manage the stdio_client context
-            read_stream, write_stream = await mcp_exit_stack.enter_async_context(
-                stdio_client(server_params)
-            )
-            # Also manage the ClientSession context
-            session = await mcp_exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-
+            server_params = StdioServerParameters(command=command, args=args, env=resolved_env)
+            # Use the *global* exit stack to manage contexts
+            read_stream, write_stream = await mcp_exit_stack.enter_async_context(stdio_client(server_params))
+            session = await mcp_exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()
-            logger.info(
-                f"Successfully initialized session with MCP server '{server_id}'."
-            )
-            mcp_sessions[server_id] = session
+            logger.info(f"Initialized session with MCP server '{server_id}'.")
 
-            # Discover tools from this server
             response = await session.list_tools()
             server_tools = response.tools
-            logger.info(f"Server '{server_id}' provides {len(server_tools)} tool(s).")
+            logger.info(f"Server '{server_id}' provides {len(server_tools)} tools.")
             for tool in server_tools:
-                # Store tool definition (MCP format is close enough to OpenAI's for litellm)
-                mcp_tools.append(
+                discovered_tools.append(
                     {
                         "type": "function",
                         "function": {
@@ -287,17 +278,43 @@ async def load_mcp_config_and_connect():
                         },
                     }
                 )
-                # Map tool name to server_id for later execution routing
-                tool_name_to_server_id[tool.name] = server_id
+                tool_map[tool.name] = server_id
                 logger.info(f" -> Discovered tool: {tool.name}")
+            return session, discovered_tools, tool_map
 
         except Exception as e:
-            logger.error(
-                f"Failed to connect to or get tools from MCP server '{server_id}': {e}",
-                exc_info=True,
-            )
+            logger.error(f"Failed for MCP server '{server_id}': {e}", exc_info=True)
+            return None, [], {} # Return empty on failure
 
-    logger.info(f"Finished MCP setup. Total discovered MCP tools: {len(mcp_tools)}")
+    # --- Create connection tasks ---
+    connection_tasks = [
+        _connect_and_discover_mcp(server_id, server_conf)
+        for server_id, server_conf in mcp_server_configs.items()
+    ]
+
+    # --- Run tasks concurrently ---
+    logger.info(f"Starting parallel connection to {len(connection_tasks)} MCP server(s)...")
+    results = await asyncio.gather(*connection_tasks, return_exceptions=True)
+    logger.info("Finished parallel MCP connection attempts.")
+
+    # --- Process results ---
+    for i, result in enumerate(results):
+        server_id = list(mcp_server_configs.keys())[i] # Get corresponding server_id
+        if isinstance(result, Exception):
+            logger.error(f"Gather caught exception for server '{server_id}': {result}")
+        elif result:
+            session, discovered, tool_map = result
+            if session:
+                mcp_sessions[server_id] = session # Store successful session
+                mcp_tools.extend(discovered)
+                tool_name_to_server_id.update(tool_map)
+            else:
+                logger.warning(f"Connection/discovery seems to have failed silently for server '{server_id}' (result: {result}).")
+        else:
+             logger.warning(f"Received unexpected empty result for server '{server_id}'.")
+
+
+    logger.info(f"Finished MCP setup. Active sessions: {len(mcp_sessions)}. Total discovered tools: {len(mcp_tools)}")
 
 
 # --- Argument Parsing ---
