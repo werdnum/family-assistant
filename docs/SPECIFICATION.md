@@ -184,7 +184,10 @@ The following features from the specification are currently implemented:
     *   `notes` table for storing notes (id, title, content, timestamps).
     *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content).
 *   **LLM Context:**
-    *   System prompt includes context from the `notes` table.
+    *   System prompt includes:
+        *   Current time.
+        *   Upcoming calendar events fetched via CalDAV (today, tomorrow, next 14 days).
+        *   Context from the `notes` table.
     *   Recent message history (from `message_history`) is included.
     *   Replied-to messages (fetched from `message_history`) are included.
 *   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
