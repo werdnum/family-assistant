@@ -455,7 +455,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     f"Failed to fetch or format calendar events: {cal_err}",
                     exc_info=True,
                 )
-                calendar_context_str = "Error retrieving calendar events."
+                # Include the specific error in the context for the LLM
+                calendar_context_str = f"Error retrieving calendar events: {str(cal_err)}"
         else:
             logger.debug("CalDAV not configured, skipping calendar context.")
             calendar_context_str = "Calendar integration not configured."  # Inform LLM
