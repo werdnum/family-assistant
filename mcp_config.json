@@ -9,6 +9,21 @@
       "env": {
         "EXAMPLE_ENV_VAR": "example_value"
       }
+    },
+    "browser": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest", "--headless", "--browser", "chromium"]
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    },
+    "brave": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-brave-search"
+      ]
     }
   }
 }
