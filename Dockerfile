@@ -58,7 +58,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # --- Copy Application Code ---
 # Copy the rest of the application code and configuration
-COPY main.py processing.py storage.py web_server.py ./
+COPY main.py processing.py storage.py web_server.py calendar_integration.py ./
 COPY prompts.yaml mcp_config.json .env ./
 COPY templates/ ./templates/
 
