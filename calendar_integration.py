@@ -1,7 +1,8 @@
 import logging
 import os
 from datetime import datetime, date, timedelta, time # Added time
-from typing import List, Dict, Optional, Tuple # Added Tuple
+# Consolidated imports including Any
+from typing import List, Dict, Optional, Tuple, Any
 import vobject
 import caldav
 from caldav.lib.error import DAVError, NotFoundError
@@ -100,9 +101,6 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
         return None
 
 # --- Core Function ---
-
-# Added Any type hint
-from typing import List, Dict, Optional, Tuple, Any # Added Tuple, Any
 
 # ... (other imports and helper functions remain the same) ...
 
