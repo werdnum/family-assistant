@@ -475,8 +475,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             photo_size = update.message.photo[-1]  # Highest resolution
             photo_file = await photo_size.get_file()
             # Download as byte array
-            async with io.BytesIO() as buf:
-                await photo_file.download_to_memory(out=buf)
+            with io.BytesIO() as buf: # Use standard with for synchronous BytesIO
+                await photo_file.download_to_memory(out=buf) # await the async download
                 buf.seek(0)
                 byte_array = buf.read()
 
