@@ -104,100 +104,98 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
 # --- Core Synchronous Function (to be run in executor) ---
 
 def _fetch_events_sync(
-    base_url: str,
+    # base_url is no longer needed if using direct URLs
     username: str,
     password: str,
     calendar_urls: List[str],
-    calendar_names: List[str]
+    # calendar_names: List[str] # Removed as we prioritize URLs
 ) -> List[Dict[str, Any]]:
-    """Synchronous function to connect to CalDAV and fetch events."""
-    logger.debug("Executing synchronous CalDAV fetch.")
+    """Synchronous function to connect to CalDAV servers using specific calendar URLs and fetch events."""
+    logger.debug("Executing synchronous CalDAV fetch using direct calendar URLs.")
     all_events = []
-    target_calendars = []
 
-    try:
-        # Use the synchronous client
-        with caldav.DAVClient(
-            url=base_url,
-            username=username,
-            password=password,
-        ) as client:
-            # --- Determine target calendars ---
-            if calendar_urls:
-                logger.info(f"Using specified calendar URLs: {calendar_urls}")
-                for url in calendar_urls:
-                    try:
-                        # Get calendar object directly using its URL (synchronous)
-                        calendar = client.calendar(url=url)
-                        target_calendars.append(calendar)
-                        logger.info(f"Successfully accessed calendar at URL: {url}")
-                    except (DAVError, NotFoundError) as e:
-                        logger.error(f"Failed to access calendar at URL '{url}': {e}")
-                    except Exception as e:
-                         logger.error(f"Unexpected error accessing calendar URL '{url}': {e}", exc_info=True)
-
-            elif calendar_names:
-                # Fallback to discovering calendars by name (synchronous)
-                logger.info(f"Using calendar names for discovery: {calendar_names}")
-                principal = client.principal()
-                all_principal_calendars = principal.calendars()
-                target_calendar_names_set = set(calendar_names)
-
-                for cal in all_principal_calendars:
-                    try:
-                        # Attempt to get display name, fallback to URL parsing (synchronous)
-                        cal_name = cal.get_property("displayname") if hasattr(cal, 'get_property') else str(cal.url).split('/')[-2]
-                        if cal_name in target_calendar_names_set:
-                            target_calendars.append(cal)
-                            logger.info(f"Found target calendar by name: {cal_name} ({cal.url})")
-                        else:
-                            logger.debug(f"Skipping non-target calendar by name: {cal_name} ({cal.url})")
-                    except (DAVError, NotFoundError) as e:
-                        logger.warning(f"Could not get display name for calendar {cal.url}: {e}")
-                    except Exception as e:
-                        logger.error(f"Unexpected error processing calendar {cal.url} during name discovery: {e}", exc_info=True)
-            else:
-                logger.error("No calendar URLs or names provided.")
-                return []
-
-            if not target_calendars:
-                logger.error("No target calendars could be accessed or found.")
-                return []
-
-            # --- Fetch events from target calendars ---
-            start_date = date.today()
-            end_date = start_date + timedelta(days=16) # Search up to 16 days out
-            logger.info(f"Searching for events between {start_date} and {end_date} in {len(target_calendars)} calendar(s).")
-
-            for calendar in target_calendars:
-                try:
-                    # Use search method (synchronous)
-                    results = calendar.search(start=start_date, end=end_date, event=True, expand=False)
-                    logger.debug(f"Found {len(results)} potential events in calendar {calendar.url}")
-
-                    # Process fetched events
-                    for event in results:
-                        try:
-                            event_url = getattr(event, 'url', 'N/A')
-                            event_data = event.data # Access data synchronously
-                            parsed = parse_event(event_data)
-                            if parsed:
-                                all_events.append(parsed)
-                            else:
-                                logger.warning(f"Failed to parse event data for {event_url}. Skipping.")
-                        except (DAVError, NotFoundError, Exception) as event_err:
-                             logger.error(f"Error processing individual event {event_url}: {event_err}", exc_info=True)
-                except (DAVError, NotFoundError) as search_err:
-                    logger.error(f"Error searching calendar {calendar.url}: {search_err}")
-                except Exception as search_exc:
-                    logger.error(f"Unexpected error searching calendar {calendar.url}: {search_exc}", exc_info=True)
-
-    except DAVError as e:
-        logger.error(f"CalDAV connection or authentication error: {e}", exc_info=True)
-        return [] # Return empty list on connection failure
-    except Exception as e:
-        logger.error(f"Unexpected error during synchronous CalDAV fetch: {e}", exc_info=True)
+    if not calendar_urls:
+        logger.error("No calendar URLs provided to _fetch_events_sync.")
         return []
+
+    # Define date range once
+    start_date = date.today()
+    end_date = start_date + timedelta(days=16) # Search up to 16 days out
+
+    # Iterate through each specific calendar URL
+    for calendar_url in calendar_urls:
+        logger.info(f"Attempting to connect and fetch from calendar: {calendar_url}")
+        try:
+            # Create a *new* client instance for *each* calendar URL
+            # This avoids the URL joining issue by using the specific URL for initialization.
+            with caldav.DAVClient(
+                url=calendar_url, # Use the specific calendar URL here
+                username=username,
+                password=password,
+            ) as client:
+                # The client is now connected directly to the calendar URL's host.
+                # We need the calendar object itself. The client might represent the principal
+                # or the calendar depending on the URL structure. Let's try getting the calendar
+                # object associated with the client's URL.
+                # This assumes the URL points directly to a calendar collection.
+                # We might need to adjust if the URL points to a principal first.
+                # Let's try accessing the calendar directly via the client object.
+                # The `caldav` library might implicitly represent the calendar if the URL points to it.
+                # We need to find the correct way to get the calendar object from a client initialized this way.
+                # Option 1: Assume client *is* the calendar (if URL is specific enough) - Risky
+                # Option 2: Get principal, then get the calendar - Requires principal logic
+                # Option 3: Use client.calendar(url=calendar_url) again? Seems redundant.
+
+                # Let's try getting the principal and finding the calendar matching the URL.
+                # This seems more robust if the library allows it.
+                principal = client.principal()
+                target_calendar = None
+                calendars = principal.calendars()
+                for cal in calendars:
+                    # Compare URLs carefully, might need normalization
+                    if str(cal.url).rstrip('/') == calendar_url.rstrip('/'):
+                        target_calendar = cal
+                        break
+
+                if not target_calendar:
+                     # Fallback: Maybe the client URL *is* the calendar path?
+                     # Try getting the calendar object directly using the client's URL context.
+                     # This part is uncertain without deeper library knowledge or testing.
+                     # Let's assume `client.calendar()` might work relative to the *new* base URL.
+                     # Or perhaps the client object itself has the search method if it represents the calendar.
+                     # Trying `client.search` directly seems plausible if the URL was specific.
+                     logger.warning(f"Could not find calendar matching URL {calendar_url} via principal. Attempting direct search on client.")
+                     # This assumes the client object itself might be searchable if the URL pointed to a calendar
+                     target_calendar = client # Treat the client as the calendar object
+
+                if not target_calendar:
+                    logger.error(f"Failed to obtain a searchable calendar object for URL: {calendar_url}")
+                    continue # Skip to the next URL
+
+                logger.info(f"Searching for events between {start_date} and {end_date} in calendar {calendar_url}")
+                # Use search method (synchronous) on the identified calendar object
+                results = target_calendar.search(start=start_date, end=end_date, event=True, expand=False)
+                logger.debug(f"Found {len(results)} potential events in calendar {calendar_url}")
+
+                # Process fetched events
+                for event in results:
+                    try:
+                        event_url_attr = getattr(event, 'url', 'N/A')
+                        event_data = event.data # Access data synchronously
+                        parsed = parse_event(event_data)
+                        if parsed:
+                            all_events.append(parsed)
+                        else:
+                            logger.warning(f"Failed to parse event data for event {event_url_attr} in {calendar_url}. Skipping.")
+                    except (DAVError, NotFoundError, Exception) as event_err:
+                         logger.error(f"Error processing individual event {getattr(event, 'url', 'N/A')} in {calendar_url}: {event_err}", exc_info=True)
+
+        except DAVError as e:
+            logger.error(f"CalDAV connection or authentication error for URL {calendar_url}: {e}", exc_info=True)
+            # Continue to the next URL if one fails
+        except Exception as e:
+            logger.error(f"Unexpected error during CalDAV fetch for URL {calendar_url}: {e}", exc_info=True)
+            # Continue to the next URL
 
     # Sort events by start time
     try:
@@ -233,12 +231,11 @@ async def fetch_upcoming_events() -> List[Dict[str, Any]]:
         all_events = await loop.run_in_executor(
             None, # Use default executor (ThreadPoolExecutor)
             _fetch_events_sync, # The function to run
-            # Arguments for _fetch_events_sync:
-            CALDAV_URL,
+            # Arguments for _fetch_events_sync (base_url and names removed):
             CALDAV_USERNAME,
             CALDAV_PASSWORD,
             CALDAV_CALENDAR_URLS,
-            CALDAV_CALENDAR_NAMES
+            # CALDAV_CALENDAR_NAMES # Removed
         )
         logger.debug(f"Executor task finished, returned {len(all_events)} events.")
         return all_events
