@@ -2,10 +2,7 @@
   "mcpServers": {
     "time": {
       "command": "uvx",
-      "args": [
-        "mcp-server-time",
-        "--local-timezone=Australia/Sydney"
-      ],
+      "args": ["mcp-server-time", "--local-timezone=Australia/Sydney"]
     },
     "browser": {
       "command": "npx",
@@ -17,13 +14,22 @@
     },
     "brave": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-brave-search"
-      ],
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
       "env": {
-      	"BRAVE_API_KEY": "$BRAVE_API_KEY"
+        "BRAVE_API_KEY": "$BRAVE_API_KEY"
       }
+    },
+    "python": {
+      "command": "deno",
+      "args": [
+        "run",
+        "-N",
+        "-R=node_modules",
+        "-W=node_modules",
+        "--node-modules-dir=auto",
+        "jsr:@pydantic/mcp-run-python",
+        "stdio"
+      ]
     }
   }
 }
