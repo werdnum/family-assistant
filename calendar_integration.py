@@ -296,11 +296,21 @@ async def fetch_upcoming_events(calendar_config: Dict[str, Any]) -> List[Dict[st
     logger.info(f"Total events fetched from all sources before sorting: {len(all_events)}")
 
     # --- Sort Combined Events ---
+    def get_sort_key(event):
+        """Converts date to datetime for sorting."""
+        start_val = event["start"]
+        if isinstance(start_val, date) and not isinstance(start_val, datetime):
+            # Convert date to datetime at midnight for comparison
+            return datetime.combine(start_val, time.min)
+        # Assume datetime objects are directly comparable (might need tz handling if mixed)
+        return start_val
+
     try:
-        # Ensure start times are comparable
-        all_events.sort(key=lambda x: x["start"])
+        # Ensure start times are comparable using the helper function
+        all_events.sort(key=get_sort_key)
         logger.debug("Sorted combined events by start time.")
     except TypeError as sort_err:
+        # This error might still occur if there are timezone-aware and naive datetimes mixed
         logger.error(
             f"Error sorting combined events, possibly due to mixed date/datetime types without tzinfo: {sort_err}"
         )
