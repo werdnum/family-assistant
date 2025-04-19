@@ -134,42 +134,13 @@ def _fetch_events_sync(
                 password=password,
             ) as client:
                 # The client is now connected directly to the calendar URL's host.
-                # We need the calendar object itself. The client might represent the principal
-                # or the calendar depending on the URL structure. Let's try getting the calendar
-                # object associated with the client's URL.
-                # This assumes the URL points directly to a calendar collection.
-                # We might need to adjust if the URL points to a principal first.
-                # Let's try accessing the calendar directly via the client object.
-                # The `caldav` library might implicitly represent the calendar if the URL points to it.
-                # We need to find the correct way to get the calendar object from a client initialized this way.
-                # Option 1: Assume client *is* the calendar (if URL is specific enough) - Risky
-                # Option 2: Get principal, then get the calendar - Requires principal logic
-                # Option 3: Use client.calendar(url=calendar_url) again? Seems redundant.
-
-                # Let's try getting the principal and finding the calendar matching the URL.
-                # This seems more robust if the library allows it.
-                principal = client.principal()
-                target_calendar = None
-                calendars = principal.calendars()
-                for cal in calendars:
-                    # Compare URLs carefully, might need normalization
-                    if str(cal.url).rstrip('/') == calendar_url.rstrip('/'):
-                        target_calendar = cal
-                        break
+                # Get the calendar object associated with this specific URL.
+                # The `calendar()` method on the client, when given the *same URL* the client
+                # was initialized with, should return the calendar object itself.
+                target_calendar = client.calendar(url=calendar_url)
 
                 if not target_calendar:
-                     # Fallback: Maybe the client URL *is* the calendar path?
-                     # Try getting the calendar object directly using the client's URL context.
-                     # This part is uncertain without deeper library knowledge or testing.
-                     # Let's assume `client.calendar()` might work relative to the *new* base URL.
-                     # Or perhaps the client object itself has the search method if it represents the calendar.
-                     # Trying `client.search` directly seems plausible if the URL was specific.
-                     logger.warning(f"Could not find calendar matching URL {calendar_url} via principal. Attempting direct search on client.")
-                     # This assumes the client object itself might be searchable if the URL pointed to a calendar
-                     target_calendar = client # Treat the client as the calendar object
-
-                if not target_calendar:
-                    logger.error(f"Failed to obtain a searchable calendar object for URL: {calendar_url}")
+                    logger.error(f"Failed to obtain calendar object for URL: {calendar_url}")
                     continue # Skip to the next URL
 
                 logger.info(f"Searching for events between {start_date} and {end_date} in calendar {calendar_url}")
