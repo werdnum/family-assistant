@@ -639,32 +639,32 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
         try:
             # Store combined user message
             # Use the ID of the *last* message in the batch as the representative ID
-                history_user_content = combined_text # Start with combined text
-                if first_photo_bytes: # Check if a photo was processed in the batch
-                    history_user_content += " [Image(s) Attached]" # Add indicator
-                if reply_target_message_id:
+            history_user_content = combined_text # Start with combined text
+            if first_photo_bytes: # Check if a photo was processed in the batch
+                history_user_content += " [Image(s) Attached]" # Add indicator
+            if reply_target_message_id:
+                 await add_message_to_history(
+                     chat_id=chat_id,
+                     message_id=reply_target_message_id, # Use last known message ID
+                     timestamp=datetime.now(timezone.utc), # Use processing time
+                     role="user",
+                     content=history_user_content,
+                 )
+                 # Store bot response if successful
+                 if llm_response:
+                     # Need bot's actual message ID if possible, otherwise use pseudo-ID
+                     bot_message_pseudo_id = reply_target_message_id + 1
                      await add_message_to_history(
                          chat_id=chat_id,
-                         message_id=reply_target_message_id, # Use last known message ID
-                         timestamp=datetime.now(timezone.utc), # Use processing time
-                         role="user",
-                         content=history_user_content,
+                         message_id=bot_message_pseudo_id, # Placeholder ID
+                         timestamp=datetime.now(timezone.utc),
+                         role="assistant",
+                         content=llm_response,
                      )
-                     # Store bot response if successful
-                     if llm_response:
-                         # Need bot's actual message ID if possible, otherwise use pseudo-ID
-                         bot_message_pseudo_id = reply_target_message_id + 1
-                         await add_message_to_history(
-                             chat_id=chat_id,
-                             message_id=bot_message_pseudo_id, # Placeholder ID
-                             timestamp=datetime.now(timezone.utc),
-                             role="assistant",
-                             content=llm_response,
-                         )
-                else:
-                     logger.warning(f"Could not store batched user message for chat {chat_id} due to missing message ID.")
+            else:
+                 logger.warning(f"Could not store batched user message for chat {chat_id} due to missing message ID.")
 
-            except Exception as db_err:
+        except Exception as db_err:
                 logger.error(f"Failed to store batched message history in DB for chat {chat_id}: {db_err}", exc_info=True)
 
         # --- Task Cleanup ---
