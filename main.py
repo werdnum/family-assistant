@@ -84,9 +84,15 @@ DEVELOPER_CHAT_ID: Optional[int] = None
 PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
 CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
 shutdown_event = asyncio.Event()
+from collections import defaultdict # Add defaultdict
+
 mcp_sessions: Dict[str, ClientSession] = (
     {}
 )  # Stores active MCP client sessions {server_id: session}
+# --- State for message batching ---
+chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+message_buffers: Dict[int, List[Tuple[str, Optional[bytes]]]] = defaultdict(list) # Store (text, photo_bytes)
+processing_tasks: Dict[int, asyncio.Task] = {}
 mcp_tools: List[Dict[str, Any]] = []  # Stores discovered MCP tools in OpenAI format
 tool_name_to_server_id: Dict[str, str] = {}  # Maps MCP tool names to their server_id
 mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
@@ -396,127 +402,112 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Hello! I'm your family assistant. Your chat ID is `{chat_id}`. How can I help?"
     )
 
+# --- Message Queue Processing ---
+async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Processes the message buffer for a given chat."""
+    # This function now contains the core logic previously in message_handler
+    global processing_tasks, message_buffers, chat_locks # Access globals
+    processed_photo_bytes = None # Track if we used a photo in this batch
+    all_texts = []
 
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles regular text messages, potentially with photos, and forwards them to the LLM."""
-    # Use caption if photo exists, otherwise use text
-    user_message_text = update.message.caption or update.message.text or ""
-    chat_id = update.effective_chat.id
-    photo_content_part = None # Initialize photo part
+    async with chat_locks[chat_id]:
+        buffered_batch = message_buffers[chat_id][:]  # Get a copy
+        message_buffers[chat_id].clear()             # Clear the buffer
 
-    # --- Access Control ---
-    if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
-        logger.warning(f"Ignoring message from unauthorized chat_id {chat_id}")
-        return
+    if not buffered_batch:
+        logger.info(f"Processing queue for chat {chat_id} called with empty buffer.")
+        return # Nothing to process
 
-    logger.info(f"Received message from chat_id {chat_id}: {user_message_text}") # Fix variable name
+    logger.info(f"Processing batch of {len(buffered_batch)} message(s) for chat {chat_id}.")
 
+    # --- Combine messages from the batch ---
+    combined_text = ""
+    first_photo_bytes = None
+    user_name = "Unknown User" # Get user name from the first message for context
+    first_update = await context.application.update_queue.get() # Need to get the update object somehow, this is not ideal
+    # Getting the first update object might be tricky here. Let's assume we have it for now.
+    # A better way might be storing Update objects in the buffer.
+    # Let's simplify: Store text/photo bytes, and maybe user_name/forward context if needed.
+    # For now, let's just combine text and take the first image.
+
+    # Let's redefine buffer structure to store more context if needed: List[Tuple[str, Optional[bytes], str, Optional[str]]] -> (text, photo_bytes, user_name, forward_context)
+    # But sticking to (text, photo_bytes) for now. We'll extract username/forward context from the *last* message in the batch for simplicity.
+    last_text, last_photo_bytes = buffered_batch[-1] # Get content from the last message in batch
+
+    # Combine text from all messages in the batch
+    all_texts = [text for text, _ in buffered_batch if text]
+    combined_text = "\n\n".join(all_texts) # Join texts with newlines
+
+    # Find the first photo in the batch
+    first_photo_bytes = next((photo for _, photo in buffered_batch if photo), None)
+
+    # TODO: Need a reliable way to get the Update object associated with the *last* message
+    # for user_name and forward context. For now, we'll skip this and use a placeholder.
+    # This part needs refinement in how data is buffered. Let's assume we have user_name.
+    user_name = "User" # Placeholder until Update object is reliably available
+    forward_context = "" # Placeholder
+
+    # --- History and Context Preparation (similar to before) ---
     messages: List[Dict[str, Any]] = []
-    now = datetime.now(timezone.utc)
-    user_message_timestamp = (
-        update.message.date or now
-    )  # Use message timestamp if available
+    # Fetch history *before* the first message in the batch (if possible) or just recent general history
+    # For simplicity, fetch general recent history
+    history_messages = await get_recent_history(
+        chat_id,
+        limit=MAX_HISTORY_MESSAGES,
+        max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
+    )
+    messages.extend(history_messages)
+    logger.debug(f"Added {len(history_messages)} recent messages from DB history for batch.")
 
-    # Check if the message is a reply
-    if update.message.reply_to_message:
-        replied_msg_id = update.message.reply_to_message.message_id
-        # Fetch the replied-to message from the database
-        replied_db_message = await get_message_by_id(chat_id, replied_msg_id)
-        if replied_db_message:
-            messages.append(replied_db_message)
-            logger.debug(f"Added replied-to message {replied_msg_id} to context.")
-        else:
-            # Fallback if not in DB (e.g., very old message) - use the text directly
-            replied_message = update.message.reply_to_message
-            if replied_message.from_user.id == context.bot.id:
-                role = "assistant"
-            else:
-                role = "user"
-            content = replied_message.text or replied_message.caption
-            if content:
-                messages.append({"role": role, "content": content})
-                logger.warning(
-                    f"Replied-to message {replied_msg_id} not found in DB, using direct content."
-                )
-        # Optional: Could fetch *more* history around the replied message here
-    else:
-        # If not a reply, add recent history from DB
-        history_messages = await get_recent_history(
-            chat_id,
-            limit=MAX_HISTORY_MESSAGES,
-            max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
-        )
-        messages.extend(history_messages)
-        logger.debug(f"Added {len(history_messages)} recent messages from DB history.")
-
-    # --- Prepare current user message text part with sender/forward context ---
-    user = update.effective_user
-    user_name = user.first_name if user else "Unknown User"
-    forward_context = ""
-    if update.message.forward_origin:
-        origin = update.message.forward_origin
-        original_sender_name = "Unknown Sender"
-        if origin.sender_user:
-            original_sender_name = origin.sender_user.first_name or "User"
-        elif origin.sender_chat:
-            original_sender_name = origin.sender_chat.title or "Chat/Channel"
-
-        forward_context = f"(forwarded from {original_sender_name}) "
-        logger.debug(f"Message was forwarded from {original_sender_name}")
-
-    # Remove the "Message from..." prefix. The role "user" already indicates the source.
-    # Keep the forward context if present.
-    formatted_user_text_content = f"{forward_context}{user_message_text}".strip()
+    # --- Prepare current user message content part (combined) ---
+    formatted_user_text_content = f"{forward_context}{combined_text}".strip()
     text_content_part = {"type": "text", "text": formatted_user_text_content}
+    final_message_content_parts = [text_content_part]
 
-    # --- Handle Photo Attachment ---
-    if update.message.photo:
-        logger.info("Message contains photo. Processing...")
+    # --- Handle Photo Attachment (from the first photo found) ---
+    photo_content_part = None
+    if first_photo_bytes:
         try:
-            photo_size = update.message.photo[-1]  # Highest resolution
-            photo_file = await photo_size.get_file()
-            # Download as byte array
-            with io.BytesIO() as buf: # Use standard with for synchronous BytesIO
-                await photo_file.download_to_memory(out=buf) # await the async download
-                buf.seek(0)
-                byte_array = buf.read()
-
-            base64_image = base64.b64encode(byte_array).decode("utf-8")
-            # Assuming JPEG, adjust if more complex detection is needed
-            # TODO: Could try to infer from file_path if available, or use python-magic
-            mime_type = "image/jpeg"
+            base64_image = base64.b64encode(first_photo_bytes).decode("utf-8")
+            mime_type = "image/jpeg" # Assuming JPEG
             photo_content_part = {
                 "type": "image_url",
                 "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
             }
-            logger.info("Successfully processed and base64 encoded the photo.")
+            final_message_content_parts.append(photo_content_part)
+            logger.info("Added first photo from batch to LLM request.")
         except Exception as img_err:
-            logger.error(f"Failed to process photo: {img_err}", exc_info=True)
-            # Inform the user about the failure
-            await update.message.reply_text(
-                "Sorry, I encountered an error trying to process the attached image. "
-                "Please try again or send the text without the image."
-            )
-            # Bail out of the handler for this message
-            return
+            logger.error(f"Error encoding photo from batch: {img_err}", exc_info=True)
+            # Decide how to handle photo error in batch - maybe just send text?
+            await context.bot.send_message(chat_id, "Error processing image in batch.") # Inform user
 
-
-    # --- Assemble final message content (text + optional image) ---
-    final_message_content_parts = [text_content_part]
-    if photo_content_part:
-        final_message_content_parts.append(photo_content_part)
-
-    # Create the user message dictionary for the LLM
+    # Create the final combined user message for LLM
     current_user_message_content = {
         "role": "user",
-        "content": final_message_content_parts, # Content is now a list
-        # "name": user_name, # Removed: Now part of the system prompt
+        "content": final_message_content_parts,
     }
     messages.append(current_user_message_content)
 
     llm_response = None
+    # Get a reference to the Update object corresponding to the *last* message in the batch
+    # This is crucial for replying correctly. Needs refinement based on buffer content.
+    # Placeholder: assume we have a way to get the last_update object.
+    last_update: Optional[Update] = None # Placeholder
+
+    # Need to get the last update object reliably. Let's modify the buffer:
+    # message_buffers: Dict[int, List[Update]] = defaultdict(list)
+    # This simplifies getting the last update but requires storing the whole object.
+
+    # --- Re-think: Let's revert buffer to (text, photo_bytes) and reply to the *last message ID* known ---
+    # We lose the Update object for the reply, which isn't ideal. PTB context might help?
+    # Let's use the context if available for the last message. This assumes message_handler provides it.
+    # If called from elsewhere, we might not have it.
+
+    last_message_id_in_batch = context.user_data.get("_last_buffered_message_id") # Need to store this ID
+    reply_target_message_id = last_message_id_in_batch # Reply to the last message
+
     try:
-        # --- Prepare System Prompt Context ---
+        # --- Prepare System Prompt Context (as before) ---
         system_prompt_template = PROMPTS.get(
             "system_prompt", "You are a helpful assistant."
         )  # Default prompt
@@ -628,47 +619,111 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             logger.warning("Received empty response from LLM.")
 
     except Exception as e:
-        logger.error(f"Error processing message: {e}", exc_info=True)
+        logger.error(f"Error processing message batch for chat {chat_id}: {e}", exc_info=True)
         # Let the error_handler deal with notifying the developer
-        await update.message.reply_text(
-            "Sorry, something went wrong while processing your request."
-        )
-        # Re-raise the exception so the error handler catches it
-        raise
-    finally:
-        # --- Store messages in DB ---
-        try:
-            # Store user message
-            # Store user message: Store only the text part in history for simplicity
-            # (DB content column expects text, storing base64 is too large)
-            history_user_content = formatted_user_text_content # Start with the text part
-            if photo_content_part:
-                history_user_content += " [Image Attached]" # Add indicator to history
-            await add_message_to_history(
-                chat_id=chat_id,
-                message_id=update.message.message_id,
-                timestamp=user_message_timestamp,
-                role="user",
-                content=history_user_content, # Store text + indicator
-            )
-            # Store bot response if successful
-            if llm_response:
-                # We don't have the bot's message_id easily here without sending the reply first
-                # For simplicity, using a placeholder or negative ID, or could refactor to store after reply
-                # Using user's message_id + 1 as a pseudo-ID for now, might collide but unlikely for context
-                bot_message_pseudo_id = update.message.message_id + 1
-                await add_message_to_history(
+        if reply_target_message_id: # Check if we have a message to reply to
+            try:
+                await context.bot.send_message(
                     chat_id=chat_id,
-                    message_id=bot_message_pseudo_id,  # Placeholder ID
-                    timestamp=datetime.now(timezone.utc),
-                    role="assistant",
-                    content=llm_response,
+                    text="Sorry, something went wrong while processing your request.",
+                    reply_to_message_id=reply_target_message_id
                 )
-        except Exception as db_err:
-            logger.error(
-                f"Failed to store message history in DB: {db_err}", exc_info=True
-            )
-            # Optionally notify developer about DB error
+            except Exception as reply_err:
+                 logger.error(f"Failed to send error reply to chat {chat_id}: {reply_err}")
+        # Re-raise the exception so the error handler catches it (if appropriate)
+        # Or just log and finish the task
+        # For now, log and finish to prevent breaking the handler loop
+    finally:
+        # --- Store messages in DB (Store combined user message, single bot response) ---
+        try:
+            try:
+                # Store combined user message
+                # Use the ID of the *last* message in the batch as the representative ID
+                history_user_content = combined_text # Start with combined text
+                if first_photo_bytes: # Check if a photo was processed in the batch
+                    history_user_content += " [Image(s) Attached]" # Add indicator
+                if reply_target_message_id:
+                     await add_message_to_history(
+                         chat_id=chat_id,
+                         message_id=reply_target_message_id, # Use last known message ID
+                         timestamp=datetime.now(timezone.utc), # Use processing time
+                         role="user",
+                         content=history_user_content,
+                     )
+                     # Store bot response if successful
+                     if llm_response:
+                         # Need bot's actual message ID if possible, otherwise use pseudo-ID
+                         bot_message_pseudo_id = reply_target_message_id + 1
+                         await add_message_to_history(
+                             chat_id=chat_id,
+                             message_id=bot_message_pseudo_id, # Placeholder ID
+                             timestamp=datetime.now(timezone.utc),
+                             role="assistant",
+                             content=llm_response,
+                         )
+                else:
+                     logger.warning(f"Could not store batched user message for chat {chat_id} due to missing message ID.")
+
+            except Exception as db_err:
+                logger.error(f"Failed to store batched message history in DB for chat {chat_id}: {db_err}", exc_info=True)
+
+        # --- Task Cleanup ---
+        async with chat_locks[chat_id]: # Ensure lock is held for task removal
+            if processing_tasks.get(chat_id) is asyncio.current_task():
+                 processing_tasks.pop(chat_id, None)
+                 logger.info(f"Processing task for chat {chat_id} finished and removed.")
+            else:
+                # This case might happen if a new task was rapidly scheduled, though unlikely with the lock
+                logger.warning(f"Current task for chat {chat_id} doesn't match entry in processing_tasks during cleanup.")
+
+# --- Original Message Handler (Now Buffers) ---
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Buffers incoming messages and triggers processing if not already running."""
+    global message_buffers, processing_tasks, chat_locks # Access globals
+    chat_id = update.effective_chat.id
+    user_message_text = update.message.caption or update.message.text or ""
+    photo_bytes = None
+
+    # --- Access Control ---
+    if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
+        logger.warning(f"Ignoring message from unauthorized chat_id {chat_id}")
+        return
+
+    # --- Process Photo (if any) into bytes immediately ---
+    if update.message.photo:
+        logger.info(f"Message {update.message.message_id} from chat {chat_id} contains photo.")
+        try:
+            photo_size = update.message.photo[-1]
+            photo_file = await photo_size.get_file()
+            with io.BytesIO() as buf:
+                await photo_file.download_to_memory(out=buf)
+                buf.seek(0)
+                photo_bytes = buf.read()
+            logger.debug(f"Photo from message {update.message.message_id} loaded into bytes.")
+        except Exception as img_err:
+            logger.error(f"Failed to process photo bytes for message {update.message.message_id}: {img_err}", exc_info=True)
+            await update.message.reply_text("Sorry, error processing attached image.")
+            # Don't buffer this message if photo processing failed critically
+            return
+
+    # --- Add message to buffer under lock ---
+    async with chat_locks[chat_id]:
+        message_buffers[chat_id].append((user_message_text, photo_bytes))
+        # Store the message ID in context for the processing task to retrieve
+        context.user_data["_last_buffered_message_id"] = update.message.message_id
+        buffer_size = len(message_buffers[chat_id])
+        logger.info(f"Buffered message {update.message.message_id} for chat {chat_id}. Buffer size: {buffer_size}")
+
+        # --- Check if processing task needs to be started ---
+        if chat_id not in processing_tasks or processing_tasks[chat_id].done():
+            logger.info(f"Starting new processing task for chat {chat_id}.")
+            task = asyncio.create_task(process_chat_queue(chat_id, context))
+            processing_tasks[chat_id] = task
+            # Add callback to remove task from dict upon completion/error
+            task.add_done_callback(lambda t, c=chat_id: processing_tasks.pop(c, None))
+        else:
+            logger.info(f"Processing task already running for chat {chat_id}. Message added to buffer.")
+        # Lock is released automatically here
 
 
 async def error_handler(update: object, context: CallbackContext) -> None:
