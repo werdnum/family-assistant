@@ -3,9 +3,12 @@ import asyncio
 import contextlib
 import html
 import argparse
+import argparse
 import asyncio
+import base64 # Add base64
 import contextlib
 import html
+import io # Add io
 import json
 import logging
 import os
@@ -378,9 +381,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles regular text messages and forwards them to the LLM."""
-    user_message = update.message.text
+    """Handles regular text messages, potentially with photos, and forwards them to the LLM."""
+    # Use caption if photo exists, otherwise use text
+    user_message_text = update.message.caption or update.message.text or ""
     chat_id = update.effective_chat.id
+    photo_content_part = None # Initialize photo part
 
     # --- Access Control ---
     if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
@@ -427,7 +432,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         messages.extend(history_messages)
         logger.debug(f"Added {len(history_messages)} recent messages from DB history.")
 
-    # --- Prepare current user message with sender/forward context ---
+    # --- Prepare current user message text part with sender/forward context ---
     user = update.effective_user
     user_name = user.first_name if user else "Unknown User"
     forward_context = ""
@@ -438,17 +443,52 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             original_sender_name = origin.sender_user.first_name or "User"
         elif origin.sender_chat:
             original_sender_name = origin.sender_chat.title or "Chat/Channel"
-        # Consider adding origin.type for more context if needed
 
         forward_context = f"(forwarded from {original_sender_name}) "
         logger.debug(f"Message was forwarded from {original_sender_name}")
 
-    formatted_user_content = f"Message from {user_name}: {forward_context}{user_message}"
+    # Include text message/caption in the formatted content
+    formatted_user_text_content = f"Message from {user_name}: {forward_context}{user_message_text}".strip()
+    text_content_part = {"type": "text", "text": formatted_user_text_content}
 
-    # Add the formatted current user message
+    # --- Handle Photo Attachment ---
+    if update.message.photo:
+        logger.info("Message contains photo. Processing...")
+        try:
+            photo_size = update.message.photo[-1]  # Highest resolution
+            photo_file = await photo_size.get_file()
+            # Download as byte array
+            async with io.BytesIO() as buf:
+                await photo_file.download_to_memory(out=buf)
+                buf.seek(0)
+                byte_array = buf.read()
+
+            base64_image = base64.b64encode(byte_array).decode("utf-8")
+            # Assuming JPEG, adjust if more complex detection is needed
+            # TODO: Could try to infer from file_path if available, or use python-magic
+            mime_type = "image/jpeg"
+            photo_content_part = {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+            }
+            logger.info("Successfully processed and base64 encoded the photo.")
+        except Exception as img_err:
+            logger.error(f"Failed to process photo: {img_err}", exc_info=True)
+            # Optionally inform the user or just proceed without the image
+            await update.message.reply_text("Sorry, I had trouble processing the image.")
+            # Don't add the photo part if processing failed
+            photo_content_part = None
+
+
+    # --- Assemble final message content (text + optional image) ---
+    final_message_content_parts = [text_content_part]
+    if photo_content_part:
+        final_message_content_parts.append(photo_content_part)
+
+    # Create the user message dictionary for the LLM
     current_user_message_content = {
         "role": "user",
-        "content": formatted_user_content,
+        "content": final_message_content_parts, # Content is now a list
     }
     messages.append(current_user_message_content)
 
@@ -576,13 +616,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # --- Store messages in DB ---
         try:
             # Store user message
-            # Store user message (using the *formatted* content sent to LLM)
+            # Store user message: Store only the text part in history for simplicity
+            # (DB content column expects text, storing base64 is too large)
+            history_user_content = formatted_user_text_content # Start with the text part
+            if photo_content_part:
+                history_user_content += " [Image Attached]" # Add indicator to history
             await add_message_to_history(
                 chat_id=chat_id,
                 message_id=update.message.message_id,
                 timestamp=user_message_timestamp,
                 role="user",
-                content=formatted_user_content, # Store the formatted content
+                content=history_user_content, # Store text + indicator
             )
             # Store bot response if successful
             if llm_response:
@@ -712,8 +756,13 @@ async def main_async() -> None:
 
     # Register handlers
     application.add_handler(CommandHandler("start", start))
+    # Handle text OR photo messages (with optional caption)
+    # filters.PHOTO will match messages containing photos, potentially with captions
+    # filters.TEXT will match plain text messages
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
+        MessageHandler(
+            (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, message_handler
+        )
     )
 
     # Register error handler
