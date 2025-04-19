@@ -2,6 +2,8 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: family-assistant-webhooks-ingress # Descriptive name for this specific ingress
+  annotations:
+    tailscale.com/funnel: "true" # Expose via Tailscale Funnel
 spec:
   ingressClassName: tailscale # Use the Tailscale Ingress controller
   tls:
