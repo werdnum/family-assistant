@@ -49,10 +49,15 @@ from storage import (
 import calendar_integration
 
 # --- Logging Configuration ---
+# Set root logger level to DEBUG to capture detailed logs
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.DEBUG
 )
+# Keep external libraries less verbose unless needed
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.INFO)
+logging.getLogger("apscheduler").setLevel(logging.INFO)
+logging.getLogger("caldav").setLevel(logging.INFO) # Set caldav lib logging level if needed
 logger = logging.getLogger(__name__)
 
 # --- Constants ---
@@ -135,10 +140,11 @@ def load_config():
             "calendar_urls": caldav_urls, # Store the list of specific calendar URLs
         }
         logger.info(f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s).")
+        logger.debug(f"CALDAV_CONFIG loaded: {CALDAV_CONFIG}") # Log the loaded config
         # Pass config to calendar_integration module if needed (currently uses getenv directly)
         # calendar_integration.set_config(CALDAV_CONFIG)
     else:
-        logger.warning("CalDAV configuration incomplete in .env file (URL, USERNAME, PASSWORD, CALENDAR_URLS required). Calendar features will be disabled.")
+        logger.warning("CalDAV configuration incomplete in .env file (URL, USERNAME, PASSWORD, CALDAV_CALENDAR_URLS required). Calendar features will be disabled.")
         CALDAV_CONFIG = {}
 
 
@@ -371,6 +377,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     next_two_weeks_events=future_events_str
                 ).strip()
                 logger.info("Prepared calendar context.")
+                logger.debug(f"Final calendar context string:\n{calendar_context_str}")
             except Exception as cal_err:
                 logger.error(f"Failed to fetch or format calendar events: {cal_err}", exc_info=True)
                 calendar_context_str = "Error retrieving calendar events."
