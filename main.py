@@ -33,6 +33,7 @@ from telegram.ext import (
     # PicklePersistence, # No longer needed for history
     filters,
 )
+from telegram.helpers import escape_markdown
 import uvicorn  # Import uvicorn
 
 # Assuming processing.py contains the LLM interaction logic
