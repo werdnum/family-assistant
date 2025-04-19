@@ -167,7 +167,30 @@ async def load_mcp_config_and_connect():
     for server_id, server_conf in mcp_server_configs.items():
         command = server_conf.get("command")
         args = server_conf.get("args", [])
-        env = server_conf.get("env") # Can be None
+        env_config = server_conf.get("env") # Original env config from JSON
+
+        # --- Resolve environment variable placeholders ---
+        resolved_env = None
+        if isinstance(env_config, dict):
+            resolved_env = {}
+            for key, value in env_config.items():
+                if isinstance(value, str) and value.startswith("$"):
+                    env_var_name = value[1:] # Remove the leading '$'
+                    resolved_value = os.getenv(env_var_name)
+                    if resolved_value is not None:
+                        resolved_env[key] = resolved_value
+                        logger.debug(f"Resolved env var '{env_var_name}' for MCP server '{server_id}'")
+                    else:
+                        logger.warning(f"Env var '{env_var_name}' for MCP server '{server_id}' not found in environment. Omitting.")
+                        # Optionally, keep the placeholder or raise an error
+                        # resolved_env[key] = value # Keep placeholder if preferred
+                else:
+                    # Keep non-placeholder values as is
+                    resolved_env[key] = value
+        elif env_config is not None:
+             logger.warning(f"MCP server '{server_id}' has non-dictionary 'env' configuration. Ignoring.")
+        # --- End environment variable resolution ---
+
 
         if not command:
             logger.error(f"Skipping MCP server '{server_id}': 'command' is missing.")
@@ -175,7 +198,8 @@ async def load_mcp_config_and_connect():
 
         logger.info(f"Attempting to connect to MCP server '{server_id}'...")
         try:
-            server_params = StdioServerParameters(command=command, args=args, env=env)
+            # Use the resolved environment variables
+            server_params = StdioServerParameters(command=command, args=args, env=resolved_env)
             # Use the exit stack to manage the stdio_client context
             read_stream, write_stream = await mcp_exit_stack.enter_async_context(stdio_client(server_params))
             # Also manage the ClientSession context
