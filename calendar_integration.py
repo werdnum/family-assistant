@@ -9,9 +9,14 @@ from caldav.lib.error import DAVError, NotFoundError
 logger = logging.getLogger(__name__)
 
 # --- Configuration (loaded from main.py environment) ---
+# Base connection details
 CALDAV_URL = os.getenv("CALDAV_URL")
 CALDAV_USERNAME = os.getenv("CALDAV_USERNAME")
 CALDAV_PASSWORD = os.getenv("CALDAV_PASSWORD")
+# Specific calendar URLs (preferred method)
+CALDAV_CALENDAR_URLS_STR = os.getenv("CALDAV_CALENDAR_URLS")
+CALDAV_CALENDAR_URLS = [url.strip() for url in CALDAV_CALENDAR_URLS_STR.split(',')] if CALDAV_CALENDAR_URLS_STR else []
+# Fallback: Calendar names (less reliable, kept for potential backward compatibility)
 CALDAV_CALENDAR_NAMES_STR = os.getenv("CALDAV_CALENDAR_NAMES")
 CALDAV_CALENDAR_NAMES = [name.strip() for name in CALDAV_CALENDAR_NAMES_STR.split(',')] if CALDAV_CALENDAR_NAMES_STR else []
 
@@ -96,48 +101,85 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
 
 # --- Core Function ---
 
+# Added Any type hint
+from typing import List, Dict, Optional, Tuple, Any # Added Tuple, Any
+
+# ... (other imports and helper functions remain the same) ...
+
 async def fetch_upcoming_events() -> List[Dict[str, Any]]:
-    """Connects to CalDAV and fetches upcoming events."""
-    if not all([CALDAV_URL, CALDAV_USERNAME, CALDAV_PASSWORD, CALDAV_CALENDAR_NAMES]):
-        logger.warning("CalDAV environment variables not fully configured. Skipping calendar fetch.")
+    """Connects to CalDAV and fetches upcoming events using direct URLs or name discovery."""
+    # Check if base connection details are present
+    if not all([CALDAV_URL, CALDAV_USERNAME, CALDAV_PASSWORD]):
+        logger.warning("Core CalDAV connection details (URL, USERNAME, PASSWORD) missing. Skipping calendar fetch.")
+        return []
+    # Check if *either* URLs or Names are provided
+    if not CALDAV_CALENDAR_URLS and not CALDAV_CALENDAR_NAMES:
+        logger.warning("Neither CALDAV_CALENDAR_URLS nor CALDAV_CALENDAR_NAMES are configured. Skipping calendar fetch.")
         return []
 
     all_events = []
+    target_calendars = []
     try:
         async with caldav.AsyncDAVClient(
-            url=CALDAV_URL,
+            url=CALDAV_URL, # Use the base URL for the client connection
             username=CALDAV_USERNAME,
             password=CALDAV_PASSWORD,
         ) as client:
-            principal = await client.principal()
-            calendars = await principal.calendars()
+            # --- Determine target calendars ---
+            if CALDAV_CALENDAR_URLS:
+                logger.info(f"Using specified calendar URLs: {CALDAV_CALENDAR_URLS}")
+                for url in CALDAV_CALENDAR_URLS:
+                    try:
+                        # Get calendar object directly using its URL
+                        calendar = await client.calendar(url=url)
+                        target_calendars.append(calendar)
+                        logger.info(f"Successfully accessed calendar at URL: {url}")
+                    except (DAVError, NotFoundError) as e:
+                        logger.error(f"Failed to access calendar at URL '{url}': {e}")
+                    except Exception as e:
+                         logger.error(f"Unexpected error accessing calendar URL '{url}': {e}", exc_info=True)
 
-            target_calendar_names = set(CALDAV_CALENDAR_NAMES)
-            found_calendars = []
+            elif CALDAV_CALENDAR_NAMES:
+                # Fallback to discovering calendars by name (original logic)
+                logger.info(f"Using calendar names for discovery: {CALDAV_CALENDAR_NAMES}")
+                principal = await client.principal()
+                all_principal_calendars = await principal.calendars()
+                target_calendar_names_set = set(CALDAV_CALENDAR_NAMES)
 
-            for cal in calendars:
-                cal_name = cal.get_property("displayname") if hasattr(cal, 'get_property') else str(cal.url).split('/')[-2]
-                if cal_name in target_calendar_names:
-                    found_calendars.append(cal)
-                    logger.info(f"Found target calendar: {cal_name} ({cal.url})")
-                else:
-                     logger.debug(f"Skipping non-target calendar: {cal_name} ({cal.url})")
-
-
-            if not found_calendars:
-                logger.warning(f"None of the target calendars found: {CALDAV_CALENDAR_NAMES}")
+                for cal in all_principal_calendars:
+                    try:
+                        # Attempt to get display name, fallback to URL parsing
+                        cal_name = await cal.get_property("displayname") if hasattr(cal, 'get_property') else str(cal.url).split('/')[-2]
+                        if cal_name in target_calendar_names_set:
+                            target_calendars.append(cal)
+                            logger.info(f"Found target calendar by name: {cal_name} ({cal.url})")
+                        else:
+                            logger.debug(f"Skipping non-target calendar by name: {cal_name} ({cal.url})")
+                    except (DAVError, NotFoundError) as e:
+                        logger.warning(f"Could not get display name for calendar {cal.url}: {e}")
+                    except Exception as e:
+                        logger.error(f"Unexpected error processing calendar {cal.url} during name discovery: {e}", exc_info=True)
+            else:
+                # This case should be caught by the initial check, but added for safety
+                logger.error("No calendar URLs or names provided.")
                 return []
 
+
+            if not target_calendars:
+                logger.error("No target calendars could be accessed or found.")
+                return []
+
+            # --- Fetch events from target calendars ---
             # Define date range: Today to 16 days from now (covers today, tomorrow, and next 14 days)
             start_date = date.today()
             end_date = start_date + timedelta(days=16) # Search up to 16 days out
 
-            logger.info(f"Searching for events between {start_date} and {end_date} in {len(found_calendars)} calendar(s).")
+            logger.info(f"Searching for events between {start_date} and {end_date} in {len(target_calendars)} calendar(s).")
 
             fetch_tasks = []
-            for calendar in found_calendars:
-                # Use date_search for fetching events in the range
-                # Note: caldav library might handle async differently; adjust if needed.
+            for calendar in target_calendars:
+                # Use search method (date_search is deprecated) for fetching events in the range
+                # Note: caldav library async support might need specific handling.
                 # Assuming search method is awaitable or runs in executor.
                 # The `caldav` library's async support might require careful handling.
                 # Let's assume `calendar.search` works correctly with async client.

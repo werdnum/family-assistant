@@ -118,7 +118,8 @@ The system will consist of the following core components:
 *   **Message History:** Store conversation history per chat in the `message_history` table and use recent history as context for the LLM.
 *   **MCP Tool Integration:** Leverage connected MCP servers (Time, Browser, Fetch, Brave Search) to perform actions requested by the LLM based on user prompts.
 *   **Calendar Integration (Read-Only):**
-    *   Reads upcoming events (today, tomorrow, next 14 days) from specified CalDAV calendars (configured via `.env`).
+    *   Reads upcoming events (today, tomorrow, next 14 days) from specified CalDAV calendars.
+    *   Configuration via `.env`: Requires `CALDAV_URL` (base server), `CALDAV_USERNAME`, `CALDAV_PASSWORD`, and `CALDAV_CALENDAR_URLS` (comma-separated list of direct URLs to the specific calendars).
     *   Provides formatted event list as context within the system prompt to the LLM.
 *   **(Future) Calendar Integration (Write):**
     *   Add/update events on the main family calendar via CalDAV.
@@ -161,7 +162,7 @@ The system will consist of the following core components:
 *   **Configuration:** Environment variables (`.env`), YAML (`prompts.yaml`), JSON (`mcp_config.json`).
 *   **MCP:** Uses the `mcp` Python SDK to connect to and interact with MCP servers defined in `mcp_config.json`.
 *   **Containerization:** **Docker** with `uv` for Python package management and `npm` for Node.js-based MCP tools.
-*   **Calendar Library:** `caldav` for CalDAV interaction, `vobject` for parsing event data.
+*   **Calendar Library:** `caldav` for CalDAV interaction, `vobject` for parsing event data. Supports connection via base URL and specific calendar URLs.
 *   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used.
 
 ## 9. Current Implementation Status (as of 2025-04-19)
