@@ -115,6 +115,73 @@ def load_config():
         logger.error(f"Error parsing prompts.yaml: {e}")
         PROMPTS = {} # Reset to empty on parsing error
 
+# --- MCP Configuration Loading & Connection ---
+async def load_mcp_config_and_connect():
+    """Loads MCP server config, connects to servers, and discovers tools."""
+    global mcp_sessions, mcp_tools, tool_name_to_server_id, mcp_exit_stack
+    config_path = "mcp_config.json"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        logger.info(f"{config_path} not found. Skipping MCP server connections.")
+        return
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding {config_path}: {e}. Skipping MCP server connections.")
+        return
+
+    mcp_server_configs = config.get("mcpServers", {})
+    if not mcp_server_configs:
+        logger.info("No servers defined in mcpServers section of mcp_config.json.")
+        return
+
+    logger.info(f"Found {len(mcp_server_configs)} MCP server configurations.")
+
+    for server_id, server_conf in mcp_server_configs.items():
+        command = server_conf.get("command")
+        args = server_conf.get("args", [])
+        env = server_conf.get("env") # Can be None
+
+        if not command:
+            logger.error(f"Skipping MCP server '{server_id}': 'command' is missing.")
+            continue
+
+        logger.info(f"Attempting to connect to MCP server '{server_id}'...")
+        try:
+            server_params = StdioServerParameters(command=command, args=args, env=env)
+            # Use the exit stack to manage the stdio_client context
+            read_stream, write_stream = await mcp_exit_stack.enter_async_context(stdio_client(server_params))
+            # Also manage the ClientSession context
+            session = await mcp_exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
+
+            await session.initialize()
+            logger.info(f"Successfully initialized session with MCP server '{server_id}'.")
+            mcp_sessions[server_id] = session
+
+            # Discover tools from this server
+            response = await session.list_tools()
+            server_tools = response.tools
+            logger.info(f"Server '{server_id}' provides {len(server_tools)} tool(s).")
+            for tool in server_tools:
+                # Store tool definition (MCP format is close enough to OpenAI's for litellm)
+                mcp_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.inputSchema, # Assuming MCP schema is compatible
+                        # 'required' field might be nested differently, adjust if needed based on MCP spec
+                    }
+                })
+                # Map tool name to server_id for later execution routing
+                tool_name_to_server_id[tool.name] = server_id
+                logger.info(f" -> Discovered tool: {tool.name}")
+
+        except Exception as e:
+            logger.error(f"Failed to connect to or get tools from MCP server '{server_id}': {e}", exc_info=True)
+
+    logger.info(f"Finished MCP setup. Total discovered MCP tools: {len(mcp_tools)}")
+
 # --- Argument Parsing ---
 parser = argparse.ArgumentParser(description="Family Assistant Bot")
 parser.add_argument(
