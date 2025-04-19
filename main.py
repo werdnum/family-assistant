@@ -15,6 +15,7 @@ import os
 import signal
 import sys
 import traceback
+import uuid # Add uuid
 import yaml
 import mcp  # Import MCP
 from mcp import ClientSession, StdioServerParameters  # MCP specifics
