@@ -609,14 +609,29 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             # Convert the LLM's markdown response to Telegram's MarkdownV2 format
             try:
                 converted_markdown = telegramify_markdown.markdownify(llm_response)
-                await update.message.reply_text(converted_markdown, parse_mode=ParseMode.MARKDOWN_V2)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=converted_markdown,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    reply_to_message_id=reply_target_message_id # Use the stored ID
+                )
             except Exception as md_err: # Catch potential errors during conversion
                 logger.error(f"Failed to convert markdown: {md_err}. Sending plain text.", exc_info=True)
                 # Fallback to sending plain text if conversion fails
-                await update.message.reply_text(llm_response)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=llm_response,
+                    reply_to_message_id=reply_target_message_id # Use the stored ID
+                )
         else:
-            await update.message.reply_text("Sorry, I couldn't process that.")
+            # Handle case where LLM gave no response
             logger.warning("Received empty response from LLM.")
+            if reply_target_message_id: # Only reply if we have a message ID
+                 await context.bot.send_message(
+                     chat_id=chat_id,
+                     text="Sorry, I couldn't process that request.",
+                     reply_to_message_id=reply_target_message_id
+                 )
 
     except Exception as e:
         logger.error(f"Error processing message batch for chat {chat_id}: {e}", exc_info=True)
