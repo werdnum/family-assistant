@@ -27,27 +27,44 @@ templates = Jinja2Templates(directory="templates")
 
 # --- Routes ---
 
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     """Serves the main page listing all notes."""
     notes = await storage.get_all_notes()
-    return templates.TemplateResponse("index.html", {"request": request, "notes": notes})
+    return templates.TemplateResponse(
+        "index.html", {"request": request, "notes": notes}
+    )
+
 
 @app.get("/notes/add", response_class=HTMLResponse)
 async def add_note_form(request: Request):
     """Serves the form to add a new note."""
-    return templates.TemplateResponse("edit_note.html", {"request": request, "note": None, "is_new": True})
+    return templates.TemplateResponse(
+        "edit_note.html", {"request": request, "note": None, "is_new": True}
+    )
+
 
 @app.get("/notes/edit/{title}", response_class=HTMLResponse)
 async def edit_note_form(request: Request, title: str):
     """Serves the form to edit an existing note."""
-    note = await storage.get_note_by_title(title) # Need to add this function to storage.py
+    note = await storage.get_note_by_title(
+        title
+    )  # Need to add this function to storage.py
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
-    return templates.TemplateResponse("edit_note.html", {"request": request, "note": note, "is_new": False})
+    return templates.TemplateResponse(
+        "edit_note.html", {"request": request, "note": note, "is_new": False}
+    )
+
 
 @app.post("/notes/save")
-async def save_note(request: Request, title: str = Form(...), content: str = Form(...), original_title: Optional[str] = Form(None)):
+async def save_note(
+    request: Request,
+    title: str = Form(...),
+    content: str = Form(...),
+    original_title: Optional[str] = Form(None),
+):
     """Handles saving a new or updated note."""
     try:
         if original_title and original_title != title:
@@ -55,16 +72,19 @@ async def save_note(request: Request, title: str = Form(...), content: str = For
             # Simple approach: delete old, add new
             await storage.delete_note(original_title)
             await storage.add_or_update_note(title, content)
-            logger.info(f"Renamed note '{original_title}' to '{title}' and updated content.")
+            logger.info(
+                f"Renamed note '{original_title}' to '{title}' and updated content."
+            )
         else:
             # New note or updating existing without title change
             await storage.add_or_update_note(title, content)
             logger.info(f"Saved note: {title}")
-        return RedirectResponse(url="/", status_code=303) # Redirect back to list
+        return RedirectResponse(url="/", status_code=303)  # Redirect back to list
     except Exception as e:
         logger.error(f"Error saving note '{title}': {e}", exc_info=True)
         # You might want to return an error page instead
         raise HTTPException(status_code=500, detail=f"Failed to save note: {e}")
+
 
 @app.post("/notes/delete/{title}")
 async def delete_note_post(request: Request, title: str):
@@ -72,10 +92,12 @@ async def delete_note_post(request: Request, title: str):
     deleted = await storage.delete_note(title)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found for deletion")
-    return RedirectResponse(url="/", status_code=303) # Redirect back to list
+    return RedirectResponse(url="/", status_code=303)  # Redirect back to list
+
 
 # --- Uvicorn Runner (for standalone testing) ---
 if __name__ == "__main__":
     import uvicorn
+
     logger.info("Starting Uvicorn server for testing...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
