@@ -4,7 +4,11 @@ FROM ghcr.io/astral-sh/uv:debian-slim AS base
 # Install system dependencies: npm for Node.js MCP servers
 # Using --mount for caching apt downloads
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends npm && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    npm \
+    curl \
+    unzip \
+    && \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
@@ -24,6 +28,26 @@ RUN uv venv /app/.venv
 # Using --mount with the explicit UV_CACHE_DIR for caching pip downloads/builds
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
     uv pip install -r requirements.txt
+
+# --- Install Deno ---
+ARG DENO_VERSION=v2.2.11
+ARG TARGETARCH=amd64 # Default target architecture, Docker buildx sets this automatically
+# Select the correct Deno binary based on architecture
+RUN ARCHITECTURE="" && \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+        ARCHITECTURE="x86_64-unknown-linux-gnu"; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        ARCHITECTURE="aarch64-unknown-linux-gnu"; \
+    else \
+        echo "Unsupported architecture: $TARGETARCH" && exit 1; \
+    fi && \
+    curl -fsSL https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${ARCHITECTURE}.zip -o deno.zip && \
+    unzip deno.zip && \
+    mv deno /usr/local/bin/ && \
+    chmod +x /usr/local/bin/deno && \
+    rm deno.zip && \
+    # Verify installation
+    deno --version
 
 # --- Install MCP Tools ---
 # Install Python MCP tools using uv tool install (these go into /uv/tools, separate from the venv)
