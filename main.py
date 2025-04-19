@@ -635,10 +635,10 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
         # For now, log and finish to prevent breaking the handler loop
     finally:
         # --- Store messages in DB (Store combined user message, single bot response) ---
+        # Removed redundant outer try block here
         try:
-            try:
-                # Store combined user message
-                # Use the ID of the *last* message in the batch as the representative ID
+            # Store combined user message
+            # Use the ID of the *last* message in the batch as the representative ID
                 history_user_content = combined_text # Start with combined text
                 if first_photo_bytes: # Check if a photo was processed in the batch
                     history_user_content += " [Image(s) Attached]" # Add indicator
