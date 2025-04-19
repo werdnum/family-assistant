@@ -91,7 +91,8 @@ mcp_sessions: Dict[str, ClientSession] = (
 )  # Stores active MCP client sessions {server_id: session}
 # --- State for message batching ---
 chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-message_buffers: Dict[int, List[Tuple[str, Optional[bytes]]]] = defaultdict(list) # Store (text, photo_bytes)
+# Store the Update object and optional photo bytes
+message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
 processing_tasks: Dict[int, asyncio.Task] = {}
 mcp_tools: List[Dict[str, Any]] = []  # Stores discovered MCP tools in OpenAI format
 tool_name_to_server_id: Dict[str, str] = {}  # Maps MCP tool names to their server_id
@@ -407,45 +408,54 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
     """Processes the message buffer for a given chat."""
     # This function now contains the core logic previously in message_handler
     global processing_tasks, message_buffers, chat_locks # Access globals
-    processed_photo_bytes = None # Track if we used a photo in this batch
-    all_texts = []
 
+    logger.debug(f"Starting process_chat_queue for chat_id {chat_id}")
     async with chat_locks[chat_id]:
+        # buffered_batch: List[Tuple[Update, Optional[bytes]]]
         buffered_batch = message_buffers[chat_id][:]  # Get a copy
         message_buffers[chat_id].clear()             # Clear the buffer
+        logger.debug(f"Cleared buffer for chat {chat_id}, processing {len(buffered_batch)} items.")
 
     if not buffered_batch:
-        logger.info(f"Processing queue for chat {chat_id} called with empty buffer.")
+        logger.info(f"Processing queue for chat {chat_id} called with empty buffer. Exiting.")
         return # Nothing to process
 
-    logger.info(f"Processing batch of {len(buffered_batch)} message(s) for chat {chat_id}.")
+    logger.info(f"Processing batch of {len(buffered_batch)} message update(s) for chat {chat_id}.")
 
-    # --- Combine messages from the batch ---
-    combined_text = ""
+    # --- Extract context from the last message in the batch ---
+    last_update, _ = buffered_batch[-1] # Get the last Update object
+    user = last_update.effective_user
+    user_name = user.first_name if user else "Unknown User"
+    reply_target_message_id = last_update.message.message_id if last_update.message else None
+    logger.debug(f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update.")
+
+    # --- Combine text and find first photo from the batch ---
+    all_texts = []
     first_photo_bytes = None
-    user_name = "Unknown User" # Get user name from the first message for context
-    first_update = await context.application.update_queue.get() # Need to get the update object somehow, this is not ideal
-    # Getting the first update object might be tricky here. Let's assume we have it for now.
-    # A better way might be storing Update objects in the buffer.
-    # Let's simplify: Store text/photo bytes, and maybe user_name/forward context if needed.
-    # For now, let's just combine text and take the first image.
+    forward_context = "" # Reset forward context for the batch
 
-    # Let's redefine buffer structure to store more context if needed: List[Tuple[str, Optional[bytes], str, Optional[str]]] -> (text, photo_bytes, user_name, forward_context)
-    # But sticking to (text, photo_bytes) for now. We'll extract username/forward context from the *last* message in the batch for simplicity.
-    last_text, last_photo_bytes = buffered_batch[-1] # Get content from the last message in batch
+    for update_item, photo_bytes in buffered_batch:
+        if update_item.message:
+            text = update_item.message.caption or update_item.message.text or ""
+            if text:
+                all_texts.append(text)
+            if photo_bytes and first_photo_bytes is None:
+                first_photo_bytes = photo_bytes
+                logger.debug(f"Found first photo in batch from message {update_item.message.message_id}")
+            # Check for forward context (use context from the *last* message for simplicity)
+            # A more complex approach could prepend context for each forwarded message.
+            if update_item.message.forward_origin:
+                origin = update_item.message.forward_origin
+                original_sender_name = "Unknown Sender"
+                if origin.sender_user:
+                    original_sender_name = origin.sender_user.first_name or "User"
+                elif origin.sender_chat:
+                    original_sender_name = origin.sender_chat.title or "Chat/Channel"
+                forward_context = f"(forwarded from {original_sender_name}) "
+                logger.debug(f"Detected forward context from {original_sender_name} in last message.")
 
-    # Combine text from all messages in the batch
-    all_texts = [text for text, _ in buffered_batch if text]
-    combined_text = "\n\n".join(all_texts) # Join texts with newlines
-
-    # Find the first photo in the batch
-    first_photo_bytes = next((photo for _, photo in buffered_batch if photo), None)
-
-    # TODO: Need a reliable way to get the Update object associated with the *last* message
-    # for user_name and forward context. For now, we'll skip this and use a placeholder.
-    # This part needs refinement in how data is buffered. Let's assume we have user_name.
-    user_name = "User" # Placeholder until Update object is reliably available
-    forward_context = "" # Placeholder
+    combined_text = "\n\n".join(all_texts).strip()
+    logger.debug(f"Combined text: '{combined_text[:100]}...'")
 
     # --- History and Context Preparation (similar to before) ---
     messages: List[Dict[str, Any]] = []
@@ -491,20 +501,9 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
     llm_response = None
     # Get a reference to the Update object corresponding to the *last* message in the batch
     # This is crucial for replying correctly. Needs refinement based on buffer content.
-    # Placeholder: assume we have a way to get the last_update object.
-    last_update: Optional[Update] = None # Placeholder
-
-    # Need to get the last update object reliably. Let's modify the buffer:
-    # message_buffers: Dict[int, List[Update]] = defaultdict(list)
-    # This simplifies getting the last update but requires storing the whole object.
-
-    # --- Re-think: Let's revert buffer to (text, photo_bytes) and reply to the *last message ID* known ---
-    # We lose the Update object for the reply, which isn't ideal. PTB context might help?
-    # Let's use the context if available for the last message. This assumes message_handler provides it.
-    # If called from elsewhere, we might not have it.
-
-    last_message_id_in_batch = context.user_data.get("_last_buffered_message_id") # Need to store this ID
-    reply_target_message_id = last_message_id_in_batch # Reply to the last message
+    # User name is now correctly extracted from the last_update
+    # reply_target_message_id is also extracted from last_update
+    logger.debug(f"Proceeding with combined text and user '{user_name}'.")
 
     try:
         # --- Prepare System Prompt Context (as before) ---
@@ -645,9 +644,17 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                 )
             except Exception as reply_err:
                  logger.error(f"Failed to send error reply to chat {chat_id}: {reply_err}")
-        # Re-raise the exception so the error handler catches it (if appropriate)
-        # Or just log and finish the task
-        # For now, log and finish to prevent breaking the handler loop
+                 # Attempt to send without replying as a fallback
+                 try:
+                     await context.bot.send_message(
+                         chat_id=chat_id,
+                         text="Sorry, something went wrong while processing your request (reply failed)."
+                     )
+                 except Exception as fallback_err:
+                     logger.error(f"Failed to send fallback error message to chat {chat_id}: {fallback_err}")
+
+        # Log and finish the task to prevent breaking the handler loop
+        logger.debug(f"Finished processing batch for chat {chat_id}, proceeding to finally block.")
     finally:
         # --- Store messages in DB (Store combined user message, single bot response) ---
         # Removed redundant outer try block here
@@ -721,13 +728,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Don't buffer this message if photo processing failed critically
             return
 
-    # --- Add message to buffer under lock ---
+    # --- Add message Update object and photo bytes to buffer under lock ---
     async with chat_locks[chat_id]:
-        message_buffers[chat_id].append((user_message_text, photo_bytes))
-        # Store the message ID in context for the processing task to retrieve
-        context.user_data["_last_buffered_message_id"] = update.message.message_id
+        message_buffers[chat_id].append((update, photo_bytes))
+        # Removed storing message_id in context.user_data
         buffer_size = len(message_buffers[chat_id])
-        logger.info(f"Buffered message {update.message.message_id} for chat {chat_id}. Buffer size: {buffer_size}")
+        logger.info(f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}")
 
         # --- Check if processing task needs to be started ---
         if chat_id not in processing_tasks or processing_tasks[chat_id].done():
