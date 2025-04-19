@@ -510,7 +510,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     current_user_message_content = {
         "role": "user",
         "content": final_message_content_parts, # Content is now a list
-        "name": user_name, # Add the user's name to the message metadata
+        # "name": user_name, # Removed: Now part of the system prompt
     }
     messages.append(current_user_message_content)
 
@@ -582,6 +582,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # --- Assemble Final System Prompt ---
         final_system_prompt = system_prompt_template.format(
+            user_name=user_name, # Add user name here
             current_time=current_time_str,
             calendar_context=calendar_context_str,
             notes_context=notes_context_str,
