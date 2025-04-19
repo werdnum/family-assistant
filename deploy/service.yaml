@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: family-assistant-service
+  name: family-assistant # Simplified name
 spec:
   selector:
     app: family-assistant # Selects pods with this label (matches the Deployment's template labels)
