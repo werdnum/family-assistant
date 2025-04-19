@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: family-assistant-webhooks-ingress # Descriptive name for this specific ingress
+spec:
+  ingressClassName: tailscale # Use the Tailscale Ingress controller
+  tls:
+    - hosts:
+      - assistant-webhooks.bishop-dorian.ts.net # Your desired Tailscale hostname
+      # secretName: is not needed, Tailscale handles TLS automatically
+  rules:
+    - host: assistant-webhooks.bishop-dorian.ts.net
+      http:
+        paths:
+          - path: /webhook/mail # The specific path for the mail webhook
+            pathType: Prefix # Or 'Exact' if you only want that exact path
+            backend:
+              service:
+                name: family-assistant # Name of the existing Service
+                port:
+                  number: 80 # Port exposed by the Service
