@@ -120,24 +120,25 @@ def load_config():
         PROMPTS = {} # Reset to empty on parsing error
 
     # --- CalDAV Config ---
-    caldav_url = os.getenv("CALDAV_URL")
+    caldav_url = os.getenv("CALDAV_URL") # Base URL still needed for connection
     caldav_user = os.getenv("CALDAV_USERNAME")
     caldav_pass = os.getenv("CALDAV_PASSWORD")
-    caldav_names_str = os.getenv("CALDAV_CALENDAR_NAMES")
-    caldav_names = [name.strip() for name in caldav_names_str.split(',')] if caldav_names_str else []
+    caldav_urls_str = os.getenv("CALDAV_CALENDAR_URLS") # Read the new variable
+    caldav_urls = [url.strip() for url in caldav_urls_str.split(',')] if caldav_urls_str else []
 
-    if caldav_url and caldav_user and caldav_pass and caldav_names:
+    # Check if essential connection details and the list of URLs are provided
+    if caldav_url and caldav_user and caldav_pass and caldav_urls:
         CALDAV_CONFIG = {
-            "url": caldav_url,
+            "url": caldav_url, # Base URL for the client connection
             "username": caldav_user,
             "password": caldav_pass, # Note: Storing password directly is not ideal for production
-            "calendar_names": caldav_names,
+            "calendar_urls": caldav_urls, # Store the list of specific calendar URLs
         }
-        logger.info(f"Loaded CalDAV configuration for {len(caldav_names)} calendar(s).")
+        logger.info(f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s).")
         # Pass config to calendar_integration module if needed (currently uses getenv directly)
         # calendar_integration.set_config(CALDAV_CONFIG)
     else:
-        logger.warning("CalDAV configuration incomplete in .env file. Calendar features will be disabled.")
+        logger.warning("CalDAV configuration incomplete in .env file (URL, USERNAME, PASSWORD, CALENDAR_URLS required). Calendar features will be disabled.")
         CALDAV_CONFIG = {}
 
 
