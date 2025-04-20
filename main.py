@@ -284,15 +284,15 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         # Execute the handler with the payload
                         await handler(task["payload"])
                         # Mark task as done if handler completes successfully
-                        await storage.update_task_status(
-                            task["task_id"], "done"
-                        )
+                        await storage.update_task_status(task["task_id"], "done")
                         logger.info(
                             f"Worker {worker_id} completed task {task['task_id']}"
                         )
                     except Exception as handler_exc:
                         current_retry = task.get("retry_count", 0)
-                        max_retries = task.get("max_retries", 3) # Use DB default if missing somehow
+                        max_retries = task.get(
+                            "max_retries", 3
+                        )  # Use DB default if missing somehow
                         error_str = str(handler_exc)
                         logger.error(
                             f"Worker {worker_id} failed task {task['task_id']} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
@@ -302,10 +302,12 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         if current_retry < max_retries:
                             # Calculate exponential backoff with jitter
                             # Base delay: 5 seconds, increases with retries
-                            backoff_delay = (5 * (2**current_retry)) + random.uniform(0, 2)
-                            next_attempt_time = datetime.now(
-                                timezone.utc
-                            ) + timedelta(seconds=backoff_delay)
+                            backoff_delay = (5 * (2**current_retry)) + random.uniform(
+                                0, 2
+                            )
+                            next_attempt_time = datetime.now(timezone.utc) + timedelta(
+                                seconds=backoff_delay
+                            )
                             logger.info(
                                 f"Scheduling retry {current_retry + 1} for task {task['task_id']} at {next_attempt_time} (delay: {backoff_delay:.2f}s)"
                             )
