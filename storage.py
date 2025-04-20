@@ -53,14 +53,23 @@ async def enqueue_task(
         try:
             async with engine.connect() as conn:  # Start of with block
                 # Code below needs to be indented inside the 'with' block
-                stmt = insert(tasks_table).values(
-                    task_id=task_id,
-                    task_type=task_type,
-                    payload=payload,
-                    scheduled_at=scheduled_at,
-                    # created_at is set by default in the table definition now
-                    status="pending",
-                )
+                values_to_insert = {
+                    "task_id": task_id,
+                    "task_type": task_type,
+                    "payload": payload,
+                    "scheduled_at": scheduled_at,
+                    "status": "pending",
+                    "retry_count": 0,  # Explicitly set retry_count to 0 on initial enqueue
+                    # created_at has a default
+                }
+                if max_retries is not None:
+                    values_to_insert["max_retries"] = max_retries
+                    logger.debug(
+                        f"Setting max_retries={max_retries} for task {task_id}"
+                    )
+                # else: it will use the DB default (3)
+
+                stmt = insert(tasks_table).values(**values_to_insert)
                 # This inner try/except is specific to the insert/commit part
                 # and should also be inside the 'with' block
                 try:
@@ -156,7 +165,11 @@ async def dequeue_task(
                             (tasks_table.c.scheduled_at == None)  # noqa: E711
                             | (tasks_table.c.scheduled_at <= now)
                         )
-                        .order_by(tasks_table.c.created_at)
+                        # Ensure we don't pick tasks that have exhausted retries
+                        .where(tasks_table.c.retry_count < tasks_table.c.max_retries)
+                        # Prioritize tasks with fewer retries, then by creation time
+                        .order_by(tasks_table.c.retry_count.asc())
+                        .order_by(tasks_table.c.created_at.asc())
                         .limit(1)
                         .with_for_update(skip_locked=True)
                     )
@@ -276,6 +289,71 @@ async def update_task_status(
     logger.error(f"update_task_status({task_id}) failed after all retries.")
     raise RuntimeError(
         f"Database operation failed for update_task_status({task_id}) after multiple retries"
+    )
+
+
+async def reschedule_task_for_retry(
+    task_id: str, next_scheduled_at: datetime, new_retry_count: int, error: str
+) -> bool:
+    """
+    Updates a task for a retry attempt: increments retry count, sets new schedule time,
+    updates last error, and resets status to 'pending', clearing lock info. Includes retries.
+    """
+    max_retries = 3
+    base_delay = 0.5  # seconds
+
+    if next_scheduled_at.tzinfo is None:
+        raise ValueError("next_scheduled_at must be timezone-aware")
+
+    for attempt in range(max_retries):
+        try:
+            async with engine.connect() as conn:
+                stmt = (
+                    update(tasks_table)
+                    .where(tasks_table.c.task_id == task_id)
+                    .values(
+                        status="pending",  # Reset status for next attempt
+                        retry_count=new_retry_count,
+                        scheduled_at=next_scheduled_at,
+                        error=error,  # Store the latest error
+                        locked_by=None,  # Clear lock
+                        locked_at=None,  # Clear lock timestamp
+                    )
+                )
+                result = await conn.execute(stmt)
+                await conn.commit()
+                if result.rowcount > 0:
+                    logger.info(
+                        f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
+                    )
+                    return True
+                logger.warning(
+                    f"Task {task_id} not found when rescheduling for retry."
+                )
+                return False
+        except DBAPIError as e:
+            logger.warning(
+                f"DBAPIError in reschedule_task_for_retry (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
+            if attempt == max_retries - 1:
+                logger.error(
+                    f"Max retries exceeded for reschedule_task_for_retry({task_id}). Raising error."
+                )
+                raise
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
+            await asyncio.sleep(delay)
+        except ValueError:  # Catch specific non-retryable errors like timezone issue
+            raise  # Re-raise immediately
+        except Exception as e:
+            logger.error(
+                f"Non-retryable error in reschedule_task_for_retry({task_id}): {e}",
+                exc_info=True,
+            )
+            raise
+
+    logger.error(f"reschedule_task_for_retry({task_id}) failed after all retries.")
+    raise RuntimeError(
+        f"Database operation failed for reschedule_task_for_retry({task_id}) after multiple retries"
     )
 
 
