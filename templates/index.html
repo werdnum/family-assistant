@@ -4,26 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Notes</title>
-    <style>
-        body { font-family: sans-serif; margin: 2em; }
-        table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top;}
-        th { background-color: #f2f2f2; }
-        .actions form { display: inline; margin: 0 5px;}
-        .actions button { padding: 2px 5px; }
-        .add-button { margin-bottom: 1em; padding: 10px 15px; }
-        pre { white-space: pre-wrap; word-wrap: break-word; }
-    </style>
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <link rel="stylesheet" href="/static/css/custom.css">
 </head>
 <body>
+<header>
     <h1>Notes</h1>
-
-    <div class="nav-links" style="margin-bottom: 1em;">
-        <a href="/notes/add"><button class="add-button" style="margin-right: 1em;">Add New Note</button></a> |
-        <a href="/history">View Message History</a> |
+    <nav>
+        <a href="/notes/add" class="button-link add-button">Add New Note</a>
+        <span>|</span>
+        <a href="/history">View Message History</a>
+        <span>|</span>
         <a href="/tasks">View Tasks</a>
-    </div>
+    </nav>
+</header>
 
+<main>
     <table>
         <thead>
             <tr>
@@ -37,10 +33,10 @@
             <tr>
                 <td>{{ note.title }}</td>
                 <td><pre>{{ note.content }}</pre></td>
-                <td class="actions">
-                    <a href="/notes/edit/{{ note.title }}"><button>Edit</button></a>
+                <td class="note-actions">
+                    <a href="/notes/edit/{{ note.title }}" class="button-link">Edit</a>
                     <form action="/notes/delete/{{ note.title }}" method="post" onsubmit="return confirm('Are you sure you want to delete this note?');">
-                        <button type="submit">Delete</button>
+                        <button type="submit" class="secondary">Delete</button> <!-- SimpleCSS might style secondary buttons -->
                     </form>
                 </td>
             </tr>
@@ -51,6 +47,12 @@
             {% endfor %}
         </tbody>
     </table>
+</main>
 
+<!-- Optional Footer
+<footer>
+    <p>Family Assistant Notes</p>
+</footer>
+-->
 </body>
 </html>

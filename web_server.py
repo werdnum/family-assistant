@@ -21,8 +21,8 @@ app = FastAPI(title="Family Assistant Notes Editor")
 # Configure templates
 templates = Jinja2Templates(directory="templates")
 
-# Mount static files (optional, if you have CSS/JS)
-# app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- Helper for DB Session (if needed, but storage functions are standalone) ---
 # Example if storage functions required a session object
