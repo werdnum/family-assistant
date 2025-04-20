@@ -586,23 +586,23 @@ async def add_or_update_note(title: str, content: str):
 
                 now = datetime.now(timezone.utc)
                 if existing_note:
-            # Update existing note
-            stmt = (
-                update(notes_table)
-                .where(notes_table.c.title == title)
-                .values(content=content, updated_at=now)
-            )
-            logger.info(f"Updating note: {title}")
-        else:
-            # Insert new note - omit 'id' to allow autoincrement
-            stmt = insert(notes_table).values(
-                title=title,
-                content=content,
-                created_at=now,
-                updated_at=now,
-                    # id is handled by autoincrement
-                )
-                logger.info(f"Inserting new note: {title}")
+                    # Update existing note
+                    stmt = (
+                        update(notes_table)
+                        .where(notes_table.c.title == title)
+                        .values(content=content, updated_at=now)
+                    )
+                    logger.info(f"Updating note: {title}")
+                else:
+                    # Insert new note - omit 'id' to allow autoincrement
+                    stmt = insert(notes_table).values(
+                        title=title,
+                        content=content,
+                        created_at=now,
+                        updated_at=now,
+                        # id is handled by autoincrement
+                    )
+                    logger.info(f"Inserting new note: {title}")
 
                 await conn.execute(stmt)
                 await conn.commit()
