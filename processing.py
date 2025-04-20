@@ -1,11 +1,11 @@
 import logging
 import json
 import asyncio
-import uuid # Added for unique task IDs
-from datetime import datetime, timezone # Added timezone
+import uuid  # Added for unique task IDs
+from datetime import datetime, timezone  # Added timezone
 from typing import List, Dict, Any, Optional, Callable
 
-from dateutil.parser import isoparse # Added for parsing datetime strings
+from dateutil.parser import isoparse  # Added for parsing datetime strings
 
 from litellm import acompletion
 
@@ -16,6 +16,7 @@ from litellm.types.completion import ChatCompletionMessageParam
 
 # Import storage functions for tools
 import storage
+
 # from storage import enqueue_task # Removed specific import
 
 # MCP state (mcp_sessions, tool_name_to_server_id) will be passed as arguments
@@ -24,6 +25,7 @@ import storage
 logger = logging.getLogger(__name__)
 
 # --- Tool Implementation ---
+
 
 async def schedule_future_callback_tool(callback_time: str, context: str, chat_id: int):
     """
@@ -39,7 +41,9 @@ async def schedule_future_callback_tool(callback_time: str, context: str, chat_i
         scheduled_dt = isoparse(callback_time)
         if scheduled_dt.tzinfo is None:
             # Or raise error, forcing LLM to provide timezone
-            logger.warning(f"Callback time '{callback_time}' lacks timezone. Assuming UTC.")
+            logger.warning(
+                f"Callback time '{callback_time}' lacks timezone. Assuming UTC."
+            )
             scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
 
         # Ensure it's in the future (optional, but good practice)
@@ -52,14 +56,16 @@ async def schedule_future_callback_tool(callback_time: str, context: str, chat_i
         # TODO: Need access to the new_task_event from main.py to notify worker
         # For now, enqueue without immediate notification. Refactor may be needed
         # if immediate notification is desired here.
-        await storage.enqueue_task( # Use storage.enqueue_task
+        await storage.enqueue_task(  # Use storage.enqueue_task
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
             # notify_event=new_task_event # Needs event passed down
         )
-        logger.info(f"Scheduled LLM callback task {task_id} for chat {chat_id} at {scheduled_dt}")
+        logger.info(
+            f"Scheduled LLM callback task {task_id} for chat {chat_id} at {scheduled_dt}"
+        )
         return f"OK. Callback scheduled for {callback_time}."
     except ValueError as ve:
         logger.error(f"Invalid callback time format or value: {callback_time} - {ve}")
