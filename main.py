@@ -711,10 +711,17 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
         # --- Prepare System Prompt Context (as before) ---
         system_prompt_template = PROMPTS.get(
             "system_prompt", "You are a helpful assistant."
-        )  # Default prompt
+        ) # Default prompt
 
-        # 1. Current Time
-        current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+        # 1. Current Time (using configured timezone)
+        try:
+            local_tz = pytz.timezone(TIMEZONE_STR)
+            current_local_time = datetime.now(local_tz)
+            # Format with timezone name/abbreviation
+            current_time_str = current_local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+        except Exception as tz_err:
+            logger.error(f"Error applying timezone {TIMEZONE_STR}: {tz_err}. Defaulting time format.")
+            current_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC") # Fallback to UTC
 
         # 2. Calendar Context
         calendar_context_str = ""
