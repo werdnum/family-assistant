@@ -182,11 +182,11 @@ async def dequeue_task(
                     )
                     return None # Transaction will rollback changes implicitly
 
-                    # No suitable task found
-                    return None
-            # End of transaction block
-            # End of connection block
-        except DBAPIError as e:
+            # If not task_row (no suitable task found by the initial SELECT)
+            return None
+        # End of transaction block (async with conn.begin())
+    # End of connection block (async with engine.connect())
+except DBAPIError as e:
             logger.warning(f"DBAPIError in dequeue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
             if attempt == max_retries - 1:
                 logger.error(f"Max retries exceeded for dequeue_task. Raising error.")
