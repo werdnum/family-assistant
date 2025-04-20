@@ -287,18 +287,21 @@ async def get_llm_response(
         str, Any
     ],  # Using Any for ClientSession to avoid MCP import here
     tool_name_to_server_id: Dict[str, str],
-) -> str | None:
+) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
     """
-    Sends the conversation history (and tools) to the LLM,
-    handles potential tool calls, and returns the final response content.
+    Sends the conversation history (and tools) to the LLM, handles potential tool calls,
+    and returns the final response content along with details of any tool calls made.
 
     Args:
         messages: A list of message dictionaries.
         model: The identifier of the LLM model.
 
     Returns:
-        The final response content string from the LLM, or None if an error occurs.
+        A tuple containing:
+        - The final response content string from the LLM (or None).
+        - A list of dictionaries detailing executed tool calls (or None).
     """
+    executed_tool_info: List[Dict[str, Any]] = [] # Initialize list to store tool call details
     logger.info(
         f"Sending {len(messages)} messages to LLM ({model}). Last message: {messages[-1]['content'][:100]}..."
     )
@@ -324,7 +327,7 @@ async def get_llm_response(
 
         if not response_message:
             logger.warning(f"LLM response structure unexpected or empty: {response}")
-            return None
+            return None, None # Return None for both content and tool info
 
         tool_calls = response_message.tool_calls
 
@@ -346,7 +349,23 @@ async def get_llm_response(
                 )
             )
 
-            # Append tool responses to the message history
+            # Store tool call details before appending responses to history
+            # This assumes tool_responses is a list matching tool_calls order
+            for i, tool_call in enumerate(tool_calls):
+                # Parse arguments again here to store them clearly
+                try:
+                    arguments = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    arguments = {"error": "Failed to parse arguments", "raw": tool_call.function.arguments}
+
+                executed_tool_info.append({
+                    "call_id": tool_call.id,
+                    "function_name": tool_call.function.name,
+                    "arguments": arguments,
+                    "response_content": tool_responses[i].get("content", "Error retrieving response content"), # Get content from the response dict
+                })
+
+            # Append tool responses to the message history for the next LLM call
             messages.extend(tool_responses)
 
             # --- Second LLM Call ---
@@ -375,13 +394,15 @@ async def get_llm_response(
                 logger.info(
                     f"Received final LLM response after tool call: {final_content[:100]}..."
                 )
-                return final_content
+                # Return final content AND the captured tool info
+                return final_content, executed_tool_info
             else:
                 logger.warning(
                     f"Second LLM response after tool call was empty or unexpected: {second_response}"
                 )
-                # Fallback: maybe return the tool execution status directly?
-                return "Tool execution finished, but I couldn't generate a summary."
+                # Fallback: maybe return the tool execution status directly? And the tool info
+                fallback_content = "Tool execution finished, but I couldn't generate a summary."
+                return fallback_content, executed_tool_info
 
         # --- No Tool Calls ---
         elif response_message.content:
@@ -389,15 +410,15 @@ async def get_llm_response(
             logger.info(
                 f"Received LLM response (no tool call): {response_content[:100]}..."
             )
-            return response_content
+            return response_content, None # No tool calls, return None for tool info
         else:
             logger.warning(
                 f"LLM response had neither content nor tool calls: {response}"
             )
-            return None
+            return None, None # Return None for both
 
     except Exception as e:
         logger.error(
             f"Error during LLM completion or tool handling: {e}", exc_info=True
         )
-        return None
+        return None, None # Return None for both on error

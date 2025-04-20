@@ -344,6 +344,7 @@ message_history = Table(
     Column("timestamp", DateTime(timezone=True), nullable=False, index=True),
     Column("role", String, nullable=False),  # 'user' or 'assistant'
     Column("content", Text, nullable=False),
+    Column("tool_calls_info", JSON, nullable=True), # Added: To store details of tool calls
 )
 
 # Define the tasks table for the message queue
@@ -446,18 +447,24 @@ async def get_all_notes() -> List[Dict[str, str]]:
 
 
 async def add_message_to_history(
-    chat_id: int, message_id: int, timestamp: datetime, role: str, content: str
+    chat_id: int,
+    message_id: int,
+    timestamp: datetime,
+    role: str,
+    content: str,
+    tool_calls_info: Optional[List[Dict[str, Any]]] = None, # Added tool_calls_info parameter
 ):
-    """Adds a message to the history table, with retries."""
+    """Adds a message to the history table, including optional tool call info, with retries."""
     max_retries = 3
     base_delay = 0.5  # seconds
 
-    stmt = insert(message_history).values(  # Define stmt outside loop
+    stmt = insert(message_history).values(
         chat_id=chat_id,
         message_id=message_id,
         timestamp=timestamp,
         role=role,
         content=content,
+        tool_calls_info=tool_calls_info, # Store the tool call info
     )
 
     for attempt in range(max_retries):
@@ -762,6 +769,7 @@ async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
             message_history.c.timestamp,
             message_history.c.role,
             message_history.c.content,
+            message_history.c.tool_calls_info, # Added: Fetch tool_calls_info
         )
         # Order by chat_id first, then by timestamp DESC within each chat
         .order_by(message_history.c.chat_id, message_history.c.timestamp.desc())
@@ -786,6 +794,7 @@ async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
                             "timestamp": row.timestamp,
                             "role": row.role,
                             "content": row.content,
+                            "tool_calls_info": row.tool_calls_info, # Added: Include tool_calls_info in result
                         }
                     )
                 return grouped_history # Success
