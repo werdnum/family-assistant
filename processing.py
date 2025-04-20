@@ -163,10 +163,16 @@ async def execute_function_call(
             f"Executing local tool call: {function_name} with args {function_args}"
         )
         try:
-            await local_function_to_call(**function_args)
-            function_response_content = f"Successfully executed {function_name}."
-            logger.info(f"Local tool call {function_name} successful.")
+            # Call the function and capture its return value
+            function_response_content = await local_function_to_call(**function_args)
+            # Log based on whether the tool's response indicates success or error
+            if "Error:" not in function_response_content:
+                 logger.info(f"Local tool call {function_name} successful.")
+            else:
+                 # The tool function already logged the specific error internally
+                 logger.warning(f"Local tool call {function_name} reported an error: {function_response_content}")
         except Exception as e:
+            # This catches errors *calling* the function, not errors *within* the function's try/except
             logger.error(
                 f"Error executing local tool {function_name}: {e}", exc_info=True
             )
