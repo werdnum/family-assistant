@@ -356,6 +356,66 @@ async def reschedule_task_for_retry(
     )
 
 
+async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
+    """
+    Retrieves all tasks from the database, ordered by status and scheduled_at, with a limit.
+    """
+    max_retries = 3
+    base_delay = 0.5  # seconds
+
+    # Define the desired order: pending first, then processing, then others.
+    # Within each status, order by scheduled_at (NULLs last for pending), then created_at.
+    status_order = {
+        "pending": 0,
+        "processing": 1,
+        "failed": 2,
+        "done": 3,
+    }
+
+    stmt = (
+        select(tasks_table)
+        .order_by(
+            # Custom sorting based on status
+            # This might require a CASE statement or similar depending on DB flavor
+            # For simplicity, fetching all and sorting in Python might be easier for now
+            # Or fetch ordered by created_at desc and let UI handle grouping/sorting
+            # Let's try ordering by created_at desc for now.
+            tasks_table.c.created_at.desc()
+        )
+        .limit(limit)
+    )
+
+    for attempt in range(max_retries):
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(stmt)
+                rows = result.fetchall()
+                # Convert rows to dictionaries
+                tasks_list = [row._mapping for row in rows]
+                # Optional: Sort in Python if complex DB ordering is tricky
+                # tasks_list.sort(key=lambda t: (status_order.get(t['status'], 99), t['scheduled_at'] or datetime.max.replace(tzinfo=timezone.utc), t['created_at']))
+                return tasks_list
+        except DBAPIError as e:
+            logger.warning(
+                f"DBAPIError in get_all_tasks (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
+            if attempt == max_retries - 1:
+                logger.error(
+                    f"Max retries exceeded for get_all_tasks. Raising error."
+                )
+                raise
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
+            await asyncio.sleep(delay)
+        except Exception as e:
+            logger.error(f"Non-retryable error in get_all_tasks: {e}", exc_info=True)
+            raise
+
+    logger.error("get_all_tasks failed after all retries.")
+    raise RuntimeError(
+        "Database operation failed for get_all_tasks after multiple retries"
+    )
+
+
 # --- End Task Queue Functions ---
 
 
@@ -371,7 +431,8 @@ __all__ = [
     "enqueue_task",
     "dequeue_task",
     "update_task_status",
-    "reschedule_task_for_retry",  # Added
+    "reschedule_task_for_retry",
+    "get_all_tasks", # Added
     "get_grouped_message_history",
     "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
