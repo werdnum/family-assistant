@@ -286,21 +286,57 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         # Mark task as done if handler completes successfully
                         await storage.update_task_status(
                             task["task_id"], "done"
-                        )  # Use storage.update_task_status
+                        )
                         logger.info(
                             f"Worker {worker_id} completed task {task['task_id']}"
                         )
                     except Exception as handler_exc:
+                        current_retry = task.get("retry_count", 0)
+                        max_retries = task.get("max_retries", 3) # Use DB default if missing somehow
+                        error_str = str(handler_exc)
                         logger.error(
-                            f"Worker {worker_id} failed task {task['task_id']} due to handler error: {handler_exc}",
+                            f"Worker {worker_id} failed task {task['task_id']} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
                             exc_info=True,
                         )
-                        # Mark task as failed
-                        await storage.update_task_status(  # Use storage.update_task_status
-                            task["task_id"], "failed", error=str(handler_exc)
-                        )
+
+                        if current_retry < max_retries:
+                            # Calculate exponential backoff with jitter
+                            # Base delay: 5 seconds, increases with retries
+                            backoff_delay = (5 * (2**current_retry)) + random.uniform(0, 2)
+                            next_attempt_time = datetime.now(
+                                timezone.utc
+                            ) + timedelta(seconds=backoff_delay)
+                            logger.info(
+                                f"Scheduling retry {current_retry + 1} for task {task['task_id']} at {next_attempt_time} (delay: {backoff_delay:.2f}s)"
+                            )
+                            try:
+                                await storage.reschedule_task_for_retry(
+                                    task_id=task["task_id"],
+                                    next_scheduled_at=next_attempt_time,
+                                    new_retry_count=current_retry + 1,
+                                    error=error_str,
+                                )
+                            except Exception as reschedule_err:
+                                # If rescheduling fails, log critical error and mark as failed to avoid infinite loops
+                                logger.critical(
+                                    f"CRITICAL: Failed to reschedule task {task['task_id']} for retry after handler error. Marking as failed. Error: {reschedule_err}",
+                                    exc_info=True,
+                                )
+                                await storage.update_task_status(
+                                    task["task_id"],
+                                    "failed",
+                                    error=f"Handler Error: {error_str}. Reschedule Failed: {reschedule_err}",
+                                )
+                        else:
+                            logger.warning(
+                                f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
+                            )
+                            # Mark task as permanently failed
+                            await storage.update_task_status(
+                                task["task_id"], "failed", error=error_str
+                            )
                 else:
-                    # This shouldn't happen if dequeue_task respects task_types
+                    # This shouldn't happen if dequeue_task respects task_types properly
                     logger.error(
                         f"Worker {worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
                     )
