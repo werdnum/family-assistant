@@ -122,10 +122,11 @@ TOOLS_DEFINITION = [
                     },
                     "chat_id": {
                         "type": "integer",
-                        "description": "The ID of the current chat where the callback should occur.",
+                        "description": "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan').",
                     },
+                    # chat_id is removed, it will be inferred from the current context
                 },
-                "required": ["callback_time", "context", "chat_id"],
+                "required": ["callback_time", "context"],
             },
         },
     },
@@ -136,12 +137,17 @@ TOOLS_DEFINITION = [
 # Added mcp_sessions and tool_name_to_server_id as parameters
 async def execute_function_call(
     tool_call: Any,
+    chat_id: int, # Add chat_id parameter
     mcp_sessions: Dict[
         str, Any
     ],  # Using Any for ClientSession to avoid MCP import here
     tool_name_to_server_id: Dict[str, str],
 ) -> Dict[str, Any]:
-    """Executes a function call requested by the LLM, checking local and MCP tools."""
+    """
+    Executes a function call requested by the LLM, checking local and MCP tools.
+
+    Injects chat_id for specific local tools like schedule_future_callback.
+    """
     function_name = tool_call.function.name
     try:
         function_args = json.loads(tool_call.function.arguments)
@@ -159,6 +165,11 @@ async def execute_function_call(
     # Check if it's a local tool first
     local_function_to_call = AVAILABLE_FUNCTIONS.get(function_name)
     if local_function_to_call:
+        # Inject chat_id if the tool is schedule_future_callback
+        if function_name == "schedule_future_callback":
+            function_args["chat_id"] = chat_id # Add/overwrite chat_id from context
+            logger.info(f"Injected chat_id {chat_id} into args for {function_name}")
+
         logger.info(
             f"Executing local tool call: {function_name} with args {function_args}"
         )
@@ -269,6 +280,7 @@ async def execute_function_call(
 # Added mcp_sessions and tool_name_to_server_id as parameters
 async def get_llm_response(
     messages: List[Dict[str, Any]],
+    chat_id: int, # Add chat_id parameter
     model: str,
     all_tools: List[Dict[str, Any]],  # Accept the combined tool list
     mcp_sessions: Dict[
@@ -324,10 +336,12 @@ async def get_llm_response(
                 response_message.model_dump()
             )  # Use model_dump for pydantic v2+
 
-            # Execute all tool calls, passing the MCP state
+            # Execute all tool calls, passing the chat_id and MCP state
             tool_responses = await asyncio.gather(
                 *(
-                    execute_function_call(tc, mcp_sessions, tool_name_to_server_id)
+                    execute_function_call(
+                        tc, chat_id, mcp_sessions, tool_name_to_server_id
+                    )
                     for tc in tool_calls
                 )
             )
