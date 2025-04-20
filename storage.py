@@ -23,6 +23,25 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "init_db",
+    "get_all_notes",
+    "add_message_to_history",
+    "get_recent_history",
+    "get_note_by_title",
+    "get_message_by_id",
+    "add_or_update_note",
+    "delete_note",
+    "enqueue_task", # Add task functions to __all__
+    "dequeue_task",
+    "update_task_status",
+    "notes_table", # Also export tables if needed elsewhere (e.g., tests)
+    "message_history",
+    "tasks_table",
+    "engine",
+    "metadata",
+]
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db"
 )  # Default to SQLite async
