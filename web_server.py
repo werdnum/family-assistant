@@ -7,8 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
 from fastapi import Response  # Added Response
 
+from collections import defaultdict # Import defaultdict
+
 # Import storage functions - adjust path if needed
 import storage
+from storage import get_grouped_message_history # Added
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +127,22 @@ async def handle_mail_webhook(request: Request):
         logger.error(f"Error processing mail webhook: {e}", exc_info=True)
         # Return 500, Mailgun might retry
         raise HTTPException(status_code=500, detail="Failed to process incoming email")
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def view_message_history(request: Request):
+    """Serves the page displaying message history."""
+    try:
+        history_by_chat = await get_grouped_message_history()
+        # Optional: Sort chats by ID if needed (DB query already sorts)
+        # history_by_chat = dict(sorted(history_by_chat.items()))
+        return templates.TemplateResponse(
+            "message_history.html",
+            {"request": request, "history_by_chat": history_by_chat},
+        )
+    except Exception as e:
+        logger.error(f"Error fetching message history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch message history")
 
 
 # --- Uvicorn Runner (for standalone testing) ---

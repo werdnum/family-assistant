@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Message History</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        .chat-group { margin-bottom: 2em; border: 1px solid #ccc; padding: 1em; border-radius: 5px; }
+        .chat-header { font-size: 1.2em; font-weight: bold; margin-bottom: 0.5em; }
+        .message { margin-bottom: 0.5em; padding: 0.5em; border-radius: 3px; }
+        .user-message { background-color: #e1f5fe; }
+        .assistant-message { background-color: #f1f8e9; }
+        .system-message { background-color: #f5f5f5; font-style: italic; }
+        .message-meta { font-size: 0.8em; color: #666; margin-bottom: 0.2em; }
+        .message-content { white-space: pre-wrap; word-wrap: break-word; }
+        .nav-links a { margin-right: 1em; }
+        .nav-links { margin-bottom: 1em; }
+    </style>
+</head>
+<body>
+    <h1>Message History</h1>
+
+    <div class="nav-links">
+        <a href="/">View Notes</a>
+    </div>
+
+    {% if history_by_chat %}
+        {% for chat_id, messages in history_by_chat.items() %}
+        <div class="chat-group">
+            <div class="chat-header">Chat ID: {{ chat_id }}</div>
+            {% for message in messages %}
+            <div class="message {{ message.role }}-message">
+                <div class="message-meta">
+                    {{ message.role.capitalize() }} - {{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S %Z') }} (Msg ID: {{ message.message_id }})
+                </div>
+                <div class="message-content">{{ message.content }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    {% else %}
+        <p>No message history found.</p>
+    {% endif %}
+
+</body>
+</html>
