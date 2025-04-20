@@ -19,8 +19,8 @@ from sqlalchemy import (
     desc,
 )
 import asyncio
-import random # Added for jitter
-from sqlalchemy.exc import DBAPIError # Added for retry logic
+import random  # Added for jitter
+from sqlalchemy.exc import DBAPIError  # Added for retry logic
 from sqlalchemy.ext.asyncio import create_async_engine
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ async def enqueue_task(
     task_type: str,
     payload: Optional[Any] = None,
     scheduled_at: Optional[datetime] = None,
-    notify_event: Optional[asyncio.Event] = None, # Add optional event for notification
+    notify_event: Optional[asyncio.Event] = None,  # Add optional event for notification
 ):
     """
     Adds a new task to the queue.
@@ -43,7 +43,7 @@ async def enqueue_task(
     (scheduled_at is None or in the past), the event will be set.
     """
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
     # Ensure scheduled_at is timezone-aware if provided (outside the loop)
     if scheduled_at and scheduled_at.tzinfo is None:
@@ -51,14 +51,14 @@ async def enqueue_task(
 
     for attempt in range(max_retries):
         try:
-            async with engine.connect() as conn: # Start of with block
+            async with engine.connect() as conn:  # Start of with block
                 # Code below needs to be indented inside the 'with' block
                 stmt = insert(tasks_table).values(
                     task_id=task_id,
                     task_type=task_type,
-            payload=payload,
-            scheduled_at=scheduled_at,
-            # created_at is set by default in the table definition now
+                    payload=payload,
+                    scheduled_at=scheduled_at,
+                    # created_at is set by default in the table definition now
                     status="pending",
                 )
                 # This inner try/except is specific to the insert/commit part
@@ -77,34 +77,45 @@ async def enqueue_task(
                         notify_event.set()
                         logger.debug(f"Notified worker about immediate task {task_id}.")
 
-                    return # Success
-                except Exception as inner_e: # Catch errors during execute/commit
+                    return  # Success
+                except Exception as inner_e:  # Catch errors during execute/commit
                     # Rollback might be needed if commit failed, but connection might be bad.
                     # Let the outer exception handler manage retries.
-                    logger.error(f"Error during execute/commit in enqueue_task: {inner_e}", exc_info=True)
+                    logger.error(
+                        f"Error during execute/commit in enqueue_task: {inner_e}",
+                        exc_info=True,
+                    )
                     # Re-raise to be caught by the outer DBAPIError or generic Exception handler
                     raise inner_e
             # End of with block for conn
 
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in enqueue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in enqueue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for enqueue_task({task_id}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for enqueue_task({task_id}). Raising error."
+                )
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
-        except ValueError: # Catch specific non-retryable errors like timezone issue
-             raise # Re-raise immediately
+        except ValueError:  # Catch specific non-retryable errors like timezone issue
+            raise  # Re-raise immediately
         except Exception as e:
             # Consider specific exception types (e.g., unique constraint violation)
             # These might indicate non-retryable issues.
-            logger.error(f"Non-retryable error in enqueue_task {task_id}: {e}", exc_info=True)
+            logger.error(
+                f"Non-retryable error in enqueue_task {task_id}: {e}", exc_info=True
+            )
             # Should we rollback here? The connection might be dead. Rollback happens on context exit error anyway.
-            raise # Re-raise other exceptions immediately
+            raise  # Re-raise other exceptions immediately
 
     logger.error(f"enqueue_task({task_id}) failed after all retries.")
     # Throwing an exception is better than returning None/False implicitly
-    raise RuntimeError(f"Database operation failed for enqueue_task({task_id}) after multiple retries")
+    raise RuntimeError(
+        f"Database operation failed for enqueue_task({task_id}) after multiple retries"
+    )
 
 
 async def dequeue_task(
@@ -125,12 +136,12 @@ async def dequeue_task(
     """
     now = datetime.now(timezone.utc)
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
-                async with conn.begin(): # Start transaction
+                async with conn.begin():  # Start transaction
                     # Select the oldest, pending task of the specified types,
                     # whose scheduled time is in the past (or null).
                     # Use FOR UPDATE SKIP LOCKED to handle concurrency.
@@ -140,13 +151,13 @@ async def dequeue_task(
                     stmt = (
                         select(tasks_table)
                         .where(tasks_table.c.status == "pending")
-                .where(tasks_table.c.task_type.in_(task_types))
-                .where(
-                    (tasks_table.c.scheduled_at == None)  # noqa: E711
-                    | (tasks_table.c.scheduled_at <= now)
-                )
-                .order_by(tasks_table.c.created_at)
-                .limit(1)
+                        .where(tasks_table.c.task_type.in_(task_types))
+                        .where(
+                            (tasks_table.c.scheduled_at == None)  # noqa: E711
+                            | (tasks_table.c.scheduled_at <= now)
+                        )
+                        .order_by(tasks_table.c.created_at)
+                        .limit(1)
                         .with_for_update(skip_locked=True)
                     )
 
@@ -161,7 +172,7 @@ async def dequeue_task(
                             .where(tasks_table.c.id == task_row.id)
                             .where(
                                 tasks_table.c.status == "pending"
-                            ) # Ensure it wasn't somehow processed between SELECT and UPDATE
+                            )  # Ensure it wasn't somehow processed between SELECT and UPDATE
                             .values(
                                 status="processing",
                                 locked_by=worker_id,
@@ -174,7 +185,7 @@ async def dequeue_task(
                             logger.info(
                                 f"Worker {worker_id} dequeued task {task_row.task_id}"
                             )
-                            return task_row._mapping # Return as dict
+                            return task_row._mapping  # Return as dict
                         else:
                             # Extremely rare race condition or issue, row was modified
                             # between SELECT FOR UPDATE and UPDATE. Transaction rollback
@@ -182,7 +193,7 @@ async def dequeue_task(
                             logger.warning(
                                 f"Worker {worker_id} failed to lock task {task_row.task_id} after selection."
                             )
-                            return None # Transaction will rollback changes implicitly
+                            return None  # Transaction will rollback changes implicitly
                         # End of if task_row block
 
             # If the loop completes without finding a task_row (e.g., SELECT returned None)
@@ -192,18 +203,22 @@ async def dequeue_task(
 
         # These except blocks should be aligned with the 'try' on line 131
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in dequeue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in dequeue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
                 logger.error(f"Max retries exceeded for dequeue_task. Raising error.")
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
             logger.error(f"Non-retryable error in dequeue_task: {e}", exc_info=True)
-            raise # Re-raise immediately
+            raise  # Re-raise immediately
 
     logger.error("dequeue_task failed after all retries.")
-    raise RuntimeError("Database operation failed for dequeue_task after multiple retries")
+    raise RuntimeError(
+        "Database operation failed for dequeue_task after multiple retries"
+    )
 
 
 async def update_task_status(
@@ -211,7 +226,7 @@ async def update_task_status(
 ) -> bool:
     """Updates the status of a task (e.g., 'done', 'failed'), with retries."""
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
     values_to_update = {"status": status}
     if status == "failed":
@@ -222,11 +237,10 @@ async def update_task_status(
 
     for attempt in range(max_retries):
         try:
-            async with engine.connect() as conn: # Start of with block
+            async with engine.connect() as conn:  # Start of with block
                 # Code below needs to be indented inside the 'with' block
                 stmt = (
-                    update(tasks_table)
-                    .where(tasks_table.c.task_id == task_id)
+                    update(tasks_table).where(tasks_table.c.task_id == task_id)
                     # Optionally ensure it was being processed before marking done/failed
                     # .where(tasks_table.c.status == 'processing')
                     .values(**values_to_update)
@@ -242,18 +256,27 @@ async def update_task_status(
                 return False
             # End connection block
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in update_task_status (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in update_task_status (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for update_task_status({task_id}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for update_task_status({task_id}). Raising error."
+                )
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-            logger.error(f"Non-retryable error in update_task_status({task_id}): {e}", exc_info=True)
-            raise # Re-raise immediately
+            logger.error(
+                f"Non-retryable error in update_task_status({task_id}): {e}",
+                exc_info=True,
+            )
+            raise  # Re-raise immediately
 
     logger.error(f"update_task_status({task_id}) failed after all retries.")
-    raise RuntimeError(f"Database operation failed for update_task_status({task_id}) after multiple retries")
+    raise RuntimeError(
+        f"Database operation failed for update_task_status({task_id}) after multiple retries"
+    )
 
 
 # --- End Task Queue Functions ---
@@ -268,10 +291,10 @@ __all__ = [
     "get_message_by_id",
     "add_or_update_note",
     "delete_note",
-    "enqueue_task", # Add task functions to __all__
+    "enqueue_task",  # Add task functions to __all__
     "dequeue_task",
     "update_task_status",
-    "notes_table", # Also export tables if needed elsewhere (e.g., tests)
+    "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
     "tasks_table",
     "engine",
@@ -326,15 +349,11 @@ message_history = Table(
 tasks_table = Table(
     "tasks",
     metadata,
-    Column(
-        "id", Integer, primary_key=True, autoincrement=True
-    ),  # Internal primary key
+    Column("id", Integer, primary_key=True, autoincrement=True),  # Internal primary key
     Column(
         "task_id", String, nullable=False, unique=True, index=True
     ),  # Caller-provided unique ID
-    Column(
-        "task_type", String, nullable=False, index=True
-    ),  # For routing to handlers
+    Column("task_type", String, nullable=False, index=True),  # For routing to handlers
     Column("payload", JSON, nullable=True),  # Task-specific data
     Column(
         "scheduled_at", DateTime(timezone=True), nullable=True, index=True
@@ -362,8 +381,8 @@ tasks_table = Table(
 
 async def init_db():
     """Initializes the database, with retries."""
-    max_retries = 5 # Allow more retries for initial connection
-    base_delay = 1.0 # seconds
+    max_retries = 5  # Allow more retries for initial connection
+    base_delay = 1.0  # seconds
 
     for attempt in range(max_retries):
         try:
@@ -371,17 +390,19 @@ async def init_db():
                 logger.info(f"Initializing database schema (attempt {attempt+1})...")
                 await conn.run_sync(metadata.create_all)
                 logger.info("Database schema initialized.")
-                return # Success
+                return  # Success
         except DBAPIError as e:
-            logger.warning(f"DBAPIError during init_db (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError during init_db (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
                 logger.error("Max retries exceeded for init_db. Raising error.")
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay * 0.5)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay * 0.5)
             await asyncio.sleep(delay)
         except Exception as e:
             logger.error(f"Non-retryable error in init_db: {e}", exc_info=True)
-            raise # Re-raise immediately
+            raise  # Re-raise immediately
 
     logger.critical("Database initialization failed after all retries.")
     raise RuntimeError("Database initialization failed after multiple retries")
@@ -390,7 +411,7 @@ async def init_db():
 async def get_all_notes() -> List[Dict[str, str]]:
     """Retrieves all notes, with retries."""
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
     for attempt in range(max_retries):
         try:
@@ -401,20 +422,26 @@ async def get_all_notes() -> List[Dict[str, str]]:
                 result = await conn.execute(stmt)
                 rows = result.fetchall()
                 # Return as a list of dicts for easier iteration
-                return [{"title": row.title, "content": row.content} for row in rows] # Success
+                return [
+                    {"title": row.title, "content": row.content} for row in rows
+                ]  # Success
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in get_all_notes (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in get_all_notes (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
                 logger.error(f"Max retries exceeded for get_all_notes. Raising error.")
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
             logger.error(f"Non-retryable error in get_all_notes: {e}", exc_info=True)
-            raise # Re-raise immediately
+            raise  # Re-raise immediately
 
     logger.error("get_all_notes failed after all retries.")
-    raise RuntimeError("Database operation failed for get_all_notes after multiple retries")
+    raise RuntimeError(
+        "Database operation failed for get_all_notes after multiple retries"
+    )
 
 
 async def add_message_to_history(
@@ -422,9 +449,9 @@ async def add_message_to_history(
 ):
     """Adds a message to the history table, with retries."""
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
-    stmt = insert(message_history).values( # Define stmt outside loop
+    stmt = insert(message_history).values(  # Define stmt outside loop
         chat_id=chat_id,
         message_id=message_id,
         timestamp=timestamp,
@@ -437,25 +464,38 @@ async def add_message_to_history(
             async with engine.connect() as conn:
                 await conn.execute(stmt)
                 await conn.commit()
-                logger.debug(f"Added message {message_id} from chat {chat_id} to history.")
-                return # Success
+                logger.debug(
+                    f"Added message {message_id} from chat {chat_id} to history."
+                )
+                return  # Success
         except DBAPIError as e:
             # Catch potential unique constraint errors if retrying same message?
             # Check e.orig or specific driver error codes if needed.
             # For now, retry generic DBAPIError
-            logger.warning(f"DBAPIError in add_message_to_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in add_message_to_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for add_message_to_history({chat_id}, {message_id}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for add_message_to_history({chat_id}, {message_id}). Raising error."
+                )
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-             # Catch non-retryable errors (like constraint violations if not DBAPIError)
-             logger.error(f"Non-retryable error in add_message_to_history({chat_id}, {message_id}): {e}", exc_info=True)
-             raise
+            # Catch non-retryable errors (like constraint violations if not DBAPIError)
+            logger.error(
+                f"Non-retryable error in add_message_to_history({chat_id}, {message_id}): {e}",
+                exc_info=True,
+            )
+            raise
 
-    logger.error(f"add_message_to_history({chat_id}, {message_id}) failed after all retries.")
-    raise RuntimeError(f"Database operation failed for add_message_to_history({chat_id}, {message_id}) after multiple retries")
+    logger.error(
+        f"add_message_to_history({chat_id}, {message_id}) failed after all retries."
+    )
+    raise RuntimeError(
+        f"Database operation failed for add_message_to_history({chat_id}, {message_id}) after multiple retries"
+    )
 
 
 async def get_recent_history(
@@ -464,9 +504,9 @@ async def get_recent_history(
     """Retrieves recent messages for a chat, ordered chronologically, with retries."""
     cutoff_time = datetime.now(timezone.utc) - max_age
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
-    stmt = ( # Define stmt outside loop
+    stmt = (  # Define stmt outside loop
         select(message_history.c.role, message_history.c.content)
         .where(message_history.c.chat_id == chat_id)
         .where(message_history.c.timestamp >= cutoff_time)
@@ -480,29 +520,42 @@ async def get_recent_history(
                 result = await conn.execute(stmt)
                 rows = result.fetchall()
                 # Reverse to get chronological order for the LLM
-                return [{"role": row.role, "content": row.content} for row in reversed(rows)] # Success!
+                return [
+                    {"role": row.role, "content": row.content} for row in reversed(rows)
+                ]  # Success!
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in get_recent_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in get_recent_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for get_recent_history({chat_id}). Raising error.")
-                raise # Re-raise the last exception if all retries fail
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+                logger.error(
+                    f"Max retries exceeded for get_recent_history({chat_id}). Raising error."
+                )
+                raise  # Re-raise the last exception if all retries fail
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
             # Catch any other unexpected errors and don't retry
-            logger.error(f"Non-retryable error in get_recent_history({chat_id}): {e}", exc_info=True)
-            raise # Re-raise immediately
+            logger.error(
+                f"Non-retryable error in get_recent_history({chat_id}): {e}",
+                exc_info=True,
+            )
+            raise  # Re-raise immediately
 
     logger.error(f"get_recent_history({chat_id}) failed after all retries.")
-    raise RuntimeError(f"Database operation failed for get_recent_history({chat_id}) after multiple retries")
+    raise RuntimeError(
+        f"Database operation failed for get_recent_history({chat_id}) after multiple retries"
+    )
 
 
 async def get_note_by_title(title: str) -> Optional[Dict[str, Any]]:
     """Retrieves a specific note by its title, with retries."""
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
-    stmt = select(notes_table.c.title, notes_table.c.content).where( # Define stmt outside loop
+    stmt = select(
+        notes_table.c.title, notes_table.c.content
+    ).where(  # Define stmt outside loop
         notes_table.c.title == title
     )
 
@@ -514,28 +567,36 @@ async def get_note_by_title(title: str) -> Optional[Dict[str, Any]]:
                 if row:
                     # Use ._mapping to access columns by name easily
                     return row._mapping
-                return None # Success (note not found or query succeeded)
+                return None  # Success (note not found or query succeeded)
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in get_note_by_title (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in get_note_by_title (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for get_note_by_title({title}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for get_note_by_title({title}). Raising error."
+                )
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-            logger.error(f"Non-retryable error in get_note_by_title({title}): {e}", exc_info=True)
-            raise # Re-raise immediately
+            logger.error(
+                f"Non-retryable error in get_note_by_title({title}): {e}", exc_info=True
+            )
+            raise  # Re-raise immediately
 
     logger.error(f"get_note_by_title({title}) failed after all retries.")
-    raise RuntimeError(f"Database operation failed for get_note_by_title({title}) after multiple retries")
+    raise RuntimeError(
+        f"Database operation failed for get_note_by_title({title}) after multiple retries"
+    )
 
 
 async def get_message_by_id(chat_id: int, message_id: int) -> Optional[Dict[str, Any]]:
     """Retrieves a specific message by its chat and message ID, with retries."""
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
-    stmt = ( # Define stmt outside loop
+    stmt = (  # Define stmt outside loop
         select(message_history.c.role, message_history.c.content)
         .where(message_history.c.chat_id == chat_id)
         .where(message_history.c.message_id == message_id)
@@ -548,36 +609,45 @@ async def get_message_by_id(chat_id: int, message_id: int) -> Optional[Dict[str,
                 row = result.fetchone()
                 if row:
                     return {"role": row.role, "content": row.content}
-                return None # Success (message not found or query succeeded)
+                return None  # Success (message not found or query succeeded)
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in get_message_by_id (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in get_message_by_id (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for get_message_by_id({chat_id}, {message_id}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for get_message_by_id({chat_id}, {message_id}). Raising error."
+                )
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-            logger.error(f"Non-retryable error in get_message_by_id({chat_id}, {message_id}): {e}", exc_info=True)
-            raise # Re-raise immediately
+            logger.error(
+                f"Non-retryable error in get_message_by_id({chat_id}, {message_id}): {e}",
+                exc_info=True,
+            )
+            raise  # Re-raise immediately
 
-    logger.error(f"get_message_by_id({chat_id}, {message_id}) failed after all retries.")
-    raise RuntimeError(f"Database operation failed for get_message_by_id({chat_id}, {message_id}) after multiple retries")
+    logger.error(
+        f"get_message_by_id({chat_id}, {message_id}) failed after all retries."
+    )
+    raise RuntimeError(
+        f"Database operation failed for get_message_by_id({chat_id}, {message_id}) after multiple retries"
+    )
 
 
 # Optional: Function to prune very old history if needed
 # async def prune_history(max_age: timedelta): ...
 
 
-
-
 async def add_or_update_note(title: str, content: str):
     """Adds/updates a note, with retries."""
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
     for attempt in range(max_retries):
         try:
-            async with engine.connect() as conn: # Start of with block
+            async with engine.connect() as conn:  # Start of with block
                 # Code below needs to be indented inside the 'with' block
                 # Check if title exists
                 select_stmt = select(notes_table).where(notes_table.c.title == title)
@@ -606,31 +676,42 @@ async def add_or_update_note(title: str, content: str):
 
                 await conn.execute(stmt)
                 await conn.commit()
-                return # Success
+                return  # Success
             # End of with block for conn
         except DBAPIError as e:
             # Note: Retrying might lead to race conditions if two updates happen concurrently.
             # The unique constraint on title helps, but consider implications.
-            logger.warning(f"DBAPIError in add_or_update_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in add_or_update_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for add_or_update_note({title}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for add_or_update_note({title}). Raising error."
+                )
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-             logger.error(f"Non-retryable error in add_or_update_note({title}): {e}", exc_info=True)
-             raise
+            logger.error(
+                f"Non-retryable error in add_or_update_note({title}): {e}",
+                exc_info=True,
+            )
+            raise
 
     logger.error(f"add_or_update_note({title}) failed after all retries.")
-    raise RuntimeError(f"Database operation failed for add_or_update_note({title}) after multiple retries")
+    raise RuntimeError(
+        f"Database operation failed for add_or_update_note({title}) after multiple retries"
+    )
 
 
 async def delete_note(title: str) -> bool:
     """Deletes a note by title, with retries."""
     max_retries = 3
-    base_delay = 0.5 # seconds
+    base_delay = 0.5  # seconds
 
-    stmt = notes_table.delete().where(notes_table.c.title == title) # Define stmt outside loop
+    stmt = notes_table.delete().where(
+        notes_table.c.title == title
+    )  # Define stmt outside loop
 
     for attempt in range(max_retries):
         try:
@@ -641,18 +722,26 @@ async def delete_note(title: str) -> bool:
                     logger.info(f"Deleted note: {title}")
                     return True
                 logger.warning(f"Note not found for deletion: {title}")
-                return False # Success (operation completed, note wasn't there)
+                return False  # Success (operation completed, note wasn't there)
             # End connection block
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in delete_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in delete_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for delete_note({title}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for delete_note({title}). Raising error."
+                )
                 raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-             logger.error(f"Non-retryable error in delete_note({title}): {e}", exc_info=True)
-             raise
+            logger.error(
+                f"Non-retryable error in delete_note({title}): {e}", exc_info=True
+            )
+            raise
 
     logger.error(f"delete_note({title}) failed after all retries.")
-    raise RuntimeError(f"Database operation failed for delete_note({title}) after multiple retries")
+    raise RuntimeError(
+        f"Database operation failed for delete_note({title}) after multiple retries"
+    )
