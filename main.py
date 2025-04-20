@@ -5,17 +5,17 @@ import html
 import argparse
 import argparse
 import asyncio
-import base64 # Add base64
+import base64  # Add base64
 import contextlib
 import html
-import io # Add io
+import io  # Add io
 import json
 import logging
 import os
 import signal
 import sys
 import traceback
-import uuid # Add uuid
+import uuid  # Add uuid
 import yaml
 import mcp  # Import MCP
 from mcp import ClientSession, StdioServerParameters  # MCP specifics
@@ -37,7 +37,7 @@ from telegram.ext import (
     # PicklePersistence, # No longer needed for history
     filters,
 )
-import telegramify_markdown # Import the new library
+import telegramify_markdown  # Import the new library
 from telegram.helpers import escape_markdown
 import uvicorn  # Import uvicorn
 
@@ -79,13 +79,13 @@ logger = logging.getLogger(__name__)
 
 # --- Events for coordination ---
 shutdown_event = asyncio.Event()
-new_task_event = asyncio.Event() # Event to notify worker of immediate tasks
+new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 
 # --- Constants ---
 MAX_HISTORY_MESSAGES = 5  # Number of recent messages to include (excluding current)
 HISTORY_MAX_AGE_HOURS = 24  # Only include messages from the last X hours
-TASK_POLLING_INTERVAL = 5 # Seconds to wait between polling for tasks
+TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 
 # --- Global Variables ---
 application: Optional[Application] = None
@@ -94,7 +94,7 @@ DEVELOPER_CHAT_ID: Optional[int] = None
 PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
 CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
 # shutdown_event moved higher up
-from collections import defaultdict # Add defaultdict
+from collections import defaultdict  # Add defaultdict
 
 mcp_sessions: Dict[str, ClientSession] = (
     {}
@@ -115,6 +115,7 @@ mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
 # Example: async def handle_my_task(payload: Any): ...
 TASK_HANDLERS: Dict[str, callable] = {}
 
+
 # Example Task Handler (can be moved elsewhere later)
 async def handle_log_message(payload: Any):
     """Simple task handler that logs the received payload."""
@@ -123,6 +124,7 @@ async def handle_log_message(payload: Any):
     await asyncio.sleep(1)
     # In a real handler, you might interact with APIs, DB, etc.
     # If this function raises an exception, the task will be marked 'failed'.
+
 
 # Register the example handler
 TASK_HANDLERS["log_message"] = handle_log_message
@@ -142,7 +144,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
             task = await dequeue_task(worker_id, task_types_handled)
 
             if task:
-                logger.info(f"Worker {worker_id} processing task {task['task_id']} (type: {task['task_type']})")
+                logger.info(
+                    f"Worker {worker_id} processing task {task['task_id']} (type: {task['task_type']})"
+                )
                 handler = TASK_HANDLERS.get(task["task_type"])
 
                 if handler:
@@ -151,7 +155,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         await handler(task["payload"])
                         # Mark task as done if handler completes successfully
                         await update_task_status(task["task_id"], "done")
-                        logger.info(f"Worker {worker_id} completed task {task['task_id']}")
+                        logger.info(
+                            f"Worker {worker_id} completed task {task['task_id']}"
+                        )
                     except Exception as handler_exc:
                         logger.error(
                             f"Worker {worker_id} failed task {task['task_id']} due to handler error: {handler_exc}",
@@ -175,29 +181,35 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
             else:
                 # No task found, wait for the polling interval OR the wake-up event
                 try:
-                    logger.debug(f"Worker {worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)...")
+                    logger.debug(
+                        f"Worker {worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
+                    )
                     # Wait for the event to be set, with a timeout
                     await asyncio.wait_for(
                         wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL
                     )
                     # If wait_for completes without timeout, the event was set
                     logger.debug(f"Worker {worker_id}: Woken up by event.")
-                    wake_up_event.clear() # Reset the event for the next notification
+                    wake_up_event.clear()  # Reset the event for the next notification
                 except asyncio.TimeoutError:
                     # Event didn't fire, timeout reached, proceed to next polling cycle
-                    logger.debug(f"Worker {worker_id}: Wait timed out, continuing poll cycle.")
-                    pass # Continue the loop normally after timeout
+                    logger.debug(
+                        f"Worker {worker_id}: Wait timed out, continuing poll cycle."
+                    )
+                    pass  # Continue the loop normally after timeout
 
         except asyncio.CancelledError:
             logger.info(f"Task worker {worker_id} received cancellation signal.")
             # If a task was being processed, try to mark it as pending again?
             # Or rely on lock expiry/manual intervention for now.
             # For simplicity, we just exit.
-            break # Exit the loop cleanly on cancellation
+            break  # Exit the loop cleanly on cancellation
         except Exception as e:
-            logger.error(f"Task worker {worker_id} encountered an error: {e}", exc_info=True)
+            logger.error(
+                f"Task worker {worker_id} encountered an error: {e}", exc_info=True
+            )
             # If an error occurs during dequeue or status update, wait before retrying
-            await asyncio.sleep(TASK_POLLING_INTERVAL * 2) # Longer sleep after error
+            await asyncio.sleep(TASK_POLLING_INTERVAL * 2)  # Longer sleep after error
 
     logger.info(f"Task worker {worker_id} stopped.")
 
@@ -205,7 +217,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 # --- Configuration Loading ---
 def load_config():
     """Loads configuration from environment variables and prompts.yaml."""
-    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG # Renamed global
+    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG  # Renamed global
     load_dotenv()  # Load environment variables from .env file
 
     # --- Telegram Config ---
@@ -259,7 +271,7 @@ def load_config():
         PROMPTS = {}  # Reset to empty on parsing error
 
     # --- Calendar Config (CalDAV & iCal) ---
-    CALENDAR_CONFIG = {} # Initialize the combined config dict
+    CALENDAR_CONFIG = {}  # Initialize the combined config dict
     caldav_enabled = False
     ical_enabled = False
 
@@ -267,7 +279,9 @@ def load_config():
     caldav_user = os.getenv("CALDAV_USERNAME")
     caldav_pass = os.getenv("CALDAV_PASSWORD")
     caldav_urls_str = os.getenv("CALDAV_CALENDAR_URLS")
-    caldav_urls = [url.strip() for url in caldav_urls_str.split(',')] if caldav_urls_str else []
+    caldav_urls = (
+        [url.strip() for url in caldav_urls_str.split(",")] if caldav_urls_str else []
+    )
 
     if caldav_user and caldav_pass and caldav_urls:
         CALENDAR_CONFIG["caldav"] = {
@@ -276,13 +290,19 @@ def load_config():
             "calendar_urls": caldav_urls,
         }
         caldav_enabled = True
-        logger.info(f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s).")
+        logger.info(
+            f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s)."
+        )
     else:
-        logger.info("CalDAV configuration incomplete or disabled (requires USERNAME, PASSWORD, CALENDAR_URLS).")
+        logger.info(
+            "CalDAV configuration incomplete or disabled (requires USERNAME, PASSWORD, CALENDAR_URLS)."
+        )
 
     # iCal settings
     ical_urls_str = os.getenv("ICAL_URLS")
-    ical_urls = [url.strip() for url in ical_urls_str.split(',')] if ical_urls_str else []
+    ical_urls = (
+        [url.strip() for url in ical_urls_str.split(",")] if ical_urls_str else []
+    )
 
     if ical_urls:
         CALENDAR_CONFIG["ical"] = {
@@ -294,8 +314,10 @@ def load_config():
         logger.info("iCal configuration incomplete or disabled (requires ICAL_URLS).")
 
     if not caldav_enabled and not ical_enabled:
-        logger.warning("No calendar sources (CalDAV or iCal) are configured. Calendar features will be disabled.")
-        CALENDAR_CONFIG = {} # Ensure it's empty if nothing is enabled
+        logger.warning(
+            "No calendar sources (CalDAV or iCal) are configured. Calendar features will be disabled."
+        )
+        CALENDAR_CONFIG = {}  # Ensure it's empty if nothing is enabled
 
 
 # --- MCP Configuration Loading & Connection ---
@@ -322,7 +344,9 @@ async def load_mcp_config_and_connect():
 
     logger.info(f"Found {len(mcp_server_configs)} MCP server configurations.")
 
-    async def _connect_and_discover_mcp(server_id: str, server_conf: Dict[str, Any]) -> Tuple[Optional[ClientSession], List[Dict[str, Any]], Dict[str, str]]:
+    async def _connect_and_discover_mcp(
+        server_id: str, server_conf: Dict[str, Any]
+    ) -> Tuple[Optional[ClientSession], List[Dict[str, Any]], Dict[str, str]]:
         """Connects to a single MCP server, discovers tools, and returns results."""
         discovered_tools = []
         tool_map = {}
@@ -364,12 +388,20 @@ async def load_mcp_config_and_connect():
             logger.error(f"MCP server '{server_id}': 'command' is missing.")
             return None, [], {}
 
-        logger.info(f"Attempting connection and discovery for MCP server '{server_id}'...")
+        logger.info(
+            f"Attempting connection and discovery for MCP server '{server_id}'..."
+        )
         try:
-            server_params = StdioServerParameters(command=command, args=args, env=resolved_env)
+            server_params = StdioServerParameters(
+                command=command, args=args, env=resolved_env
+            )
             # Use the *global* exit stack to manage contexts
-            read_stream, write_stream = await mcp_exit_stack.enter_async_context(stdio_client(server_params))
-            session = await mcp_exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
+            read_stream, write_stream = await mcp_exit_stack.enter_async_context(
+                stdio_client(server_params)
+            )
+            session = await mcp_exit_stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
             await session.initialize()
             logger.info(f"Initialized session with MCP server '{server_id}'.")
 
@@ -394,7 +426,7 @@ async def load_mcp_config_and_connect():
 
         except Exception as e:
             logger.error(f"Failed for MCP server '{server_id}': {e}", exc_info=True)
-            return None, [], {} # Return empty on failure
+            return None, [], {}  # Return empty on failure
 
     # --- Create connection tasks ---
     connection_tasks = [
@@ -403,28 +435,35 @@ async def load_mcp_config_and_connect():
     ]
 
     # --- Run tasks concurrently ---
-    logger.info(f"Starting parallel connection to {len(connection_tasks)} MCP server(s)...")
+    logger.info(
+        f"Starting parallel connection to {len(connection_tasks)} MCP server(s)..."
+    )
     results = await asyncio.gather(*connection_tasks, return_exceptions=True)
     logger.info("Finished parallel MCP connection attempts.")
 
     # --- Process results ---
     for i, result in enumerate(results):
-        server_id = list(mcp_server_configs.keys())[i] # Get corresponding server_id
+        server_id = list(mcp_server_configs.keys())[i]  # Get corresponding server_id
         if isinstance(result, Exception):
             logger.error(f"Gather caught exception for server '{server_id}': {result}")
         elif result:
             session, discovered, tool_map = result
             if session:
-                mcp_sessions[server_id] = session # Store successful session
+                mcp_sessions[server_id] = session  # Store successful session
                 mcp_tools.extend(discovered)
                 tool_name_to_server_id.update(tool_map)
             else:
-                logger.warning(f"Connection/discovery seems to have failed silently for server '{server_id}' (result: {result}).")
+                logger.warning(
+                    f"Connection/discovery seems to have failed silently for server '{server_id}' (result: {result})."
+                )
         else:
-             logger.warning(f"Received unexpected empty result for server '{server_id}'.")
+            logger.warning(
+                f"Received unexpected empty result for server '{server_id}'."
+            )
 
-
-    logger.info(f"Finished MCP setup. Active sessions: {len(mcp_sessions)}. Total discovered tools: {len(mcp_tools)}")
+    logger.info(
+        f"Finished MCP setup. Active sessions: {len(mcp_sessions)}. Total discovered tools: {len(mcp_tools)}"
+    )
 
 
 # --- Argument Parsing ---
@@ -506,36 +545,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Hello! I'm your family assistant. Your chat ID is `{chat_id}`. How can I help?"
     )
 
+
 # --- Message Queue Processing ---
 async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Processes the message buffer for a given chat."""
     # This function now contains the core logic previously in message_handler
-    global processing_tasks, message_buffers, chat_locks # Access globals
+    global processing_tasks, message_buffers, chat_locks  # Access globals
 
     logger.debug(f"Starting process_chat_queue for chat_id {chat_id}")
     async with chat_locks[chat_id]:
         # buffered_batch: List[Tuple[Update, Optional[bytes]]]
         buffered_batch = message_buffers[chat_id][:]  # Get a copy
-        message_buffers[chat_id].clear()             # Clear the buffer
-        logger.debug(f"Cleared buffer for chat {chat_id}, processing {len(buffered_batch)} items.")
+        message_buffers[chat_id].clear()  # Clear the buffer
+        logger.debug(
+            f"Cleared buffer for chat {chat_id}, processing {len(buffered_batch)} items."
+        )
 
     if not buffered_batch:
-        logger.info(f"Processing queue for chat {chat_id} called with empty buffer. Exiting.")
-        return # Nothing to process
+        logger.info(
+            f"Processing queue for chat {chat_id} called with empty buffer. Exiting."
+        )
+        return  # Nothing to process
 
-    logger.info(f"Processing batch of {len(buffered_batch)} message update(s) for chat {chat_id}.")
+    logger.info(
+        f"Processing batch of {len(buffered_batch)} message update(s) for chat {chat_id}."
+    )
 
     # --- Extract context from the last message in the batch ---
-    last_update, _ = buffered_batch[-1] # Get the last Update object
+    last_update, _ = buffered_batch[-1]  # Get the last Update object
     user = last_update.effective_user
     user_name = user.first_name if user else "Unknown User"
-    reply_target_message_id = last_update.message.message_id if last_update.message else None
-    logger.debug(f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update.")
+    reply_target_message_id = (
+        last_update.message.message_id if last_update.message else None
+    )
+    logger.debug(
+        f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update."
+    )
 
     # --- Combine text and find first photo from the batch ---
     all_texts = []
     first_photo_bytes = None
-    forward_context = "" # Reset forward context for the batch
+    forward_context = ""  # Reset forward context for the batch
 
     for update_item, photo_bytes in buffered_batch:
         if update_item.message:
@@ -544,7 +594,9 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                 all_texts.append(text)
             if photo_bytes and first_photo_bytes is None:
                 first_photo_bytes = photo_bytes
-                logger.debug(f"Found first photo in batch from message {update_item.message.message_id}")
+                logger.debug(
+                    f"Found first photo in batch from message {update_item.message.message_id}"
+                )
             # Check for forward context (use context from the *last* message for simplicity)
             # A more complex approach could prepend context for each forwarded message.
             if update_item.message.forward_origin:
@@ -555,7 +607,9 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                 elif origin.sender_chat:
                     original_sender_name = origin.sender_chat.title or "Chat/Channel"
                 forward_context = f"(forwarded from {original_sender_name}) "
-                logger.debug(f"Detected forward context from {original_sender_name} in last message.")
+                logger.debug(
+                    f"Detected forward context from {original_sender_name} in last message."
+                )
 
     combined_text = "\n\n".join(all_texts).strip()
     logger.debug(f"Combined text: '{combined_text[:100]}...'")
@@ -570,7 +624,9 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
         max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
     )
     messages.extend(history_messages)
-    logger.debug(f"Added {len(history_messages)} recent messages from DB history for batch.")
+    logger.debug(
+        f"Added {len(history_messages)} recent messages from DB history for batch."
+    )
 
     # --- Prepare current user message content part (combined) ---
     formatted_user_text_content = f"{forward_context}{combined_text}".strip()
@@ -582,7 +638,7 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
     if first_photo_bytes:
         try:
             base64_image = base64.b64encode(first_photo_bytes).decode("utf-8")
-            mime_type = "image/jpeg" # Assuming JPEG
+            mime_type = "image/jpeg"  # Assuming JPEG
             photo_content_part = {
                 "type": "image_url",
                 "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
@@ -592,7 +648,9 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
         except Exception as img_err:
             logger.error(f"Error encoding photo from batch: {img_err}", exc_info=True)
             # Decide how to handle photo error in batch - maybe just send text?
-            await context.bot.send_message(chat_id, "Error processing image in batch.") # Inform user
+            await context.bot.send_message(
+                chat_id, "Error processing image in batch."
+            )  # Inform user
 
     # Create the final combined user message for LLM
     current_user_message_content = {
@@ -623,7 +681,9 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             try:
                 logger.info("Fetching calendar events...")
                 # Pass the config to the fetch function
-                upcoming_events = await calendar_integration.fetch_upcoming_events(CALENDAR_CONFIG)
+                upcoming_events = await calendar_integration.fetch_upcoming_events(
+                    CALENDAR_CONFIG
+                )
                 today_events_str, future_events_str = (
                     calendar_integration.format_events_for_prompt(
                         upcoming_events, PROMPTS
@@ -644,7 +704,9 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                     exc_info=True,
                 )
                 # Include the specific error in the context for the LLM
-                calendar_context_str = f"Error retrieving calendar events: {str(cal_err)}"
+                calendar_context_str = (
+                    f"Error retrieving calendar events: {str(cal_err)}"
+                )
         else:
             logger.debug("No calendars configured, skipping calendar context.")
             calendar_context_str = "Calendar integration not configured."  # Inform LLM
@@ -675,7 +737,7 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
 
         # --- Assemble Final System Prompt ---
         final_system_prompt = system_prompt_template.format(
-            user_name=user_name, # Add user name here
+            user_name=user_name,  # Add user name here
             current_time=current_time_str,
             calendar_context=calendar_context_str,
             notes_context=notes_context_str,
@@ -715,96 +777,115 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                     chat_id=chat_id,
                     text=converted_markdown,
                     parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_to_message_id=reply_target_message_id # Use the stored ID
+                    reply_to_message_id=reply_target_message_id,  # Use the stored ID
                 )
-            except Exception as md_err: # Catch potential errors during conversion
-                logger.error(f"Failed to convert markdown: {md_err}. Sending plain text.", exc_info=True)
+            except Exception as md_err:  # Catch potential errors during conversion
+                logger.error(
+                    f"Failed to convert markdown: {md_err}. Sending plain text.",
+                    exc_info=True,
+                )
                 # Fallback to sending plain text if conversion fails
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=llm_response,
-                    reply_to_message_id=reply_target_message_id # Use the stored ID
+                    reply_to_message_id=reply_target_message_id,  # Use the stored ID
                 )
         else:
             # Handle case where LLM gave no response
             logger.warning("Received empty response from LLM.")
-            if reply_target_message_id: # Only reply if we have a message ID
-                 await context.bot.send_message(
-                     chat_id=chat_id,
-                     text="Sorry, I couldn't process that request.",
-                     reply_to_message_id=reply_target_message_id
-                 )
+            if reply_target_message_id:  # Only reply if we have a message ID
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Sorry, I couldn't process that request.",
+                    reply_to_message_id=reply_target_message_id,
+                )
 
     except Exception as e:
-        logger.error(f"Error processing message batch for chat {chat_id}: {e}", exc_info=True)
+        logger.error(
+            f"Error processing message batch for chat {chat_id}: {e}", exc_info=True
+        )
         # Let the error_handler deal with notifying the developer
-        if reply_target_message_id: # Check if we have a message to reply to
+        if reply_target_message_id:  # Check if we have a message to reply to
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text="Sorry, something went wrong while processing your request.",
-                    reply_to_message_id=reply_target_message_id
+                    reply_to_message_id=reply_target_message_id,
                 )
             except Exception as reply_err:
-                 logger.error(f"Failed to send error reply to chat {chat_id}: {reply_err}")
-                 # Attempt to send without replying as a fallback
-                 try:
-                     await context.bot.send_message(
-                         chat_id=chat_id,
-                         text="Sorry, something went wrong while processing your request (reply failed)."
-                     )
-                 except Exception as fallback_err:
-                     logger.error(f"Failed to send fallback error message to chat {chat_id}: {fallback_err}")
+                logger.error(
+                    f"Failed to send error reply to chat {chat_id}: {reply_err}"
+                )
+                # Attempt to send without replying as a fallback
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="Sorry, something went wrong while processing your request (reply failed).",
+                    )
+                except Exception as fallback_err:
+                    logger.error(
+                        f"Failed to send fallback error message to chat {chat_id}: {fallback_err}"
+                    )
 
         # Log and finish the task to prevent breaking the handler loop
-        logger.debug(f"Finished processing batch for chat {chat_id}, proceeding to finally block.")
+        logger.debug(
+            f"Finished processing batch for chat {chat_id}, proceeding to finally block."
+        )
     finally:
         # --- Store messages in DB (Store combined user message, single bot response) ---
         # Removed redundant outer try block here
         try:
             # Store combined user message
             # Use the ID of the *last* message in the batch as the representative ID
-            history_user_content = combined_text # Start with combined text
-            if first_photo_bytes: # Check if a photo was processed in the batch
-                history_user_content += " [Image(s) Attached]" # Add indicator
+            history_user_content = combined_text  # Start with combined text
+            if first_photo_bytes:  # Check if a photo was processed in the batch
+                history_user_content += " [Image(s) Attached]"  # Add indicator
             if reply_target_message_id:
-                 await add_message_to_history(
-                     chat_id=chat_id,
-                     message_id=reply_target_message_id, # Use last known message ID
-                     timestamp=datetime.now(timezone.utc), # Use processing time
-                     role="user",
-                     content=history_user_content,
-                 )
-                 # Store bot response if successful
-                 if llm_response:
-                     # Need bot's actual message ID if possible, otherwise use pseudo-ID
-                     bot_message_pseudo_id = reply_target_message_id + 1
-                     await add_message_to_history(
-                         chat_id=chat_id,
-                         message_id=bot_message_pseudo_id, # Placeholder ID
-                         timestamp=datetime.now(timezone.utc),
-                         role="assistant",
-                         content=llm_response,
-                     )
+                await add_message_to_history(
+                    chat_id=chat_id,
+                    message_id=reply_target_message_id,  # Use last known message ID
+                    timestamp=datetime.now(timezone.utc),  # Use processing time
+                    role="user",
+                    content=history_user_content,
+                )
+                # Store bot response if successful
+                if llm_response:
+                    # Need bot's actual message ID if possible, otherwise use pseudo-ID
+                    bot_message_pseudo_id = reply_target_message_id + 1
+                    await add_message_to_history(
+                        chat_id=chat_id,
+                        message_id=bot_message_pseudo_id,  # Placeholder ID
+                        timestamp=datetime.now(timezone.utc),
+                        role="assistant",
+                        content=llm_response,
+                    )
             else:
-                 logger.warning(f"Could not store batched user message for chat {chat_id} due to missing message ID.")
+                logger.warning(
+                    f"Could not store batched user message for chat {chat_id} due to missing message ID."
+                )
 
         except Exception as db_err:
-                logger.error(f"Failed to store batched message history in DB for chat {chat_id}: {db_err}", exc_info=True)
+            logger.error(
+                f"Failed to store batched message history in DB for chat {chat_id}: {db_err}",
+                exc_info=True,
+            )
 
         # --- Task Cleanup ---
-        async with chat_locks[chat_id]: # Ensure lock is held for task removal
+        async with chat_locks[chat_id]:  # Ensure lock is held for task removal
             if processing_tasks.get(chat_id) is asyncio.current_task():
-                 processing_tasks.pop(chat_id, None)
-                 logger.info(f"Processing task for chat {chat_id} finished and removed.")
+                processing_tasks.pop(chat_id, None)
+                logger.info(f"Processing task for chat {chat_id} finished and removed.")
             else:
                 # This case might happen if a new task was rapidly scheduled, though unlikely with the lock
-                logger.warning(f"Current task for chat {chat_id} doesn't match entry in processing_tasks during cleanup.")
+                logger.warning(
+                    f"Current task for chat {chat_id} doesn't match entry in processing_tasks during cleanup."
+                )
+
 
 # --- Original Message Handler (Now Buffers) ---
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Buffers incoming messages and triggers processing if not already running."""
-    global message_buffers, processing_tasks, chat_locks # Access globals
+    global message_buffers, processing_tasks, chat_locks  # Access globals
     chat_id = update.effective_chat.id
     user_message_text = update.message.caption or update.message.text or ""
     photo_bytes = None
@@ -816,7 +897,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # --- Process Photo (if any) into bytes immediately ---
     if update.message.photo:
-        logger.info(f"Message {update.message.message_id} from chat {chat_id} contains photo.")
+        logger.info(
+            f"Message {update.message.message_id} from chat {chat_id} contains photo."
+        )
         try:
             photo_size = update.message.photo[-1]
             photo_file = await photo_size.get_file()
@@ -824,9 +907,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await photo_file.download_to_memory(out=buf)
                 buf.seek(0)
                 photo_bytes = buf.read()
-            logger.debug(f"Photo from message {update.message.message_id} loaded into bytes.")
+            logger.debug(
+                f"Photo from message {update.message.message_id} loaded into bytes."
+            )
         except Exception as img_err:
-            logger.error(f"Failed to process photo bytes for message {update.message.message_id}: {img_err}", exc_info=True)
+            logger.error(
+                f"Failed to process photo bytes for message {update.message.message_id}: {img_err}",
+                exc_info=True,
+            )
             await update.message.reply_text("Sorry, error processing attached image.")
             # Don't buffer this message if photo processing failed critically
             return
@@ -836,7 +924,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         message_buffers[chat_id].append((update, photo_bytes))
         # Removed storing message_id in context.user_data
         buffer_size = len(message_buffers[chat_id])
-        logger.info(f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}")
+        logger.info(
+            f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}"
+        )
 
         # --- Check if processing task needs to be started ---
         if chat_id not in processing_tasks or processing_tasks[chat_id].done():
@@ -846,7 +936,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Add callback to remove task from dict upon completion/error
             task.add_done_callback(lambda t, c=chat_id: processing_tasks.pop(c, None))
         else:
-            logger.info(f"Processing task already running for chat {chat_id}. Message added to buffer.")
+            logger.info(
+                f"Processing task already running for chat {chat_id}. Message added to buffer."
+            )
         # Lock is released automatically here
 
 
@@ -981,7 +1073,7 @@ async def main_async() -> None:
     # Start polling and job queue (if any)
     await application.start()
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-    logger.info("Bot polling started.") # Updated log message
+    logger.info("Bot polling started.")  # Updated log message
 
     # --- Uvicorn Server Setup ---
     config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
@@ -990,7 +1082,7 @@ async def main_async() -> None:
     # Run Uvicorn server concurrently (polling is already running)
     # telegram_task = asyncio.create_task(application.updater.start_polling(allowed_updates=Update.ALL_TYPES)) # Removed duplicate start_polling
     web_server_task = asyncio.create_task(server.serve())
-    logger.info("Web server running on http://0.0.0.0:8000") # Updated log message
+    logger.info("Web server running on http://0.0.0.0:8000")  # Updated log message
 
     # Start the task queue worker, passing the notification event
     worker_id = f"worker-{uuid.uuid4()}"
@@ -1017,7 +1109,6 @@ async def main_async() -> None:
 
     logger.info("All services stopped. Final shutdown.")
     # Application shutdown is handled by the signal handler which calls shutdown_handler
-
 
 
 def main() -> None:
