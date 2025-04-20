@@ -36,7 +36,7 @@ async def enqueue_task(
     scheduled_at: Optional[datetime] = None,
     max_retries: Optional[int] = None,  # Allow overriding default max_retries
     notify_event: Optional[asyncio.Event] = None,
-): # noqa: PLR0913 - Keep signature but add max_retries
+):  # noqa: PLR0913 - Keep signature but add max_retries
     """
     Adds a new task to the queue.
 
@@ -328,9 +328,7 @@ async def reschedule_task_for_retry(
                         f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
                     )
                     return True
-                logger.warning(
-                    f"Task {task_id} not found when rescheduling for retry."
-                )
+                logger.warning(f"Task {task_id} not found when rescheduling for retry.")
                 return False
         except DBAPIError as e:
             logger.warning(
@@ -373,9 +371,9 @@ __all__ = [
     "enqueue_task",
     "dequeue_task",
     "update_task_status",
-    "reschedule_task_for_retry", # Added
+    "reschedule_task_for_retry",  # Added
     "get_grouped_message_history",
-    "notes_table", # Also export tables if needed elsewhere (e.g., tests)
+    "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
     "tasks_table",
     "engine",
