@@ -91,6 +91,12 @@ COPY main.py processing.py storage.py web_server.py calendar_integration.py ./
 COPY prompts.yaml mcp_config.json ./
 COPY templates/ ./templates/
 
+# --- Linting Step ---
+# Run pylint in errors-only mode after copying the code
+RUN echo "Running pylint..." && \
+    /app/.venv/bin/pylint --errors-only *.py || \
+    (echo "Pylint found errors. Please fix them." && exit 1)
+
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
 EXPOSE 8000
