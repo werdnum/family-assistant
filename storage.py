@@ -188,8 +188,10 @@ async def dequeue_task(
             # If the loop completes without finding a task_row (e.g., SELECT returned None)
             return None
         # End of transaction block (async with conn.begin())
-    # End of connection block (async with engine.connect())
-except DBAPIError as e:
+        # End of connection block (async with engine.connect())
+
+        # These except blocks should be aligned with the 'try' on line 131
+        except DBAPIError as e:
             logger.warning(f"DBAPIError in dequeue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
             if attempt == max_retries - 1:
                 logger.error(f"Max retries exceeded for dequeue_task. Raising error.")
