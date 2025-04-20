@@ -291,9 +291,10 @@ __all__ = [
     "get_message_by_id",
     "add_or_update_note",
     "delete_note",
-    "enqueue_task",  # Add task functions to __all__
+    "enqueue_task",
     "dequeue_task",
     "update_task_status",
+    "get_grouped_message_history", # Added
     "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
     "tasks_table",
@@ -744,4 +745,66 @@ async def delete_note(title: str) -> bool:
     logger.error(f"delete_note({title}) failed after all retries.")
     raise RuntimeError(
         f"Database operation failed for delete_note({title}) after multiple retries"
+    )
+
+
+async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
+    """
+    Retrieves all message history, grouped by chat_id and ordered by timestamp.
+    """
+    max_retries = 3
+    base_delay = 0.5  # seconds
+
+    stmt = (
+        select(
+            message_history.c.chat_id,
+            message_history.c.message_id,
+            message_history.c.timestamp,
+            message_history.c.role,
+            message_history.c.content,
+        )
+        # Order by chat_id first, then by timestamp within each chat
+        .order_by(message_history.c.chat_id, message_history.c.timestamp)
+    )
+
+    for attempt in range(max_retries):
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(stmt)
+                rows = result.fetchall()
+
+                # Group messages by chat_id
+                grouped_history = {}
+                for row in rows:
+                    chat_id = row.chat_id
+                    if chat_id not in grouped_history:
+                        grouped_history[chat_id] = []
+                    grouped_history[chat_id].append(
+                        {
+                            "chat_id": row.chat_id,
+                            "message_id": row.message_id,
+                            "timestamp": row.timestamp,
+                            "role": row.role,
+                            "content": row.content,
+                        }
+                    )
+                return grouped_history # Success
+        except DBAPIError as e:
+            logger.warning(
+                f"DBAPIError in get_grouped_message_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
+            if attempt == max_retries - 1:
+                logger.error(f"Max retries exceeded for get_grouped_message_history. Raising error.")
+                raise
+            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
+            await asyncio.sleep(delay)
+        except Exception as e:
+            logger.error(
+                f"Non-retryable error in get_grouped_message_history: {e}", exc_info=True
+            )
+            raise
+
+    logger.error("get_grouped_message_history failed after all retries.")
+    raise RuntimeError(
+        "Database operation failed for get_grouped_message_history after multiple retries"
     )
