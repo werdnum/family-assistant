@@ -616,9 +616,21 @@ async def get_recent_history(
                 result = await conn.execute(stmt)
                 rows = result.fetchall()
                 # Reverse to get chronological order for the LLM
-                return [
-                    {"role": row.role, "content": row.content} for row in reversed(rows)
-                ]  # Success!
+                formatted_rows = []
+                for row in reversed(rows):
+                    msg = {"role": row.role, "content": row.content}
+                    # Include tool_calls_info if it exists (it's stored as JSON)
+                    if row.role == "assistant" and row.tool_calls_info:
+                        # Directly attach the stored info. Assumes it's stored
+                        # in a format compatible with LLM expectations or needs
+                        # further transformation in main.py.
+                        # LiteLLM expects a 'tool_calls' key with a list of tool call objects.
+                        # We need to ensure the structure matches.
+                        # The stored info might be simpler (e.g., just name, args, response).
+                        # Let's pass it raw for now and adapt in main.py
+                        msg["tool_calls_info_raw"] = row.tool_calls_info
+                    formatted_rows.append(msg)
+                return formatted_rows  # Success!
         except DBAPIError as e:
             logger.warning(
                 f"DBAPIError in get_recent_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
