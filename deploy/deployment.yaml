@@ -38,6 +38,14 @@ spec:
           value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@storage-cluster.postgres.svc.cluster.local/mlbot"
         - name: TIMEZONE # Add the timezone variable
           value: "Australia/Sydney" # Set the desired timezone for the deployment
+        livenessProbe:
+          httpGet:
+            path: /health # The endpoint added to web_server.py
+            port: 8000    # The port the application listens on inside the container
+          initialDelaySeconds: 15 # Wait 15 seconds before the first probe
+          periodSeconds: 20     # Probe every 20 seconds
+          timeoutSeconds: 5       # Wait 5 seconds for a response
+          failureThreshold: 3   # Consider it failed after 3 consecutive failures
         # volumeMounts: # Removed volume mount for SQLite
         # - name: data-volume
         #   mountPath: /data
