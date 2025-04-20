@@ -23,6 +23,163 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 logger = logging.getLogger(__name__)
 
+
+# --- Task Queue Functions ---
+
+
+async def enqueue_task(
+    task_id: str,
+    task_type: str,
+    payload: Optional[Any] = None,
+    scheduled_at: Optional[datetime] = None,
+    notify_event: Optional[asyncio.Event] = None, # Add optional event for notification
+):
+    """
+    Adds a new task to the queue.
+
+    If notify_event is provided and the task is scheduled for immediate execution
+    (scheduled_at is None or in the past), the event will be set.
+    """
+    async with engine.connect() as conn:
+        # Ensure scheduled_at is timezone-aware if provided
+        if scheduled_at and scheduled_at.tzinfo is None:
+            raise ValueError("scheduled_at must be timezone-aware")
+
+        stmt = insert(tasks_table).values(
+            task_id=task_id,
+            task_type=task_type,
+            payload=payload,
+            scheduled_at=scheduled_at,
+            # created_at is set by default in the table definition now
+            status="pending",
+        )
+        try:
+            await conn.execute(stmt)
+            await conn.commit()
+            logger.info(f"Enqueued task {task_id} of type {task_type}.")
+
+            # Notify worker if task is immediate and event is provided
+            is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
+                timezone.utc
+            )
+            if is_immediate and notify_event:
+                notify_event.set()
+                logger.debug(f"Notified worker about immediate task {task_id}.")
+
+        except Exception as e:
+            await conn.rollback()
+            # Consider specific exception types (e.g., unique constraint violation)
+            logger.error(f"Failed to enqueue task {task_id}: {e}", exc_info=True)
+            raise  # Re-raise the exception
+
+
+async def dequeue_task(
+    worker_id: str, task_types: List[str]
+) -> Optional[Dict[str, Any]]:
+    """
+    Atomically dequeues the next available task matching the types and locks it.
+
+    Uses SELECT FOR UPDATE SKIP LOCKED, best suited for PostgreSQL.
+    May behave differently or less concurrently on SQLite.
+
+    Args:
+        worker_id: An identifier for the worker attempting to dequeue.
+        task_types: A list of task types the worker can handle.
+
+    Returns:
+        A dictionary representing the task row, or None if no suitable task is found.
+    """
+    now = datetime.now(timezone.utc)
+    async with engine.connect() as conn:
+        async with conn.begin():  # Start transaction
+            # Select the oldest, pending task of the specified types,
+            # whose scheduled time is in the past (or null).
+            # Use FOR UPDATE SKIP LOCKED to handle concurrency.
+            # Note: This locking clause is PostgreSQL-specific via SQLAlchemy.
+            # SQLite will likely lock the entire table during the transaction.
+            stmt = (
+                select(tasks_table)
+                .where(tasks_table.c.status == "pending")
+                .where(tasks_table.c.task_type.in_(task_types))
+                .where(
+                    (tasks_table.c.scheduled_at == None)  # noqa: E711
+                    | (tasks_table.c.scheduled_at <= now)
+                )
+                .order_by(tasks_table.c.created_at)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            )
+
+            result = await conn.execute(stmt)
+            task_row = result.fetchone()
+
+            if task_row:
+                # Lock acquired, update the status and lock info
+                update_stmt = (
+                    update(tasks_table)
+                    .where(tasks_table.c.id == task_row.id)
+                    .where(
+                        tasks_table.c.status == "pending"
+                    ) # Ensure it wasn't somehow processed between SELECT and UPDATE
+                    .values(
+                        status="processing",
+                        locked_by=worker_id,
+                        locked_at=now,
+                    )
+                )
+                update_result = await conn.execute(update_stmt)
+
+                if update_result.rowcount == 1:
+                    logger.info(
+                        f"Worker {worker_id} dequeued task {task_row.task_id}"
+                    )
+                    return task_row._mapping # Return as dict
+                else:
+                    # Extremely rare race condition or issue, row was modified
+                    # between SELECT FOR UPDATE and UPDATE. Transaction rollback
+                    # will handle cleanup.
+                    logger.warning(
+                        f"Worker {worker_id} failed to lock task {task_row.task_id} after selection."
+                    )
+                    return None # Transaction will rollback changes implicitly
+
+            # No suitable task found
+            return None
+
+
+async def update_task_status(
+    task_id: str, status: str, error: Optional[str] = None
+) -> bool:
+    """Updates the status of a task (e.g., 'done', 'failed')."""
+    async with engine.connect() as conn:
+        values_to_update = {"status": status}
+        if status == "failed":
+            values_to_update["error"] = error
+        # Clear lock info when finishing or failing
+        values_to_update["locked_by"] = None
+        values_to_update["locked_at"] = None
+
+        stmt = (
+            update(tasks_table)
+            .where(tasks_table.c.task_id == task_id)
+            # Optionally ensure it was being processed before marking done/failed
+            # .where(tasks_table.c.status == 'processing')
+            .values(**values_to_update)
+        )
+        result = await conn.execute(stmt)
+        await conn.commit()
+        if result.rowcount > 0:
+            logger.info(f"Updated task {task_id} status to {status}.")
+            return True
+        logger.warning(
+            f"Task {task_id} not found or status unchanged when updating to {status}."
+        )
+        return False
+
+
+# --- End Task Queue Functions ---
+
+
 __all__ = [
     "init_db",
     "get_all_notes",
