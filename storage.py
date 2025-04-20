@@ -763,8 +763,8 @@ async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
             message_history.c.role,
             message_history.c.content,
         )
-        # Order by chat_id first, then by timestamp within each chat
-        .order_by(message_history.c.chat_id, message_history.c.timestamp)
+        # Order by chat_id first, then by timestamp DESC within each chat
+        .order_by(message_history.c.chat_id, message_history.c.timestamp.desc())
     )
 
     for attempt in range(max_retries):
