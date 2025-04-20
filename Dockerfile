@@ -90,6 +90,7 @@ ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 COPY main.py processing.py storage.py web_server.py calendar_integration.py ./
 COPY prompts.yaml mcp_config.json ./
 COPY templates/ ./templates/
+COPY static/ ./static/ # Copy static files (CSS)
 
 # --- Linting Step ---
 # Run pylint in errors-only mode after copying the code
