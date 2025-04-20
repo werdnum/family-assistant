@@ -5,13 +5,14 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
-from fastapi import Response  # Added Response
+from fastapi import Response # Added Response
+import json # Import json for payload rendering
 
-from collections import defaultdict  # Import defaultdict
+from collections import defaultdict # Import defaultdict
 
 # Import storage functions - adjust path if needed
 import storage
-from storage import get_grouped_message_history  # Added
+from storage import get_grouped_message_history, get_all_tasks # Added get_all_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,26 @@ async def view_message_history(request: Request):
     except Exception as e:
         logger.error(f"Error fetching message history: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch message history")
+
+
+@app.get("/tasks", response_class=HTMLResponse)
+async def view_tasks(request: Request):
+    """Serves the page displaying scheduled tasks."""
+    try:
+        tasks = await get_all_tasks(limit=200) # Fetch tasks, add limit if needed
+        return templates.TemplateResponse(
+            "tasks.html",
+            {
+                "request": request,
+                "tasks": tasks,
+                # Add json filter to Jinja environment if not default
+                # Pass 'tojson' filter if needed explicitly, or handle in template
+                # jinja_env.filters['tojson'] = json.dumps # Example
+            },
+        )
+    except Exception as e:
+        logger.error(f"Error fetching tasks: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch tasks")
 
 
 # --- Uvicorn Runner (for standalone testing) ---
