@@ -160,18 +160,18 @@ async def handle_llm_callback(payload: Any):
 
         # Generate the LLM response using the refactored function
         # Use a placeholder name like "System" or "Assistant" for the user_name in the prompt
-        llm_response = await _generate_llm_response_for_chat(
+        llm_response_content, tool_call_info = await _generate_llm_response_for_chat(
             chat_id=chat_id,
             trigger_content_parts=trigger_content_parts,
             user_name="System Trigger" # Or "Assistant"? Needs testing for optimal LLM behavior.
         )
 
-        if llm_response:
+        if llm_response_content: # Check if content exists
             # Send the LLM's response back to the chat
-            formatted_response = format_llm_response_for_telegram(llm_response)
-            await application.bot.send_message(
+            formatted_response = format_llm_response_for_telegram(llm_response_content) # Use content string
+            sent_message = await application.bot.send_message( # Store sent message result
                 chat_id=chat_id,
-                text=formatted_response,
+                text=formatted_response, # Use formatted content string
                 parse_mode=ParseMode.MARKDOWN_V2
                 # Note: We don't have an original message ID to reply to here.
             )
@@ -195,25 +195,28 @@ async def handle_llm_callback(payload: Any):
                     message_id=response_msg_id,
                     timestamp=datetime.now(timezone.utc),
                     role="assistant",
-                    content=llm_response,
+                    content=llm_response_content, # Store the content string
+                    tool_calls_info=tool_call_info, # Store tool info too
                 )
             except Exception as db_err:
                 logger.error(f"Failed to store callback history for chat {chat_id}: {db_err}", exc_info=True)
 
         else:
-            logger.warning(f"LLM did not return a response for callback in chat {chat_id}.")
+            logger.warning(f"LLM did not return a response content for callback in chat {chat_id}.")
             # Optionally send a generic failure message to the chat
             await application.bot.send_message(
                 chat_id=chat_id,
                 text="Sorry, I couldn't process the scheduled callback."
             )
             # Raise an error to mark the task as failed if no response was generated
-            raise RuntimeError("LLM failed to generate response for callback.")
+            raise RuntimeError("LLM failed to generate response content for callback.")
 
     except Exception as e:
         logger.error(
             f"Failed during LLM callback processing for chat {chat_id}: {e}", exc_info=True
         )
+        # Raise the exception to ensure the task is marked as failed
+        raise
 
 
 # Register the callback handler
