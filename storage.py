@@ -34,8 +34,9 @@ async def enqueue_task(
     task_type: str,
     payload: Optional[Any] = None,
     scheduled_at: Optional[datetime] = None,
-    notify_event: Optional[asyncio.Event] = None,  # Add optional event for notification
-):
+    max_retries: Optional[int] = None,  # Allow overriding default max_retries
+    notify_event: Optional[asyncio.Event] = None,
+): # noqa: PLR0913 - Keep signature but add max_retries
     """
     Adds a new task to the queue.
 
@@ -372,8 +373,9 @@ __all__ = [
     "enqueue_task",
     "dequeue_task",
     "update_task_status",
-    "get_grouped_message_history",  # Added
-    "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
+    "reschedule_task_for_retry", # Added
+    "get_grouped_message_history",
+    "notes_table", # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
     "tasks_table",
     "engine",
@@ -457,7 +459,13 @@ tasks_table = Table(
     Column(
         "locked_at", DateTime(timezone=True), nullable=True
     ),  # Timestamp when the lock was acquired
-    Column("error", Text, nullable=True),  # Store error message on failure
+    Column("error", Text, nullable=True),  # Store last error message on failure/retry
+    Column(
+        "retry_count", Integer, default=0, nullable=False
+    ),  # Number of times this task has been retried
+    Column(
+        "max_retries", Integer, default=3, nullable=False
+    ),  # Maximum number of retries allowed
 )
 
 
