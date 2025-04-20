@@ -56,7 +56,7 @@ from storage import (
     get_message_by_id,
     add_or_update_note,  # Import the function to be used as a tool
 )
-import storage # Import the whole module for task queue functions
+import storage  # Import the whole module for task queue functions
 
 # Import calendar functions
 import calendar_integration
@@ -130,9 +130,11 @@ TASK_HANDLERS["log_message"] = handle_log_message
 
 async def handle_llm_callback(payload: Any):
     """Task handler for LLM scheduled callbacks."""
-    global application # Need access to the bot application instance
+    global application  # Need access to the bot application instance
     if not application:
-        logger.error("Cannot handle LLM callback: Telegram application not initialized.")
+        logger.error(
+            "Cannot handle LLM callback: Telegram application not initialized."
+        )
         return
 
     chat_id = payload.get("chat_id")
@@ -153,7 +155,9 @@ async def handle_llm_callback(payload: Any):
         await application.bot.send_message(chat_id=chat_id, text=message_to_send)
         logger.info(f"Sent callback trigger message to chat {chat_id}.")
     except Exception as e:
-        logger.error(f"Failed to send LLM callback message to chat {chat_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to send LLM callback message to chat {chat_id}: {e}", exc_info=True
+        )
         # If sending fails, the callback is effectively lost.
         # Consider adding the failure reason back to the task status.
 
@@ -174,7 +178,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
         task = None
         try:
             # Dequeue a task of a type this worker handles
-            task = await storage.dequeue_task(worker_id, task_types_handled) # Use storage.dequeue_task
+            task = await storage.dequeue_task(
+                worker_id, task_types_handled
+            )  # Use storage.dequeue_task
 
             if task:
                 logger.info(
@@ -187,7 +193,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         # Execute the handler with the payload
                         await handler(task["payload"])
                         # Mark task as done if handler completes successfully
-                        await storage.update_task_status(task["task_id"], "done") # Use storage.update_task_status
+                        await storage.update_task_status(
+                            task["task_id"], "done"
+                        )  # Use storage.update_task_status
                         logger.info(
                             f"Worker {worker_id} completed task {task['task_id']}"
                         )
@@ -197,7 +205,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                             exc_info=True,
                         )
                         # Mark task as failed
-                        await storage.update_task_status( # Use storage.update_task_status
+                        await storage.update_task_status(  # Use storage.update_task_status
                             task["task_id"], "failed", error=str(handler_exc)
                         )
                 else:
@@ -205,7 +213,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                     logger.error(
                         f"Worker {worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
                     )
-                    await storage.update_task_status( # Use storage.update_task_status
+                    await storage.update_task_status(  # Use storage.update_task_status
                         task["task_id"],
                         "failed",
                         error=f"No handler registered for type {task['task_type']}",
@@ -1156,8 +1164,7 @@ def main() -> None:
     for sig_num, sig_name in signal_map.items():
         # Use a default argument in the lambda that captures the current sig_name
         loop.add_signal_handler(
-            sig_num,
-            lambda name=sig_name: asyncio.create_task(shutdown_handler(name))
+            sig_num, lambda name=sig_name: asyncio.create_task(shutdown_handler(name))
         )
 
     # SIGHUP for config reload (only on Unix-like systems)
