@@ -36,6 +36,8 @@ spec:
               key: password
         - name: DATABASE_URL # Construct the final URL
           value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@storage-cluster.postgres.svc.cluster.local/mlbot"
+        - name: TIMEZONE # Add the timezone variable
+          value: "Australia/Sydney" # Set the desired timezone for the deployment
         # volumeMounts: # Removed volume mount for SQLite
         # - name: data-volume
         #   mountPath: /data
