@@ -198,8 +198,8 @@ The following features from the specification are currently implemented:
 *   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
 *   **Tools:**
     *   Local Tools:
-        *   `add_or_update_note`: Saves/updates notes in the database.
-        *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone), `context` (string), and `chat_id`.
+        *   `add_or_update_note`: Saves/updates notes in the database. Accepts `title` and `content`.
+        *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone) and `context` (string). The `chat_id` is automatically inferred from the conversation context.
     *   **MCP Integration:**
         *   Loads server configurations from `mcp_config.json`.
         *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search) using the `mcp` library.

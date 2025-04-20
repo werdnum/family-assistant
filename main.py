@@ -822,6 +822,7 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             # Get response from LLM via processing module, passing all available tools and MCP state
             llm_response = await get_llm_response(
                 messages,
+                chat_id, # Pass the current chat_id
                 args.model,
                 all_tools,
                 mcp_sessions,  # Pass the MCP sessions dict
