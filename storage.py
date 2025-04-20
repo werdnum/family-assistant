@@ -597,13 +597,20 @@ async def add_message_to_history(
 async def get_recent_history(
     chat_id: int, limit: int, max_age: timedelta
 ) -> List[Dict[str, Any]]:
-    """Retrieves recent messages for a chat, ordered chronologically, with retries."""
+    """
+    Retrieves recent messages for a chat, including tool call info for assistant messages,
+    ordered chronologically, with retries.
+    """
     cutoff_time = datetime.now(timezone.utc) - max_age
     max_retries = 3
     base_delay = 0.5  # seconds
 
     stmt = (  # Define stmt outside loop
-        select(message_history.c.role, message_history.c.content)
+        select(
+            message_history.c.role,
+            message_history.c.content,
+            message_history.c.tool_calls_info,  # Select the tool calls info
+        )
         .where(message_history.c.chat_id == chat_id)
         .where(message_history.c.timestamp >= cutoff_time)
         .order_by(message_history.c.timestamp.desc())  # Get latest first
