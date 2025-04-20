@@ -159,10 +159,10 @@ async def dequeue_task(
                         update_stmt = (
                             update(tasks_table)
                             .where(tasks_table.c.id == task_row.id)
-                    .where(
-                        tasks_table.c.status == "pending"
-                    ) # Ensure it wasn't somehow processed between SELECT and UPDATE
-                    .values(
+                            .where(
+                                tasks_table.c.status == "pending"
+                            ) # Ensure it wasn't somehow processed between SELECT and UPDATE
+                            .values(
                                 status="processing",
                                 locked_by=worker_id,
                                 locked_at=now,
@@ -171,20 +171,21 @@ async def dequeue_task(
                         update_result = await conn.execute(update_stmt)
 
                         if update_result.rowcount == 1:
-                    logger.info(
-                        f"Worker {worker_id} dequeued task {task_row.task_id}"
-                    )
-                    return task_row._mapping # Return as dict
-                else:
-                    # Extremely rare race condition or issue, row was modified
-                    # between SELECT FOR UPDATE and UPDATE. Transaction rollback
-                    # will handle cleanup.
-                    logger.warning(
-                        f"Worker {worker_id} failed to lock task {task_row.task_id} after selection."
-                    )
-                    return None # Transaction will rollback changes implicitly
+                            logger.info(
+                                f"Worker {worker_id} dequeued task {task_row.task_id}"
+                            )
+                            return task_row._mapping # Return as dict
+                        else:
+                            # Extremely rare race condition or issue, row was modified
+                            # between SELECT FOR UPDATE and UPDATE. Transaction rollback
+                            # will handle cleanup.
+                            logger.warning(
+                                f"Worker {worker_id} failed to lock task {task_row.task_id} after selection."
+                            )
+                            return None # Transaction will rollback changes implicitly
+                        # End of if task_row block
 
-            # If not task_row (no suitable task found by the initial SELECT)
+            # If the loop completes without finding a task_row (e.g., SELECT returned None)
             return None
         # End of transaction block (async with conn.begin())
     # End of connection block (async with engine.connect())
