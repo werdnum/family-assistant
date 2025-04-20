@@ -153,15 +153,67 @@ async def handle_llm_callback(payload: Any):
 
     try:
         # Send the message *as the bot* into the chat.
-        # This will trigger the normal message_handler flow.
-        await application.bot.send_message(chat_id=chat_id, text=message_to_send)
-        logger.info(f"Sent callback trigger message to chat {chat_id}.")
+        # Construct the trigger message content for the LLM
+        # Using a clear prefix to indicate it's a callback
+        trigger_text = f"System Callback Trigger:\n\nThe time is now {current_time_str}.\nYour scheduled context was:\n---\n{callback_context}\n---"
+        trigger_content_parts = [{"type": "text", "text": trigger_text}]
+
+        # Generate the LLM response using the refactored function
+        # Use a placeholder name like "System" or "Assistant" for the user_name in the prompt
+        llm_response = await _generate_llm_response_for_chat(
+            chat_id=chat_id,
+            trigger_content_parts=trigger_content_parts,
+            user_name="System Trigger" # Or "Assistant"? Needs testing for optimal LLM behavior.
+        )
+
+        if llm_response:
+            # Send the LLM's response back to the chat
+            formatted_response = format_llm_response_for_telegram(llm_response)
+            await application.bot.send_message(
+                chat_id=chat_id,
+                text=formatted_response,
+                parse_mode=ParseMode.MARKDOWN_V2
+                # Note: We don't have an original message ID to reply to here.
+            )
+            logger.info(f"Sent LLM response for callback to chat {chat_id}.")
+
+            # Store the callback trigger and response in history
+            try:
+                # Pseudo-ID for the trigger message (timestamp based?)
+                trigger_msg_id = int(datetime.now(timezone.utc).timestamp() * 1000) # Crude pseudo-ID
+                await storage.add_message_to_history(
+                    chat_id=chat_id,
+                    message_id=trigger_msg_id,
+                    timestamp=datetime.now(timezone.utc),
+                    role="system", # Or 'user'/'assistant' depending on how trigger_message was structured
+                    content=trigger_text,
+                )
+                # Pseudo-ID for the bot response
+                response_msg_id = trigger_msg_id + 1
+                await storage.add_message_to_history(
+                    chat_id=chat_id,
+                    message_id=response_msg_id,
+                    timestamp=datetime.now(timezone.utc),
+                    role="assistant",
+                    content=llm_response,
+                )
+            except Exception as db_err:
+                logger.error(f"Failed to store callback history for chat {chat_id}: {db_err}", exc_info=True)
+
+        else:
+            logger.warning(f"LLM did not return a response for callback in chat {chat_id}.")
+            # Optionally send a generic failure message to the chat
+            await application.bot.send_message(
+                chat_id=chat_id,
+                text="Sorry, I couldn't process the scheduled callback."
+            )
+            # Raise an error to mark the task as failed if no response was generated
+            raise RuntimeError("LLM failed to generate response for callback.")
+
     except Exception as e:
         logger.error(
-            f"Failed to send LLM callback message to chat {chat_id}: {e}", exc_info=True
+            f"Failed during LLM callback processing for chat {chat_id}: {e}", exc_info=True
         )
-        # If sending fails, the callback is effectively lost.
-        # Consider adding the failure reason back to the task status.
 
 
 # Register the callback handler
@@ -586,6 +638,126 @@ async def typing_notifications(
             await asyncio.wait_for(typing_task, timeout=1.0)
 
 
+# --- Core LLM Interaction Logic ---
+
+async def _generate_llm_response_for_chat(
+    chat_id: int,
+    trigger_content_parts: List[Dict[str, Any]], # Content of the triggering message (user text/photo or callback)
+    user_name: str, # Name to use in system prompt
+    # TODO: Consider passing context explicitly instead of relying on globals/args
+    # context: ContextTypes.DEFAULT_TYPE # Needed for typing notifications?
+) -> str | None:
+    """
+    Prepares context, message history, calls the LLM, and returns the response.
+
+    Args:
+        chat_id: The target chat ID.
+        trigger_content_parts: List of content parts (text, image_url) for the triggering message.
+        user_name: The user name to format into the system prompt.
+
+    Returns:
+        The final LLM response string, or None on error.
+    """
+    logger.debug(f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}")
+
+    # --- History and Context Preparation ---
+    messages: List[Dict[str, Any]] = []
+    history_messages = await storage.get_recent_history( # Use storage directly
+        chat_id,
+        limit=MAX_HISTORY_MESSAGES,
+        max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
+    )
+    messages.extend(history_messages)
+    logger.debug(f"Added {len(history_messages)} recent messages from DB history.")
+
+    # --- Prepare System Prompt Context ---
+    system_prompt_template = PROMPTS.get("system_prompt", "You are a helpful assistant.")
+    try:
+        local_tz = pytz.timezone(TIMEZONE_STR)
+        current_local_time = datetime.now(local_tz)
+        current_time_str = current_local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+    except Exception as tz_err:
+        logger.error(f"Error applying timezone {TIMEZONE_STR}: {tz_err}. Defaulting time format.")
+        current_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    calendar_context_str = ""
+    if CALENDAR_CONFIG:
+        try:
+            upcoming_events = await calendar_integration.fetch_upcoming_events(CALENDAR_CONFIG)
+            today_events_str, future_events_str = calendar_integration.format_events_for_prompt(upcoming_events, PROMPTS)
+            calendar_header_template = PROMPTS.get("calendar_context_header", "{today_tomorrow_events}\n{next_two_weeks_events}")
+            calendar_context_str = calendar_header_template.format(today_tomorrow_events=today_events_str, next_two_weeks_events=future_events_str).strip()
+        except Exception as cal_err:
+            logger.error(f"Failed to fetch or format calendar events: {cal_err}", exc_info=True)
+            calendar_context_str = f"Error retrieving calendar events: {str(cal_err)}"
+    else:
+        calendar_context_str = "Calendar integration not configured."
+
+    notes_context_str = ""
+    try:
+        all_notes = await storage.get_all_notes() # Use storage directly
+        if all_notes:
+            notes_list_str = ""
+            note_item_format = PROMPTS.get("note_item_format", "- {title}: {content}")
+            for note in all_notes:
+                notes_list_str += note_item_format.format(title=note["title"], content=note["content"]) + "\n"
+            notes_context_header_template = PROMPTS.get("notes_context_header", "Relevant notes:\n{notes_list}")
+            notes_context_str = notes_context_header_template.format(notes_list=notes_list_str.strip())
+        else:
+            notes_context_str = PROMPTS.get("no_notes", "No notes available.")
+    except Exception as note_err:
+        logger.error(f"Failed to get notes for context: {note_err}", exc_info=True)
+        notes_context_str = "Error retrieving notes."
+
+
+    final_system_prompt = system_prompt_template.format(
+        user_name=user_name,
+        current_time=current_time_str,
+        calendar_context=calendar_context_str,
+        notes_context=notes_context_str,
+    ).strip()
+
+    if final_system_prompt:
+        messages.insert(0, {"role": "system", "content": final_system_prompt})
+        logger.debug("Prepended system prompt to LLM messages.")
+    else:
+        logger.warning("Generated empty system prompt.")
+
+
+    # --- Add the triggering message content ---
+    # Note: For callbacks, the role might ideally be 'system' or a specific 'callback' role,
+    # but using 'user' is often necessary for the LLM to properly attend to it as the primary input.
+    # If LLM behavior is odd, consider experimenting with the role here.
+    trigger_message = {
+        "role": "user", # Treat trigger as user input for processing flow
+        "content": trigger_content_parts,
+    }
+    messages.append(trigger_message)
+    logger.debug(f"Appended trigger message to LLM history: {trigger_message}")
+
+    # --- Combine local and MCP tools ---
+    # Ensure processing.TOOLS_DEFINITION is accessible or imported
+    from processing import TOOLS_DEFINITION as local_tools_definition
+    all_tools = local_tools_definition + mcp_tools
+
+    # --- Call LLM ---
+    # Note: Typing notifications are omitted here for simplicity in this refactored function.
+    # They could be added back if needed, perhaps by passing the `context` object.
+    try:
+        llm_response = await get_llm_response(
+            messages,
+            chat_id, # Pass the current chat_id
+            args.model,
+            all_tools,
+            mcp_sessions,
+            tool_name_to_server_id,
+        )
+        return llm_response # Can be None if get_llm_response fails
+    except Exception as e:
+        logger.error(f"Error during LLM interaction for chat {chat_id}: {e}", exc_info=True)
+        return None
+
+
 # --- Telegram Bot Handlers ---
 
 
@@ -668,40 +840,23 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
     combined_text = "\n\n".join(all_texts).strip()
     logger.debug(f"Combined text: '{combined_text[:100]}...'")
 
-    # --- History and Context Preparation (similar to before) ---
-    messages: List[Dict[str, Any]] = []
-    # Fetch history *before* the first message in the batch (if possible) or just recent general history
-    # For simplicity, fetch general recent history
-    history_messages = await get_recent_history(
-        chat_id,
-        limit=MAX_HISTORY_MESSAGES,
-        max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
-    )
-    messages.extend(history_messages)
-    logger.debug(
-        f"Added {len(history_messages)} recent messages from DB history for batch."
-    )
-
     # --- Prepare current user message content part (combined) ---
     formatted_user_text_content = f"{forward_context}{combined_text}".strip()
     text_content_part = {"type": "text", "text": formatted_user_text_content}
-    final_message_content_parts = [text_content_part]
+    trigger_content_parts = [text_content_part] # Start with text
 
     # --- Handle Photo Attachment (from the first photo found) ---
-    photo_content_part = None
     if first_photo_bytes:
         try:
             base64_image = base64.b64encode(first_photo_bytes).decode("utf-8")
             mime_type = "image/jpeg"  # Assuming JPEG
-            photo_content_part = {
+            trigger_content_parts.append({ # Append photo part
                 "type": "image_url",
                 "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
-            }
-            final_message_content_parts.append(photo_content_part)
-            logger.info("Added first photo from batch to LLM request.")
+            })
+            logger.info("Added first photo from batch to trigger content.")
         except Exception as img_err:
             logger.error(f"Error encoding photo from batch: {img_err}", exc_info=True)
-            # Decide how to handle photo error in batch - maybe just send text?
             await context.bot.send_message(
                 chat_id, "Error processing image in batch."
             )  # Inform user
