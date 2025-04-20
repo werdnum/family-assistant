@@ -11,6 +11,7 @@ import html
 import io  # Add io
 import json
 import logging
+import random # Add random
 import os
 import signal
 import sys
