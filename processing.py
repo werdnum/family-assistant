@@ -1,7 +1,11 @@
 import logging
 import json
-import asyncio  # Added import
+import asyncio
+import uuid # Added for unique task IDs
+from datetime import datetime, timezone # Added timezone
 from typing import List, Dict, Any, Optional, Callable
+
+from dateutil.parser import isoparse # Added for parsing datetime strings
 
 from litellm import acompletion
 
@@ -10,8 +14,9 @@ from litellm import acompletion
 # Removed ToolCall import due to ImportError
 from litellm.types.completion import ChatCompletionMessageParam
 
-# Import storage function for the tool
+# Import storage functions for tools
 import storage
+from storage import enqueue_task # Specifically import enqueue_task
 
 # MCP state (mcp_sessions, tool_name_to_server_id) will be passed as arguments
 # Removed: from main import mcp_sessions, tool_name_to_server_id
@@ -20,8 +25,55 @@ logger = logging.getLogger(__name__)
 
 # --- Tool Implementation ---
 
+async def schedule_future_callback_tool(callback_time: str, context: str, chat_id: int):
+    """
+    Schedules a task to trigger an LLM callback in a specific chat at a future time.
+
+    Args:
+        callback_time: ISO 8601 formatted datetime string (including timezone).
+        context: The context/prompt for the future LLM callback.
+        chat_id: The chat ID where the callback should occur.
+    """
+    try:
+        # Parse the ISO 8601 string, ensuring it's timezone-aware
+        scheduled_dt = isoparse(callback_time)
+        if scheduled_dt.tzinfo is None:
+            # Or raise error, forcing LLM to provide timezone
+            logger.warning(f"Callback time '{callback_time}' lacks timezone. Assuming UTC.")
+            scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
+
+        # Ensure it's in the future (optional, but good practice)
+        if scheduled_dt <= datetime.now(timezone.utc):
+            raise ValueError("Callback time must be in the future.")
+
+        task_id = f"llm_callback_{uuid.uuid4()}"
+        payload = {"chat_id": chat_id, "callback_context": context}
+
+        # TODO: Need access to the new_task_event from main.py to notify worker
+        # For now, enqueue without immediate notification. Refactor may be needed
+        # if immediate notification is desired here.
+        await enqueue_task(
+            task_id=task_id,
+            task_type="llm_callback",
+            payload=payload,
+            scheduled_at=scheduled_dt,
+            # notify_event=new_task_event # Needs event passed down
+        )
+        logger.info(f"Scheduled LLM callback task {task_id} for chat {chat_id} at {scheduled_dt}")
+        return f"OK. Callback scheduled for {callback_time}."
+    except ValueError as ve:
+        logger.error(f"Invalid callback time format or value: {callback_time} - {ve}")
+        return f"Error: Invalid callback time provided. Ensure it's a future ISO 8601 datetime with timezone. {ve}"
+    except Exception as e:
+        logger.error(f"Failed to schedule callback task: {e}", exc_info=True)
+        return "Error: Failed to schedule the callback."
+
+
 # Map tool names to their actual functions
-AVAILABLE_FUNCTIONS = {"add_or_update_note": storage.add_or_update_note}
+AVAILABLE_FUNCTIONS = {
+    "add_or_update_note": storage.add_or_update_note,
+    "schedule_future_callback": schedule_future_callback_tool,
+}
 
 # Define tools in the format LiteLLM expects (OpenAI format)
 TOOLS_DEFINITION = [
@@ -45,7 +97,32 @@ TOOLS_DEFINITION = [
                 "required": ["title", "content"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_future_callback",
+            "description": "Schedule a future trigger for yourself (the assistant) to continue processing or follow up on a topic at a specified time within the current chat context. Use this if the user asks you to do something later, or if a task requires waiting.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "callback_time": {
+                        "type": "string",
+                        "description": "The exact date and time (ISO 8601 format, including timezone, e.g., '2025-05-10T14:30:00+02:00') when the callback should be triggered.",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan').",
+                    },
+                    "chat_id": {
+                        "type": "integer",
+                        "description": "The ID of the current chat where the callback should occur.",
+                    },
+                },
+                "required": ["callback_time", "context", "chat_id"],
+            },
+        },
+    },
 ]
 
 

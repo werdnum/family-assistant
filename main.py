@@ -128,6 +128,41 @@ async def handle_log_message(payload: Any):
 
 # Register the example handler
 TASK_HANDLERS["log_message"] = handle_log_message
+
+
+async def handle_llm_callback(payload: Any):
+    """Task handler for LLM scheduled callbacks."""
+    global application # Need access to the bot application instance
+    if not application:
+        logger.error("Cannot handle LLM callback: Telegram application not initialized.")
+        return
+
+    chat_id = payload.get("chat_id")
+    callback_context = payload.get("callback_context")
+
+    if not chat_id or not callback_context:
+        logger.error(f"Invalid payload for llm_callback task: {payload}")
+        # Optionally mark task as failed here?
+        return
+
+    logger.info(f"Handling LLM callback for chat_id {chat_id}")
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+    message_to_send = f"System Callback: The time is now {current_time_str}.\n\nYou previously scheduled a callback with the following context:\n\n---\n{callback_context}\n---"
+
+    try:
+        # Send the message *as the bot* into the chat.
+        # This will trigger the normal message_handler flow.
+        await application.bot.send_message(chat_id=chat_id, text=message_to_send)
+        logger.info(f"Sent callback trigger message to chat {chat_id}.")
+    except Exception as e:
+        logger.error(f"Failed to send LLM callback message to chat {chat_id}: {e}", exc_info=True)
+        # If sending fails, the callback is effectively lost.
+        # Consider adding the failure reason back to the task status.
+
+
+# Register the callback handler
+TASK_HANDLERS["llm_callback"] = handle_llm_callback
+
 logger.info(f"Registered task handlers: {list(TASK_HANDLERS.keys())}")
 
 

@@ -30,6 +30,7 @@ RUN uv venv /app/.venv
 # We don't need --system anymore.
 # Using --mount with the explicit UV_CACHE_DIR for caching pip downloads/builds
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
+    uv pip install -r requirements.txt --no-deps && \
     uv pip install -r requirements.txt
 
 # --- Install Deno ---
