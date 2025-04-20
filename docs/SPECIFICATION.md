@@ -123,6 +123,7 @@ The system will consist of the following core components:
     *   Supports **CalDAV** calendars via direct URLs. Configuration via `.env`: Requires `CALDAV_USERNAME`, `CALDAV_PASSWORD`, and `CALDAV_CALENDAR_URLS` (comma-separated list of direct URLs). `CALDAV_URL` is optional.
     *   Supports **iCalendar** URLs (`.ics`). Configuration via `.env`: Requires `ICAL_URLS` (comma-separated list of URLs).
     *   Provides a combined, sorted list of events as context within the system prompt to the LLM.
+*   **Task Queue:** Uses the database (`tasks` table) for background processing. Supports scheduled tasks and immediate notification via `asyncio.Event`. Handles `log_message` task type.
 *   **(Future) Calendar Integration (Write):**
     *   Add/update events on the main family calendar via CalDAV.
 *   **(Future) Reminders:**
@@ -196,7 +197,9 @@ The following features from the specification are currently implemented:
     *   Replied-to messages (fetched from `message_history`) are included.
 *   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
 *   **Tools:**
-    *   Local tool `add_or_update_note` available to the LLM for saving notes to the database.
+    *   Local Tools:
+        *   `add_or_update_note`: Saves/updates notes in the database.
+        *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone), `context` (string), and `chat_id`.
     *   **MCP Integration:**
         *   Loads server configurations from `mcp_config.json`.
         *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search) using the `mcp` library.
@@ -214,4 +217,50 @@ The following features from the specification are currently implemented:
 *   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks).
 *   Advanced Web UI features (dashboard, chat).
 *   User profiles/preferences table.
+
+## 10. Database Task Queue
+
+To handle background processing, asynchronous operations, and scheduled tasks without introducing an external message broker dependency, a simple task queue is implemented directly within the application's primary database (SQLite or PostgreSQL).
+
+### 10.1 Design Goals
+*   **Persistence:** Tasks survive application restarts.
+*   **Atomicity:** Dequeuing a task should be an atomic operation to prevent multiple workers from processing the same task.
+*   **Scheduled Delivery:** Support for tasks that should only be processed after a specific time.
+*   **Typed Tasks:** Allow different types of tasks to be routed to specific handler logic.
+*   **Simplicity:** Leverage existing database infrastructure.
+
+### 10.2 Database Schema (`tasks` table)
+The queue is managed via the `tasks` table with the following columns:
+
+*   `id`: Integer, primary key, auto-incrementing internal ID.
+*   `task_id`: String, **caller-provided unique ID** for the task. Ensures idempotency if a task is accidentally enqueued multiple times. Unique constraint enforced.
+*   `task_type`: String, indicates the kind of task (e.g., `send_notification`, `process_email_ingestion`, `llm_callback`). Used to route the task to the correct handler function. Indexed.
+*   `payload`: JSON (or Text), stores arbitrary data needed by the task handler. For `llm_callback`, this includes `chat_id` and `callback_context`.
+*   `scheduled_at`: DateTime (timezone-aware), optional timestamp indicating the earliest time the task should be processed. If NULL, the task can be processed immediately. Indexed.
+*   `created_at`: DateTime (timezone-aware), timestamp when the task was enqueued.
+*   `status`: String, current state of the task (e.g., `pending`, `processing`, `done`, `failed`). Indexed. Default is `pending`.
+*   `locked_by`: String, identifier of the worker currently processing the task. NULL if not being processed.
+*   `locked_at`: DateTime (timezone-aware), timestamp when the worker acquired the lock. NULL if not locked.
+*   `error`: Text, stores error details if the task status becomes `failed`.
+
+### 10.3 Operations
+Core operations are provided in `storage.py`:
+
+*   `enqueue_task(task_id, task_type, payload=None, scheduled_at=None, notify_event=None)`: Adds a new task with status `pending`. Requires a unique `task_id`. Can optionally trigger an `asyncio.Event` for immediate tasks.
+*   `dequeue_task(worker_id, task_types)`: Attempts to atomically retrieve and lock the oldest, ready (`status='pending'` and `scheduled_at` is past or NULL) task matching one of the provided `task_types`.
+    *   It uses `SELECT ... FOR UPDATE SKIP LOCKED` logic (via SQLAlchemy's `with_for_update(skip_locked=True)`). This provides good concurrency on **PostgreSQL**.
+    *   **Note:** On **SQLite**, `SKIP LOCKED` is not natively supported. SQLAlchemy's implementation might result in table-level locking during the transaction, potentially limiting concurrency if multiple workers access the same SQLite database file (which is generally discouraged).
+    *   If successful, it updates the task's status to `processing`, sets `locked_by` and `locked_at`, and returns the task details. Returns `None` if no suitable task is available or lock acquisition fails.
+*   `update_task_status(task_id, status, error=None)`: Updates the status of a task (typically to `done` or `failed`) and clears the lock information.
+
+### 10.4 Processing Model
+*   **Polling & Notification:** The primary mechanism is polling (`task_worker_loop` in `main.py`). An `asyncio.Event` (`new_task_event`) allows `enqueue_task` to wake the worker immediately for non-scheduled tasks, reducing latency.
+*   **Worker Loop:** A background task (`asyncio` task) periodically calls `dequeue_task` or wakes up via the event.
+*   **Handler Registry:** A dictionary (`TASK_HANDLERS` in `main.py`) maps `task_type` strings to corresponding asynchronous handler functions.
+*   **Execution:** When a task is dequeued, the worker looks up the handler based on `task_type` and executes it with the task's `payload`.
+*   **Implemented Handlers:**
+    *   `handle_log_message`: Logs the task payload (example).
+    *   `handle_llm_callback`: Extracts `chat_id` and `callback_context` from payload, constructs a trigger message, and sends it *as the bot* to the specified chat. This message is then processed by the normal `message_handler`.
+*   **Completion/Failure:** Based on the handler's outcome, the worker calls `update_task_status` to mark the task as `done` or `failed`. Error details should be captured for failed tasks.
+*   **Lock Timeout (Implicit):** While not explicitly implemented, long-running tasks could potentially be retried by other workers if a worker crashes. A robust implementation might add logic to check `locked_at` to detect stale locks, but this adds complexity.
 
