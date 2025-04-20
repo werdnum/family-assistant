@@ -1,0 +1,220 @@
+/* General adjustments */
+body {
+    margin: 2em; /* Add some breathing room */
+}
+
+pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 200px; /* Limit height */
+    overflow-y: auto;  /* Add scroll */
+    background-color: var(--accent-bg); /* Use theme background */
+    padding: 0.5em;
+    border-radius: 4px;
+    border: 1px solid var(--border); /* Use theme border */
+}
+
+/* Navigation */
+nav {
+    margin-bottom: 1.5em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5em;
+}
+nav a, nav span { /* Added span for non-link text */
+    margin-right: 1em;
+    text-decoration: none;
+}
+nav a:hover {
+    text-decoration: underline;
+}
+
+/* Button styling adjustments */
+button, .button-link { /* Added class for link styled as button */
+    margin-right: 0.5em; /* Space between buttons */
+}
+.add-button {
+    margin-bottom: 1em;
+}
+a.button-link { /* Style links to look like buttons */
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--accent);
+    background-color: var(--accent);
+    color: var(--accent-text);
+    text-decoration: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem; /* Match button font size */
+    line-height: 1.5; /* Match button line height */
+}
+a.button-link:hover {
+    background-color: var(--accent-hover);
+    border-color: var(--accent-hover);
+    color: var(--accent-text);
+    text-decoration: none;
+}
+
+
+/* index.html specific */
+.note-actions form {
+    display: inline;
+    margin: 0 0.2em;
+}
+.note-actions button {
+    padding: 0.2em 0.5em; /* Smaller buttons for actions */
+    font-size: 0.9em;
+}
+.note-actions a button { /* Style edit button similarly */
+     padding: 0.2em 0.5em;
+     font-size: 0.9em;
+}
+
+/* edit_note.html specific */
+.edit-form label {
+    display: block;
+    margin-bottom: 0.5em;
+    font-weight: bold;
+}
+.edit-form input[type="text"], .edit-form textarea {
+    width: 100%;
+    margin-bottom: 1em;
+    box-sizing: border-box;
+}
+.edit-form textarea {
+    min-height: 200px;
+    font-family: monospace; /* Keep monospace for code-like content */
+}
+.edit-form .buttons {
+    margin-top: 1em;
+}
+.edit-form .buttons a button { /* Ensure cancel button is styled */
+    background-color: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+.edit-form .buttons a button:hover {
+    background-color: var(--accent-bg);
+}
+
+
+/* message_history.html specific */
+.chat-group {
+    margin-bottom: 2em;
+    border: 1px solid var(--border);
+    padding: 1em;
+    border-radius: 5px;
+    background-color: var(--accent-bg);
+}
+.chat-header {
+    font-size: 1.2em;
+    font-weight: bold;
+    margin-bottom: 1em; /* Increased margin */
+    padding-bottom: 0.5em;
+    border-bottom: 1px solid var(--border);
+}
+.message {
+    margin-bottom: 1em; /* Increased margin */
+    padding: 0.8em; /* Increased padding */
+    border-radius: 4px;
+    border: 1px solid var(--border);
+}
+.user-message {
+    background-color: #e1f5fe; /* Keep custom colors for distinction */
+    border-color: #b3e5fc;
+}
+.assistant-message {
+    background-color: #f1f8e9; /* Keep custom colors for distinction */
+    border-color: #dcedc8;
+}
+.system-message {
+    background-color: #f5f5f5; /* Keep custom colors for distinction */
+    border-color: #eeeeee;
+    font-style: italic;
+}
+/* Adjust text color for better contrast on custom backgrounds if needed */
+.user-message, .assistant-message, .system-message {
+    color: #333; /* Ensure readability */
+}
+
+.message-meta {
+    font-size: 0.8em;
+    color: #666;
+    margin-bottom: 0.4em; /* Increased margin */
+}
+.message-content {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+.tool-info-details {
+    margin-top: 0.8em; /* Increased margin */
+    background-color: #eee;
+    border: 1px solid #ddd;
+    border-radius: 4px; /* Slight increase */
+    padding: 0.5em 0.8em; /* Increased padding */
+}
+.tool-info-details summary {
+    cursor: pointer;
+    font-size: 0.9em;
+    color: #333;
+    font-weight: bold; /* Make summary stand out */
+}
+.tool-info-content {
+    margin-top: 0.5em; /* Increased margin */
+    font-size: 0.85em;
+    color: #555;
+    background-color: #f9f9f9;
+    padding: 0.8em; /* Increased padding */
+    border-radius: 4px; /* Slight increase */
+    overflow-x: auto;
+}
+.tool-info-content pre { /* Ensure pre inside details is styled well */
+    background-color: #f9f9f9; /* Match parent background */
+    border: none;
+    padding: 0;
+    max-height: none; /* Remove max-height if desired within details */
+    overflow-y: visible;
+}
+
+/* tasks.html specific */
+.tasks-table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 1em;
+    table-layout: fixed; /* Keep fixed layout */
+}
+.tasks-table th, .tasks-table td {
+    border: 1px solid var(--border);
+    padding: 8px;
+    text-align: left;
+    vertical-align: top;
+    word-wrap: break-word;
+}
+.tasks-table th {
+    background-color: var(--accent-bg);
+    font-weight: bold; /* Ensure headers are bold */
+}
+/* Status Colors */
+.status-pending { background-color: #e3f2fd; border-left: 3px solid #90caf9; }
+.status-processing { background-color: #fff9c4; border-left: 3px solid #fff176; }
+.status-done { background-color: #e8f5e9; border-left: 3px solid #a5d6a7; }
+.status-failed { background-color: #ffebee; border-left: 3px solid #ef9a9a; }
+/* Status Colors Text (Ensure contrast) */
+.status-pending, .status-processing, .status-done, .status-failed {
+    color: #333; /* Adjust if needed */
+}
+
+/* Column Widths */
+.col-id { width: 5%; }
+.col-taskid { width: 15%; }
+.col-type { width: 10%; }
+.col-status { width: 8%; }
+.col-scheduled { width: 12%; }
+.col-created { width: 12%; }
+.col-retries { width: 8%; }
+.col-payload { width: 15%; }
+.col-error { width: 15%; }
+
+/* Task Payload/Error Pre Styling */
+.tasks-table pre {
+    max-height: 100px; /* Keep limited height */
+}

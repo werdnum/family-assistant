@@ -4,18 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ "Edit Note" if note else "Add Note" }}</title>
-    <style>
-        body { font-family: sans-serif; margin: 2em; }
-        label { display: block; margin-bottom: 0.5em; font-weight: bold; }
-        input[type="text"], textarea { width: 100%; padding: 8px; margin-bottom: 1em; border: 1px solid #ccc; box-sizing: border-box; }
-        textarea { min-height: 200px; font-family: monospace; }
-        .buttons button { padding: 10px 15px; margin-right: 10px; }
-    </style>
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <link rel="stylesheet" href="/static/css/custom.css">
 </head>
 <body>
+<header>
     <h1>{{ "Edit Note" if note else "Add New Note" }}</h1>
+</header>
 
-    <form action="/notes/save" method="post">
+<main>
+    <form action="/notes/save" method="post" class="edit-form">
         {% if note %}
         <input type="hidden" name="original_title" value="{{ note.title }}">
         {% endif %}
@@ -29,9 +27,15 @@
         </div>
         <div class="buttons">
             <button type="submit">Save Note</button>
-            <a href="/"><button type="button">Cancel</button></a>
+            <a href="/" class="button-link">Cancel</a> <!-- Use class for button-like link -->
         </div>
     </form>
+</main>
 
+<!-- Optional Footer
+<footer>
+    <p>Family Assistant Notes</p>
+</footer>
+-->
 </body>
 </html>

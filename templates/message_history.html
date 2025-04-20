@@ -4,31 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Message History</title>
-    <style>
-        body { font-family: sans-serif; margin: 2em; }
-        .chat-group { margin-bottom: 2em; border: 1px solid #ccc; padding: 1em; border-radius: 5px; }
-        .chat-header { font-size: 1.2em; font-weight: bold; margin-bottom: 0.5em; }
-        .message { margin-bottom: 0.5em; padding: 0.5em; border-radius: 3px; }
-        .user-message { background-color: #e1f5fe; }
-        .assistant-message { background-color: #f1f8e9; }
-        .system-message { background-color: #f5f5f5; font-style: italic; }
-        .message-meta { font-size: 0.8em; color: #666; margin-bottom: 0.2em; }
-        .message-content { white-space: pre-wrap; word-wrap: break-word; }
-        .nav-links a { margin-right: 1em; }
-        .nav-links { margin-bottom: 1em; }
-        .tool-info-details { margin-top: 0.5em; background-color: #eee; border: 1px solid #ddd; border-radius: 3px; padding: 0.3em 0.6em; }
-        .tool-info-details summary { cursor: pointer; font-size: 0.9em; color: #333; }
-        .tool-info-content { margin-top: 0.3em; font-size: 0.85em; color: #555; background-color: #f9f9f9; padding: 0.5em; border-radius: 3px; overflow-x: auto; }
-    </style>
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <link rel="stylesheet" href="/static/css/custom.css">
 </head>
 <body>
+<header>
     <h1>Message History</h1>
-
-    <div class="nav-links">
-        <a href="/">View Notes</a> |
+    <nav>
+        <a href="/">View Notes</a>
+        <span>|</span>
         <a href="/tasks">View Tasks</a>
-    </div>
+    </nav>
+</header>
 
+<main>
     {% if history_by_chat %}
         {% for chat_id, messages in history_by_chat.items() %}
         <div class="chat-group">
@@ -39,19 +28,19 @@
                     {{ message.role.capitalize() }} - {{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S %Z') }} (Msg ID: {{ message.message_id }})
                 </div>
                 <div class="message-content">
-                    {{ message.content }}
+                    <div class="message-content-text">{{ message.content }}</div> <!-- Wrap text content -->
                     {% if message.role == 'assistant' and message.tool_calls_info %}
                     <details class="tool-info-details">
                         <summary>Tool Calls ({{ message.tool_calls_info|length }})</summary>
-                        <pre class="tool-info-content">{% for tool_call in message.tool_calls_info %}
-Tool: {{ tool_call.function_name }}
-Call ID: {{ tool_call.call_id }}
-Arguments:
-{{ tool_call.arguments | tojson(indent=2) }}
-Response:
-{{ tool_call.response_content }}
----
-{% endfor %}</pre>
+                        <div class="tool-info-content"> <!-- Use div instead of pre for structure -->
+                            {% for tool_call in message.tool_calls_info %}
+                            <strong>Tool:</strong> {{ tool_call.function_name }}<br>
+                            <strong>Call ID:</strong> {{ tool_call.call_id }}<br>
+                            <strong>Arguments:</strong><pre>{{ tool_call.arguments | tojson(indent=2) }}</pre>
+                            <strong>Response:</strong><pre>{{ tool_call.response_content }}</pre>
+                            {% if not loop.last %}---{% endif %}
+                            {% endfor %}
+                        </div>
                     </details>
                     {% endif %}
                 </div>
@@ -62,6 +51,12 @@ Response:
     {% else %}
         <p>No message history found.</p>
     {% endif %}
+</main>
 
+<!-- Optional Footer
+<footer>
+    <p>Family Assistant Message History</p>
+</footer>
+-->
 </body>
 </html>
