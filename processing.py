@@ -16,7 +16,7 @@ from litellm.types.completion import ChatCompletionMessageParam
 
 # Import storage functions for tools
 import storage
-from storage import enqueue_task # Specifically import enqueue_task
+# from storage import enqueue_task # Removed specific import
 
 # MCP state (mcp_sessions, tool_name_to_server_id) will be passed as arguments
 # Removed: from main import mcp_sessions, tool_name_to_server_id
@@ -52,7 +52,7 @@ async def schedule_future_callback_tool(callback_time: str, context: str, chat_i
         # TODO: Need access to the new_task_event from main.py to notify worker
         # For now, enqueue without immediate notification. Refactor may be needed
         # if immediate notification is desired here.
-        await enqueue_task(
+        await storage.enqueue_task( # Use storage.enqueue_task
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,

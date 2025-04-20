@@ -55,10 +55,8 @@ from storage import (
     get_recent_history,
     get_message_by_id,
     add_or_update_note,  # Import the function to be used as a tool
-    # Task Queue imports
-    dequeue_task,
-    update_task_status,
 )
+import storage # Import the whole module for task queue functions
 
 # Import calendar functions
 import calendar_integration
@@ -176,7 +174,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
         task = None
         try:
             # Dequeue a task of a type this worker handles
-            task = await dequeue_task(worker_id, task_types_handled)
+            task = await storage.dequeue_task(worker_id, task_types_handled) # Use storage.dequeue_task
 
             if task:
                 logger.info(
@@ -189,7 +187,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         # Execute the handler with the payload
                         await handler(task["payload"])
                         # Mark task as done if handler completes successfully
-                        await update_task_status(task["task_id"], "done")
+                        await storage.update_task_status(task["task_id"], "done") # Use storage.update_task_status
                         logger.info(
                             f"Worker {worker_id} completed task {task['task_id']}"
                         )
@@ -199,7 +197,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                             exc_info=True,
                         )
                         # Mark task as failed
-                        await update_task_status(
+                        await storage.update_task_status( # Use storage.update_task_status
                             task["task_id"], "failed", error=str(handler_exc)
                         )
                 else:
@@ -207,7 +205,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                     logger.error(
                         f"Worker {worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
                     )
-                    await update_task_status(
+                    await storage.update_task_status( # Use storage.update_task_status
                         task["task_id"],
                         "failed",
                         error=f"No handler registered for type {task['task_type']}",
