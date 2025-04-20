@@ -166,6 +166,12 @@ async def view_tasks(request: Request):
         raise HTTPException(status_code=500, detail="Failed to fetch tasks")
 
 
+@app.get("/health", status_code=200)
+async def health_check():
+    """Basic health check endpoint."""
+    return {"status": "ok"}
+
+
 # --- Uvicorn Runner (for standalone testing) ---
 if __name__ == "__main__":
     import uvicorn
