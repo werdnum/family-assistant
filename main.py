@@ -751,8 +751,65 @@ async def _generate_llm_response_for_chat(
         limit=MAX_HISTORY_MESSAGES,
         max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
     )
-    messages.extend(history_messages)
-    logger.debug(f"Added {len(history_messages)} recent messages from DB history.")
+
+    # Process history messages, formatting assistant tool calls correctly
+    for msg in history_messages:
+        if msg["role"] == "assistant" and "tool_calls_info_raw" in msg:
+            # Construct the 'tool_calls' structure expected by LiteLLM/OpenAI
+            # from the stored 'tool_calls_info_raw'
+            reformatted_tool_calls = []
+            raw_info_list = msg.get("tool_calls_info_raw", [])
+            if isinstance(raw_info_list, list): # Ensure it's a list
+                for raw_call in raw_info_list:
+                    # Assuming raw_call is a dict like:
+                    # {'call_id': '...', 'function_name': '...', 'arguments': {...}, 'response_content': '...'}
+                    if isinstance(raw_call, dict):
+                        reformatted_tool_calls.append(
+                            {
+                                "id": raw_call.get("call_id", f"call_{uuid.uuid4()}"), # Generate ID if missing
+                                "type": "function",
+                                "function": {
+                                    "name": raw_call.get("function_name", "unknown_tool"),
+                                    # Arguments should already be a JSON string or dict from storage
+                                    "arguments": json.dumps(raw_call.get("arguments", {})) if isinstance(raw_call.get("arguments"), dict) else raw_call.get("arguments", '{}'),
+                                },
+                            }
+                        )
+                        # Also need to append the corresponding tool response message
+                        # The history mechanism currently stores this *within* the assistant message's info block.
+                        # We need separate 'assistant' (with tool_calls) and 'tool' messages.
+                        # Let's adjust history storage/retrieval or formatting here.
+
+                        # OPTION 1 (Simpler formatting here): Append tool response immediately after
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": msg.get("content"), # Include original content if any
+                                "tool_calls": reformatted_tool_calls
+                            }
+                        )
+                        # Now append the corresponding tool result message for each call
+                        for raw_call in raw_info_list:
+                             if isinstance(raw_call, dict):
+                                messages.append(
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": raw_call.get("call_id", "missing_id"),
+                                        "content": raw_call.get("response_content", "Error: Missing tool response content"),
+                                    }
+                                )
+                    else:
+                         logger.warning(f"Skipping non-dict item in raw_tool_calls_info: {raw_call}")
+            else:
+                 logger.warning(f"Expected list for raw_tool_calls_info, got {type(raw_info_list)}. Skipping tool call reconstruction.")
+            # Skip adding the original combined message dictionary 'msg' as we added parts separately
+        else:
+            # Add regular user or assistant messages (without tool calls)
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
+    # messages.extend(history_messages) # Removed this line, processing is now done above
+    logger.debug(f"Processed {len(history_messages)} DB history messages into LLM format.")
+
 
     # --- Prepare System Prompt Context ---
     system_prompt_template = PROMPTS.get(
