@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Tuple, Any
 import vobject
 import caldav
 from caldav.lib.error import DAVError, NotFoundError
-import httpx # Import httpx
+import httpx  # Import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +102,11 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
 
 # --- Core Fetching Functions ---
 
+
 async def _fetch_ical_events_async(ical_urls: List[str]) -> List[Dict[str, Any]]:
     """Asynchronously fetches and parses events from a list of iCal URLs."""
     all_events = []
-    async with httpx.AsyncClient(timeout=30.0) as client: # Increased timeout
+    async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
         fetch_tasks = []
         for url in ical_urls:
             logger.info(f"Fetching iCal data from: {url}")
@@ -116,21 +117,29 @@ async def _fetch_ical_events_async(ical_urls: List[str]) -> List[Dict[str, Any]]
         for i, result in enumerate(results):
             url = ical_urls[i]
             if isinstance(result, Exception):
-                logger.error(f"Error fetching iCal URL {url}: {result}", exc_info=result)
+                logger.error(
+                    f"Error fetching iCal URL {url}: {result}", exc_info=result
+                )
                 continue
             elif result.status_code != 200:
-                logger.error(f"Failed to fetch iCal URL {url}: Status {result.status_code}")
+                logger.error(
+                    f"Failed to fetch iCal URL {url}: Status {result.status_code}"
+                )
                 continue
 
             try:
                 ical_data = result.text
-                logger.debug(f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}...")
+                logger.debug(
+                    f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
+                )
                 # Use vobject to parse the fetched data
                 cal = vobject.readComponents(ical_data)
                 count = 0
                 for component in cal:
                     if component.name.upper() == "VEVENT":
-                        parsed = parse_event(component.serialize()) # Reuse existing parser
+                        parsed = parse_event(
+                            component.serialize()
+                        )  # Reuse existing parser
                         if parsed:
                             all_events.append(parsed)
                             count += 1
@@ -138,7 +147,9 @@ async def _fetch_ical_events_async(ical_urls: List[str]) -> List[Dict[str, Any]]
             except Exception as e:
                 logger.error(f"Error parsing iCal data from {url}: {e}", exc_info=True)
 
-    logger.info(f"Fetched and parsed {len(all_events)} total events from {len(ical_urls)} iCal URL(s).")
+    logger.info(
+        f"Fetched and parsed {len(all_events)} total events from {len(ical_urls)} iCal URL(s)."
+    )
     return all_events
 
 
@@ -238,7 +249,10 @@ def _fetch_caldav_events_sync(
 
 # --- Main Orchestration Function ---
 
-async def fetch_upcoming_events(calendar_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+
+async def fetch_upcoming_events(
+    calendar_config: Dict[str, Any],
+) -> List[Dict[str, Any]]:
     """Fetches events from configured CalDAV and iCal sources and merges them."""
     logger.debug("Entering fetch_upcoming_events orchestrator.")
     all_events = []
@@ -255,14 +269,16 @@ async def fetch_upcoming_events(calendar_config: Dict[str, Any]) -> List[Dict[st
             logger.debug("Scheduling synchronous CalDAV fetch in executor.")
             caldav_task = loop.run_in_executor(
                 None,  # Use default executor
-                _fetch_caldav_events_sync, # Renamed function
+                _fetch_caldav_events_sync,  # Renamed function
                 username,
                 password,
                 calendar_urls,
             )
             tasks.append(caldav_task)
         else:
-            logger.warning("CalDAV config present but incomplete (missing user/pass/urls). Skipping CalDAV fetch.")
+            logger.warning(
+                "CalDAV config present but incomplete (missing user/pass/urls). Skipping CalDAV fetch."
+            )
 
     # --- Schedule iCal Fetch (if configured) ---
     ical_config = calendar_config.get("ical")
@@ -273,7 +289,9 @@ async def fetch_upcoming_events(calendar_config: Dict[str, Any]) -> List[Dict[st
             ical_task = asyncio.create_task(_fetch_ical_events_async(ical_urls))
             tasks.append(ical_task)
         else:
-            logger.warning("iCal config present but no URLs provided. Skipping iCal fetch.")
+            logger.warning(
+                "iCal config present but no URLs provided. Skipping iCal fetch."
+            )
 
     # --- Gather Results ---
     if not tasks:
@@ -287,13 +305,17 @@ async def fetch_upcoming_events(calendar_config: Dict[str, Any]) -> List[Dict[st
     for result in results:
         if isinstance(result, Exception):
             # Errors within the fetch functions should already be logged
-            logger.error(f"Caught exception during asyncio.gather: {result}", exc_info=result)
+            logger.error(
+                f"Caught exception during asyncio.gather: {result}", exc_info=result
+            )
         elif isinstance(result, list):
             all_events.extend(result)
         else:
             logger.warning(f"Unexpected result type from gather: {type(result)}")
 
-    logger.info(f"Total events fetched from all sources before sorting: {len(all_events)}")
+    logger.info(
+        f"Total events fetched from all sources before sorting: {len(all_events)}"
+    )
 
     # --- Sort Combined Events ---
     def get_sort_key(event):
@@ -402,14 +424,20 @@ if __name__ == "__main__":
     caldav_user = os.getenv("CALDAV_USERNAME")
     caldav_pass = os.getenv("CALDAV_PASSWORD")
     caldav_urls_str = os.getenv("CALDAV_CALENDAR_URLS")
-    caldav_urls = [url.strip() for url in caldav_urls_str.split(',')] if caldav_urls_str else []
+    caldav_urls = (
+        [url.strip() for url in caldav_urls_str.split(",")] if caldav_urls_str else []
+    )
     if caldav_user and caldav_pass and caldav_urls:
         test_calendar_config["caldav"] = {
-            "username": caldav_user, "password": caldav_pass, "calendar_urls": caldav_urls
+            "username": caldav_user,
+            "password": caldav_pass,
+            "calendar_urls": caldav_urls,
         }
 
     ical_urls_str = os.getenv("ICAL_URLS")
-    ical_urls = [url.strip() for url in ical_urls_str.split(',')] if ical_urls_str else []
+    ical_urls = (
+        [url.strip() for url in ical_urls_str.split(",")] if ical_urls_str else []
+    )
     if ical_urls:
         test_calendar_config["ical"] = {"urls": ical_urls}
     # --- End dummy config ---
@@ -419,7 +447,7 @@ if __name__ == "__main__":
         if not test_calendar_config:
             print("No calendar sources configured in .env for testing.")
             return
-        events = await fetch_upcoming_events(test_calendar_config) # Pass the config
+        events = await fetch_upcoming_events(test_calendar_config)  # Pass the config
         print(f"\nFetched {len(events)} events from all sources.")
 
         # Load dummy prompts for formatting test

@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
 from fastapi import Response  # Added Response
 
-from collections import defaultdict # Import defaultdict
+from collections import defaultdict  # Import defaultdict
 
 # Import storage functions - adjust path if needed
 import storage
-from storage import get_grouped_message_history # Added
+from storage import get_grouped_message_history  # Added
 
 logger = logging.getLogger(__name__)
 

@@ -294,7 +294,7 @@ __all__ = [
     "enqueue_task",
     "dequeue_task",
     "update_task_status",
-    "get_grouped_message_history", # Added
+    "get_grouped_message_history",  # Added
     "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
     "tasks_table",
@@ -344,7 +344,9 @@ message_history = Table(
     Column("timestamp", DateTime(timezone=True), nullable=False, index=True),
     Column("role", String, nullable=False),  # 'user' or 'assistant'
     Column("content", Text, nullable=False),
-    Column("tool_calls_info", JSON, nullable=True), # Added: To store details of tool calls
+    Column(
+        "tool_calls_info", JSON, nullable=True
+    ),  # Added: To store details of tool calls
 )
 
 # Define the tasks table for the message queue
@@ -452,7 +454,9 @@ async def add_message_to_history(
     timestamp: datetime,
     role: str,
     content: str,
-    tool_calls_info: Optional[List[Dict[str, Any]]] = None, # Added tool_calls_info parameter
+    tool_calls_info: Optional[
+        List[Dict[str, Any]]
+    ] = None,  # Added tool_calls_info parameter
 ):
     """Adds a message to the history table, including optional tool call info, with retries."""
     max_retries = 3
@@ -464,7 +468,7 @@ async def add_message_to_history(
         timestamp=timestamp,
         role=role,
         content=content,
-        tool_calls_info=tool_calls_info, # Store the tool call info
+        tool_calls_info=tool_calls_info,  # Store the tool call info
     )
 
     for attempt in range(max_retries):
@@ -769,7 +773,7 @@ async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
             message_history.c.timestamp,
             message_history.c.role,
             message_history.c.content,
-            message_history.c.tool_calls_info, # Added: Fetch tool_calls_info
+            message_history.c.tool_calls_info,  # Added: Fetch tool_calls_info
         )
         # Order by chat_id first, then by timestamp DESC within each chat
         .order_by(message_history.c.chat_id, message_history.c.timestamp.desc())
@@ -794,22 +798,25 @@ async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
                             "timestamp": row.timestamp,
                             "role": row.role,
                             "content": row.content,
-                            "tool_calls_info": row.tool_calls_info, # Added: Include tool_calls_info in result
+                            "tool_calls_info": row.tool_calls_info,  # Added: Include tool_calls_info in result
                         }
                     )
-                return grouped_history # Success
+                return grouped_history  # Success
         except DBAPIError as e:
             logger.warning(
                 f"DBAPIError in get_grouped_message_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
             )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for get_grouped_message_history. Raising error.")
+                logger.error(
+                    f"Max retries exceeded for get_grouped_message_history. Raising error."
+                )
                 raise
             delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
             logger.error(
-                f"Non-retryable error in get_grouped_message_history: {e}", exc_info=True
+                f"Non-retryable error in get_grouped_message_history: {e}",
+                exc_info=True,
             )
             raise
 
