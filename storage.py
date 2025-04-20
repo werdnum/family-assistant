@@ -51,30 +51,39 @@ async def enqueue_task(
 
     for attempt in range(max_retries):
         try:
-            async with engine.connect() as conn:
-
-        stmt = insert(tasks_table).values(
-            task_id=task_id,
-            task_type=task_type,
+            async with engine.connect() as conn: # Start of with block
+                # Code below needs to be indented inside the 'with' block
+                stmt = insert(tasks_table).values(
+                    task_id=task_id,
+                    task_type=task_type,
             payload=payload,
             scheduled_at=scheduled_at,
             # created_at is set by default in the table definition now
-            status="pending",
-        )
-        try:
-            await conn.execute(stmt)
-            await conn.commit()
-            logger.info(f"Enqueued task {task_id} of type {task_type}.")
+                    status="pending",
+                )
+                # This inner try/except is specific to the insert/commit part
+                # and should also be inside the 'with' block
+                try:
+                    await conn.execute(stmt)
+                    await conn.commit()
+                    logger.info(f"Enqueued task {task_id} of type {task_type}.")
 
             # Notify worker if task is immediate and event is provided
             is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
                 timezone.utc
             )
             if is_immediate and notify_event:
-                notify_event.set()
-                logger.debug(f"Notified worker about immediate task {task_id}.")
+                    notify_event.set()
+                    logger.debug(f"Notified worker about immediate task {task_id}.")
 
-            return # Success
+                    return # Success
+                except Exception as inner_e: # Catch errors during execute/commit
+                    # Rollback might be needed if commit failed, but connection might be bad.
+                    # Let the outer exception handler manage retries.
+                    logger.error(f"Error during execute/commit in enqueue_task: {inner_e}", exc_info=True)
+                    # Re-raise to be caught by the outer DBAPIError or generic Exception handler
+                    raise inner_e
+            # End of with block for conn
 
         except DBAPIError as e:
             logger.warning(f"DBAPIError in enqueue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
@@ -123,12 +132,13 @@ async def dequeue_task(
                 async with conn.begin(): # Start transaction
                     # Select the oldest, pending task of the specified types,
                     # whose scheduled time is in the past (or null).
-            # Use FOR UPDATE SKIP LOCKED to handle concurrency.
-            # Note: This locking clause is PostgreSQL-specific via SQLAlchemy.
-            # SQLite will likely lock the entire table during the transaction.
-            stmt = (
-                select(tasks_table)
-                .where(tasks_table.c.status == "pending")
+                    # Use FOR UPDATE SKIP LOCKED to handle concurrency.
+                    # Note: This locking clause is PostgreSQL-specific via SQLAlchemy.
+                    # SQLite will likely lock the entire table during the transaction.
+                    # This block needs to be inside the transaction
+                    stmt = (
+                        select(tasks_table)
+                        .where(tasks_table.c.status == "pending")
                 .where(tasks_table.c.task_type.in_(task_types))
                 .where(
                     (tasks_table.c.scheduled_at == None)  # noqa: E711
@@ -136,13 +146,13 @@ async def dequeue_task(
                 )
                 .order_by(tasks_table.c.created_at)
                 .limit(1)
-                .with_for_update(skip_locked=True)
-            )
+                        .with_for_update(skip_locked=True)
+                    )
 
-            result = await conn.execute(stmt)
-            task_row = result.fetchone()
+                    result = await conn.execute(stmt)
+                    task_row = result.fetchone()
 
-            if task_row:
+                    if task_row:
                 # Lock acquired, update the status and lock info
                 update_stmt = (
                     update(tasks_table)
@@ -207,17 +217,18 @@ async def update_task_status(
 
     for attempt in range(max_retries):
         try:
-            async with engine.connect() as conn:
+            async with engine.connect() as conn: # Start of with block
+                # Code below needs to be indented inside the 'with' block
                 stmt = (
                     update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            # Optionally ensure it was being processed before marking done/failed
-            # .where(tasks_table.c.status == 'processing')
-            .values(**values_to_update)
-        )
-        result = await conn.execute(stmt)
-        await conn.commit()
-        if result.rowcount > 0:
+                    .where(tasks_table.c.task_id == task_id)
+                    # Optionally ensure it was being processed before marking done/failed
+                    # .where(tasks_table.c.status == 'processing')
+                    .values(**values_to_update)
+                )
+                result = await conn.execute(stmt)
+                await conn.commit()
+                if result.rowcount > 0:
                     logger.info(f"Updated task {task_id} status to {status}.")
                     return True
                 logger.warning(
@@ -561,14 +572,15 @@ async def add_or_update_note(title: str, content: str):
 
     for attempt in range(max_retries):
         try:
-            async with engine.connect() as conn:
+            async with engine.connect() as conn: # Start of with block
+                # Code below needs to be indented inside the 'with' block
                 # Check if title exists
                 select_stmt = select(notes_table).where(notes_table.c.title == title)
                 result = await conn.execute(select_stmt)
-        existing_note = result.fetchone()
+                existing_note = result.fetchone()
 
-        now = datetime.now(timezone.utc)
-        if existing_note:
+                now = datetime.now(timezone.utc)
+                if existing_note:
             # Update existing note
             stmt = (
                 update(notes_table)
@@ -583,14 +595,14 @@ async def add_or_update_note(title: str, content: str):
                 content=content,
                 created_at=now,
                 updated_at=now,
-                # id is handled by autoincrement
-            )
-            logger.info(f"Inserting new note: {title}")
+                    # id is handled by autoincrement
+                )
+                logger.info(f"Inserting new note: {title}")
 
                 await conn.execute(stmt)
                 await conn.commit()
                 return # Success
-            # End connection block
+            # End of with block for conn
         except DBAPIError as e:
             # Note: Retrying might lead to race conditions if two updates happen concurrently.
             # The unique constraint on title helps, but consider implications.
