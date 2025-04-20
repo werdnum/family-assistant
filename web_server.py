@@ -5,7 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
-from fastapi import Response # Added Response
+from fastapi import Response  # Added Response
 
 # Import storage functions - adjust path if needed
 import storage
