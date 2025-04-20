@@ -3,7 +3,7 @@ import json
 import asyncio
 import uuid  # Added for unique task IDs
 from datetime import datetime, timezone  # Added timezone
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple # Added Tuple
 
 from dateutil.parser import isoparse  # Added for parsing datetime strings
 
