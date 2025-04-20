@@ -24,7 +24,7 @@ from contextlib import AsyncExitStack  # For managing multiple async contexts
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple  # Added Tuple
 
-import pytz # Added for timezone handling
+import pytz  # Added for timezone handling
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
@@ -90,9 +90,9 @@ TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 application: Optional[Application] = None
 ALLOWED_CHAT_IDS: list[int] = []
 DEVELOPER_CHAT_ID: Optional[int] = None
-PROMPTS: Dict[str, str] = {} # Global dict to hold loaded prompts
-CALENDAR_CONFIG: Dict[str, Any] = {} # Stores CalDAV and iCal settings
-TIMEZONE_STR: str = "UTC" # Default timezone
+PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
+CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
+TIMEZONE_STR: str = "UTC"  # Default timezone
 # shutdown_event moved higher up
 from collections import defaultdict  # Add defaultdict
 
@@ -163,16 +163,18 @@ async def handle_llm_callback(payload: Any):
         llm_response_content, tool_call_info = await _generate_llm_response_for_chat(
             chat_id=chat_id,
             trigger_content_parts=trigger_content_parts,
-            user_name="System Trigger" # Or "Assistant"? Needs testing for optimal LLM behavior.
+            user_name="System Trigger",  # Or "Assistant"? Needs testing for optimal LLM behavior.
         )
 
-        if llm_response_content: # Check if content exists
+        if llm_response_content:  # Check if content exists
             # Send the LLM's response back to the chat
-            formatted_response = format_llm_response_for_telegram(llm_response_content) # Use content string
-            sent_message = await application.bot.send_message( # Store sent message result
+            formatted_response = format_llm_response_for_telegram(
+                llm_response_content
+            )  # Use content string
+            sent_message = await application.bot.send_message(  # Store sent message result
                 chat_id=chat_id,
-                text=formatted_response, # Use formatted content string
-                parse_mode=ParseMode.MARKDOWN_V2
+                text=formatted_response,  # Use formatted content string
+                parse_mode=ParseMode.MARKDOWN_V2,
                 # Note: We don't have an original message ID to reply to here.
             )
             logger.info(f"Sent LLM response for callback to chat {chat_id}.")
@@ -180,12 +182,14 @@ async def handle_llm_callback(payload: Any):
             # Store the callback trigger and response in history
             try:
                 # Pseudo-ID for the trigger message (timestamp based?)
-                trigger_msg_id = int(datetime.now(timezone.utc).timestamp() * 1000) # Crude pseudo-ID
+                trigger_msg_id = int(
+                    datetime.now(timezone.utc).timestamp() * 1000
+                )  # Crude pseudo-ID
                 await storage.add_message_to_history(
                     chat_id=chat_id,
                     message_id=trigger_msg_id,
                     timestamp=datetime.now(timezone.utc),
-                    role="system", # Or 'user'/'assistant' depending on how trigger_message was structured
+                    role="system",  # Or 'user'/'assistant' depending on how trigger_message was structured
                     content=trigger_text,
                 )
                 # Pseudo-ID for the bot response
@@ -195,25 +199,31 @@ async def handle_llm_callback(payload: Any):
                     message_id=response_msg_id,
                     timestamp=datetime.now(timezone.utc),
                     role="assistant",
-                    content=llm_response_content, # Store the content string
-                    tool_calls_info=tool_call_info, # Store tool info too
+                    content=llm_response_content,  # Store the content string
+                    tool_calls_info=tool_call_info,  # Store tool info too
                 )
             except Exception as db_err:
-                logger.error(f"Failed to store callback history for chat {chat_id}: {db_err}", exc_info=True)
+                logger.error(
+                    f"Failed to store callback history for chat {chat_id}: {db_err}",
+                    exc_info=True,
+                )
 
         else:
-            logger.warning(f"LLM did not return a response content for callback in chat {chat_id}.")
+            logger.warning(
+                f"LLM did not return a response content for callback in chat {chat_id}."
+            )
             # Optionally send a generic failure message to the chat
             await application.bot.send_message(
                 chat_id=chat_id,
-                text="Sorry, I couldn't process the scheduled callback."
+                text="Sorry, I couldn't process the scheduled callback.",
             )
             # Raise an error to mark the task as failed if no response was generated
             raise RuntimeError("LLM failed to generate response content for callback.")
 
     except Exception as e:
         logger.error(
-            f"Failed during LLM callback processing for chat {chat_id}: {e}", exc_info=True
+            f"Failed during LLM callback processing for chat {chat_id}: {e}",
+            exc_info=True,
         )
         # Raise the exception to ensure the task is marked as failed
         raise
@@ -235,7 +245,9 @@ def format_llm_response_for_telegram(response_text: str) -> str:
         if converted and not converted.isspace():
             return converted
         else:
-            logger.warning(f"Markdown conversion resulted in empty string for: {response_text[:100]}... Using original.")
+            logger.warning(
+                f"Markdown conversion resulted in empty string for: {response_text[:100]}... Using original."
+            )
             # Fallback to original text, escaped, if conversion is empty
             return escape_markdown(response_text, version=2)
     except Exception as md_err:
@@ -337,7 +349,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 # --- Configuration Loading ---
 def load_config():
     """Loads configuration from environment variables and prompts.yaml."""
-    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG, TIMEZONE_STR # Added TIMEZONE_STR
+    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG, TIMEZONE_STR  # Added TIMEZONE_STR
     load_dotenv()  # Load environment variables from .env file
 
     # --- Telegram Config ---
@@ -437,7 +449,7 @@ def load_config():
         logger.warning(
             "No calendar sources (CalDAV or iCal) are configured. Calendar features will be disabled."
         )
-        CALENDAR_CONFIG = {} # Ensure it's empty if nothing is enabled
+        CALENDAR_CONFIG = {}  # Ensure it's empty if nothing is enabled
 
     # --- Timezone Config ---
     loaded_tz = os.getenv("TIMEZONE", "UTC")
@@ -447,8 +459,10 @@ def load_config():
         TIMEZONE_STR = loaded_tz
         logger.info(f"Using timezone: {TIMEZONE_STR}")
     except pytz.exceptions.UnknownTimeZoneError:
-        logger.error(f"Invalid TIMEZONE '{loaded_tz}' specified in .env. Defaulting to UTC.")
-        TIMEZONE_STR = "UTC" # Keep the default if invalid
+        logger.error(
+            f"Invalid TIMEZONE '{loaded_tz}' specified in .env. Defaulting to UTC."
+        )
+        TIMEZONE_STR = "UTC"  # Keep the default if invalid
 
 
 # --- MCP Configuration Loading & Connection ---
@@ -665,10 +679,13 @@ async def typing_notifications(
 
 # --- Core LLM Interaction Logic ---
 
+
 async def _generate_llm_response_for_chat(
     chat_id: int,
-    trigger_content_parts: List[Dict[str, Any]], # Content of the triggering message (user text/photo or callback)
-    user_name: str, # Name to use in system prompt
+    trigger_content_parts: List[
+        Dict[str, Any]
+    ],  # Content of the triggering message (user text/photo or callback)
+    user_name: str,  # Name to use in system prompt
     # TODO: Consider passing context explicitly instead of relying on globals/args
     # context: ContextTypes.DEFAULT_TYPE # Needed for typing notifications?
 ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
@@ -684,11 +701,13 @@ async def _generate_llm_response_for_chat(
     Returns:
         A tuple: (LLM response string or None, List of tool call info dicts or None).
     """
-    logger.debug(f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}")
+    logger.debug(
+        f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
+    )
 
     # --- History and Context Preparation ---
     messages: List[Dict[str, Any]] = []
-    history_messages = await storage.get_recent_history( # Use storage directly
+    history_messages = await storage.get_recent_history(  # Use storage directly
         chat_id,
         limit=MAX_HISTORY_MESSAGES,
         max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
@@ -697,44 +716,68 @@ async def _generate_llm_response_for_chat(
     logger.debug(f"Added {len(history_messages)} recent messages from DB history.")
 
     # --- Prepare System Prompt Context ---
-    system_prompt_template = PROMPTS.get("system_prompt", "You are a helpful assistant.")
+    system_prompt_template = PROMPTS.get(
+        "system_prompt", "You are a helpful assistant."
+    )
     try:
         local_tz = pytz.timezone(TIMEZONE_STR)
         current_local_time = datetime.now(local_tz)
         current_time_str = current_local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
     except Exception as tz_err:
-        logger.error(f"Error applying timezone {TIMEZONE_STR}: {tz_err}. Defaulting time format.")
+        logger.error(
+            f"Error applying timezone {TIMEZONE_STR}: {tz_err}. Defaulting time format."
+        )
         current_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     calendar_context_str = ""
     if CALENDAR_CONFIG:
         try:
-            upcoming_events = await calendar_integration.fetch_upcoming_events(CALENDAR_CONFIG)
-            today_events_str, future_events_str = calendar_integration.format_events_for_prompt(upcoming_events, PROMPTS)
-            calendar_header_template = PROMPTS.get("calendar_context_header", "{today_tomorrow_events}\n{next_two_weeks_events}")
-            calendar_context_str = calendar_header_template.format(today_tomorrow_events=today_events_str, next_two_weeks_events=future_events_str).strip()
+            upcoming_events = await calendar_integration.fetch_upcoming_events(
+                CALENDAR_CONFIG
+            )
+            today_events_str, future_events_str = (
+                calendar_integration.format_events_for_prompt(upcoming_events, PROMPTS)
+            )
+            calendar_header_template = PROMPTS.get(
+                "calendar_context_header",
+                "{today_tomorrow_events}\n{next_two_weeks_events}",
+            )
+            calendar_context_str = calendar_header_template.format(
+                today_tomorrow_events=today_events_str,
+                next_two_weeks_events=future_events_str,
+            ).strip()
         except Exception as cal_err:
-            logger.error(f"Failed to fetch or format calendar events: {cal_err}", exc_info=True)
+            logger.error(
+                f"Failed to fetch or format calendar events: {cal_err}", exc_info=True
+            )
             calendar_context_str = f"Error retrieving calendar events: {str(cal_err)}"
     else:
         calendar_context_str = "Calendar integration not configured."
 
     notes_context_str = ""
     try:
-        all_notes = await storage.get_all_notes() # Use storage directly
+        all_notes = await storage.get_all_notes()  # Use storage directly
         if all_notes:
             notes_list_str = ""
             note_item_format = PROMPTS.get("note_item_format", "- {title}: {content}")
             for note in all_notes:
-                notes_list_str += note_item_format.format(title=note["title"], content=note["content"]) + "\n"
-            notes_context_header_template = PROMPTS.get("notes_context_header", "Relevant notes:\n{notes_list}")
-            notes_context_str = notes_context_header_template.format(notes_list=notes_list_str.strip())
+                notes_list_str += (
+                    note_item_format.format(
+                        title=note["title"], content=note["content"]
+                    )
+                    + "\n"
+                )
+            notes_context_header_template = PROMPTS.get(
+                "notes_context_header", "Relevant notes:\n{notes_list}"
+            )
+            notes_context_str = notes_context_header_template.format(
+                notes_list=notes_list_str.strip()
+            )
         else:
             notes_context_str = PROMPTS.get("no_notes", "No notes available.")
     except Exception as note_err:
         logger.error(f"Failed to get notes for context: {note_err}", exc_info=True)
         notes_context_str = "Error retrieving notes."
-
 
     final_system_prompt = system_prompt_template.format(
         user_name=user_name,
@@ -749,13 +792,12 @@ async def _generate_llm_response_for_chat(
     else:
         logger.warning("Generated empty system prompt.")
 
-
     # --- Add the triggering message content ---
     # Note: For callbacks, the role might ideally be 'system' or a specific 'callback' role,
     # but using 'user' is often necessary for the LLM to properly attend to it as the primary input.
     # If LLM behavior is odd, consider experimenting with the role here.
     trigger_message = {
-        "role": "user", # Treat trigger as user input for processing flow
+        "role": "user",  # Treat trigger as user input for processing flow
         "content": trigger_content_parts,
     }
     messages.append(trigger_message)
@@ -764,6 +806,7 @@ async def _generate_llm_response_for_chat(
     # --- Combine local and MCP tools ---
     # Ensure processing.TOOLS_DEFINITION is accessible or imported
     from processing import TOOLS_DEFINITION as local_tools_definition
+
     all_tools = local_tools_definition + mcp_tools
 
     # --- Call LLM ---
@@ -782,7 +825,9 @@ async def _generate_llm_response_for_chat(
         # Return both parts as a tuple
         return llm_response_content, tool_info
     except Exception as e:
-        logger.error(f"Error during LLM interaction for chat {chat_id}: {e}", exc_info=True)
+        logger.error(
+            f"Error during LLM interaction for chat {chat_id}: {e}", exc_info=True
+        )
         # Return None for both parts on error
         return None, None
 
@@ -872,46 +917,49 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
     # --- Prepare current user message content part (combined) ---
     formatted_user_text_content = f"{forward_context}{combined_text}".strip()
     text_content_part = {"type": "text", "text": formatted_user_text_content}
-    trigger_content_parts = [text_content_part] # Start with text
+    trigger_content_parts = [text_content_part]  # Start with text
 
     # --- Handle Photo Attachment (from the first photo found) ---
     if first_photo_bytes:
         try:
             base64_image = base64.b64encode(first_photo_bytes).decode("utf-8")
             mime_type = "image/jpeg"  # Assuming JPEG
-            trigger_content_parts.append({ # Append photo part
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
-            })
+            trigger_content_parts.append(
+                {  # Append photo part
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                }
+            )
             logger.info("Added first photo from batch to trigger content.")
         except Exception as img_err:
             logger.error(f"Error encoding photo from batch: {img_err}", exc_info=True)
-            await context.bot.send_message(
-                chat_id, "Error processing image in batch."
-            )
+            await context.bot.send_message(chat_id, "Error processing image in batch.")
             # Continue processing with just the text part if the image failed.
-            trigger_content_parts = [text_content_part] # Reset to just text
-
+            trigger_content_parts = [text_content_part]  # Reset to just text
 
     llm_response_content = None
-    tool_call_info = None # Initialize tool info for this batch
+    tool_call_info = None  # Initialize tool info for this batch
     logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
     try:
         # Use the new helper function to get the LLM response content and tool info
         async with typing_notifications(context, chat_id):
-             llm_response_content, tool_call_info = await _generate_llm_response_for_chat(
-                 chat_id=chat_id,
-                 trigger_content_parts=trigger_content_parts,
-                 user_name=user_name,
-                 # context=context
-             )
+            llm_response_content, tool_call_info = (
+                await _generate_llm_response_for_chat(
+                    chat_id=chat_id,
+                    trigger_content_parts=trigger_content_parts,
+                    user_name=user_name,
+                    # context=context
+                )
+            )
 
         if llm_response_content:
             # Reply to the *last* message in the batch
             # Convert the LLM's markdown response to Telegram's MarkdownV2 format
             try:
-                converted_markdown = telegramify_markdown.markdownify(llm_response_content)
+                converted_markdown = telegramify_markdown.markdownify(
+                    llm_response_content
+                )
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=converted_markdown,
@@ -926,7 +974,7 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                 # Fallback to sending plain text if conversion fails
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=llm_response_content, # Send the actual content
+                    text=llm_response_content,  # Send the actual content
                     reply_to_message_id=reply_target_message_id,
                 )
         else:
@@ -981,15 +1029,15 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                 await storage.add_message_to_history(
                     chat_id=chat_id,
                     message_id=reply_target_message_id,
-                    timestamp=datetime.now(timezone.utc), # Use processing time
+                    timestamp=datetime.now(timezone.utc),  # Use processing time
                     role="user",
                     content=history_user_content,
-                    tool_calls_info=None # User messages don't have tool calls
+                    tool_calls_info=None,  # User messages don't have tool calls
                 )
             else:
-                 logger.warning(
-                     f"Could not store batched user message for chat {chat_id} due to missing message ID."
-                 )
+                logger.warning(
+                    f"Could not store batched user message for chat {chat_id} due to missing message ID."
+                )
 
             # Store bot response if successful, including tool call info
             if llm_response_content and reply_target_message_id:
@@ -997,11 +1045,11 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                 bot_message_pseudo_id = reply_target_message_id + 1
                 await storage.add_message_to_history(
                     chat_id=chat_id,
-                    message_id=bot_message_pseudo_id, # Placeholder ID
+                    message_id=bot_message_pseudo_id,  # Placeholder ID
                     timestamp=datetime.now(timezone.utc),
                     role="assistant",
                     content=llm_response_content,
-                    tool_calls_info=tool_call_info # Pass the captured tool info
+                    tool_calls_info=tool_call_info,  # Pass the captured tool info
                 )
         except Exception as db_err:
             logger.error(

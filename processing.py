@@ -3,7 +3,7 @@ import json
 import asyncio
 import uuid  # Added for unique task IDs
 from datetime import datetime, timezone  # Added timezone
-from typing import List, Dict, Any, Optional, Callable, Tuple # Added Tuple
+from typing import List, Dict, Any, Optional, Callable, Tuple  # Added Tuple
 
 from dateutil.parser import isoparse  # Added for parsing datetime strings
 
@@ -137,7 +137,7 @@ TOOLS_DEFINITION = [
 # Added mcp_sessions and tool_name_to_server_id as parameters
 async def execute_function_call(
     tool_call: Any,
-    chat_id: int, # Add chat_id parameter
+    chat_id: int,  # Add chat_id parameter
     mcp_sessions: Dict[
         str, Any
     ],  # Using Any for ClientSession to avoid MCP import here
@@ -167,7 +167,7 @@ async def execute_function_call(
     if local_function_to_call:
         # Inject chat_id if the tool is schedule_future_callback
         if function_name == "schedule_future_callback":
-            function_args["chat_id"] = chat_id # Add/overwrite chat_id from context
+            function_args["chat_id"] = chat_id  # Add/overwrite chat_id from context
             logger.info(f"Injected chat_id {chat_id} into args for {function_name}")
 
         logger.info(
@@ -178,10 +178,12 @@ async def execute_function_call(
             function_response_content = await local_function_to_call(**function_args)
             # Log based on whether the tool's response indicates success or error
             if "Error:" not in function_response_content:
-                 logger.info(f"Local tool call {function_name} successful.")
+                logger.info(f"Local tool call {function_name} successful.")
             else:
-                 # The tool function already logged the specific error internally
-                 logger.warning(f"Local tool call {function_name} reported an error: {function_response_content}")
+                # The tool function already logged the specific error internally
+                logger.warning(
+                    f"Local tool call {function_name} reported an error: {function_response_content}"
+                )
         except Exception as e:
             # This catches errors *calling* the function, not errors *within* the function's try/except
             logger.error(
@@ -280,7 +282,7 @@ async def execute_function_call(
 # Added mcp_sessions and tool_name_to_server_id as parameters
 async def get_llm_response(
     messages: List[Dict[str, Any]],
-    chat_id: int, # Add chat_id parameter
+    chat_id: int,  # Add chat_id parameter
     model: str,
     all_tools: List[Dict[str, Any]],  # Accept the combined tool list
     mcp_sessions: Dict[
@@ -301,7 +303,9 @@ async def get_llm_response(
         - The final response content string from the LLM (or None).
         - A list of dictionaries detailing executed tool calls (or None).
     """
-    executed_tool_info: List[Dict[str, Any]] = [] # Initialize list to store tool call details
+    executed_tool_info: List[Dict[str, Any]] = (
+        []
+    )  # Initialize list to store tool call details
     logger.info(
         f"Sending {len(messages)} messages to LLM ({model}). Last message: {messages[-1]['content'][:100]}..."
     )
@@ -327,7 +331,7 @@ async def get_llm_response(
 
         if not response_message:
             logger.warning(f"LLM response structure unexpected or empty: {response}")
-            return None, None # Return None for both content and tool info
+            return None, None  # Return None for both content and tool info
 
         tool_calls = response_message.tool_calls
 
@@ -356,14 +360,21 @@ async def get_llm_response(
                 try:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
-                    arguments = {"error": "Failed to parse arguments", "raw": tool_call.function.arguments}
+                    arguments = {
+                        "error": "Failed to parse arguments",
+                        "raw": tool_call.function.arguments,
+                    }
 
-                executed_tool_info.append({
-                    "call_id": tool_call.id,
-                    "function_name": tool_call.function.name,
-                    "arguments": arguments,
-                    "response_content": tool_responses[i].get("content", "Error retrieving response content"), # Get content from the response dict
-                })
+                executed_tool_info.append(
+                    {
+                        "call_id": tool_call.id,
+                        "function_name": tool_call.function.name,
+                        "arguments": arguments,
+                        "response_content": tool_responses[i].get(
+                            "content", "Error retrieving response content"
+                        ),  # Get content from the response dict
+                    }
+                )
 
             # Append tool responses to the message history for the next LLM call
             messages.extend(tool_responses)
@@ -401,7 +412,9 @@ async def get_llm_response(
                     f"Second LLM response after tool call was empty or unexpected: {second_response}"
                 )
                 # Fallback: maybe return the tool execution status directly? And the tool info
-                fallback_content = "Tool execution finished, but I couldn't generate a summary."
+                fallback_content = (
+                    "Tool execution finished, but I couldn't generate a summary."
+                )
                 return fallback_content, executed_tool_info
 
         # --- No Tool Calls ---
@@ -410,15 +423,15 @@ async def get_llm_response(
             logger.info(
                 f"Received LLM response (no tool call): {response_content[:100]}..."
             )
-            return response_content, None # No tool calls, return None for tool info
+            return response_content, None  # No tool calls, return None for tool info
         else:
             logger.warning(
                 f"LLM response had neither content nor tool calls: {response}"
             )
-            return None, None # Return None for both
+            return None, None  # Return None for both
 
     except Exception as e:
         logger.error(
             f"Error during LLM completion or tool handling: {e}", exc_info=True
         )
-        return None, None # Return None for both on error
+        return None, None  # Return None for both on error
