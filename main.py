@@ -668,9 +668,10 @@ async def _generate_llm_response_for_chat(
     user_name: str, # Name to use in system prompt
     # TODO: Consider passing context explicitly instead of relying on globals/args
     # context: ContextTypes.DEFAULT_TYPE # Needed for typing notifications?
-) -> str | None:
+) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
     """
-    Prepares context, message history, calls the LLM, and returns the response.
+    Prepares context, message history, calls the LLM, and returns the response content
+    along with any tool call information.
 
     Args:
         chat_id: The target chat ID.
@@ -678,7 +679,7 @@ async def _generate_llm_response_for_chat(
         user_name: The user name to format into the system prompt.
 
     Returns:
-        The final LLM response string, or None on error.
+        A tuple: (LLM response string or None, List of tool call info dicts or None).
     """
     logger.debug(f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}")
 
@@ -766,18 +767,21 @@ async def _generate_llm_response_for_chat(
     # Note: Typing notifications are omitted here for simplicity in this refactored function.
     # They could be added back if needed, perhaps by passing the `context` object.
     try:
-        llm_response = await get_llm_response(
+        # Get both response content and tool info from get_llm_response
+        llm_response_content, tool_info = await get_llm_response(
             messages,
-            chat_id, # Pass the current chat_id
+            chat_id,
             args.model,
             all_tools,
             mcp_sessions,
             tool_name_to_server_id,
         )
-        return llm_response # Can be None if get_llm_response fails
+        # Return both parts as a tuple
+        return llm_response_content, tool_info
     except Exception as e:
         logger.error(f"Error during LLM interaction for chat {chat_id}: {e}", exc_info=True)
-        return None
+        # Return None for both parts on error
+        return None, None
 
 
 # --- Telegram Bot Handlers ---
@@ -886,25 +890,25 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             trigger_content_parts = [text_content_part] # Reset to just text
 
 
-    llm_response = None
+    llm_response_content = None
+    tool_call_info = None # Initialize tool info for this batch
     logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
     try:
-        # Use the new helper function to get the LLM response
+        # Use the new helper function to get the LLM response content and tool info
         async with typing_notifications(context, chat_id):
-             llm_response = await _generate_llm_response_for_chat(
+             llm_response_content, tool_call_info = await _generate_llm_response_for_chat(
                  chat_id=chat_id,
-                 trigger_content_parts=trigger_content_parts, # Pass the combined content
-                 user_name=user_name, # Pass the actual user's name
-                 # context=context # Pass context if typing_notifications are moved inside _generate_llm_response_for_chat
+                 trigger_content_parts=trigger_content_parts,
+                 user_name=user_name,
+                 # context=context
              )
 
-        if llm_response:
+        if llm_response_content:
             # Reply to the *last* message in the batch
-            # The llm_response here is the final response after potential tool calls
             # Convert the LLM's markdown response to Telegram's MarkdownV2 format
             try:
-                converted_markdown = telegramify_markdown.markdownify(llm_response)
+                converted_markdown = telegramify_markdown.markdownify(llm_response_content)
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=converted_markdown,
@@ -919,8 +923,8 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                 # Fallback to sending plain text if conversion fails
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=llm_response,
-                    reply_to_message_id=reply_target_message_id,  # Use the stored ID
+                    text=llm_response_content, # Send the actual content
+                    reply_to_message_id=reply_target_message_id,
                 )
         else:
             # Handle case where LLM gave no response
@@ -964,38 +968,38 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             f"Finished processing batch for chat {chat_id}, proceeding to finally block."
         )
     finally:
-        # --- Store messages in DB (Store combined user message, single bot response) ---
-        # Removed redundant outer try block here
+        # --- Store messages in DB (Store combined user message, single bot response with tool info) ---
         try:
-            # Store combined user message
-            # Use the ID of the *last* message in the batch as the representative ID
-            history_user_content = combined_text  # Start with combined text
-            if first_photo_bytes:  # Check if a photo was processed in the batch
-                history_user_content += " [Image(s) Attached]"  # Add indicator
+            # Store combined user message first
             if reply_target_message_id:
-                await add_message_to_history(
+                history_user_content = combined_text  # Start with combined text
+                if first_photo_bytes:  # Check if a photo was processed
+                    history_user_content += " [Image(s) Attached]"
+                await storage.add_message_to_history(
                     chat_id=chat_id,
-                    message_id=reply_target_message_id,  # Use last known message ID
-                    timestamp=datetime.now(timezone.utc),  # Use processing time
+                    message_id=reply_target_message_id,
+                    timestamp=datetime.now(timezone.utc), # Use processing time
                     role="user",
                     content=history_user_content,
+                    tool_calls_info=None # User messages don't have tool calls
                 )
-                # Store bot response if successful
-                if llm_response:
-                    # Need bot's actual message ID if possible, otherwise use pseudo-ID
-                    bot_message_pseudo_id = reply_target_message_id + 1
-                    await add_message_to_history(
-                        chat_id=chat_id,
-                        message_id=bot_message_pseudo_id,  # Placeholder ID
-                        timestamp=datetime.now(timezone.utc),
-                        role="assistant",
-                        content=llm_response,
-                    )
             else:
-                logger.warning(
-                    f"Could not store batched user message for chat {chat_id} due to missing message ID."
-                )
+                 logger.warning(
+                     f"Could not store batched user message for chat {chat_id} due to missing message ID."
+                 )
 
+            # Store bot response if successful, including tool call info
+            if llm_response_content and reply_target_message_id:
+                # Need bot's actual message ID if possible, otherwise use pseudo-ID
+                bot_message_pseudo_id = reply_target_message_id + 1
+                await storage.add_message_to_history(
+                    chat_id=chat_id,
+                    message_id=bot_message_pseudo_id, # Placeholder ID
+                    timestamp=datetime.now(timezone.utc),
+                    role="assistant",
+                    content=llm_response_content,
+                    tool_calls_info=tool_call_info # Pass the captured tool info
+                )
         except Exception as db_err:
             logger.error(
                 f"Failed to store batched message history in DB for chat {chat_id}: {db_err}",

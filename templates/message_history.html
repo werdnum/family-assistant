@@ -16,6 +16,9 @@
         .message-content { white-space: pre-wrap; word-wrap: break-word; }
         .nav-links a { margin-right: 1em; }
         .nav-links { margin-bottom: 1em; }
+        .tool-info-details { margin-top: 0.5em; background-color: #eee; border: 1px solid #ddd; border-radius: 3px; padding: 0.3em 0.6em; }
+        .tool-info-details summary { cursor: pointer; font-size: 0.9em; color: #333; }
+        .tool-info-content { margin-top: 0.3em; font-size: 0.85em; color: #555; background-color: #f9f9f9; padding: 0.5em; border-radius: 3px; overflow-x: auto; }
     </style>
 </head>
 <body>
@@ -34,7 +37,23 @@
                 <div class="message-meta">
                     {{ message.role.capitalize() }} - {{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S %Z') }} (Msg ID: {{ message.message_id }})
                 </div>
-                <div class="message-content">{{ message.content }}</div>
+                <div class="message-content">
+                    {{ message.content }}
+                    {% if message.role == 'assistant' and message.tool_calls_info %}
+                    <details class="tool-info-details">
+                        <summary>Tool Calls ({{ message.tool_calls_info|length }})</summary>
+                        <pre class="tool-info-content">{% for tool_call in message.tool_calls_info %}
+Tool: {{ tool_call.function_name }}
+Call ID: {{ tool_call.call_id }}
+Arguments:
+{{ tool_call.arguments | tojson(indent=2) }}
+Response:
+{{ tool_call.response_content }}
+---
+{% endfor %}</pre>
+                    </details>
+                    {% endif %}
+                </div>
             </div>
             {% endfor %}
         </div>
