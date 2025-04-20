@@ -879,11 +879,11 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             logger.info("Added first photo from batch to trigger content.")
         except Exception as img_err:
             logger.error(f"Error encoding photo from batch: {img_err}", exc_info=True)
-                await context.bot.send_message(
-                    chat_id, "Error processing image in batch."
-                )
-                # Continue processing with just the text part if the image failed.
-                trigger_content_parts = [text_content_part] # Reset to just text
+            await context.bot.send_message(
+                chat_id, "Error processing image in batch."
+            )
+            # Continue processing with just the text part if the image failed.
+            trigger_content_parts = [text_content_part] # Reset to just text
 
 
     llm_response = None
