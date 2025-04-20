@@ -68,13 +68,14 @@ async def enqueue_task(
                     await conn.commit()
                     logger.info(f"Enqueued task {task_id} of type {task_type}.")
 
-            # Notify worker if task is immediate and event is provided
-            is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
-                timezone.utc
-            )
-            if is_immediate and notify_event:
-                    notify_event.set()
-                    logger.debug(f"Notified worker about immediate task {task_id}.")
+                    # Notify worker if task is immediate and event is provided
+                    # This block MUST be inside the try block, indented correctly.
+                    is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
+                        timezone.utc
+                    )
+                    if is_immediate and notify_event:
+                        notify_event.set()
+                        logger.debug(f"Notified worker about immediate task {task_id}.")
 
                     return # Success
                 except Exception as inner_e: # Catch errors during execute/commit
