@@ -1151,9 +1151,15 @@ def main() -> None:
     loop = asyncio.get_event_loop()
 
     # Setup signal handlers
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    signal_map = {
+        signal.SIGINT: "SIGINT",
+        signal.SIGTERM: "SIGTERM",
+    }
+    for sig_num, sig_name in signal_map.items():
+        # Use a default argument in the lambda that captures the current sig_name
         loop.add_signal_handler(
-            sig, lambda s=sig.name: asyncio.create_task(shutdown_handler(s))
+            sig_num,
+            lambda name=sig_name: asyncio.create_task(shutdown_handler(name))
         )
 
     # SIGHUP for config reload (only on Unix-like systems)
