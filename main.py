@@ -222,6 +222,28 @@ TASK_HANDLERS["llm_callback"] = handle_llm_callback
 logger.info(f"Registered task handlers: {list(TASK_HANDLERS.keys())}")
 
 
+# --- Helper Function ---
+def format_llm_response_for_telegram(response_text: str) -> str:
+    """Converts LLM Markdown to Telegram MarkdownV2, with fallback."""
+    try:
+        # Attempt conversion
+        converted = telegramify_markdown.markdownify(response_text)
+        # Basic check: ensure conversion didn't result in empty/whitespace only
+        if converted and not converted.isspace():
+            return converted
+        else:
+            logger.warning(f"Markdown conversion resulted in empty string for: {response_text[:100]}... Using original.")
+            # Fallback to original text, escaped, if conversion is empty
+            return escape_markdown(response_text, version=2)
+    except Exception as md_err:
+        logger.error(
+            f"Failed to convert markdown: {md_err}. Falling back to escaped text. Original: {response_text[:100]}...",
+            # exc_info=True, # Optional: Add full traceback if needed
+        )
+        # Fallback to escaping the original text
+        return escape_markdown(response_text, version=2)
+
+
 # --- Task Queue Worker ---
 async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
     """Continuously polls for and processes tasks."""
@@ -857,135 +879,28 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             logger.info("Added first photo from batch to trigger content.")
         except Exception as img_err:
             logger.error(f"Error encoding photo from batch: {img_err}", exc_info=True)
-            await context.bot.send_message(
-                chat_id, "Error processing image in batch."
-            )  # Inform user
+                await context.bot.send_message(
+                    chat_id, "Error processing image in batch."
+                )
+                # Continue processing with just the text part if the image failed.
+                trigger_content_parts = [text_content_part] # Reset to just text
 
-    # Create the final combined user message for LLM
-    current_user_message_content = {
-        "role": "user",
-        "content": final_message_content_parts,
-    }
-    messages.append(current_user_message_content)
 
     llm_response = None
-    # Get a reference to the Update object corresponding to the *last* message in the batch
-    # This is crucial for replying correctly. Needs refinement based on buffer content.
-    # User name is now correctly extracted from the last_update
-    # reply_target_message_id is also extracted from last_update
-    logger.debug(f"Proceeding with combined text and user '{user_name}'.")
+    logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
     try:
-        # --- Prepare System Prompt Context (as before) ---
-        system_prompt_template = PROMPTS.get(
-            "system_prompt", "You are a helpful assistant."
-        ) # Default prompt
-
-        # 1. Current Time (using configured timezone)
-        try:
-            local_tz = pytz.timezone(TIMEZONE_STR)
-            current_local_time = datetime.now(local_tz)
-            # Format with timezone name/abbreviation
-            current_time_str = current_local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
-        except Exception as tz_err:
-            logger.error(f"Error applying timezone {TIMEZONE_STR}: {tz_err}. Defaulting time format.")
-            current_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC") # Fallback to UTC
-
-        # 2. Calendar Context
-        calendar_context_str = ""
-        if CALENDAR_CONFIG:  # Check the renamed config dict
-            try:
-                logger.info("Fetching calendar events...")
-                # Pass the config to the fetch function
-                upcoming_events = await calendar_integration.fetch_upcoming_events(
-                    CALENDAR_CONFIG
-                )
-                today_events_str, future_events_str = (
-                    calendar_integration.format_events_for_prompt(
-                        upcoming_events, PROMPTS
-                    )
-                )
-                calendar_header_template = PROMPTS.get(
-                    "calendar_context_header",
-                    "{today_tomorrow_events}\n{next_two_weeks_events}",
-                )
-                calendar_context_str = calendar_header_template.format(
-                    today_tomorrow_events=today_events_str,
-                    next_two_weeks_events=future_events_str,
-                ).strip()
-                logger.info("Prepared calendar context.")
-            except Exception as cal_err:
-                logger.error(
-                    f"Failed to fetch or format calendar events: {cal_err}",
-                    exc_info=True,
-                )
-                # Include the specific error in the context for the LLM
-                calendar_context_str = (
-                    f"Error retrieving calendar events: {str(cal_err)}"
-                )
-        else:
-            logger.debug("No calendars configured, skipping calendar context.")
-            calendar_context_str = "Calendar integration not configured."  # Inform LLM
-
-        # 3. Notes Context
-        notes_context_str = ""
-        all_notes = await get_all_notes()
-        if all_notes:
-            notes_list_str = ""
-            note_item_format = PROMPTS.get("note_item_format", "- {title}: {content}")
-            for note in all_notes:
-                notes_list_str += (
-                    note_item_format.format(
-                        title=note["title"], content=note["content"]
-                    )
-                    + "\n"
-                )
-
-            notes_context_header_template = PROMPTS.get(
-                "notes_context_header", "Relevant notes:\n{notes_list}"
-            )
-            notes_context_str = notes_context_header_template.format(
-                notes_list=notes_list_str.strip()
-            )
-            logger.info("Prepared notes context.")
-        else:
-            notes_context_str = PROMPTS.get("no_notes", "No notes available.")
-
-        # --- Assemble Final System Prompt ---
-        final_system_prompt = system_prompt_template.format(
-            user_name=user_name,  # Add user name here
-            current_time=current_time_str,
-            calendar_context=calendar_context_str,
-            notes_context=notes_context_str,
-        ).strip()
-
-        if final_system_prompt:  # Only insert if there's content
-            messages.insert(0, {"role": "system", "content": final_system_prompt})
-            logger.info("Prepended system prompt to LLM messages.")
-        else:
-            logger.warning("Generated empty system prompt.")
-
-        # Send typing action using context manager
-        # Combine local tools and MCP tools
-        # Ensure processing.TOOLS_DEFINITION is accessible or imported
-        from processing import TOOLS_DEFINITION as local_tools_definition
-
-        all_tools = local_tools_definition + mcp_tools
-        # logger.debug(f"Providing {len(all_tools)} total tools to LLM ({len(local_tools_definition)} local, {len(mcp_tools)} MCP).") # Removed debug log
-
+        # Use the new helper function to get the LLM response
         async with typing_notifications(context, chat_id):
-            # Get response from LLM via processing module, passing all available tools and MCP state
-            llm_response = await get_llm_response(
-                messages,
-                chat_id, # Pass the current chat_id
-                args.model,
-                all_tools,
-                mcp_sessions,  # Pass the MCP sessions dict
-                tool_name_to_server_id,  # Pass the tool name mapping
-            )
+             llm_response = await _generate_llm_response_for_chat(
+                 chat_id=chat_id,
+                 trigger_content_parts=trigger_content_parts, # Pass the combined content
+                 user_name=user_name, # Pass the actual user's name
+                 # context=context # Pass context if typing_notifications are moved inside _generate_llm_response_for_chat
+             )
 
         if llm_response:
-            # Reply to the original message to maintain context in the Telegram chat
+            # Reply to the *last* message in the batch
             # The llm_response here is the final response after potential tool calls
             # Convert the LLM's markdown response to Telegram's MarkdownV2 format
             try:
