@@ -24,6 +24,7 @@ from contextlib import AsyncExitStack  # For managing multiple async contexts
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple  # Added Tuple
 
+import pytz # Added for timezone handling
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
@@ -89,8 +90,9 @@ TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 application: Optional[Application] = None
 ALLOWED_CHAT_IDS: list[int] = []
 DEVELOPER_CHAT_ID: Optional[int] = None
-PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
-CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
+PROMPTS: Dict[str, str] = {} # Global dict to hold loaded prompts
+CALENDAR_CONFIG: Dict[str, Any] = {} # Stores CalDAV and iCal settings
+TIMEZONE_STR: str = "UTC" # Default timezone
 # shutdown_event moved higher up
 from collections import defaultdict  # Add defaultdict
 
@@ -258,7 +260,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 # --- Configuration Loading ---
 def load_config():
     """Loads configuration from environment variables and prompts.yaml."""
-    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG  # Renamed global
+    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG, TIMEZONE_STR # Added TIMEZONE_STR
     load_dotenv()  # Load environment variables from .env file
 
     # --- Telegram Config ---
@@ -358,7 +360,18 @@ def load_config():
         logger.warning(
             "No calendar sources (CalDAV or iCal) are configured. Calendar features will be disabled."
         )
-        CALENDAR_CONFIG = {}  # Ensure it's empty if nothing is enabled
+        CALENDAR_CONFIG = {} # Ensure it's empty if nothing is enabled
+
+    # --- Timezone Config ---
+    loaded_tz = os.getenv("TIMEZONE", "UTC")
+    try:
+        # Validate the timezone string using pytz
+        pytz.timezone(loaded_tz)
+        TIMEZONE_STR = loaded_tz
+        logger.info(f"Using timezone: {TIMEZONE_STR}")
+    except pytz.exceptions.UnknownTimeZoneError:
+        logger.error(f"Invalid TIMEZONE '{loaded_tz}' specified in .env. Defaulting to UTC.")
+        TIMEZONE_STR = "UTC" # Keep the default if invalid
 
 
 # --- MCP Configuration Loading & Connection ---
