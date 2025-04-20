@@ -154,22 +154,23 @@ async def dequeue_task(
                     task_row = result.fetchone()
 
                     if task_row:
-                # Lock acquired, update the status and lock info
-                update_stmt = (
-                    update(tasks_table)
-                    .where(tasks_table.c.id == task_row.id)
+                        # Lock acquired, update the status and lock info
+                        # This block needs to be indented under 'if task_row:'
+                        update_stmt = (
+                            update(tasks_table)
+                            .where(tasks_table.c.id == task_row.id)
                     .where(
                         tasks_table.c.status == "pending"
                     ) # Ensure it wasn't somehow processed between SELECT and UPDATE
                     .values(
-                        status="processing",
-                        locked_by=worker_id,
-                        locked_at=now,
-                    )
-                )
-                update_result = await conn.execute(update_stmt)
+                                status="processing",
+                                locked_by=worker_id,
+                                locked_at=now,
+                            )
+                        )
+                        update_result = await conn.execute(update_stmt)
 
-                if update_result.rowcount == 1:
+                        if update_result.rowcount == 1:
                     logger.info(
                         f"Worker {worker_id} dequeued task {task_row.task_id}"
                     )
