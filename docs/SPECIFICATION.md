@@ -267,3 +267,29 @@ Core operations are provided in `storage.py`:
 *   **Completion/Failure:** Based on the handler's outcome, the worker calls `update_task_status` to mark the task as `done` or `failed`. Error details should be captured for failed tasks.
 *   **Lock Timeout (Implicit):** While not explicitly implemented, long-running tasks could potentially be retried by other workers if a worker crashes. A robust implementation might add logic to check `locked_at` to detect stale locks, but this adds complexity.
 
+## 11. Security Considerations
+
+### 11.1 Prompt Injection Mitigation
+When the LLM's context includes information derived from external, potentially untrusted sources (e.g., ingested emails, results from web searches via MCP tools), there's a risk of prompt injection. Malicious content within these sources could trick the LLM into performing unintended actions, especially if the LLM has access to powerful tools.
+
+Strategies to mitigate this include:
+
+1.  **Tool Sensitivity Classification:** Categorize tools available to the LLM based on their potential impact:
+    *   **Read-only:** Tools that only retrieve information (e.g., `get_note`, `get_time`, read-only web searches).
+    *   **Mutating (Internal):** Tools that modify the application's internal state (e.g., `add_or_update_note`, `schedule_future_callback`).
+    *   **Mutating (External):** Tools that affect external systems or have real-world consequences (e.g., future tools for adding calendar events, controlling smart home devices via MCP, sending emails/messages). These are considered the most sensitive.
+
+2.  **Context Tainting:** Track whether the current processing context for an LLM request includes data derived from potentially untrusted external sources.
+    *   A direct user message via Telegram is generally considered trusted.
+    *   Data fetched via MCP tools (like web search results) or ingested from emails should mark the context as "tainted".
+
+3.  **Conditional Tool Access / Confirmation:** When the LLM requests to use a tool, especially a *Mutating (Internal)* or *Mutating (External)* one:
+    *   **Check Taint Status:** If the context is tainted:
+        *   **Option A (Strict):** Disallow the use of all mutating tools. The LLM can report it cannot perform the action due to the context.
+        *   **Option B (Confirmation):** For sensitive tools (especially *Mutating (External)*), do not execute the tool call immediately. Instead:
+            *   The application's code (outside the LLM generation loop) sends a confirmation message to the user via a secure channel (e.g., Telegram message with an Inline Keyboard: "Allow [Tool Name] with params [Params]? [Yes] [No]").
+            *   The tool call is only executed if the user explicitly confirms via the interface element (e.g., button press). The LLM is *not* involved in generating or processing this confirmation request/response, preventing it from bypassing the check.
+    *   **If the context is *not* tainted** (e.g., a direct user request without external data lookups involved in the *same* turn), sensitive tool calls might be allowed directly, depending on the tool's nature and configured policy.
+
+This approach aims to balance functionality with security, allowing the LLM to operate on external data while preventing malicious content within that data from hijacking sensitive actions. The confirmation step (Option B) provides a user-controlled safeguard for high-risk operations.
+
