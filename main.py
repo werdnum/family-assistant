@@ -34,6 +34,8 @@ from telegram.ext import (
     ApplicationBuilder,
     CallbackContext,
     CommandHandler,
+    ContextTypes, # Re-add ContextTypes
+    MessageHandler, # Re-add MessageHandler
     filters,
 )
 from dateutil import rrule # For recurrence rules
