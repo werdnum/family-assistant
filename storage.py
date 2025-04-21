@@ -98,18 +98,9 @@ async def enqueue_task(
                     logger.info(
                         f"Enqueued task {task_id} (Type: {task_type}, Original: {values_to_insert['original_task_id']}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
                     )
-                # else: it will use the DB default (3)
-
-                stmt = insert(tasks_table).values(**values_to_insert)
-                # This inner try/except is specific to the insert/commit part
-                # and should also be inside the 'with' block
-                try:
-                    await conn.execute(stmt)
-                    await conn.commit()
-                    logger.info(f"Enqueued task {task_id} of type {task_type}.")
 
                     # Notify worker if task is immediate and event is provided
-                    # This block MUST be inside the try block, indented correctly.
+                    # This block MUST be inside the try block, after successful commit.
                     is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
                         timezone.utc
                     )
@@ -408,13 +399,29 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     )
 
     for attempt in range(max_retries):
-        "failed": 2,
-        "done": 3,
-    }
+        # "failed": 2,  <- Removed stray lines
+        # "done": 3,    <- Removed stray lines
+        # }             <- Removed stray lines
 
-    stmt = (
-        select(tasks_table)
-        .order_by(
+        # stmt = (      <- Removed duplicate statement definition
+        #     select(tasks_table)
+        #     .order_by(
+        #         # Custom sorting based on status
+        #         # This might require a CASE statement or similar depending on DB flavor
+        #         # For simplicity, fetching all and sorting in Python might be easier for now
+        #         # Or fetch ordered by created_at desc and let UI handle grouping/sorting
+        #         # Let's try ordering by created_at desc for now.
+        #         tasks_table.c.created_at.desc()
+        #     )
+        #     .limit(limit)
+        # )
+
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(stmt) # Use the stmt defined before the loop
+                rows = result.fetchall()
+                # Convert rows to dictionaries
+                tasks_list = [row._mapping for row in rows]
             # Custom sorting based on status
             # This might require a CASE statement or similar depending on DB flavor
             # For simplicity, fetching all and sorting in Python might be easier for now
