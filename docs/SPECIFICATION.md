@@ -270,7 +270,19 @@ Core operations are provided in `storage.py`:
 *   `update_task_status(task_id, status, error=None)`: Updates the status of a task (typically to `done` or `failed`), clears the lock information, and includes retry logic for the database operation.
 *   `reschedule_task_for_retry(task_id, next_scheduled_at, new_retry_count, error)`: Updates a task for a retry attempt: increments retry count, sets new schedule time, updates last error, resets status to `pending`, and clears lock info. Includes retry logic for the database operation.
 
-### 10.4 Processing Model
+### 10.5 Recurring Tasks (Future)
+The task system could be extended to support recurring tasks. Potential approaches:
+
+*   **Schema Extension:** Add columns like `recurrence_rule` (e.g., RRULE string) or `cron_spec` to the `tasks` table.
+*   **Processing Logic:** When a worker successfully processes a recurring task (`update_task_status` to `done`):
+    *   Instead of simply marking it `done`, the worker calculates the next occurrence time based on the recurrence rule/cronspec.
+    *   It then updates the *same* task record, resetting its `status` to `pending` and updating the `scheduled_at` to the next occurrence time. Alternatively, it could mark the current task `done` and create a *new* task record for the next occurrence (duplication).
+*   **Considerations:**
+    *   **Drift:** Need to ensure the calculation of the next occurrence is robust to avoid time drift.
+    *   **Missed Runs / Self-Healing:** If the application is down when a recurring task was due, how does it catch up? A separate periodic check might be needed to find recurring tasks whose `scheduled_at` is in the past and reschedule them appropriately (either run them immediately or schedule for the next *future* time slot, depending on the task's nature). This check could also identify "lost" recurring tasks that failed processing and never got rescheduled.
+    *   **Modification/Deletion:** How are recurring tasks modified or stopped? Requires specific UI/commands.
+
+### 10.6 Processing Model
 *   **Polling & Notification:** The primary mechanism is polling (`task_worker_loop` in `main.py`). An `asyncio.Event` (`new_task_event`) allows `enqueue_task` to wake the worker immediately for non-scheduled tasks, reducing latency.
 *   **Worker Loop:** A background task (`asyncio` task) periodically calls `dequeue_task` or wakes up via the event.
 *   **Handler Registry:** A dictionary (`TASK_HANDLERS` in `main.py`) maps `task_type` strings to corresponding asynchronous handler functions.
@@ -283,7 +295,7 @@ Core operations are provided in `storage.py`:
     *   Failure: Worker checks `retry_count` against `max_retries`.
         *   If retries remain, worker calls `reschedule_task_for_retry` with exponential backoff and jitter.
         *   If max retries are reached, worker calls `update_task_status` to mark task as `failed`. Error details are captured.
-*   **Lock Timeout (Implicit):** While not explicitly implemented, long-running tasks could potentially be retried by other workers if a worker crashes. The retry mechanism handles failures within the handler, but crashes might require manual intervention or a separate stale lock detection mechanism (not currently implemented).
+*   **Lock Timeout (Implicit):** While not explicitly implemented, long-running tasks could potentially be retried by other workers if a worker crashes. The retry mechanism handles failures within the handler, but crashes might require manual intervention or a separate stale lock detection mechanism (not currently implemented). See also Section 10.5 regarding self-healing for recurring tasks.
 
 ## 11. Security Considerations
 
