@@ -141,9 +141,9 @@ The system will consist of the following core components:
 *   Database interactions will be managed using **SQLAlchemy** as the ORM.
 *   Implemented Tables:
     *   `notes`: Stores user-created notes (id, title, content, created\_at, updated\_at). Title is unique.
-    *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content).
+    *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info).
 *   External Data:
-    *   Calendar events are fetched live via CalDAV and are *not* stored in the local database.
+    *   Calendar events are fetched live via CalDAV/iCal and are *not* stored in the local database.
 *   (Future) Potential Tables:
     *   `events`: Could potentially cache calendar items or store locally managed events/deadlines.
     *   `users`: Family member details, preferences.
@@ -167,12 +167,15 @@ The system will consist of the following core components:
 *   **Backend:** **Python** using `python-telegram-bot` for Telegram interaction, `FastAPI` and `uvicorn` for the web server.
 *   **Database & ORM:** **SQLite** (default) or **PostgreSQL** (supported via connection string), accessed via **SQLAlchemy** (async).
 *   **Configuration:** Environment variables (`.env`), YAML (`prompts.yaml`), JSON (`mcp_config.json`).
+*   **Timezone:** Configurable via `TIMEZONE` environment variable, uses **pytz**.
 *   **MCP:** Uses the `mcp` Python SDK to connect to and interact with MCP servers defined in `mcp_config.json`.
 *   **Containerization:** **Docker** with `uv` for Python package management and `npm` for Node.js-based MCP tools.
 *   **Calendar Libraries:** `caldav` for CalDAV interaction, `vobject` for parsing VCALENDAR data (used by both CalDAV and iCal), `httpx` for fetching iCal URLs.
+*   **Formatting:** Uses `telegramify-markdown` for converting LLM output to Telegram MarkdownV2.
 *   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used.
+*   **Utilities:** `uuid` for generating unique IDs (e.g., task IDs).
 
-## 9. Current Implementation Status (as of 2025-04-19)
+## 9. Current Implementation Status (as of 2025-04-21)
 
 The following features from the specification are currently implemented:
 
@@ -185,32 +188,37 @@ The following features from the specification are currently implemented:
     *   API keys, chat IDs, DB URL via environment variables (`.env`).
     *   Prompts via `prompts.yaml`.
     *   MCP server definitions via `mcp_config.json`.
+    *   Timezone via `TIMEZONE` environment variable.
 *   **Access Control:** Based on `ALLOWED_CHAT_IDS`.
 *   **Error Handling:** Logging and optional notification to `DEVELOPER_CHAT_ID`.
 *   **Lifecycle Management:** Graceful shutdown (`SIGINT`/`SIGTERM`), placeholder config reload (`SIGHUP`).
-*   **Data Storage (SQLAlchemy with SQLite/PostgreSQL):**
+*   **Data Storage (SQLAlchemy with SQLite/PostgreSQL):** Database operations include retry logic.
     *   `notes` table for storing notes (id, title, content, timestamps).
-    *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content).
+    *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info JSON).
+    *   `tasks` table for the background task queue (see Section 10).
 *   **LLM Context:**
     *   System prompt includes:
-        *   Current time.
+        *   Current time (timezone-aware via `TIMEZONE` env var).
         *   Upcoming calendar events fetched from configured CalDAV and iCal sources (today, tomorrow, next 14 days).
         *   Context from the `notes` table.
-    *   Recent message history (from `message_history`) is included.
-    *   Replied-to messages (fetched from `message_history`) are included.
+    *   Recent message history (from `message_history`, including basic tool call info if available) is included.
+    *   Replied-to messages (fetched from `message_history`) are included if the current message is a reply.
 *   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
 *   **Tools:**
     *   Local Tools:
         *   `add_or_update_note`: Saves/updates notes in the database. Accepts `title` and `content`.
-        *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone) and `context` (string). The `chat_id` is automatically inferred from the conversation context.
+        *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone) and `context` (string). The `chat_id` is automatically inferred from the conversation context. Task is created in the `tasks` table.
     *   **MCP Integration:**
-        *   Loads server configurations from `mcp_config.json`.
-        *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search) using the `mcp` library.
+        *   Loads server configurations from `mcp_config.json` (resolves environment variables like `$API_KEY`).
+        *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search) using the `mcp` library (connections established in parallel on startup).
         *   Discovers tools provided by connected MCP servers.
         *   Makes both local and MCP tools available to the LLM.
         *   Executes MCP tool calls requested by the LLM.
-*   **Image Handling:** Processes photos attached to Telegram messages and sends them to the LLM.
-*   **Containerization:** **Dockerfile** provided for building an image with all dependencies (Python via `uv`, Node.js via `npm`, Playwright browser).
+*   **Image Handling:** Processes the first photo attached to Telegram messages (in a batch) and sends it (base64 encoded) to the LLM along with the text.
+*   **Markdown Formatting:** Uses `telegramify-markdown` to convert LLM responses to Telegram's MarkdownV2 format, with fallback to escaped text.
+*   **Message Batching:** Buffers incoming messages received close together and processes them as a single batch to avoid overwhelming the LLM and ensure context.
+*   **Containerization:** **Dockerfile** provided for building an image with all dependencies (Python via `uv`, Deno/npm for MCP tools, Playwright browser). Uses cache mounts for faster builds.
+*   **Task Queue:** Implemented using the `tasks` database table, `asyncio.Event` for immediate notification, and a worker loop in `main.py`. Includes retry logic with exponential backoff. (See Section 10).
 
 **Features Not Yet Implemented:**
 
@@ -244,17 +252,21 @@ The queue is managed via the `tasks` table with the following columns:
 *   `status`: String, current state of the task (e.g., `pending`, `processing`, `done`, `failed`). Indexed. Default is `pending`.
 *   `locked_by`: String, identifier of the worker currently processing the task. NULL if not being processed.
 *   `locked_at`: DateTime (timezone-aware), timestamp when the worker acquired the lock. NULL if not locked.
-*   `error`: Text, stores error details if the task status becomes `failed`.
+*   `error`: Text, stores error details if the task status becomes `failed` or during retries.
+*   `retry_count`: Integer, number of times this task has been attempted. Default is 0.
+*   `max_retries`: Integer, maximum number of retries allowed for this task. Default is 3.
 
 ### 10.3 Operations
 Core operations are provided in `storage.py`:
 
 *   `enqueue_task(task_id, task_type, payload=None, scheduled_at=None, notify_event=None)`: Adds a new task with status `pending`. Requires a unique `task_id`. Can optionally trigger an `asyncio.Event` for immediate tasks.
-*   `dequeue_task(worker_id, task_types)`: Attempts to atomically retrieve and lock the oldest, ready (`status='pending'` and `scheduled_at` is past or NULL) task matching one of the provided `task_types`.
+*   `enqueue_task(task_id, task_type, payload=None, scheduled_at=None, max_retries=None, notify_event=None)`: Adds a new task with status `pending`. Requires a unique `task_id`. Can optionally override `max_retries` and trigger an `asyncio.Event` for immediate tasks. Includes retry logic for the database operation itself.
+*   `dequeue_task(worker_id, task_types)`: Attempts to atomically retrieve and lock the oldest, ready (`status='pending'`, `scheduled_at` is past or NULL, `retry_count < max_retries`) task matching one of the provided `task_types`, prioritizing tasks with fewer retries.
     *   It uses `SELECT ... FOR UPDATE SKIP LOCKED` logic (via SQLAlchemy's `with_for_update(skip_locked=True)`). This provides good concurrency on **PostgreSQL**.
     *   **Note:** On **SQLite**, `SKIP LOCKED` is not natively supported. SQLAlchemy's implementation might result in table-level locking during the transaction, potentially limiting concurrency if multiple workers access the same SQLite database file (which is generally discouraged).
-    *   If successful, it updates the task's status to `processing`, sets `locked_by` and `locked_at`, and returns the task details. Returns `None` if no suitable task is available or lock acquisition fails.
-*   `update_task_status(task_id, status, error=None)`: Updates the status of a task (typically to `done` or `failed`) and clears the lock information.
+    *   If successful, it updates the task's status to `processing`, sets `locked_by` and `locked_at`, and returns the task details. Returns `None` if no suitable task is available or lock acquisition fails. Includes retry logic for the database operation itself.
+*   `update_task_status(task_id, status, error=None)`: Updates the status of a task (typically to `done` or `failed`), clears the lock information, and includes retry logic for the database operation.
+*   `reschedule_task_for_retry(task_id, next_scheduled_at, new_retry_count, error)`: Updates a task for a retry attempt: increments retry count, sets new schedule time, updates last error, resets status to `pending`, and clears lock info. Includes retry logic for the database operation.
 
 ### 10.4 Processing Model
 *   **Polling & Notification:** The primary mechanism is polling (`task_worker_loop` in `main.py`). An `asyncio.Event` (`new_task_event`) allows `enqueue_task` to wake the worker immediately for non-scheduled tasks, reducing latency.
@@ -263,9 +275,13 @@ Core operations are provided in `storage.py`:
 *   **Execution:** When a task is dequeued, the worker looks up the handler based on `task_type` and executes it with the task's `payload`.
 *   **Implemented Handlers:**
     *   `handle_log_message`: Logs the task payload (example).
-    *   `handle_llm_callback`: Extracts `chat_id` and `callback_context` from payload, constructs a trigger message, and sends it *as the bot* to the specified chat. This message is then processed by the normal `message_handler`.
-*   **Completion/Failure:** Based on the handler's outcome, the worker calls `update_task_status` to mark the task as `done` or `failed`. Error details should be captured for failed tasks.
-*   **Lock Timeout (Implicit):** While not explicitly implemented, long-running tasks could potentially be retried by other workers if a worker crashes. A robust implementation might add logic to check `locked_at` to detect stale locks, but this adds complexity.
+    *   `handle_llm_callback`: Extracts `chat_id` and `callback_context` from payload, constructs a trigger message ("System Callback Trigger:..."), sends it to the LLM via `_generate_llm_response_for_chat`, sends the LLM's response back to the specified chat *as the bot*, and stores both the trigger and response in message history.
+*   **Completion/Failure/Retry:** Based on the handler's outcome:
+    *   Success: Worker calls `update_task_status` to mark task as `done`.
+    *   Failure: Worker checks `retry_count` against `max_retries`.
+        *   If retries remain, worker calls `reschedule_task_for_retry` with exponential backoff and jitter.
+        *   If max retries are reached, worker calls `update_task_status` to mark task as `failed`. Error details are captured.
+*   **Lock Timeout (Implicit):** While not explicitly implemented, long-running tasks could potentially be retried by other workers if a worker crashes. The retry mechanism handles failures within the handler, but crashes might require manual intervention or a separate stale lock detection mechanism (not currently implemented).
 
 ## 11. Security Considerations
 
@@ -291,5 +307,5 @@ Strategies to mitigate this include:
             *   The tool call is only executed if the user explicitly confirms via the interface element (e.g., button press). The LLM is *not* involved in generating or processing this confirmation request/response, preventing it from bypassing the check.
     *   **If the context is *not* tainted** (e.g., a direct user request without external data lookups involved in the *same* turn), sensitive tool calls might be allowed directly, depending on the tool's nature and configured policy.
 
-This approach aims to balance functionality with security, allowing the LLM to operate on external data while preventing malicious content within that data from hijacking sensitive actions. The confirmation step (Option B) provides a user-controlled safeguard for high-risk operations.
+This approach describes *potential strategies* to balance functionality with security. Currently, **these mitigation strategies (context tainting, conditional tool access based on taint, user confirmation flows) are NOT implemented.** The system currently allows the LLM to call any available tool (local or MCP) based on its interpretation of the prompt and context, without explicit checks for context origin or user confirmation steps beyond the initial prompt.
 
