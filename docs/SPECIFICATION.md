@@ -125,10 +125,13 @@ The system will consist of the following core components:
     *   Provides a combined, sorted list of events as context within the system prompt to the LLM.
 *   **Task Queue:** Uses the database (`tasks` table) for background processing. Supports scheduled tasks and immediate notification via `asyncio.Event`. Handles `log_message` task type.
 *   **(Future) Calendar Integration (Write):**
-    *   Add/update events on the main family calendar via CalDAV.
+    *   Introduce tools allowing the LLM to add or update events on specific calendars.
+    *   This will require a more robust configuration system for calendars, allowing administrators to define multiple calendars with distinct purposes (e.g., "Main Family Calendar", "Work Calendar", "Kids Activities", "Reminders").
+    *   The LLM will need context about these available calendars (names, descriptions of purpose) to choose the correct one when a user requests adding an event (e.g., "Add dentist appointment..." vs. "Remind me to...").
+    *   Implementation likely requires CalDAV write capabilities.
 *   **(Future) Reminders:**
-    *   Set reminders via natural language (stored on a dedicated calendar).
-    *   Receive notifications for due reminders.
+    *   Set reminders via natural language (stored on a dedicated 'Reminders' calendar, requiring write access and configuration as described above).
+    *   Receive notifications for due reminders (likely requires a scheduled task to check the calendar).
 *   **(Future) Email Ingestion:** Process information from forwarded emails.
 *   **(Future) External Data Integration:** Fetch data like weather forecasts directly or via MCP.
 
