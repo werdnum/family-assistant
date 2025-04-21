@@ -34,14 +34,13 @@ from telegram.ext import (
     ApplicationBuilder,
     CallbackContext,
     CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    # PicklePersistence, # No longer needed for history
     filters,
 )
-import telegramify_markdown  # Import the new library
+from dateutil import rrule # For recurrence rules
+from dateutil.parser import isoparse # For parsing ISO dates if needed in rrule
+import telegramify_markdown
 from telegram.helpers import escape_markdown
-import uvicorn  # Import uvicorn
+import uvicorn
 
 # Assuming processing.py contains the LLM interaction logic
 from processing import get_llm_response
@@ -284,15 +283,73 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                     try:
                         # Execute the handler with the payload
                         await handler(task["payload"])
-                        # Mark task as done if handler completes successfully
-                        await storage.update_task_status(task["task_id"], "done")
+                        task_id = task["task_id"]
+                        task_type = task["task_type"]
+                        payload = task["payload"]
+                        recurrence_rule_str = task.get("recurrence_rule")
+                        original_task_id = task.get("original_task_id", task_id) # Use task_id if original is missing (first run)
+                        task_max_retries = task.get("max_retries", 3)
+
+                        # Mark task as done
+                        await storage.update_task_status(task_id, "done")
                         logger.info(
-                            f"Worker {worker_id} completed task {task['task_id']}"
+                            f"Worker {worker_id} completed task {task_id} (Original: {original_task_id})"
                         )
+
+                        # --- Handle Recurrence ---
+                        if recurrence_rule_str:
+                            logger.info(f"Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance.")
+                            try:
+                                # Use the *scheduled_at* time of the completed task as the base for the next occurrence
+                                last_scheduled_at = task.get("scheduled_at")
+                                if not last_scheduled_at:
+                                     # If somehow scheduled_at is missing, use created_at as fallback
+                                     last_scheduled_at = task.get("created_at", datetime.now(timezone.utc))
+                                     logger.warning(f"Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base.")
+                                # Ensure the base time is timezone-aware for rrule
+                                if last_scheduled_at.tzinfo is None:
+                                    last_scheduled_at = last_scheduled_at.replace(tzinfo=timezone.utc)
+                                    logger.warning(f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}")
+
+
+                                # Calculate the next occurrence *after* the last scheduled time
+                                rule = rrule.rrulestr(recurrence_rule_str, dtstart=last_scheduled_at)
+                                next_scheduled_dt = rule.after(last_scheduled_at)
+
+                                if next_scheduled_dt:
+                                    # Generate a new unique task ID for the next instance
+                                    # Format: <original_task_id>_recur_<next_iso_timestamp>
+                                    next_task_id = f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
+
+                                    logger.info(f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}")
+
+                                    # Enqueue the next task instance
+                                    await storage.enqueue_task(
+                                        task_id=next_task_id,
+                                        task_type=task_type, # Same type
+                                        payload=payload, # Same payload
+                                        scheduled_at=next_scheduled_dt,
+                                        max_retries=task_max_retries, # Same retry policy
+                                        recurrence_rule=recurrence_rule_str, # Keep the rule
+                                        original_task_id=original_task_id, # Link back to original
+                                        notify_event=new_task_event # Notify if immediate
+                                    )
+                                    logger.info(f"Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}.")
+                                else:
+                                    logger.info(f"No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'.")
+
+                            except Exception as recur_err:
+                                logger.error(
+                                    f"Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
+                                    exc_info=True
+                                )
+                                # Don't mark the original task as failed, just log the recurrence error.
+                                # Potentially send notification to developer?
+
                     except Exception as handler_exc:
                         current_retry = task.get("retry_count", 0)
                         max_retries = task.get(
-                            "max_retries", 3
+                            "max_retries", 3 # Use DB default if missing somehow
                         )  # Use DB default if missing somehow
                         error_str = str(handler_exc)
                         logger.error(

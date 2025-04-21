@@ -26,11 +26,15 @@
             <div class="task-detail"><span class="task-label">Type:</span> <span class="task-value">{{ task.task_type }}</span></div>
             <div class="task-detail"><span class="task-label">Status:</span> <span class="task-value task-status">{{ task.status }}</span></div>
             <div class="task-detail"><span class="task-label">Scheduled:</span> <span class="task-value">{{ task.scheduled_at.strftime('%Y-%m-%d %H:%M:%S %Z') if task.scheduled_at else 'Immediate' }}</span></div>
-            <div class="task-detail"><span class="task-label">Created:</span> <span class="task-value">{{ task.created_at.strftime('%Y-%m-%d %H:%M:%S %Z') }}</span></div>
+            <div class="task-detail"><span class="task-label">Created:</span> <span class="task-value">{{ task.created_at.strftime('%Y-%m-%d %H:%M:%S %Z') if task.created_at else 'N/A' }}</span></div>
             <div class="task-detail"><span class="task-label">Retries:</span> <span class="task-value">{{ task.retry_count }} / {{ task.max_retries }}</span></div>
+            {% if task.recurrence_rule %}
+            <div class="task-detail"><span class="task-label">Recurrence:</span> <span class="task-value task-recurrence">{{ task.recurrence_rule }}</span></div>
+            <div class="task-detail"><span class="task-label">Original Task ID:</span> <span class="task-value task-id">{{ task.original_task_id }}</span></div>
+            {% endif %}
             <div class="task-detail task-payload">
                 <span class="task-label">Payload:</span>
-                <pre>{{ task.payload | tojson(indent=2) if task.payload else 'None' }}</pre>
+                <pre>{{ task.payload | tojson(indent=2) if task.payload is not none else 'None' }}</pre> <!-- Check for None explicitly -->
             </div>
              <div class="task-detail task-error">
                 <span class="task-label">Last Error:</span>

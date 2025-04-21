@@ -22,9 +22,81 @@ import storage
 # MCP state (mcp_sessions, tool_name_to_server_id) will be passed as arguments
 # Removed: from main import mcp_sessions, tool_name_to_server_id
 
+from dateutil import rrule # Added for validating recurrence rule
+
 logger = logging.getLogger(__name__)
 
 # --- Tool Implementation ---
+
+
+async def schedule_recurring_task_tool(
+    task_type: str,
+    initial_schedule_time: str,
+    recurrence_rule: str,
+    payload: Dict[str, Any],
+    max_retries: Optional[int] = 3,
+    description: Optional[str] = None, # Optional description for the task ID
+):
+    """
+    Schedules a new recurring task.
+
+    Args:
+        task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
+        initial_schedule_time: ISO 8601 datetime string for the *first* run.
+        recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
+        payload: JSON object containing data needed by the task handler.
+        max_retries: Maximum number of retries for each instance (default 3).
+        description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief').
+    """
+    try:
+        # Validate recurrence rule format (basic validation)
+        try:
+             # We don't need dtstart here, just parsing validity
+             rrule.rrulestr(recurrence_rule)
+        except ValueError as rrule_err:
+             raise ValueError(f"Invalid recurrence_rule format: {rrule_err}")
+
+        # Parse the initial schedule time
+        initial_dt = isoparse(initial_schedule_time)
+        if initial_dt.tzinfo is None:
+            logger.warning(
+                f"Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming UTC."
+            )
+            initial_dt = initial_dt.replace(tzinfo=timezone.utc)
+
+        # Ensure it's in the future (optional, but good practice)
+        if initial_dt <= datetime.now(timezone.utc):
+            raise ValueError("Initial schedule time must be in the future.")
+
+        # Generate the *initial* unique task ID
+        base_id = f"recurring_{task_type}"
+        if description:
+            safe_desc = "".join(c if c.isalnum() or c in ['-', '_'] else '_' for c in description.lower())
+            base_id += f"_{safe_desc}"
+        # Add a unique element (UUID) to ensure the *first* ID is truly unique
+        initial_task_id = f"{base_id}_{uuid.uuid4()}"
+
+        # Enqueue the first instance. original_task_id is implicitly set to initial_task_id by enqueue_task logic.
+        await storage.enqueue_task(
+            task_id=initial_task_id,
+            task_type=task_type,
+            payload=payload,
+            scheduled_at=initial_dt,
+            max_retries=max_retries,
+            recurrence_rule=recurrence_rule,
+            # original_task_id=None, # Let enqueue_task handle setting it to initial_task_id
+            # notify_event=new_task_event # No immediate notification needed usually
+        )
+        logger.info(
+            f"Scheduled initial recurring task {initial_task_id} (Type: {task_type}) starting at {initial_dt} with rule '{recurrence_rule}'"
+        )
+        return f"OK. Recurring task '{initial_task_id}' scheduled starting {initial_schedule_time} with rule '{recurrence_rule}'."
+    except ValueError as ve:
+        logger.error(f"Invalid arguments for scheduling recurring task: {ve}")
+        return f"Error: Invalid arguments provided. {ve}"
+    except Exception as e:
+        logger.error(f"Failed to schedule recurring task: {e}", exc_info=True)
+        return "Error: Failed to schedule the recurring task."
 
 
 async def schedule_future_callback_tool(callback_time: str, context: str, chat_id: int):
@@ -79,6 +151,7 @@ async def schedule_future_callback_tool(callback_time: str, context: str, chat_i
 AVAILABLE_FUNCTIONS = {
     "add_or_update_note": storage.add_or_update_note,
     "schedule_future_callback": schedule_future_callback_tool,
+    "schedule_recurring_task": schedule_recurring_task_tool, # Add new tool
 }
 
 # Define tools in the format LiteLLM expects (OpenAI format)
@@ -127,6 +200,45 @@ TOOLS_DEFINITION = [
                     # chat_id is removed, it will be inferred from the current context
                 },
                 "required": ["callback_time", "context"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_recurring_task",
+            "description": "Schedule a task that will run repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like sending a daily summary or checking for updates periodically.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_type": {
+                        "type": "string",
+                        "description": "The identifier for the task handler that should process this task (e.g., 'send_daily_brief').",
+                    },
+                    "initial_schedule_time": {
+                        "type": "string",
+                        "description": "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the task should run.",
+                    },
+                     "recurrence_rule": {
+                        "type": "string",
+                        "description": "An RRULE string defining the recurrence schedule according to RFC 5545 (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0' for 8:00 AM daily, 'FREQ=WEEKLY;BYDAY=MO' for every Monday).",
+                    },
+                    "payload": {
+                        "type": "object",
+                        "description": "A JSON object containing any necessary data or parameters for the task handler.",
+                         "additionalProperties": True, # Allow any structure within the payload
+                    },
+                     "max_retries": {
+                        "type": "integer",
+                        "description": "Optional. Maximum number of retries for each instance if it fails (default: 3).",
+                        "default": 3,
+                    },
+                    "description": {
+                        "type": "string",
+                         "description": "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief').",
+                    },
+                },
+                "required": ["task_type", "initial_schedule_time", "recurrence_rule", "payload"],
             },
         },
     },

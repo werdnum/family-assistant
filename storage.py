@@ -10,18 +10,21 @@ from sqlalchemy import (
     select,
     insert,
     update,
-    delete,  # Add delete
+    delete,
+    ForeignKey, # Added ForeignKey
     BigInteger,
     Integer,
     DateTime,
     Text,
-    JSON,  # Added JSON for payload
+    JSON,
     desc,
 )
 import asyncio
-import random  # Added for jitter
-from sqlalchemy.exc import DBAPIError  # Added for retry logic
+import random
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
+from dateutil import rrule # Added for recurrence calculation
+from dateutil.parser import isoparse # Added for parsing dates in recurrence
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +35,26 @@ logger = logging.getLogger(__name__)
 async def enqueue_task(
     task_id: str,
     task_type: str,
-    payload: Optional[Any] = None,
+    payload: Optional[Dict[str, Any]] = None,
     scheduled_at: Optional[datetime] = None,
-    max_retries: Optional[int] = None,  # Allow overriding default max_retries
+    max_retries: Optional[int] = 3, # Default max_retries
+    recurrence_rule: Optional[str] = None, # Added recurrence_rule
+    original_task_id: Optional[str] = None, # Added original_task_id for subsequent runs
     notify_event: Optional[asyncio.Event] = None,
-):  # noqa: PLR0913 - Keep signature but add max_retries
+): # noqa: PLR0913
     """
     Adds a new task to the queue.
+
+    - task_id: Must be unique for each task instance.
+    - task_type: Type of task for handler routing.
+    - payload: Data for the task handler.
+    - scheduled_at: When the task should run.
+    - max_retries: How many times to retry on failure.
+    - recurrence_rule: An RRULE string (e.g., 'FREQ=DAILY;INTERVAL=1') if the task should recur.
+    - original_task_id: For recurring tasks, this links subsequent instances back to the first one.
+                       Should be NULL for the very first instance of a recurring task.
+                       Must be populated when enqueueing the *next* instance.
+    - notify_event: Event to trigger immediate worker pickup.
 
     If notify_event is provided and the task is scheduled for immediate execution
     (scheduled_at is None or in the past), the event will be set.
@@ -57,16 +73,30 @@ async def enqueue_task(
                 values_to_insert = {
                     "task_id": task_id,
                     "task_type": task_type,
-                    "payload": payload,
+                    "payload": payload, # Stored as JSON/Text
                     "scheduled_at": scheduled_at,
                     "status": "pending",
-                    "retry_count": 0,  # Explicitly set retry_count to 0 on initial enqueue
-                    # created_at has a default
+                    "retry_count": 0,
+                    "max_retries": max_retries if max_retries is not None else 3, # Use provided or default
+                    "recurrence_rule": recurrence_rule, # Store the rule
+                    # If original_task_id is not provided (i.e., this is the *first* instance),
+                    # set the original_task_id column to *this* task's task_id.
+                    # If original_task_id *is* provided (i.e., this is a subsequent instance), use it.
+                    "original_task_id": original_task_id if original_task_id else task_id,
+                    # created_at has a default in the DB
                 }
-                if max_retries is not None:
-                    values_to_insert["max_retries"] = max_retries
-                    logger.debug(
-                        f"Setting max_retries={max_retries} for task {task_id}"
+                # Remove None values so DB defaults apply if needed (though most are handled above)
+                values_to_insert = {k: v for k, v in values_to_insert.items() if v is not None or k in ["payload", "error"]}
+
+
+                stmt = insert(tasks_table).values(**values_to_insert)
+                # This inner try/except is specific to the insert/commit part
+                # and should also be inside the 'with' block
+                try:
+                    await conn.execute(stmt)
+                    await conn.commit()
+                    logger.info(
+                        f"Enqueued task {task_id} (Type: {task_type}, Original: {values_to_insert['original_task_id']}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
                     )
                 # else: it will use the DB default (3)
 
@@ -134,6 +164,7 @@ async def dequeue_task(
     """
     Atomically dequeues the next available task matching the types and locks it.
 
+    Returns the task row as a dictionary, including recurrence info if present.
     Uses SELECT FOR UPDATE SKIP LOCKED, best suited for PostgreSQL.
     May behave differently or less concurrently on SQLite.
 
@@ -363,11 +394,20 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     max_retries = 3
     base_delay = 0.5  # seconds
 
-    # Define the desired order: pending first, then processing, then others.
-    # Within each status, order by scheduled_at (NULLs last for pending), then created_at.
-    status_order = {
-        "pending": 0,
-        "processing": 1,
+    """
+    Retrieves tasks from the database, ordered by creation time descending, with a limit.
+    Includes recurrence columns.
+    """
+    max_retries = 3
+    base_delay = 0.5  # seconds
+
+    stmt = (
+        select(tasks_table) # Select all columns by default
+        .order_by(tasks_table.c.created_at.desc())
+        .limit(limit)
+    )
+
+    for attempt in range(max_retries):
         "failed": 2,
         "done": 3,
     }

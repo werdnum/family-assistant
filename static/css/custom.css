@@ -224,6 +224,13 @@ a.button-link:hover {
 .task-value.task-status {
     font-weight: bold;
 }
+.task-value.task-recurrence {
+    font-family: monospace;
+    font-size: 0.9em;
+    background-color: rgba(0,0,0,0.03);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+}
 
 
 .task-payload pre, .task-error pre {
