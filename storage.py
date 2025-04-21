@@ -422,17 +422,14 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
                 rows = result.fetchall()
                 # Convert rows to dictionaries
                 tasks_list = [row._mapping for row in rows]
-            # Custom sorting based on status
-            # This might require a CASE statement or similar depending on DB flavor
-            # For simplicity, fetching all and sorting in Python might be easier for now
-            # Or fetch ordered by created_at desc and let UI handle grouping/sorting
-            # Let's try ordering by created_at desc for now.
-            tasks_table.c.created_at.desc()
-        )
-        .limit(limit)
-    )
+                # The `return tasks_list` should happen after the connection block,
+                # so this was misplaced anyway. The correct return is later.
+                # Removing the leftover block below fixes the syntax error.
 
-    for attempt in range(max_retries):
+        # The loop continues below to handle retries...
+        # The 'try' block should be inside the loop.
+
+        # The actual try/except block for the database operation starts here:
         try:
             async with engine.connect() as conn:
                 result = await conn.execute(stmt)
