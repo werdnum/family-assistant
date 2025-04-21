@@ -270,17 +270,27 @@ Core operations are provided in `storage.py`:
 *   `update_task_status(task_id, status, error=None)`: Updates the status of a task (typically to `done` or `failed`), clears the lock information, and includes retry logic for the database operation.
 *   `reschedule_task_for_retry(task_id, next_scheduled_at, new_retry_count, error)`: Updates a task for a retry attempt: increments retry count, sets new schedule time, updates last error, resets status to `pending`, and clears lock info. Includes retry logic for the database operation.
 
-### 10.5 Recurring Tasks (Future)
-The task system could be extended to support recurring tasks. Potential approaches:
+### 10.5 Recurring Tasks
+The task system supports recurring tasks using RRULE strings and a duplication approach.
 
-*   **Schema Extension:** Add columns like `recurrence_rule` (e.g., RRULE string) or `cron_spec` to the `tasks` table.
-*   **Processing Logic:** When a worker successfully processes a recurring task (`update_task_status` to `done`):
-    *   Instead of simply marking it `done`, the worker calculates the next occurrence time based on the recurrence rule/cronspec.
-    *   It then updates the *same* task record, resetting its `status` to `pending` and updating the `scheduled_at` to the next occurrence time. Alternatively, it could mark the current task `done` and create a *new* task record for the next occurrence (duplication).
+*   **Schema Extension:** The `tasks` table includes:
+    *   `recurrence_rule`: (String, nullable) Stores the RRULE string (e.g., `FREQ=DAILY;INTERVAL=1;BYHOUR=8`).
+    *   `original_task_id`: (String, nullable, indexed) Links subsequent recurring instances back to the ID of the *first* instance that defined the recurrence. For the first instance, this field is populated with its own `task_id`.
+*   **Scheduling:**
+    *   A new recurring task is initiated using the `schedule_recurring_task` tool (callable by the LLM) or potentially a future UI/API endpoint.
+    *   This tool calls `storage.enqueue_task`, providing the initial unique `task_id`, `task_type`, `payload`, `initial_schedule_time`, and the `recurrence_rule`.
+*   **Processing Logic (Duplication):**
+    *   When the `task_worker_loop` successfully processes a task (marks it `done`):
+        *   It checks if the task has a non-null `recurrence_rule`.
+        *   If a rule exists, it uses `dateutil.rrule` to calculate the next occurrence time based on the rule and the *scheduled_at* time of the task that just completed.
+        *   It generates a *new unique task_id* for the next instance (e.g., `{original_task_id}_recur_{next_iso_timestamp}`).
+        *   It calls `storage.enqueue_task` to create this *next* task instance, copying the `task_type`, `payload`, `recurrence_rule`, `max_retries`, and `original_task_id` from the completed task, and setting the new `task_id` and `scheduled_at`.
+        *   The *current* task remains marked as `done`.
 *   **Considerations:**
-    *   **Drift:** Need to ensure the calculation of the next occurrence is robust to avoid time drift.
-    *   **Missed Runs / Self-Healing:** If the application is down when a recurring task was due, how does it catch up? A separate periodic check might be needed to find recurring tasks whose `scheduled_at` is in the past and reschedule them appropriately (either run them immediately or schedule for the next *future* time slot, depending on the task's nature). This check could also identify "lost" recurring tasks that failed processing and never got rescheduled.
-    *   **Modification/Deletion:** How are recurring tasks modified or stopped? Requires specific UI/commands.
+    *   **Task ID:** Each instance of a recurring task has its own unique `task_id`. The `original_task_id` links them logically.
+    *   **History:** Each instance is treated as a separate task run with its own potential retries and status history.
+    *   **Missed Runs / Self-Healing:** This duplication approach *does not* automatically handle runs missed while the application was down. If the worker is offline when an instance was due, that instance will simply not be created. A separate mechanism (e.g., a periodic check scanning for original recurring tasks whose next expected run is in the past) would be needed for robust self-healing, but is not currently implemented.
+    *   **Modification/Deletion:** Stopping a recurring task requires deleting or marking future *pending* instances and potentially preventing the creation of new ones (e.g., by nullifying the `recurrence_rule` on the *last completed* or *currently pending* instance linked to the `original_task_id`). This requires specific logic not yet implemented. Modifying the schedule requires similar careful handling.
 
 ### 10.6 Processing Model
 *   **Polling & Notification:** The primary mechanism is polling (`task_worker_loop` in `main.py`). An `asyncio.Event` (`new_task_event`) allows `enqueue_task` to wake the worker immediately for non-scheduled tasks, reducing latency.
