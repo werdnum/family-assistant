@@ -425,20 +425,20 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
                 # The `return tasks_list` should happen after the connection block,
                 # so this was misplaced anyway. The correct return is later.
                 # Removing the leftover block below fixes the syntax error.
+                return tasks_list # Return *after* converting rows, inside the 'with' block
 
         # The loop continues below to handle retries...
         # The 'try' block should be inside the loop.
 
         # The actual try/except block for the database operation starts here:
-        try:
             async with engine.connect() as conn:
-                result = await conn.execute(stmt)
+                result = await conn.execute(stmt) # Use the stmt defined before the loop
                 rows = result.fetchall()
                 # Convert rows to dictionaries
                 tasks_list = [row._mapping for row in rows]
                 # Optional: Sort in Python if complex DB ordering is tricky
                 # tasks_list.sort(key=lambda t: (status_order.get(t['status'], 99), t['scheduled_at'] or datetime.max.replace(tzinfo=timezone.utc), t['created_at']))
-                return tasks_list
+                return tasks_list # Success, return from within the loop
         except DBAPIError as e:
             logger.warning(
                 f"DBAPIError in get_all_tasks (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
