@@ -211,10 +211,10 @@ The following features from the specification are currently implemented:
 
 **Features Not Yet Implemented:**
 
-*   Calendar Integration (writing events via CalDAV).
-*   Reminders (setting/notifying - likely requires a dedicated reminder calendar and write access).
+*   Calendar Integration (writing events via CalDAV): Requires implementing write tools and enhanced configuration to specify target calendars.
+*   Reminders (setting/notifying): Dependent on calendar write access and configuration for a dedicated reminders calendar.
 *   Email Ingestion.
-*   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks).
+*   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks): `APScheduler` is present but not integrated into the main loop.
 *   Advanced Web UI features (dashboard, chat).
 *   User profiles/preferences table.
 
