@@ -565,6 +565,12 @@ tasks_table = Table(
     Column(
         "max_retries", Integer, default=3, nullable=False
     ),  # Maximum number of retries allowed
+    Column(
+        "recurrence_rule", String, nullable=True
+    ), # Stores RRULE string, e.g., "FREQ=DAILY;INTERVAL=1"
+    Column(
+        "original_task_id", String, nullable=True, index=True
+    ), # Links recurring instances to the first one
 )
 
 
