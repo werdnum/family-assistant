@@ -19,36 +19,27 @@
 
 <main>
     {% if tasks %}
-    <table class="tasks-table"> <!-- Added class for specific styling -->
-        <thead>
-            <tr>
-                <th class="col-id">ID</th>
-                <th class="col-taskid">Task ID</th>
-                <th class="col-type">Type</th>
-                <th class="col-status">Status</th>
-                <th class="col-scheduled">Scheduled At</th>
-                <th class="col-created">Created At</th>
-                <th class="col-retries">Retries (Count/Max)</th>
-                <th class="col-payload">Payload</th>
-                <th class="col-error">Last Error</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for task in tasks %}
-            <tr class="status-{{ task.status }}">
-                <td class="col-id">{{ task.id }}</td>
-                <td class="col-taskid">{{ task.task_id }}</td>
-                <td class="col-type">{{ task.task_type }}</td>
-                <td class="col-status">{{ task.status }}</td>
-                <td class="col-scheduled">{{ task.scheduled_at.strftime('%Y-%m-%d %H:%M:%S %Z') if task.scheduled_at else 'Immediate' }}</td>
-                <td class="col-created">{{ task.created_at.strftime('%Y-%m-%d %H:%M:%S %Z') }}</td>
-                <td class="col-retries">{{ task.retry_count }} / {{ task.max_retries }}</td>
-                <td class="col-payload"><pre>{{ task.payload | tojson(indent=2) if task.payload else 'None' }}</pre></td>
-                <td class="col-error"><pre>{{ task.error if task.error else 'None' }}</pre></td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="tasks-list">
+        {% for task in tasks %}
+        <article class="task-card status-{{ task.status }}"> <!-- Use article for semantics -->
+            <div class="task-detail"><span class="task-label">Task ID:</span> <span class="task-value task-id">{{ task.task_id }}</span></div>
+            <div class="task-detail"><span class="task-label">Type:</span> <span class="task-value">{{ task.task_type }}</span></div>
+            <div class="task-detail"><span class="task-label">Status:</span> <span class="task-value task-status">{{ task.status }}</span></div>
+            <div class="task-detail"><span class="task-label">Scheduled:</span> <span class="task-value">{{ task.scheduled_at.strftime('%Y-%m-%d %H:%M:%S %Z') if task.scheduled_at else 'Immediate' }}</span></div>
+            <div class="task-detail"><span class="task-label">Created:</span> <span class="task-value">{{ task.created_at.strftime('%Y-%m-%d %H:%M:%S %Z') }}</span></div>
+            <div class="task-detail"><span class="task-label">Retries:</span> <span class="task-value">{{ task.retry_count }} / {{ task.max_retries }}</span></div>
+            <div class="task-detail task-payload">
+                <span class="task-label">Payload:</span>
+                <pre>{{ task.payload | tojson(indent=2) if task.payload else 'None' }}</pre>
+            </div>
+             <div class="task-detail task-error">
+                <span class="task-label">Last Error:</span>
+                <pre>{{ task.error if task.error else 'None' }}</pre>
+            </div>
+             <div class="task-detail task-internal-id"><span class="task-label">Internal ID:</span> <span class="task-value">{{ task.id }}</span></div>
+        </article>
+        {% endfor %}
+    </div>
     {% else %}
         <p>No tasks found.</p>
     {% endif %}
