@@ -176,45 +176,76 @@ a.button-link:hover {
 }
 
 /* tasks.html specific */
-.tasks-table {
-    border-collapse: collapse;
-    width: 100%;
-    margin-bottom: 1em;
-    table-layout: fixed; /* Keep fixed layout */
+.tasks-list {
+    display: flex; /* Use flexbox for layout */
+    flex-direction: column;
+    gap: 1.5em; /* Space between cards */
 }
-.tasks-table th, .tasks-table td {
+
+.task-card {
     border: 1px solid var(--border);
-    padding: 8px;
-    text-align: left;
-    vertical-align: top;
-    word-wrap: break-word;
-}
-.tasks-table th {
-    background-color: var(--accent-bg);
-    font-weight: bold; /* Ensure headers are bold */
-}
-/* Status Colors */
-.status-pending { background-color: #e3f2fd; border-left: 3px solid #90caf9; }
-.status-processing { background-color: #fff9c4; border-left: 3px solid #fff176; }
-.status-done { background-color: #e8f5e9; border-left: 3px solid #a5d6a7; }
-.status-failed { background-color: #ffebee; border-left: 3px solid #ef9a9a; }
-/* Status Colors Text (Ensure contrast) */
-.status-pending, .status-processing, .status-done, .status-failed {
-    color: #333; /* Adjust if needed */
+    border-radius: 5px;
+    padding: 1em;
+    background-color: var(--bg); /* Default background */
+    border-left-width: 5px; /* Make status border more prominent */
+    border-left-style: solid;
+    border-left-color: var(--border); /* Default border color */
 }
 
-/* Column Widths */
-.col-id { width: 5%; }
-.col-taskid { width: 15%; }
-.col-type { width: 10%; }
-.col-status { width: 8%; }
-.col-scheduled { width: 12%; }
-.col-created { width: 12%; }
-.col-retries { width: 8%; }
-.col-payload { width: 15%; }
-.col-error { width: 15%; }
-
-/* Task Payload/Error Pre Styling */
-.tasks-table pre {
-    max-height: 100px; /* Keep limited height */
+/* Status Colors applied to cards */
+.task-card.status-pending { background-color: #e3f2fd; border-left-color: #90caf9; }
+.task-card.status-processing { background-color: #fff9c4; border-left-color: #fff176; }
+.task-card.status-done { background-color: #e8f5e9; border-left-color: #a5d6a7; }
+.task-card.status-failed { background-color: #ffebee; border-left-color: #ef9a9a; }
+/* Ensure text is readable on status backgrounds */
+.task-card.status-pending, .task-card.status-processing, .task-card.status-done, .task-card.status-failed {
+    color: #333;
 }
+
+.task-detail {
+    margin-bottom: 0.6em; /* Space between details */
+    line-height: 1.4;
+}
+
+.task-label {
+    font-weight: bold;
+    margin-right: 0.5em;
+    color: var(--text-light); /* Lighter color for label */
+}
+
+.task-value {
+    /* Styles for the value part, if needed */
+    word-wrap: break-word; /* Ensure long values wrap */
+}
+.task-value.task-id {
+    font-family: monospace; /* Monospace for IDs */
+    font-size: 0.9em;
+}
+.task-value.task-status {
+    font-weight: bold;
+}
+
+
+.task-payload pre, .task-error pre {
+    margin-top: 0.3em; /* Space between label and pre */
+    max-height: 150px; /* Slightly more height for context */
+    overflow-y: auto;
+    background-color: rgba(0,0,0,0.05); /* Subtle background for pre */
+    padding: 0.5em;
+    border-radius: 3px;
+}
+/* Make internal ID less prominent */
+.task-internal-id {
+    font-size: 0.8em;
+    color: var(--text-light);
+    margin-top: 0.8em;
+    border-top: 1px dashed var(--border);
+    padding-top: 0.5em;
+}
+
+
+/* Optional: Media query to switch back to table on wider screens */
+/* @media (min-width: 1024px) { */
+    /* Add table-based CSS rules here if desired */
+    /* Hide the card layout, show a table */
+/* } */
