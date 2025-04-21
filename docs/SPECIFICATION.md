@@ -123,7 +123,7 @@ The system will consist of the following core components:
     *   Supports **CalDAV** calendars via direct URLs. Configuration via `.env`: Requires `CALDAV_USERNAME`, `CALDAV_PASSWORD`, and `CALDAV_CALENDAR_URLS` (comma-separated list of direct URLs). `CALDAV_URL` is optional.
     *   Supports **iCalendar** URLs (`.ics`). Configuration via `.env`: Requires `ICAL_URLS` (comma-separated list of URLs).
     *   Provides a combined, sorted list of events as context within the system prompt to the LLM.
-*   **Task Queue:** Uses the database (`tasks` table) for background processing. Supports scheduled tasks and immediate notification via `asyncio.Event`. Handles `log_message` task type.
+*   **Task Queue:** Uses the database (`tasks` table) for background processing. Supports scheduled tasks, immediate notification via `asyncio.Event`, and task retries with exponential backoff. Handles `log_message` and `llm_callback` task types. (See Section 10 for details).
 *   **(Future) Calendar Integration (Write):**
     *   Introduce tools allowing the LLM to add or update events on specific calendars.
     *   This will require a more robust configuration system for calendars, allowing administrators to define multiple calendars with distinct purposes (e.g., "Main Family Calendar", "Work Calendar", "Kids Activities", "Reminders").
@@ -204,6 +204,8 @@ The following features from the specification are currently implemented:
     *   Recent message history (from `message_history`, including basic tool call info if available) is included.
     *   Replied-to messages (fetched from `message_history`) are included if the current message is a reply.
 *   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
+    *   An interface to view message history grouped by chat (`/history`).
+    *   An interface to view recent tasks from the database task queue (`/tasks`).
 *   **Tools:**
     *   Local Tools:
         *   `add_or_update_note`: Saves/updates notes in the database. Accepts `title` and `content`.
