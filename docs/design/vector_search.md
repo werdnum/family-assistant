@@ -159,6 +159,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 3.  **Query Embedding & FTS Query:** Generate the embedding for the semantic part of the query. Convert keywords into a `tsquery` (e.g., using `plainto_tsquery('english', keywords)`).
 4.  **Database Query:** Execute a SQL query combining vector search and metadata filtering:
     *   **Hybrid Approach:** Retrieve candidates using both vector similarity and FTS matching, then combine and re-rank the results. Reciprocal Rank Fusion (RRF) is a common technique.
+    
     ```sql
     WITH relevant_docs AS (
         SELECT id
@@ -217,13 +218,12 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 
     ```
 
-    *Replace `<query_embedding>` with the generated query vector and `<model_identifier>` with the correct model name.*
-    *Replace `<keywords>` with the keywords extracted for FTS.*
-    *Use the appropriate distance operator (`<=>` for cosine, `<->` for L2, `<#>` for inner product) matching the index.*
-    *Adjust the RRF formula and `LIMIT` in subqueries as needed.*
-    *Crucially, the query **must filter by `embedding_model`** to allow the query planner to select the correct partial index. The query embedding *must* have the dimension specified in that partial index.*
-    *Ensure the FTS configuration (`'english'`) matches the one used during ingestion.*
-    *Ensure the FTS configuration (`'english'`) in the query matches the one used in the GIN expression index.*
+    * Replace `<query_embedding>` with the generated query vector and `<model_identifier>` with the correct model name.*
+    * Replace `<keywords>` with the keywords extracted for FTS.*
+    * Use the appropriate distance operator (`<=>` for cosine, `<->` for L2, `<#>` for inner product) matching the index.*
+    * Adjust the RRF formula and `LIMIT` in subqueries as needed.*
+    * The query **must filter by `embedding_model`** to allow the query planner to select the correct partial index. The query embedding *must* have the dimension specified in that partial index.
+    * Ensure the FTS configuration (`'english'`) in the query matches the one used in the GIN expression index.*
 
 5.  **Result Processing:** The application receives the top N relevant embeddings, their source content (if applicable), and associated document metadata. It might need to de-duplicate results if multiple embeddings from the same document are returned.
 6.  **Response Generation:** The LLM uses the retrieved content snippets to synthesize an answer for the user.
