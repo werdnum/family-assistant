@@ -190,7 +190,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
           ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('english', de.content), plainto_tsquery('english', $<keywords>)) DESC) as fts_rank
       FROM document_embeddings de
       WHERE de.document_id IN (SELECT id FROM relevant_docs) AND de.content IS NOT NULL
-        AND de.content_tsvector @@ plainto_tsquery('english', $<keywords>)
+        AND to_tsvector('english', de.content) @@ plainto_tsquery('english', $<keywords>) -- Use expression in query
       ORDER BY score DESC
       LIMIT 50 -- Retrieve more candidates for potential re-ranking
     )
@@ -209,7 +209,6 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
     FROM document_embeddings de
     JOIN documents d ON de.document_id = d.id
     LEFT JOIN vector_results vr ON de.id = vr.embedding_id
-    LEFT JOIN fts_results fr ON de.id = fr.embedding_id
     JOIN documents d ON de.document_id = d.id
     WHERE de.document_id IN (SELECT id FROM relevant_docs)
     WHERE vr.embedding_id IS NOT NULL OR fr.embedding_id IS NOT NULL -- Must appear in at least one result set
