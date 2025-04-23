@@ -7,6 +7,7 @@
 *   **Core Functionality:**
     *   Persist documents and their vector embeddings.
     *   Support semantic search based on user queries (translated by an LLM).
+    *   Use LLM during ingestion to extract structured metadata based on a defined schema.
     *   Filter search results based on metadata (e.g., document type, date, source).
     *   Support keyword search on textual content alongside vector search (hybrid search).
     *   Handle various document types (text extraction, OCR).
@@ -80,6 +81,19 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
 
 ```
 
+**Metadata Schema Definition:**
+
+While the `metadata` JSONB field is flexible, defining a consistent schema is crucial for reliable extraction and querying. This schema should outline common fields expected across different document types and potentially define required fields for specific `source_type`s.
+
+*   **Common Fields:** `sender`, `recipients`, `event_name`, `event_date`, `location`, `vendor`, `amount`, `currency`, `due_date`, `category`, `tags` (as an array of strings).
+*   **Type-Specific Fields:**
+    *   `email`: `cc`, `bcc`, `thread_id`
+    *   `receipt`: `total_amount`, `tax_amount`, `payment_method`
+    *   `invoice`: `invoice_number`, `customer_id`, `service_period`
+    *   `event_ticket`: `seat_number`, `attendee_names`
+*   **LLM Interaction:** When using an LLM for extraction (see Ingestion Process), the prompt should guide the LLM to populate fields according to this defined schema, ideally requesting output in JSON format matching the structure.
+
+
 **Schema Notes:**
 
 *   **`documents` Table:** Holds high-level information. `source_id` ensures we don't ingest the same item twice. `metadata` allows storing arbitrary key-value pairs. The `title` field itself can be embedded.
@@ -103,7 +117,12 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
 ## 3. Ingestion and Embedding Process
 
 1.  **Item Acquisition:** Obtain the document/item (e.g., read email via IMAP, download file, receive webhook).
-2.  **Metadata Extraction:** Parse/extract key metadata (source, ID, title, dates, sender, etc.). Store this in the `documents` table. Get the `document.id`.
+2.  **Initial Metadata & Content Extraction:** Perform basic parsing to get essential identifiers (`source_id`), the raw content (text, image data), and any easily obtainable metadata (e.g., email headers, file modification time). Extract the main text content for further processing.
+3.  **LLM-Powered Metadata Enrichment:**
+    *   Feed the extracted text content (and potentially initial metadata like filename or subject) to an LLM.
+    *   Prompt the LLM to analyze the content and extract relevant metadata according to the predefined **Metadata Schema Definition** (see above). Explicitly request the output in a structured JSON format.
+    *   Validate the LLM's JSON output against the expected schema. Handle potential errors or missing fields.
+4.  **Document Record Creation:** Store the initial and LLM-extracted metadata (combined into the `metadata` JSONB field), `source_type`, `source_id`, `title`, `created_at`, etc., in the `documents` table. Retrieve the generated `document.id`.
 3.  **Content Extraction:**
     *   **Emails:** Parse the body, strip HTML/signatures, potentially focus on the main content.
     *   **Emails:** Parse the body, strip HTML/signatures. Extract subject separately for potential 'title' embedding.
@@ -113,16 +132,16 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
     *   Clean the extracted text.
     *   For non-text or very large documents, consider using an LLM to generate a concise, descriptive **summary** of the item. Store this summary.
     *   Extract or use the document's **title** (e.g., email subject, filename).
-5.  **Chunking:**
+6.  **Chunking:**
     *   Divide the main content (extracted text, note body) into chunks if necessary (e.g., by paragraph). Assign `chunk_index` starting from 1.
     *   Document-level aspects like title and summary conceptually belong to `chunk_index = 0`.
-6.  **Embedding Generation:** Generate embeddings for relevant aspects using the chosen model(s):
+7.  **Embedding Generation:** Generate embeddings for relevant aspects using the chosen model(s):
     *   Embed the `title` text.
     *   Embed the generated `summary` text.
     *   Embed the content of each text `chunk` (from step 5).
     *   Embed OCR text if applicable.
     *   Generate and store other embedding types (e.g., image CLIP vectors) if needed, potentially using different models.
-7.  **Storage:** For *each* generated embedding, insert a row into `document_embeddings`, storing:
+8.  **Embedding Storage:** For *each* generated embedding, insert a row into `document_embeddings`, storing:
     *   `document_id`
     *   **TSVector Generation:** If the `content` field is not NULL (i.e., for text-based embeddings), generate its `tsvector` representation using a chosen FTS configuration (e.g., `'english'`).
     *   `content_tsvector` (the generated tsvector or NULL)
