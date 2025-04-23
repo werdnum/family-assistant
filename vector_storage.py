@@ -191,7 +191,7 @@ async def add_document(
         The database ID of the added or existing document.
     """
     # TODO: Implement actual insert/conflict handling logic
-    logger.info(f"Skeleton: Adding document with source_id {source_id}")
+    logger.info(f"Skeleton: Adding document with source_id {doc.source_id}")
     # Example (needs proper async session handling and error checking):
     # async with async_sessionmaker(get_engine())() as session:
     #     async with session.begin():
