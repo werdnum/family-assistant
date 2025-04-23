@@ -18,7 +18,7 @@
 
 ## 2. Database Schema (PostgreSQL with pgvector)
 
-We'll use two main tables: `documents` to store metadata about the original items, and `document_chunks` to store the text content and corresponding vector embeddings. This allows for future expansion to multiple chunks per document.
+We'll use two main tables: `documents` to store metadata about the original items, and `document_embeddings` to store various vector embeddings related to each document (e.g., for title, summary, content chunks).
 
 ```sql
 -- Enable pgvector extension (if not already enabled)
@@ -33,21 +33,29 @@ CREATE TABLE documents (
     title TEXT,                     -- Title or subject of the document
     created_at TIMESTAMPTZ,          -- Original creation date of the item
     added_at TIMESTAMPTZ DEFAULT NOW(), -- When the item was added to this system
-    metadata JSONB                   -- Flexible field for additional metadata (e.g., email sender/recipient, file tags, detected entities)
+    metadata JSONB                   -- Flexible field for additional metadata (e.g., email sender/recipient, file tags, detected entities),
+    -- summary TEXT                  -- Optional: Consider adding a dedicated summary field if frequently generated
 );
 
 -- Indexes for metadata filtering
 CREATE INDEX idx_documents_source_type ON documents (source_type);
 CREATE INDEX idx_documents_created_at ON documents (created_at);
 CREATE INDEX idx_documents_metadata ON documents USING GIN (metadata); -- For querying JSONB fields
+-- CREATE INDEX idx_documents_title_gin ON documents USING GIN (to_tsvector('english', title)); -- Optional for keyword search on title
 
--- Table to store text chunks and their embeddings
-CREATE TABLE document_chunks (
+-- Table to store different types of embeddings associated with documents or their chunks
+CREATE TABLE document_embeddings (
     id BIGSERIAL PRIMARY KEY,
     document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    chunk_index INT NOT NULL DEFAULT 0, -- 0 for single chunk, 0, 1, 2... for multiple chunks
+    chunk_index INT NOT NULL DEFAULT 0, -- 0 for document-level embeddings (title, summary), 1+ for content chunks
+    embedding_type VARCHAR(50) NOT NULL, -- e.g., 'title', 'summary', 'content_chunk', 'ocr_text', 'image_clip'
+    content TEXT,                       -- Source text for text-based embeddings (NULL for non-text like 'image_clip')
     content TEXT NOT NULL,              -- The actual text content of the chunk (or LLM-generated description)
     embedding VECTOR(768) NOT NULL,     -- Vector embedding. Adjust dimension (768) based on the chosen model.
+                                        -- NOTE: Storing vectors of different dimensions in the same column
+                                        -- requires pgvector >= 0.5.0. If using older versions or widely
+                                        -- varying dimensions, consider separate tables or storing vectors
+                                        -- in JSONB (losing indexing benefits). Assumes fixed dimension for now.
     embedding_model VARCHAR(100) NOT NULL, -- Identifier for the model used to generate the embedding
     content_hash TEXT,                  -- Optional: Hash of the content to detect changes
     added_at TIMESTAMPTZ DEFAULT NOW(),
@@ -60,26 +68,39 @@ CREATE TABLE document_chunks (
 -- Choose dimensions, index type (hnsw/ivfflat), and distance metric (vector_cosine_ops, vector_l2_ops, vector_ip_ops)
 -- based on the embedding model and performance characteristics.
 CREATE INDEX idx_document_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops)
+-- If dimensions are compatible, a single index can cover multiple embedding types.
+CREATE INDEX idx_doc_embeddings_embedding_hnsw ON document_embeddings USING hnsw (embedding vector_cosine_ops)
 WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data/needs
 
--- Optional: Add traditional index if searching chunk content directly is needed
--- CREATE INDEX idx_document_chunks_content_gin ON document_chunks USING GIN (to_tsvector('english', content));
+-- Optional: Index specific embedding types, potentially useful if dimensions differ significantly
+-- CREATE INDEX idx_doc_embeddings_text_embedding_hnsw ON document_embeddings USING hnsw (embedding vector_cosine_ops)
+-- WHERE embedding_type IN ('title', 'summary', 'content_chunk', 'ocr_text') WITH (m = 16, ef_construction = 64);
+
+-- Indexes to aid filtering during search
+CREATE INDEX idx_doc_embeddings_type_model ON document_embeddings (embedding_type, embedding_model);
+CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_id, chunk_index);
+-- CREATE INDEX idx_doc_embeddings_content_gin ON document_embeddings USING GIN (to_tsvector('english', content)) WHERE content IS NOT NULL; -- Optional for keyword search on content
 
 ```
 
 **Schema Notes:**
 
-*   **`documents` Table:** Holds high-level information. `source_id` ensures we don't ingest the same item twice. `metadata` allows storing arbitrary key-value pairs relevant to the source (e.g., `{ "sender": "...", "recipients": [...] }` for emails).
-*   **`document_chunks` Table:** Stores the text and vector.
+*   **`documents` Table:** Holds high-level information. `source_id` ensures we don't ingest the same item twice. `metadata` allows storing arbitrary key-value pairs. The `title` field itself can be embedded.
+*   **`document_embeddings` Table:** Stores individual embeddings.
     *   `document_id`: Links back to the parent document.
     *   `chunk_index`: Supports multiple chunks per document (initially just 0).
     *   `content`: Stores the text used for embedding. This could be the raw extracted text, a cleaned version, or an LLM-generated summary/description.
     *   `embedding`: The vector itself. The dimension needs to match the chosen embedding model.
     *   `embedding_model`: Tracks which model generated the vector, crucial for future migrations or checks.
 *   **Indexes:**
+*   `embedding_type`: Crucial field indicating what the `embedding` represents (e.g., 'title', 'summary', 'content_chunk'). Allows querying specific aspects.
+*   `content`: The source text for text-based embeddings (e.g., the actual title text, the summary text, the chunk text). Can be `NULL` for non-text embeddings (like image vectors).
+*   `chunk_index`: Groups embeddings. `0` typically represents document-level aspects (title, summary), while `1+` can represent sequential content chunks.
+*   **Indexes:**
     *   Standard B-tree indexes on `documents` columns frequently used for filtering (`source_type`, `created_at`).
     *   GIN index on `documents.metadata` for efficient querying within the JSONB structure.
-    *   `pgvector` index (`hnsw` or `ivfflat`) on `document_chunks.embedding` is critical for fast approximate nearest neighbor search. Cosine distance (`vector_cosine_ops`) is often a good starting point for text embeddings.
+    *   `pgvector` index (`hnsw` or `ivfflat`) on `document_embeddings.embedding` is critical for similarity search. Indexing strategy might depend on whether different `embedding_type`s have compatible vector dimensions.
+    *   Standard indexes on `document_embeddings` (`embedding_type`, `embedding_model`, `document_id`, `chunk_index`) aid filtering before or after vector search.
 
 ## 3. Ingestion and Embedding Process
 
@@ -87,16 +108,29 @@ WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data
 2.  **Metadata Extraction:** Parse/extract key metadata (source, ID, title, dates, sender, etc.). Store this in the `documents` table. Get the `document.id`.
 3.  **Content Extraction:**
     *   **Emails:** Parse the body, strip HTML/signatures, potentially focus on the main content.
+    *   **Emails:** Parse the body, strip HTML/signatures. Extract subject separately for potential 'title' embedding.
     *   **PDFs/Images:** Use OCR (e.g., Tesseract, cloud services) to extract text.
     *   **Notes:** Use the note content directly.
 4.  **Text Preparation / Description (Optional but Recommended):**
     *   Clean the extracted text.
-    *   For non-text or very large documents, consider using an LLM to generate a concise, descriptive summary of the item. This summary can then be embedded. This is particularly useful for images ("Photo of receipt from store X dated Y") or complex documents.
+    *   For non-text or very large documents, consider using an LLM to generate a concise, descriptive **summary** of the item. Store this summary.
+    *   Extract or use the document's **title** (e.g., email subject, filename).
 5.  **Chunking:**
-    *   **Initial:** Treat the entire prepared text/description as a single chunk (index 0).
-    *   **Future:** Implement a chunking strategy (e.g., by paragraph, fixed token size with overlap) if documents are large. Create multiple rows in `document_chunks` for each chunk, incrementing `chunk_index`.
-6.  **Embedding Generation:** Pass the text content of each chunk to the chosen embedding model (via an abstraction layer like LiteLLM if needed) to get the vector. Record the model identifier used.
-7.  **Storage:** Insert the chunk content, vector embedding, `document_id`, `chunk_index`, and `embedding_model` into the `document_chunks` table.
+    *   Divide the main content (extracted text, note body) into chunks if necessary (e.g., by paragraph). Assign `chunk_index` starting from 1.
+    *   Document-level aspects like title and summary conceptually belong to `chunk_index = 0`.
+6.  **Embedding Generation:** Generate embeddings for relevant aspects using the chosen model(s):
+    *   Embed the `title` text.
+    *   Embed the generated `summary` text.
+    *   Embed the content of each text `chunk` (from step 5).
+    *   Embed OCR text if applicable.
+    *   Generate and store other embedding types (e.g., image CLIP vectors) if needed, potentially using different models.
+7.  **Storage:** For *each* generated embedding, insert a row into `document_embeddings`, storing:
+    *   `document_id`
+    *   `chunk_index` (0 for title/summary, 1+ for content chunks)
+    *   `embedding_type` ('title', 'summary', 'content_chunk', 'ocr_text', etc.)
+    *   `content` (the source text, if applicable)
+    *   `embedding` (the vector)
+    *   `embedding_model` (identifier of the model used)
 
 ## 4. Querying Process
 
@@ -104,6 +138,7 @@ WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data
 2.  **Query Formulation:** The LLM (or intermediary logic) translates this into:
     *   A **search query text** suitable for embedding (e.g., "scanned letter IRS 2024").
     *   A set of **metadata filters** (e.g., `source_type = 'pdf'` or `'image'`, `created_at >= '2024-01-01'`, potentially keywords in `title` or `metadata`).
+    *   Optionally, target **embedding types** (e.g., prioritize searching 'title' and 'summary' first, or only search 'content_chunk').
 3.  **Query Embedding:** Generate the embedding for the search query text using the *same embedding model* used for the stored documents.
 4.  **Database Query:** Execute a SQL query combining vector search and metadata filtering:
 
@@ -117,17 +152,19 @@ WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data
           -- AND title ILIKE '%IRS%'       -- Example title filter
     )
     SELECT
-        dc.id AS chunk_id,
-        dc.document_id,
+        de.id AS embedding_id,
+        de.document_id,
         d.title,
         d.source_type,
         d.created_at,
-        dc.content,
-        dc.embedding <=> $<query_embedding>::vector AS distance -- Cosine distance operator
-    FROM document_chunks dc
-    JOIN documents d ON dc.document_id = d.id
-    WHERE dc.document_id IN (SELECT id FROM relevant_docs)
-      AND dc.embedding_model = $<model_identifier> -- Ensure consistency
+        de.embedding_type,
+        de.content AS embedding_source_content, -- The text that was embedded (if applicable)
+        de.embedding <=> $<query_embedding>::vector AS distance -- Cosine distance operator
+    FROM document_embeddings de
+    JOIN documents d ON de.document_id = d.id
+    WHERE de.document_id IN (SELECT id FROM relevant_docs)
+      AND de.embedding_model = $<model_identifier> -- Ensure model consistency for the query vector
+      -- AND de.embedding_type IN ('title', 'summary', 'content_chunk') -- Optional: Filter by embedding type
     ORDER BY distance ASC -- Order by similarity (lower cosine distance is more similar)
     LIMIT 10; -- Limit results
     ```
@@ -135,7 +172,7 @@ WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data
     *Replace `<query_embedding>` with the generated query vector and `<model_identifier>` with the correct model name.*
     *Use the appropriate distance operator (`<=>` for cosine, `<->` for L2, `<#>` for inner product) matching the index.*
 
-5.  **Result Processing:** The application receives the top N relevant chunks and their associated document metadata.
+5.  **Result Processing:** The application receives the top N relevant embeddings, their source content (if applicable), and associated document metadata. It might need to de-duplicate results if multiple embeddings from the same document are returned.
 6.  **Response Generation:** The LLM uses the retrieved content snippets to synthesize an answer for the user.
 
 ## 5. Considerations
@@ -147,6 +184,7 @@ WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data
 *   **Scalability:** For very large datasets, consider PostgreSQL scaling strategies or potentially dedicated vector databases.
 *   **Hybrid Search:** The schema could be extended to support keyword search (e.g., using `tsvector`) alongside vector search for hybrid retrieval strategies if needed.
 *   **OCR Quality:** The quality of OCR significantly impacts the searchability of scanned documents/images.
+*   **Vector Dimensions:** If using embeddings with different dimensions (e.g., text vs. image models), ensure your `pgvector` version supports it (>= 0.5.0) or use alternative strategies like separate tables or storing vectors in JSONB (sacrificing indexing). Indexing might require WHERE clauses if dimensions differ within the column.
 *   **Cost:** Embedding generation (especially using external APIs) and potentially OCR services incur costs.
 
 
