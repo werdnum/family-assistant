@@ -58,8 +58,8 @@ CREATE TABLE document_embeddings (
     content_hash TEXT,                  -- Optional: Hash of the content to detect changes
     added_at TIMESTAMPTZ DEFAULT NOW(),
 
-    -- Ensure chunk_index is unique per document
-    UNIQUE (document_id, chunk_index)
+    -- Composite unique key: Ensure only one embedding of a specific type exists for a specific chunk/document part.
+    UNIQUE (document_id, chunk_index, embedding_type)
 );
 
 -- Partial vector indexes for specific models/dimensions.
@@ -86,12 +86,11 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
 *   **`document_embeddings` Table:** Stores individual embeddings.
     *   `document_id`: Links back to the parent document.
     *   `chunk_index`: Supports multiple chunks per document (initially just 0).
-    *   `content`: Stores the text used for text-based embeddings.
+    *   `embedding_type`: Crucial field indicating what the `embedding` represents (e.g., 'title', 'summary', 'content_chunk', 'ocr_text', 'image_clip'). Part of the composite key.
+    *   `content`: The source text for text-based embeddings (e.g., the actual title text, the summary text, the chunk text). Can be `NULL` for non-text embeddings.
     *   `embedding`: The vector itself. The dimension needs to match the chosen embedding model.
     *   `embedding_model`: Tracks which model generated the vector, crucial for future migrations or checks.
 *   **Indexes:**
-*   `embedding_type`: Crucial field indicating what the `embedding` represents (e.g., 'title', 'summary', 'content_chunk'). Allows querying specific aspects.
-*   `content`: The source text for text-based embeddings (e.g., the actual title text, the summary text, the chunk text). Can be `NULL` for non-text embeddings (like image vectors).
 *   `chunk_index`: Groups embeddings. `0` typically represents document-level aspects (title, summary), while `1+` can represent sequential content chunks.
 *   **Indexes:**
 *   `content_tsvector`: Stores the processed text for keyword searching using PostgreSQL's FTS functions.
@@ -99,6 +98,7 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
     *   GIN index on `documents.metadata` for efficient querying within the JSONB structure.
     *   Partial `pgvector` indexes (e.g., `idx_doc_embeddings_gemini_1536_hnsw_cos`) targeting specific `embedding_model` values and casting the `embedding` column to the correct dimension are critical for fast similarity search.
     *   Standard indexes on `document_embeddings` (`embedding_type`, `embedding_model`, `document_id`, `chunk_index`) aid filtering before or after vector search.
+*   **Uniqueness:** The `UNIQUE (document_id, chunk_index, embedding_type)` constraint ensures data integrity, preventing duplicate embeddings for the same source aspect.
 
 ## 3. Ingestion and Embedding Process
 
@@ -223,5 +223,3 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
 *   **OCR Quality:** The quality of OCR significantly impacts the searchability of scanned documents/images.
 *   **Variable Vector Dimensions:** Using the `VECTOR` type allows storing embeddings of different dimensions in the same column (requires pgvector >= 0.5.0). Use partial indexes that cast the vector to the specific dimension for each model (`embedding::vector(DIM)`) and filter queries by `embedding_model` to utilize these indexes effectively.
 *   **Cost:** Embedding generation (especially using external APIs) and potentially OCR services incur costs.
-
-
