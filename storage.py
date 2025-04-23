@@ -11,7 +11,7 @@ from sqlalchemy import (
     insert,
     update,
     delete,
-    ForeignKey, # Added ForeignKey
+    ForeignKey,  # Added ForeignKey
     BigInteger,
     Integer,
     DateTime,
@@ -23,16 +23,25 @@ import asyncio
 import random
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
-from dateutil import rrule # Added for recurrence calculation
-from dateutil.parser import isoparse # Added for parsing dates in recurrence
+from dateutil import rrule  # Added for recurrence calculation
+from dateutil.parser import isoparse  # Added for parsing dates in recurrence
 
 # --- Vector Storage Imports ---
 try:
-    from vector_storage import Base as VectorBase, init_vector_db, add_document, get_document_by_source_id, add_embedding, delete_document, query_vectors # Explicit imports
+    from vector_storage import (
+        Base as VectorBase,
+        init_vector_db,
+        add_document,
+        get_document_by_source_id,
+        add_embedding,
+        delete_document,
+        query_vectors,
+    )  # Explicit imports
+
     VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
 except ImportError:
-    vector_storage = None # type: ignore
+    vector_storage = None  # type: ignore
     VECTOR_STORAGE_ENABLED = False
     logger.warning("vector_storage.py not found. Vector storage features disabled.")
 
@@ -47,11 +56,13 @@ async def enqueue_task(
     task_type: str,
     payload: Optional[Dict[str, Any]] = None,
     scheduled_at: Optional[datetime] = None,
-    max_retries: Optional[int] = 3, # Default max_retries
-    recurrence_rule: Optional[str] = None, # Added recurrence_rule
-    original_task_id: Optional[str] = None, # Added original_task_id for subsequent runs
+    max_retries: Optional[int] = 3,  # Default max_retries
+    recurrence_rule: Optional[str] = None,  # Added recurrence_rule
+    original_task_id: Optional[
+        str
+    ] = None,  # Added original_task_id for subsequent runs
     notify_event: Optional[asyncio.Event] = None,
-): # noqa: PLR0913
+):  # noqa: PLR0913
     """
     Adds a new task to the queue.
 
@@ -83,21 +94,28 @@ async def enqueue_task(
                 values_to_insert = {
                     "task_id": task_id,
                     "task_type": task_type,
-                    "payload": payload, # Stored as JSON/Text
+                    "payload": payload,  # Stored as JSON/Text
                     "scheduled_at": scheduled_at,
                     "status": "pending",
                     "retry_count": 0,
-                    "max_retries": max_retries if max_retries is not None else 3, # Use provided or default
-                    "recurrence_rule": recurrence_rule, # Store the rule
+                    "max_retries": (
+                        max_retries if max_retries is not None else 3
+                    ),  # Use provided or default
+                    "recurrence_rule": recurrence_rule,  # Store the rule
                     # If original_task_id is not provided (i.e., this is the *first* instance),
                     # set the original_task_id column to *this* task's task_id.
                     # If original_task_id *is* provided (i.e., this is a subsequent instance), use it.
-                    "original_task_id": original_task_id if original_task_id else task_id,
+                    "original_task_id": (
+                        original_task_id if original_task_id else task_id
+                    ),
                     # created_at has a default in the DB
                 }
                 # Remove None values so DB defaults apply if needed (though most are handled above)
-                values_to_insert = {k: v for k, v in values_to_insert.items() if v is not None or k in ["payload", "error"]}
-
+                values_to_insert = {
+                    k: v
+                    for k, v in values_to_insert.items()
+                    if v is not None or k in ["payload", "error"]
+                }
 
                 stmt = insert(tasks_table).values(**values_to_insert)
                 # This inner try/except is specific to the insert/commit part
@@ -403,7 +421,7 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     base_delay = 0.5  # seconds
 
     stmt = (
-        select(tasks_table) # Select all columns by default
+        select(tasks_table)  # Select all columns by default
         .order_by(tasks_table.c.created_at.desc())
         .limit(limit)
     )
@@ -428,35 +446,37 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
 
         try:
             async with engine.connect() as conn:
-                result = await conn.execute(stmt) # Use the stmt defined before the loop
+                result = await conn.execute(
+                    stmt
+                )  # Use the stmt defined before the loop
                 rows = result.fetchall()
                 # Convert rows to dictionaries
                 tasks_list = [row._mapping for row in rows]
                 # The `return tasks_list` should happen after the connection block,
                 # so this was misplaced anyway. The correct return is later.
                 # Removing the leftover block below fixes the syntax error.
-                return tasks_list # Return *after* converting rows, inside the 'with' block
+                return tasks_list  # Return *after* converting rows, inside the 'with' block
 
-        # The loop continues below to handle retries...
-        # The 'try' block should be inside the loop.
+            # The loop continues below to handle retries...
+            # The 'try' block should be inside the loop.
 
-        # The actual try/except block for the database operation starts here:
+            # The actual try/except block for the database operation starts here:
             async with engine.connect() as conn:
-                result = await conn.execute(stmt) # Use the stmt defined before the loop
+                result = await conn.execute(
+                    stmt
+                )  # Use the stmt defined before the loop
                 rows = result.fetchall()
                 # Convert rows to dictionaries
                 tasks_list = [row._mapping for row in rows]
                 # Optional: Sort in Python if complex DB ordering is tricky
                 # tasks_list.sort(key=lambda t: (status_order.get(t['status'], 99), t['scheduled_at'] or datetime.max.replace(tzinfo=timezone.utc), t['created_at']))
-                return tasks_list # Success, return from within the loop
+                return tasks_list  # Success, return from within the loop
         except DBAPIError as e:
             logger.warning(
                 f"DBAPIError in get_all_tasks (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
             )
             if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for get_all_tasks. Raising error."
-                )
+                logger.error(f"Max retries exceeded for get_all_tasks. Raising error.")
                 raise
             delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
@@ -476,8 +496,8 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
 __all__ = [
     "init_db",
     "get_all_notes",
-    "get_engine", # Export the engine creation function/getter
-    "get_engine", # Export the engine creation function/getter
+    "get_engine",  # Export the engine creation function/getter
+    "get_engine",  # Export the engine creation function/getter
     "add_message_to_history",
     "get_recent_history",
     "get_note_by_title",
@@ -488,7 +508,7 @@ __all__ = [
     "dequeue_task",
     "update_task_status",
     "reschedule_task_for_retry",
-    "get_all_tasks", # Added
+    "get_all_tasks",  # Added
     "get_grouped_message_history",
     "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
@@ -497,16 +517,17 @@ __all__ = [
     "metadata",
     # Vector Storage Exports (conditional)
 ]
-]
 
 if VECTOR_STORAGE_ENABLED and vector_storage:
-    __all__.extend([
-        "add_document",
-        "get_document_by_source_id",
-        "add_embedding",
-        "delete_document",
-        "query_vectors",
-    ])
+    __all__.extend(
+        [
+            "add_document",
+            "get_document_by_source_id",
+            "add_embedding",
+            "delete_document",
+            "query_vectors",
+        ]
+    )
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db"
 )  # Default to SQLite async
@@ -516,13 +537,16 @@ engine = create_async_engine(
 )  # Set echo=True for debugging SQL
 metadata = MetaData()
 
-def get_engine():
-    """Returns the initialized SQLAlchemy async engine."""
-    return engine
 
 def get_engine():
     """Returns the initialized SQLAlchemy async engine."""
     return engine
+
+
+def get_engine():
+    """Returns the initialized SQLAlchemy async engine."""
+    return engine
+
 
 # Define the notes table (replaces key_value_store)
 notes_table = Table(
@@ -601,15 +625,15 @@ tasks_table = Table(
     ),  # Maximum number of retries allowed
     Column(
         "recurrence_rule", String, nullable=True
-    ), # Stores RRULE string, e.g., "FREQ=DAILY;INTERVAL=1"
+    ),  # Stores RRULE string, e.g., "FREQ=DAILY;INTERVAL=1"
     Column(
         "original_task_id", String, nullable=True, index=True
-    ), # Links recurring instances to the first one
+    ),  # Links recurring instances to the first one
 )
 
 # Add vector storage models to the same metadata object if enabled
 if VECTOR_STORAGE_ENABLED:
-    VectorBase.metadata = metadata # Use the imported Base from vector_storage
+    VectorBase.metadata = metadata  # Use the imported Base from vector_storage
 
 
 async def init_db():
@@ -626,10 +650,13 @@ async def init_db():
                 # Also initialize vector DB parts if enabled
                 if VECTOR_STORAGE_ENABLED:
                     try:
-                        await init_vector_db() # Call the imported function directly
+                        await init_vector_db()  # Call the imported function directly
                     except Exception as vec_e:
-                        logger.error(f"Failed to initialize vector database: {vec_e}", exc_info=True)
-                        raise # Propagate error if vector init fails
+                        logger.error(
+                            f"Failed to initialize vector database: {vec_e}",
+                            exc_info=True,
+                        )
+                        raise  # Propagate error if vector init fails
                 return  # Success
         except DBAPIError as e:
             logger.warning(
