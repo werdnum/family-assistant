@@ -28,7 +28,7 @@ from dateutil.parser import isoparse # Added for parsing dates in recurrence
 
 # --- Vector Storage Imports ---
 try:
-    import vector_storage
+    from vector_storage import Base as VectorBase, init_vector_db, add_document, get_document_by_source_id, add_embedding, delete_document, query_vectors # Explicit imports
     VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
 except ImportError:
@@ -477,6 +477,7 @@ __all__ = [
     "init_db",
     "get_all_notes",
     "get_engine", # Export the engine creation function/getter
+    "get_engine", # Export the engine creation function/getter
     "add_message_to_history",
     "get_recent_history",
     "get_note_by_title",
@@ -497,9 +498,10 @@ __all__ = [
     # Vector Storage Exports (conditional)
 ]
 
+]
+
 if VECTOR_STORAGE_ENABLED and vector_storage:
     __all__.extend([
-        "init_vector_db",
         "add_document",
         "get_document_by_source_id",
         "add_embedding",
@@ -507,7 +509,6 @@ if VECTOR_STORAGE_ENABLED and vector_storage:
         "query_vectors",
     ])
 ]
-
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db"
 )  # Default to SQLite async
@@ -516,6 +517,10 @@ engine = create_async_engine(
     DATABASE_URL, echo=False
 )  # Set echo=True for debugging SQL
 metadata = MetaData()
+
+def get_engine():
+    """Returns the initialized SQLAlchemy async engine."""
+    return engine
 
 def get_engine():
     """Returns the initialized SQLAlchemy async engine."""
@@ -605,8 +610,8 @@ tasks_table = Table(
 )
 
 # Add vector storage models to the same metadata object if enabled
-if VECTOR_STORAGE_ENABLED and vector_storage:
-    vector_storage.Base.metadata = metadata
+if VECTOR_STORAGE_ENABLED:
+    VectorBase.metadata = metadata # Use the imported Base from vector_storage
 )
 
 
@@ -622,9 +627,9 @@ async def init_db():
                 await conn.run_sync(metadata.create_all)
                 logger.info("Database schema initialized.")
                 # Also initialize vector DB parts if enabled
-                if VECTOR_STORAGE_ENABLED and vector_storage:
+                if VECTOR_STORAGE_ENABLED:
                     try:
-                        await vector_storage.init_vector_db() # This uses the engine from storage.py now
+                        await init_vector_db() # Call the imported function directly
                     except Exception as vec_e:
                         logger.error(f"Failed to initialize vector database: {vec_e}", exc_info=True)
                         raise # Propagate error if vector init fails

@@ -1,0 +1,238 @@
+"""
+API for interacting with the vector storage database (PostgreSQL with pgvector).
+
+Handles storing document metadata, text chunks, and their corresponding vector embeddings.
+Provides functions for adding, retrieving, deleting, and querying documents and embeddings.
+"""
+
+import logging
+import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple, Sequence
+
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from pgvector.sqlalchemy import Vector # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
+
+from storage import get_engine # Assuming storage.py provides get_engine()
+
+logger = logging.getLogger(__name__)
+
+
+# --- Database Setup ---
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Document(Base):
+    """SQLAlchemy model for the 'documents' table."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
+    source_type: Mapped[str] = mapped_column(sa.String(50), nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(sa.Text, unique=True, nullable=False)
+    source_uri: Mapped[Optional[str]] = mapped_column(sa.Text)
+    title: Mapped[Optional[str]] = mapped_column(sa.Text)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        sa.DateTime(timezone=True), index=True
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+
+    embeddings: Mapped[List["DocumentEmbedding"]] = sa.orm.relationship(
+        "DocumentEmbedding", back_populates="document", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        sa.Index("idx_documents_metadata", metadata, postgresql_using="gin"),
+    )
+
+
+class DocumentEmbedding(Base):
+    """SQLAlchemy model for the 'document_embeddings' table."""
+
+    __tablename__ = "document_embeddings"
+
+    id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        sa.BigInteger, sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_index: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    embedding_type: Mapped[str] = mapped_column(sa.String(50), nullable=False)
+    content: Mapped[Optional[str]] = mapped_column(sa.Text)
+    # Variable dimension vector requires pgvector >= 0.5.0
+    embedding: Mapped[List[float]] = mapped_column(Vector, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(sa.String(100), nullable=False)
+    content_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
+    added_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+    document: Mapped["Document"] = sa.orm.relationship("Document", back_populates="embeddings")
+
+    __table_args__ = (
+        sa.UniqueConstraint("document_id", "chunk_index", "embedding_type"),
+        sa.Index(
+            "idx_doc_embeddings_type_model", embedding_type, embedding_model
+        ),
+        sa.Index(
+            "idx_doc_embeddings_document_chunk", document_id, chunk_index
+        ),
+        # GIN expression index for FTS
+        sa.Index(
+            "idx_doc_embeddings_content_fts_gin",
+            sa.func.to_tsvector("english", content),
+            postgresql_using="gin",
+            postgresql_where=(content.isnot(None)),
+        ),
+        # Example Partial HNSW index for a specific model/dimension
+        # Requires manual creation via raw SQL in init_vector_db or migrations
+        # sa.Index(
+        #     "idx_doc_embeddings_gemini_1536_hnsw_cos",
+        #     # Note: Need to explicitly use sa.text for the column expression part
+        #     sa.text("(embedding::vector(1536)) vector_cosine_ops"), # Raw SQL for cast + opclass
+        #     postgresql_using="hnsw",
+        #     postgresql_where=sa.text("embedding_model = 'gemini-exp-03-07'"),
+        #     postgresql_with={"m": 16, "ef_construction": 64},
+        # ),
+    )
+
+
+# --- API Functions ---
+
+async def init_vector_db():
+    """Initializes the vector database components (extension, indexes). Tables are created by storage.init_db."""
+    engine = get_engine() # Use engine from storage.py
+    async with engine.begin() as conn:
+        # Tables are created via Base.metadata in storage.init_db
+        # Manually create extensions and partial indexes that SQLAlchemy might not handle directly
+        await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
+        # Example: Create the specific partial index for gemini-exp-03-07
+        # Note: Indexes might error if they already exist, add IF NOT EXISTS or handle errors
+        try:
+            await conn.execute(sa.text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_doc_embeddings_gemini_1536_hnsw_cos ON document_embeddings
+                USING hnsw ((embedding::vector(1536)) vector_cosine_ops)
+                WHERE embedding_model = 'gemini-exp-03-07'
+                WITH (m = 16, ef_construction = 64);
+                """
+            ))
+        except Exception as e:
+             # This might happen if the index exists but with different params, etc.
+             # In a real app, consider more robust migration management.
+             logger.warning(f"Could not create partial index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}")
+    logger.info("Vector database components (extension, indexes) initialized.")
+
+
+async def add_document(
+    source_type: str,
+    source_id: str,
+    source_uri: Optional[str] = None,
+    title: Optional[str] = None,
+    created_at: Optional[datetime] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> int:
+    """
+    Adds a document record to the database or retrieves the existing one.
+
+    Args:
+        source_type: The type of the source (e.g., 'email', 'pdf').
+        source_id: The unique identifier from the source system.
+        source_uri: URI or path to the original item.
+        title: Title or subject of the document.
+        created_at: Original creation date of the item.
+        metadata: Additional metadata as a dictionary.
+
+    Returns:
+        The database ID of the added or existing document.
+    """
+    # TODO: Implement actual insert/conflict handling logic
+    logger.info(f"Skeleton: Adding document with source_id {source_id}")
+    # Example (needs proper async session handling and error checking):
+    # async with async_sessionmaker(get_engine())() as session:
+    #     async with session.begin():
+    #         # Check if exists, if not create...
+    #         pass
+    return 1 # Placeholder
+
+async def get_document_by_source_id(source_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a document by its source ID."""
+    # TODO: Implement actual select logic
+    logger.info(f"Skeleton: Getting document by source_id {source_id}")
+    return None # Placeholder
+
+async def add_embedding(
+    document_id: int,
+    chunk_index: int,
+    embedding_type: str,
+    embedding: List[float],
+    embedding_model: str,
+    content: Optional[str] = None,
+    content_hash: Optional[str] = None,
+):
+    """Adds an embedding record linked to a document."""
+    # TODO: Implement actual insert logic
+    logger.info(f"Skeleton: Adding embedding for doc {document_id}, type {embedding_type}, model {embedding_model}")
+    pass
+
+async def delete_document(document_id: int):
+    """Deletes a document and its associated embeddings."""
+    # TODO: Implement actual delete logic using cascade
+    logger.info(f"Skeleton: Deleting document {document_id} and its embeddings")
+    pass
+
+async def query_vectors(
+    query_embedding: List[float],
+    embedding_model: str, # Used to select the correct index and filter
+    keywords: Optional[str] = None,
+    filters: Optional[Dict[str, Any]] = None, # For document table filtering
+    embedding_type_filter: Optional[List[str]] = None, # Filter embeddings by type
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """
+    Performs a hybrid search combining vector similarity and keyword search
+    with metadata filtering.
+
+    Args:
+        query_embedding: The vector representation of the search query.
+        embedding_model: Identifier of the model used for the query vector (must match indexed models).
+        keywords: Keywords for full-text search.
+        filters: Dictionary of filters to apply to the 'documents' table
+                 (e.g., {"source_type": "email", "created_at_gte": datetime(...)})
+        embedding_type_filter: List of allowed embedding types to search within.
+        limit: The maximum number of results to return.
+
+    Returns:
+        A list of dictionaries, each representing a relevant document chunk/embedding
+        with its metadata and scores. Returns an empty list if skeleton.
+    """
+    # TODO: Implement the complex SQL query with RRF as shown in the design doc.
+    #       This will involve constructing the WHERE clauses based on filters,
+    #       using the correct vector dimension based on embedding_model,
+    #       and performing the RRF calculation.
+    logger.info(f"Skeleton: Querying vectors with model {embedding_model}. Keywords: {keywords}, Limit: {limit}")
+    logger.debug(f"Filters: {filters}, Embedding Types: {embedding_type_filter}")
+    return [] # Placeholder
+
+
+# Export functions explicitly for clarity when importing elsewhere
+__all__ = [
+    "init_vector_db",
+    "add_document",
+    "get_document_by_source_id",
+    "add_embedding",
+    "delete_document",
+    "query_vectors",
+    "Document",          # Export models if needed for type hinting or direct use
+    "DocumentEmbedding",
+    "Base",              # Export Base if needed for defining other models elsewhere
+]
+
