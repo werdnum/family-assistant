@@ -51,12 +51,9 @@ CREATE TABLE document_embeddings (
     chunk_index INT NOT NULL DEFAULT 0, -- 0 for document-level embeddings (title, summary), 1+ for content chunks
     embedding_type VARCHAR(50) NOT NULL, -- e.g., 'title', 'summary', 'content_chunk', 'ocr_text', 'image_clip'
     content TEXT,                       -- Source text for text-based embeddings (NULL for non-text like 'image_clip')
-    content_tsvector TSVECTOR,          -- tsvector for full-text search on the content field
-    embedding VECTOR(768) NOT NULL,     -- Vector embedding. Adjust dimension (768) based on the chosen model.
-                                        -- NOTE: Storing vectors of different dimensions in the same column
-                                        -- requires pgvector >= 0.5.0. If using older versions or widely
-                                        -- varying dimensions, consider separate tables or storing vectors
-                                        -- in JSONB (losing indexing benefits). Assumes fixed dimension for now.
+    content_tsvector TSVECTOR,          -- tsvector for full-text search on the content field (generated from 'content')
+    embedding VECTOR NOT NULL,          -- Variable-dimension vector embedding. Requires pgvector >= 0.5.0
+                                        -- Dimensions determined by the 'embedding_model'.
     embedding_model VARCHAR(100) NOT NULL, -- Identifier for the model used to generate the embedding
     content_hash TEXT,                  -- Optional: Hash of the content to detect changes
     added_at TIMESTAMPTZ DEFAULT NOW(),
@@ -65,17 +62,15 @@ CREATE TABLE document_embeddings (
     UNIQUE (document_id, chunk_index)
 );
 
--- Vector index for similarity search (example using HNSW with Cosine distance)
--- Choose dimensions, index type (hnsw/ivfflat), and distance metric (vector_cosine_ops, vector_l2_ops, vector_ip_ops)
+-- Partial vector indexes for specific models/dimensions.
+-- Choose index type (hnsw/ivfflat), distance metric (vector_cosine_ops, vector_l2_ops, vector_ip_ops),
+-- and dimensions based on the embedding model.
 -- based on the embedding model and performance characteristics.
-CREATE INDEX idx_document_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops)
--- If dimensions are compatible, a single index can cover multiple embedding types.
-CREATE INDEX idx_doc_embeddings_embedding_hnsw ON document_embeddings USING hnsw (embedding vector_cosine_ops)
+-- Example for gemini-exp-03-07 (assuming 1536 dimensions, Cosine distance)
+CREATE INDEX idx_doc_embeddings_gemini_1536_hnsw_cos ON document_embeddings
+USING hnsw ((embedding::vector(1536)) vector_cosine_ops)
+WHERE embedding_model = 'gemini-exp-03-07';
 WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data/needs
-
--- Optional: Index specific embedding types, potentially useful if dimensions differ significantly
--- CREATE INDEX idx_doc_embeddings_text_embedding_hnsw ON document_embeddings USING hnsw (embedding vector_cosine_ops)
--- WHERE embedding_type IN ('title', 'summary', 'content_chunk', 'ocr_text') WITH (m = 16, ef_construction = 64);
 
 -- Indexes to aid filtering during search
 CREATE INDEX idx_doc_embeddings_type_model ON document_embeddings (embedding_type, embedding_model);
@@ -102,7 +97,7 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
 *   `content_tsvector`: Stores the processed text for keyword searching using PostgreSQL's FTS functions.
     *   Standard B-tree indexes on `documents` columns frequently used for filtering (`source_type`, `created_at`).
     *   GIN index on `documents.metadata` for efficient querying within the JSONB structure.
-    *   `pgvector` index (`hnsw` or `ivfflat`) on `document_embeddings.embedding` is critical for similarity search. Indexing strategy might depend on whether different `embedding_type`s have compatible vector dimensions.
+    *   Partial `pgvector` indexes (e.g., `idx_doc_embeddings_gemini_1536_hnsw_cos`) targeting specific `embedding_model` values and casting the `embedding` column to the correct dimension are critical for fast similarity search.
     *   Standard indexes on `document_embeddings` (`embedding_type`, `embedding_model`, `document_id`, `chunk_index`) aid filtering before or after vector search.
 
 ## 3. Ingestion and Embedding Process
@@ -166,7 +161,7 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
           ROW_NUMBER() OVER (ORDER BY de.embedding <=> $<query_embedding>::vector ASC) as vec_rank
       FROM document_embeddings de
       WHERE de.document_id IN (SELECT id FROM relevant_docs)
-        AND de.embedding_model = $<model_identifier>
+        AND de.embedding_model = $<model_identifier> -- Filter to use the correct partial index
         -- AND de.embedding_type IN ('title', 'summary', 'content_chunk') -- Optional filter
       ORDER BY distance ASC
       LIMIT 50 -- Retrieve more candidates for potential re-ranking
@@ -204,12 +199,14 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
     WHERE vr.embedding_id IS NOT NULL OR fr.embedding_id IS NOT NULL -- Must appear in at least one result set
     ORDER BY rrf_score DESC -- Order by the combined RRF score
     LIMIT 10; -- Limit results
+
     ```
 
     *Replace `<query_embedding>` with the generated query vector and `<model_identifier>` with the correct model name.*
     *Replace `<keywords>` with the keywords extracted for FTS.*
     *Use the appropriate distance operator (`<=>` for cosine, `<->` for L2, `<#>` for inner product) matching the index.*
     *Adjust the RRF formula and `LIMIT` in subqueries as needed.*
+    *Crucially, the query **must filter by `embedding_model`** to allow the query planner to select the correct partial index. The query embedding *must* have the dimension specified in that partial index.*
     *Ensure the FTS configuration (`'english'`) matches the one used during ingestion.*
 
 5.  **Result Processing:** The application receives the top N relevant embeddings, their source content (if applicable), and associated document metadata. It might need to de-duplicate results if multiple embeddings from the same document are returned.
@@ -219,12 +216,12 @@ CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USIN
 
 *   **Embedding Model Choice:** Select a model appropriate for the task (semantic retrieval) and document types. Consider models supporting the desired languages and text lengths. The schema tracks the model used per chunk.
 *   **Dimension Size:** Choose the vector dimension based on the model. Larger dimensions capture more detail but require more storage and potentially more computation.
-*   **Index Tuning:** `pgvector` index parameters (`m`, `ef_construction` for HNSW; `lists` for IVFFlat) need tuning based on dataset size, query latency requirements, and recall accuracy trade-offs.
+*   **Index Tuning:** `pgvector` partial index parameters (`m`, `ef_construction` for HNSW; `lists` for IVFFlat) need tuning for each specific index based on dataset size, query latency requirements, and recall accuracy trade-offs.
 *   **Re-indexing:** If the embedding model is changed, all existing embeddings will need to be regenerated and the `document_chunks` table updated.
 *   **Scalability:** For very large datasets, consider PostgreSQL scaling strategies or potentially dedicated vector databases.
 *   **Hybrid Search:** Combining vector and keyword search often yields better results than either alone. Requires careful query construction and result merging (e.g., RRF). Choose an appropriate FTS configuration (language, dictionaries).
 *   **OCR Quality:** The quality of OCR significantly impacts the searchability of scanned documents/images.
-*   **Vector Dimensions:** If using embeddings with different dimensions (e.g., text vs. image models), ensure your `pgvector` version supports it (>= 0.5.0) or use alternative strategies like separate tables or storing vectors in JSONB (sacrificing indexing). Indexing might require WHERE clauses if dimensions differ within the column.
+*   **Variable Vector Dimensions:** Using the `VECTOR` type allows storing embeddings of different dimensions in the same column (requires pgvector >= 0.5.0). Use partial indexes that cast the vector to the specific dimension for each model (`embedding::vector(DIM)`) and filter queries by `embedding_model` to utilize these indexes effectively.
 *   **Cost:** Embedding generation (especially using external APIs) and potentially OCR services incur costs.
 
 
