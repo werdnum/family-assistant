@@ -5,14 +5,14 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
-from fastapi import Response # Added Response
-import json # Import json for payload rendering
+from fastapi import Response  # Added Response
+import json  # Import json for payload rendering
 
-from collections import defaultdict # Import defaultdict
+from collections import defaultdict  # Import defaultdict
 
 # Import storage functions - adjust path if needed
 import storage
-from storage import get_grouped_message_history, get_all_tasks # Added get_all_tasks
+from storage import get_grouped_message_history, get_all_tasks  # Added get_all_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,7 @@ async def view_message_history(request: Request):
 async def view_tasks(request: Request):
     """Serves the page displaying scheduled tasks."""
     try:
-        tasks = await get_all_tasks(limit=200) # Fetch tasks, add limit if needed
+        tasks = await get_all_tasks(limit=200)  # Fetch tasks, add limit if needed
         return templates.TemplateResponse(
             "tasks.html",
             {

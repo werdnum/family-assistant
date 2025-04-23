@@ -22,7 +22,7 @@ import storage
 # MCP state (mcp_sessions, tool_name_to_server_id) will be passed as arguments
 # Removed: from main import mcp_sessions, tool_name_to_server_id
 
-from dateutil import rrule # Added for validating recurrence rule
+from dateutil import rrule  # Added for validating recurrence rule
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ async def schedule_recurring_task_tool(
     recurrence_rule: str,
     payload: Dict[str, Any],
     max_retries: Optional[int] = 3,
-    description: Optional[str] = None, # Optional description for the task ID
+    description: Optional[str] = None,  # Optional description for the task ID
 ):
     """
     Schedules a new recurring task.
@@ -51,10 +51,10 @@ async def schedule_recurring_task_tool(
     try:
         # Validate recurrence rule format (basic validation)
         try:
-             # We don't need dtstart here, just parsing validity
-             rrule.rrulestr(recurrence_rule)
+            # We don't need dtstart here, just parsing validity
+            rrule.rrulestr(recurrence_rule)
         except ValueError as rrule_err:
-             raise ValueError(f"Invalid recurrence_rule format: {rrule_err}")
+            raise ValueError(f"Invalid recurrence_rule format: {rrule_err}")
 
         # Parse the initial schedule time
         initial_dt = isoparse(initial_schedule_time)
@@ -71,7 +71,10 @@ async def schedule_recurring_task_tool(
         # Generate the *initial* unique task ID
         base_id = f"recurring_{task_type}"
         if description:
-            safe_desc = "".join(c if c.isalnum() or c in ['-', '_'] else '_' for c in description.lower())
+            safe_desc = "".join(
+                c if c.isalnum() or c in ["-", "_"] else "_"
+                for c in description.lower()
+            )
             base_id += f"_{safe_desc}"
         # Add a unique element (UUID) to ensure the *first* ID is truly unique
         initial_task_id = f"{base_id}_{uuid.uuid4()}"
@@ -151,7 +154,7 @@ async def schedule_future_callback_tool(callback_time: str, context: str, chat_i
 AVAILABLE_FUNCTIONS = {
     "add_or_update_note": storage.add_or_update_note,
     "schedule_future_callback": schedule_future_callback_tool,
-    "schedule_recurring_task": schedule_recurring_task_tool, # Add new tool
+    "schedule_recurring_task": schedule_recurring_task_tool,  # Add new tool
 }
 
 # Define tools in the format LiteLLM expects (OpenAI format)
@@ -219,26 +222,31 @@ TOOLS_DEFINITION = [
                         "type": "string",
                         "description": "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the task should run.",
                     },
-                     "recurrence_rule": {
+                    "recurrence_rule": {
                         "type": "string",
                         "description": "An RRULE string defining the recurrence schedule according to RFC 5545 (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0' for 8:00 AM daily, 'FREQ=WEEKLY;BYDAY=MO' for every Monday).",
                     },
                     "payload": {
                         "type": "object",
                         "description": "A JSON object containing any necessary data or parameters for the task handler.",
-                         "additionalProperties": True, # Allow any structure within the payload
+                        "additionalProperties": True,  # Allow any structure within the payload
                     },
-                     "max_retries": {
+                    "max_retries": {
                         "type": "integer",
                         "description": "Optional. Maximum number of retries for each instance if it fails (default: 3).",
                         "default": 3,
                     },
                     "description": {
                         "type": "string",
-                         "description": "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief').",
+                        "description": "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief').",
                     },
                 },
-                "required": ["task_type", "initial_schedule_time", "recurrence_rule", "payload"],
+                "required": [
+                    "task_type",
+                    "initial_schedule_time",
+                    "recurrence_rule",
+                    "payload",
+                ],
             },
         },
     },

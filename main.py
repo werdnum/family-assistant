@@ -11,7 +11,7 @@ import html
 import io  # Add io
 import json
 import logging
-import random # Add random
+import random  # Add random
 import os
 import signal
 import sys
@@ -34,12 +34,12 @@ from telegram.ext import (
     ApplicationBuilder,
     CallbackContext,
     CommandHandler,
-    ContextTypes, # Re-add ContextTypes
-    MessageHandler, # Re-add MessageHandler
+    ContextTypes,  # Re-add ContextTypes
+    MessageHandler,  # Re-add MessageHandler
     filters,
 )
-from dateutil import rrule # For recurrence rules
-from dateutil.parser import isoparse # For parsing ISO dates if needed in rrule
+from dateutil import rrule  # For recurrence rules
+from dateutil.parser import isoparse  # For parsing ISO dates if needed in rrule
 import telegramify_markdown
 from telegram.helpers import escape_markdown
 import uvicorn
@@ -289,7 +289,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         task_type = task["task_type"]
                         payload = task["payload"]
                         recurrence_rule_str = task.get("recurrence_rule")
-                        original_task_id = task.get("original_task_id", task_id) # Use task_id if original is missing (first run)
+                        original_task_id = task.get(
+                            "original_task_id", task_id
+                        )  # Use task_id if original is missing (first run)
                         task_max_retries = task.get("max_retries", 3)
 
                         # Mark task as done
@@ -300,22 +302,33 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 
                         # --- Handle Recurrence ---
                         if recurrence_rule_str:
-                            logger.info(f"Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance.")
+                            logger.info(
+                                f"Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
+                            )
                             try:
                                 # Use the *scheduled_at* time of the completed task as the base for the next occurrence
                                 last_scheduled_at = task.get("scheduled_at")
                                 if not last_scheduled_at:
-                                     # If somehow scheduled_at is missing, use created_at as fallback
-                                     last_scheduled_at = task.get("created_at", datetime.now(timezone.utc))
-                                     logger.warning(f"Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base.")
+                                    # If somehow scheduled_at is missing, use created_at as fallback
+                                    last_scheduled_at = task.get(
+                                        "created_at", datetime.now(timezone.utc)
+                                    )
+                                    logger.warning(
+                                        f"Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base."
+                                    )
                                 # Ensure the base time is timezone-aware for rrule
                                 if last_scheduled_at.tzinfo is None:
-                                    last_scheduled_at = last_scheduled_at.replace(tzinfo=timezone.utc)
-                                    logger.warning(f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}")
-
+                                    last_scheduled_at = last_scheduled_at.replace(
+                                        tzinfo=timezone.utc
+                                    )
+                                    logger.warning(
+                                        f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
+                                    )
 
                                 # Calculate the next occurrence *after* the last scheduled time
-                                rule = rrule.rrulestr(recurrence_rule_str, dtstart=last_scheduled_at)
+                                rule = rrule.rrulestr(
+                                    recurrence_rule_str, dtstart=last_scheduled_at
+                                )
                                 next_scheduled_dt = rule.after(last_scheduled_at)
 
                                 if next_scheduled_dt:
@@ -323,27 +336,33 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                     # Format: <original_task_id>_recur_<next_iso_timestamp>
                                     next_task_id = f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
 
-                                    logger.info(f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}")
+                                    logger.info(
+                                        f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
+                                    )
 
                                     # Enqueue the next task instance
                                     await storage.enqueue_task(
                                         task_id=next_task_id,
-                                        task_type=task_type, # Same type
-                                        payload=payload, # Same payload
+                                        task_type=task_type,  # Same type
+                                        payload=payload,  # Same payload
                                         scheduled_at=next_scheduled_dt,
-                                        max_retries=task_max_retries, # Same retry policy
-                                        recurrence_rule=recurrence_rule_str, # Keep the rule
-                                        original_task_id=original_task_id, # Link back to original
-                                        notify_event=new_task_event # Notify if immediate
+                                        max_retries=task_max_retries,  # Same retry policy
+                                        recurrence_rule=recurrence_rule_str,  # Keep the rule
+                                        original_task_id=original_task_id,  # Link back to original
+                                        notify_event=new_task_event,  # Notify if immediate
                                     )
-                                    logger.info(f"Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}.")
+                                    logger.info(
+                                        f"Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
+                                    )
                                 else:
-                                    logger.info(f"No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'.")
+                                    logger.info(
+                                        f"No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
+                                    )
 
                             except Exception as recur_err:
                                 logger.error(
                                     f"Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
-                                    exc_info=True
+                                    exc_info=True,
                                 )
                                 # Don't mark the original task as failed, just log the recurrence error.
                                 # Potentially send notification to developer?
@@ -351,7 +370,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                     except Exception as handler_exc:
                         current_retry = task.get("retry_count", 0)
                         max_retries = task.get(
-                            "max_retries", 3 # Use DB default if missing somehow
+                            "max_retries", 3  # Use DB default if missing somehow
                         )  # Use DB default if missing somehow
                         error_str = str(handler_exc)
                         logger.error(
@@ -818,19 +837,27 @@ async def _generate_llm_response_for_chat(
             # from the stored 'tool_calls_info_raw'
             reformatted_tool_calls = []
             raw_info_list = msg.get("tool_calls_info_raw", [])
-            if isinstance(raw_info_list, list): # Ensure it's a list
+            if isinstance(raw_info_list, list):  # Ensure it's a list
                 for raw_call in raw_info_list:
                     # Assuming raw_call is a dict like:
                     # {'call_id': '...', 'function_name': '...', 'arguments': {...}, 'response_content': '...'}
                     if isinstance(raw_call, dict):
                         reformatted_tool_calls.append(
                             {
-                                "id": raw_call.get("call_id", f"call_{uuid.uuid4()}"), # Generate ID if missing
+                                "id": raw_call.get(
+                                    "call_id", f"call_{uuid.uuid4()}"
+                                ),  # Generate ID if missing
                                 "type": "function",
                                 "function": {
-                                    "name": raw_call.get("function_name", "unknown_tool"),
+                                    "name": raw_call.get(
+                                        "function_name", "unknown_tool"
+                                    ),
                                     # Arguments should already be a JSON string or dict from storage
-                                    "arguments": json.dumps(raw_call.get("arguments", {})) if isinstance(raw_call.get("arguments"), dict) else raw_call.get("arguments", '{}'),
+                                    "arguments": (
+                                        json.dumps(raw_call.get("arguments", {}))
+                                        if isinstance(raw_call.get("arguments"), dict)
+                                        else raw_call.get("arguments", "{}")
+                                    ),
                                 },
                             }
                         )
@@ -843,32 +870,44 @@ async def _generate_llm_response_for_chat(
                         messages.append(
                             {
                                 "role": "assistant",
-                                "content": msg.get("content"), # Include original content if any
-                                "tool_calls": reformatted_tool_calls
+                                "content": msg.get(
+                                    "content"
+                                ),  # Include original content if any
+                                "tool_calls": reformatted_tool_calls,
                             }
                         )
                         # Now append the corresponding tool result message for each call
                         for raw_call in raw_info_list:
-                             if isinstance(raw_call, dict):
+                            if isinstance(raw_call, dict):
                                 messages.append(
                                     {
                                         "role": "tool",
-                                        "tool_call_id": raw_call.get("call_id", "missing_id"),
-                                        "content": raw_call.get("response_content", "Error: Missing tool response content"),
+                                        "tool_call_id": raw_call.get(
+                                            "call_id", "missing_id"
+                                        ),
+                                        "content": raw_call.get(
+                                            "response_content",
+                                            "Error: Missing tool response content",
+                                        ),
                                     }
                                 )
                     else:
-                         logger.warning(f"Skipping non-dict item in raw_tool_calls_info: {raw_call}")
+                        logger.warning(
+                            f"Skipping non-dict item in raw_tool_calls_info: {raw_call}"
+                        )
             else:
-                 logger.warning(f"Expected list for raw_tool_calls_info, got {type(raw_info_list)}. Skipping tool call reconstruction.")
+                logger.warning(
+                    f"Expected list for raw_tool_calls_info, got {type(raw_info_list)}. Skipping tool call reconstruction."
+                )
             # Skip adding the original combined message dictionary 'msg' as we added parts separately
         else:
             # Add regular user or assistant messages (without tool calls)
             messages.append({"role": msg["role"], "content": msg["content"]})
 
     # messages.extend(history_messages) # Removed this line, processing is now done above
-    logger.debug(f"Processed {len(history_messages)} DB history messages into LLM format.")
-
+    logger.debug(
+        f"Processed {len(history_messages)} DB history messages into LLM format."
+    )
 
     # --- Prepare System Prompt Context ---
     system_prompt_template = PROMPTS.get(
