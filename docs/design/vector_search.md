@@ -121,25 +121,27 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
     *   Prompt the LLM to analyze the content and extract relevant metadata according to the predefined **Metadata Schema Definition** (see above). Explicitly request the output in a structured JSON format.
     *   Validate the LLM's JSON output against the expected schema. Handle potential errors or missing fields.
 4.  **Document Record Creation:** Store the initial and LLM-extracted metadata (combined into the `metadata` JSONB field), `source_type`, `source_id`, `title`, `created_at`, etc., in the `documents` table. Retrieve the generated `document.id`.
-3.  **Content Extraction:**
+    *   The `add_document` storage function accepts an `IngestibleDocument` object conforming to a defined protocol, providing access to `source_type`, `source_id`, `title`, `created_at`, and base `metadata`. It also accepts an optional `enriched_metadata` dictionary.
+5.  **Content Extraction (Post-Document Record):**
     *   **Emails:** Parse the body, strip HTML/signatures, potentially focus on the main content.
     *   **Emails:** Parse the body, strip HTML/signatures. Extract subject separately for potential 'title' embedding.
     *   **PDFs/Images:** Use OCR (e.g., Tesseract, cloud services) to extract text.
     *   **Notes:** Use the note content directly.
-4.  **Text Preparation / Description (Optional but Recommended):**
+6.  **Text Preparation / Description (Optional but Recommended):**
     *   Clean the extracted text.
     *   For non-text or very large documents, consider using an LLM to generate a concise, descriptive **summary** of the item. Store this summary.
     *   Extract or use the document's **title** (e.g., email subject, filename).
-6.  **Chunking:**
+7.  **Chunking:**
     *   Divide the main content (extracted text, note body) into chunks if necessary (e.g., by paragraph). Assign `chunk_index` starting from 1.
     *   Document-level aspects like title and summary conceptually belong to `chunk_index = 0`.
-7.  **Embedding Generation:** Generate embeddings for relevant aspects using the chosen model(s):
+8.  **Embedding Generation:** Generate embeddings for relevant aspects using the chosen model(s):
     *   Embed the `title` text.
     *   Embed the generated `summary` text.
     *   Embed the content of each text `chunk` (from step 5).
     *   Embed OCR text if applicable.
     *   Generate and store other embedding types (e.g., image CLIP vectors) if needed, potentially using different models.
-8.  **Embedding Storage:** For *each* generated embedding, insert a row into `document_embeddings`, storing:
+9.  **Embedding Storage:** For *each* generated embedding, insert a row into `document_embeddings` using the `add_embedding` function, providing:
+    *   `document_id` (obtained from step 4)
     *   `document_id`
     *   `chunk_index` (0 for title/summary, 1+ for content chunks)
     *   `embedding_type` ('title', 'summary', 'content_chunk', 'ocr_text', etc.)
@@ -246,7 +248,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 *   [x] Create skeleton API (`vector_storage.py`) with function signatures. (Committed: 19c5154)
 *   [x] Integrate API skeleton into `storage.py` (imports, `init_db` call, `__all__`). (Committed: 19c5154, dadf507)
 *   [x] Implement `init_vector_db` to create extension and necessary partial indexes (example for gemini). (Committed: 19c5154)
-*   [ ] Implement `add_document` logic (handle insert/conflict).
+*   [ ] Implement `add_document` logic (accepts `IngestibleDocument`, handles insert/conflict).
 *   [ ] Implement `get_document_by_source_id` logic.
 *   [ ] Implement `add_embedding` logic (handle insert, potentially with conflict resolution on UNIQUE constraint).
 *   [ ] Implement `delete_document` logic.
