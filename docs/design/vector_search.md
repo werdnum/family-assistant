@@ -238,3 +238,22 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 *   **OCR Quality:** The quality of OCR significantly impacts the searchability of scanned documents/images.
 *   **Variable Vector Dimensions:** Using the `VECTOR` type allows storing embeddings of different dimensions in the same column (requires pgvector >= 0.5.0). Use partial indexes that cast the vector to the specific dimension for each model (`embedding::vector(DIM)`) and filter queries by `embedding_model` to utilize these indexes effectively.
 *   **Cost:** Embedding generation (especially using external APIs) and potentially OCR services incur costs.
+
+## 6. Implementation Tasks
+
+*   [x] Define database schema (`documents`, `document_embeddings`). (Committed: 888a793)
+*   [x] Implement SQLAlchemy models (`Document`, `DocumentEmbedding`). (Committed: 19c5154)
+*   [x] Create skeleton API (`vector_storage.py`) with function signatures. (Committed: 19c5154)
+*   [x] Integrate API skeleton into `storage.py` (imports, `init_db` call, `__all__`). (Committed: 19c5154, dadf507)
+*   [x] Implement `init_vector_db` to create extension and necessary partial indexes (example for gemini). (Committed: 19c5154)
+*   [ ] Implement `add_document` logic (handle insert/conflict).
+*   [ ] Implement `get_document_by_source_id` logic.
+*   [ ] Implement `add_embedding` logic (handle insert, potentially with conflict resolution on UNIQUE constraint).
+*   [ ] Implement `delete_document` logic.
+*   [ ] Implement `query_vectors` logic (hybrid search with RRF).
+*   [ ] Implement document ingestion pipeline (acquisition, content extraction, OCR integration).
+*   [ ] Implement LLM-based metadata extraction (calling LLM with JSON mode).
+*   [ ] Implement embedding generation using an LLM (calling embedding model API).
+*   [ ] Integrate querying into the main application flow (e.g., as an LLM tool or background process).
+*   [ ] Implement document chunking strategy (optional, if needed beyond title/summary/single-content).
+*   [ ] Add more partial indexes for other embedding models as they are introduced.
