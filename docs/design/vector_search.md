@@ -52,7 +52,6 @@ CREATE TABLE document_embeddings (
     chunk_index INT NOT NULL DEFAULT 0, -- 0 for document-level embeddings (title, summary), 1+ for content chunks
     embedding_type VARCHAR(50) NOT NULL, -- e.g., 'title', 'summary', 'content_chunk', 'ocr_text', 'image_clip'
     content TEXT,                       -- Source text for text-based embeddings (NULL for non-text like 'image_clip')
-    content_tsvector TSVECTOR,          -- tsvector for full-text search on the content field (generated from 'content')
     embedding VECTOR NOT NULL,          -- Variable-dimension vector embedding. Requires pgvector >= 0.5.0
                                         -- Dimensions determined by the 'embedding_model'.
     embedding_model VARCHAR(100) NOT NULL, -- Identifier for the model used to generate the embedding
@@ -76,8 +75,8 @@ WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data
 -- Indexes to aid filtering during search
 CREATE INDEX idx_doc_embeddings_type_model ON document_embeddings (embedding_type, embedding_model);
 CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_id, chunk_index);
--- GIN index for full-text search on the content_tsvector column
-CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USING GIN (content_tsvector) WHERE content IS NOT NULL;
+-- GIN expression index for full-text search directly on the 'content' column
+CREATE INDEX idx_doc_embeddings_content_fts_gin ON document_embeddings USING GIN (to_tsvector('english', content)) WHERE content IS NOT NULL;
 
 ```
 
@@ -107,7 +106,6 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 *   **Indexes:**
 *   `chunk_index`: Groups embeddings. `0` typically represents document-level aspects (title, summary), while `1+` can represent sequential content chunks.
 *   **Indexes:**
-*   `content_tsvector`: Stores the processed text for keyword searching using PostgreSQL's FTS functions.
     *   Standard B-tree indexes on `documents` columns frequently used for filtering (`source_type`, `created_at`).
     *   GIN index on `documents.metadata` for efficient querying within the JSONB structure.
     *   Partial `pgvector` indexes (e.g., `idx_doc_embeddings_gemini_1536_hnsw_cos`) targeting specific `embedding_model` values and casting the `embedding` column to the correct dimension are critical for fast similarity search.
@@ -143,8 +141,6 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
     *   Generate and store other embedding types (e.g., image CLIP vectors) if needed, potentially using different models.
 8.  **Embedding Storage:** For *each* generated embedding, insert a row into `document_embeddings`, storing:
     *   `document_id`
-    *   **TSVector Generation:** If the `content` field is not NULL (i.e., for text-based embeddings), generate its `tsvector` representation using a chosen FTS configuration (e.g., `'english'`).
-    *   `content_tsvector` (the generated tsvector or NULL)
     *   `chunk_index` (0 for title/summary, 1+ for content chunks)
     *   `embedding_type` ('title', 'summary', 'content_chunk', 'ocr_text', etc.)
     *   `content` (the source text, if applicable)
@@ -189,10 +185,10 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
       SELECT
           de.id AS embedding_id,
           de.document_id,
-          ts_rank(de.content_tsvector, plainto_tsquery('english', $<keywords>)) AS score,
-          ROW_NUMBER() OVER (ORDER BY ts_rank(de.content_tsvector, plainto_tsquery('english', $<keywords>)) DESC) as fts_rank
+          ts_rank(to_tsvector('english', de.content), plainto_tsquery('english', $<keywords>)) AS score,
+          ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('english', de.content), plainto_tsquery('english', $<keywords>)) DESC) as fts_rank
       FROM document_embeddings de
-      WHERE de.document_id IN (SELECT id FROM relevant_docs)
+      WHERE de.document_id IN (SELECT id FROM relevant_docs) AND de.content IS NOT NULL
         AND de.content_tsvector @@ plainto_tsquery('english', $<keywords>)
       ORDER BY score DESC
       LIMIT 50 -- Retrieve more candidates for potential re-ranking
@@ -227,6 +223,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
     *Adjust the RRF formula and `LIMIT` in subqueries as needed.*
     *Crucially, the query **must filter by `embedding_model`** to allow the query planner to select the correct partial index. The query embedding *must* have the dimension specified in that partial index.*
     *Ensure the FTS configuration (`'english'`) matches the one used during ingestion.*
+    *Ensure the FTS configuration (`'english'`) in the query matches the one used in the GIN expression index.*
 
 5.  **Result Processing:** The application receives the top N relevant embeddings, their source content (if applicable), and associated document metadata. It might need to de-duplicate results if multiple embeddings from the same document are returned.
 6.  **Response Generation:** The LLM uses the retrieved content snippets to synthesize an answer for the user.
