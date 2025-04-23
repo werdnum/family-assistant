@@ -8,7 +8,7 @@ Provides functions for adding, retrieving, deleting, and querying documents and 
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Sequence
+from typing import Any, Dict, List, Optional, Tuple, Sequence, Protocol # Added Protocol
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
@@ -23,6 +23,41 @@ logger = logging.getLogger(__name__)
 
 
 # --- Database Setup ---
+
+
+# --- Protocol Definition ---
+class IngestibleDocument(Protocol):
+    """Defines the interface for documents that can be ingested into vector storage."""
+
+    @property
+    def source_type(self) -> str:
+        """The type of the source (e.g., 'email', 'pdf', 'note')."""
+        ...
+
+    @property
+    def source_id(self) -> str:
+        """The unique identifier from the source system."""
+        ...
+
+    @property
+    def source_uri(self) -> Optional[str]:
+        """URI or path to the original item, if applicable."""
+        ...
+
+    @property
+    def title(self) -> Optional[str]:
+        """Title or subject of the document."""
+        ...
+
+    @property
+    def created_at(self) -> Optional[datetime]:
+        """Original creation date of the item (must be timezone-aware if provided)."""
+        ...
+
+    @property
+    def metadata(self) -> Optional[Dict[str, Any]]:
+        """Base metadata extracted directly from the source (can be enriched later)."""
+        ...
 
 
 class Base(DeclarativeBase):
@@ -137,23 +172,20 @@ async def init_vector_db():
 
 
 async def add_document(
-    source_type: str,
-    source_id: str,
-    source_uri: Optional[str] = None,
-    title: Optional[str] = None,
-    created_at: Optional[datetime] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    doc: IngestibleDocument, # Changed parameter
+    enriched_metadata: Optional[Dict[str, Any]] = None, # Allow passing LLM enriched metadata
 ) -> int:
     """
+    Adds a document record to the database or retrieves the existing one based on source_id.
+
+    Uses the provided IngestibleDocument object to populate initial fields.
+    Allows overriding or augmenting metadata with an optional enriched_metadata dictionary.
     Adds a document record to the database or retrieves the existing one.
 
     Args:
-        source_type: The type of the source (e.g., 'email', 'pdf').
-        source_id: The unique identifier from the source system.
-        source_uri: URI or path to the original item.
-        title: Title or subject of the document.
-        created_at: Original creation date of the item.
-        metadata: Additional metadata as a dictionary.
+        doc: An object conforming to the IngestibleDocument protocol.
+        enriched_metadata: Optional dictionary containing metadata potentially enriched by an LLM,
+                           which will be merged with or override doc.metadata.
 
     Returns:
         The database ID of the added or existing document.
@@ -163,10 +195,13 @@ async def add_document(
     # Example (needs proper async session handling and error checking):
     # async with async_sessionmaker(get_engine())() as session:
     #     async with session.begin():
-    #         # Check if exists, if not create...
+    #         final_metadata = {**(doc.metadata or {}), **(enriched_metadata or {})}
+    #         # Find existing or create new Document row using doc properties and final_metadata
+    #         # stmt = insert(Document).values(...).on_conflict_do_update(...)
+    #         # result = await session.execute(stmt)
+    #         # doc_id = result.inserted_primary_key[0] or fetch existing id
     #         pass
     return 1  # Placeholder
-
 
 async def get_document_by_source_id(source_id: str) -> Optional[Dict[str, Any]]:
     """Retrieves a document by its source ID."""
@@ -245,5 +280,6 @@ __all__ = [
     "query_vectors",
     "Document",  # Export models if needed for type hinting or direct use
     "DocumentEmbedding",
-    "Base",  # Export Base if needed for defining other models elsewhere
+    "Base", # Export Base if needed for defining other models elsewhere
+    "IngestibleDocument", # Export the protocol
 ]
