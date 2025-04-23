@@ -8,6 +8,7 @@
     *   Persist documents and their vector embeddings.
     *   Support semantic search based on user queries (translated by an LLM).
     *   Filter search results based on metadata (e.g., document type, date, source).
+    *   Support keyword search on textual content alongside vector search (hybrid search).
     *   Handle various document types (text extraction, OCR).
 *   **Chunking:** Design the system to support document chunking, although the initial implementation may use a single chunk per document.
 *   **Embeddings:**
@@ -50,7 +51,7 @@ CREATE TABLE document_embeddings (
     chunk_index INT NOT NULL DEFAULT 0, -- 0 for document-level embeddings (title, summary), 1+ for content chunks
     embedding_type VARCHAR(50) NOT NULL, -- e.g., 'title', 'summary', 'content_chunk', 'ocr_text', 'image_clip'
     content TEXT,                       -- Source text for text-based embeddings (NULL for non-text like 'image_clip')
-    content TEXT NOT NULL,              -- The actual text content of the chunk (or LLM-generated description)
+    content_tsvector TSVECTOR,          -- tsvector for full-text search on the content field
     embedding VECTOR(768) NOT NULL,     -- Vector embedding. Adjust dimension (768) based on the chosen model.
                                         -- NOTE: Storing vectors of different dimensions in the same column
                                         -- requires pgvector >= 0.5.0. If using older versions or widely
@@ -79,7 +80,8 @@ WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data
 -- Indexes to aid filtering during search
 CREATE INDEX idx_doc_embeddings_type_model ON document_embeddings (embedding_type, embedding_model);
 CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_id, chunk_index);
--- CREATE INDEX idx_doc_embeddings_content_gin ON document_embeddings USING GIN (to_tsvector('english', content)) WHERE content IS NOT NULL; -- Optional for keyword search on content
+-- GIN index for full-text search on the content_tsvector column
+CREATE INDEX idx_doc_embeddings_content_tsvector_gin ON document_embeddings USING GIN (content_tsvector) WHERE content IS NOT NULL;
 
 ```
 
@@ -89,7 +91,7 @@ CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_
 *   **`document_embeddings` Table:** Stores individual embeddings.
     *   `document_id`: Links back to the parent document.
     *   `chunk_index`: Supports multiple chunks per document (initially just 0).
-    *   `content`: Stores the text used for embedding. This could be the raw extracted text, a cleaned version, or an LLM-generated summary/description.
+    *   `content`: Stores the text used for text-based embeddings.
     *   `embedding`: The vector itself. The dimension needs to match the chosen embedding model.
     *   `embedding_model`: Tracks which model generated the vector, crucial for future migrations or checks.
 *   **Indexes:**
@@ -97,6 +99,7 @@ CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_
 *   `content`: The source text for text-based embeddings (e.g., the actual title text, the summary text, the chunk text). Can be `NULL` for non-text embeddings (like image vectors).
 *   `chunk_index`: Groups embeddings. `0` typically represents document-level aspects (title, summary), while `1+` can represent sequential content chunks.
 *   **Indexes:**
+*   `content_tsvector`: Stores the processed text for keyword searching using PostgreSQL's FTS functions.
     *   Standard B-tree indexes on `documents` columns frequently used for filtering (`source_type`, `created_at`).
     *   GIN index on `documents.metadata` for efficient querying within the JSONB structure.
     *   `pgvector` index (`hnsw` or `ivfflat`) on `document_embeddings.embedding` is critical for similarity search. Indexing strategy might depend on whether different `embedding_type`s have compatible vector dimensions.
@@ -126,11 +129,14 @@ CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_
     *   Generate and store other embedding types (e.g., image CLIP vectors) if needed, potentially using different models.
 7.  **Storage:** For *each* generated embedding, insert a row into `document_embeddings`, storing:
     *   `document_id`
+    *   **TSVector Generation:** If the `content` field is not NULL (i.e., for text-based embeddings), generate its `tsvector` representation using a chosen FTS configuration (e.g., `'english'`).
+    *   `content_tsvector` (the generated tsvector or NULL)
     *   `chunk_index` (0 for title/summary, 1+ for content chunks)
     *   `embedding_type` ('title', 'summary', 'content_chunk', 'ocr_text', etc.)
     *   `content` (the source text, if applicable)
     *   `embedding` (the vector)
     *   `embedding_model` (identifier of the model used)
+    *   Store the generated `content_tsvector` along with other data. This can be done via a trigger or during the INSERT statement itself: `to_tsvector('english', content_text)`.
 
 ## 4. Querying Process
 
@@ -138,10 +144,11 @@ CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_
 2.  **Query Formulation:** The LLM (or intermediary logic) translates this into:
     *   A **search query text** suitable for embedding (e.g., "scanned letter IRS 2024").
     *   A set of **metadata filters** (e.g., `source_type = 'pdf'` or `'image'`, `created_at >= '2024-01-01'`, potentially keywords in `title` or `metadata`).
+    *   **Keywords** for full-text search (e.g., "IRS", "letter", "2024").
     *   Optionally, target **embedding types** (e.g., prioritize searching 'title' and 'summary' first, or only search 'content_chunk').
-3.  **Query Embedding:** Generate the embedding for the search query text using the *same embedding model* used for the stored documents.
+3.  **Query Embedding & FTS Query:** Generate the embedding for the semantic part of the query. Convert keywords into a `tsquery` (e.g., using `plainto_tsquery('english', keywords)`).
 4.  **Database Query:** Execute a SQL query combining vector search and metadata filtering:
-
+    *   **Hybrid Approach:** Retrieve candidates using both vector similarity and FTS matching, then combine and re-rank the results. Reciprocal Rank Fusion (RRF) is a common technique.
     ```sql
     WITH relevant_docs AS (
         SELECT id
@@ -151,6 +158,31 @@ CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_
           -- AND metadata->>'sender' = 'IRS' -- Example JSONB filter
           -- AND title ILIKE '%IRS%'       -- Example title filter
     )
+    , vector_results AS (
+      SELECT
+          de.id AS embedding_id,
+          de.document_id,
+          de.embedding <=> $<query_embedding>::vector AS distance,
+          ROW_NUMBER() OVER (ORDER BY de.embedding <=> $<query_embedding>::vector ASC) as vec_rank
+      FROM document_embeddings de
+      WHERE de.document_id IN (SELECT id FROM relevant_docs)
+        AND de.embedding_model = $<model_identifier>
+        -- AND de.embedding_type IN ('title', 'summary', 'content_chunk') -- Optional filter
+      ORDER BY distance ASC
+      LIMIT 50 -- Retrieve more candidates for potential re-ranking
+    )
+    , fts_results AS (
+      SELECT
+          de.id AS embedding_id,
+          de.document_id,
+          ts_rank(de.content_tsvector, plainto_tsquery('english', $<keywords>)) AS score,
+          ROW_NUMBER() OVER (ORDER BY ts_rank(de.content_tsvector, plainto_tsquery('english', $<keywords>)) DESC) as fts_rank
+      FROM document_embeddings de
+      WHERE de.document_id IN (SELECT id FROM relevant_docs)
+        AND de.content_tsvector @@ plainto_tsquery('english', $<keywords>)
+      ORDER BY score DESC
+      LIMIT 50 -- Retrieve more candidates for potential re-ranking
+    )
     SELECT
         de.id AS embedding_id,
         de.document_id,
@@ -159,18 +191,26 @@ CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_
         d.created_at,
         de.embedding_type,
         de.content AS embedding_source_content, -- The text that was embedded (if applicable)
-        de.embedding <=> $<query_embedding>::vector AS distance -- Cosine distance operator
+        vr.distance,
+        fr.score AS fts_score,
+        -- Calculate RRF score (k=60 is a common default)
+        COALESCE(1.0 / (60 + vr.vec_rank), 0.0) + COALESCE(1.0 / (60 + fr.fts_rank), 0.0) AS rrf_score
     FROM document_embeddings de
     JOIN documents d ON de.document_id = d.id
+    LEFT JOIN vector_results vr ON de.id = vr.embedding_id
+    LEFT JOIN fts_results fr ON de.id = fr.embedding_id
+    JOIN documents d ON de.document_id = d.id
     WHERE de.document_id IN (SELECT id FROM relevant_docs)
-      AND de.embedding_model = $<model_identifier> -- Ensure model consistency for the query vector
-      -- AND de.embedding_type IN ('title', 'summary', 'content_chunk') -- Optional: Filter by embedding type
-    ORDER BY distance ASC -- Order by similarity (lower cosine distance is more similar)
+    WHERE vr.embedding_id IS NOT NULL OR fr.embedding_id IS NOT NULL -- Must appear in at least one result set
+    ORDER BY rrf_score DESC -- Order by the combined RRF score
     LIMIT 10; -- Limit results
     ```
 
     *Replace `<query_embedding>` with the generated query vector and `<model_identifier>` with the correct model name.*
+    *Replace `<keywords>` with the keywords extracted for FTS.*
     *Use the appropriate distance operator (`<=>` for cosine, `<->` for L2, `<#>` for inner product) matching the index.*
+    *Adjust the RRF formula and `LIMIT` in subqueries as needed.*
+    *Ensure the FTS configuration (`'english'`) matches the one used during ingestion.*
 
 5.  **Result Processing:** The application receives the top N relevant embeddings, their source content (if applicable), and associated document metadata. It might need to de-duplicate results if multiple embeddings from the same document are returned.
 6.  **Response Generation:** The LLM uses the retrieved content snippets to synthesize an answer for the user.
@@ -182,7 +222,7 @@ CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_
 *   **Index Tuning:** `pgvector` index parameters (`m`, `ef_construction` for HNSW; `lists` for IVFFlat) need tuning based on dataset size, query latency requirements, and recall accuracy trade-offs.
 *   **Re-indexing:** If the embedding model is changed, all existing embeddings will need to be regenerated and the `document_chunks` table updated.
 *   **Scalability:** For very large datasets, consider PostgreSQL scaling strategies or potentially dedicated vector databases.
-*   **Hybrid Search:** The schema could be extended to support keyword search (e.g., using `tsvector`) alongside vector search for hybrid retrieval strategies if needed.
+*   **Hybrid Search:** Combining vector and keyword search often yields better results than either alone. Requires careful query construction and result merging (e.g., RRF). Choose an appropriate FTS configuration (language, dictionaries).
 *   **OCR Quality:** The quality of OCR significantly impacts the searchability of scanned documents/images.
 *   **Vector Dimensions:** If using embeddings with different dimensions (e.g., text vs. image models), ensure your `pgvector` version supports it (>= 0.5.0) or use alternative strategies like separate tables or storing vectors in JSONB (sacrificing indexing). Indexing might require WHERE clauses if dimensions differ within the column.
 *   **Cost:** Embedding generation (especially using external APIs) and potentially OCR services incur costs.
