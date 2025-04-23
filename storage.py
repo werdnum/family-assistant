@@ -26,6 +26,16 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from dateutil import rrule # Added for recurrence calculation
 from dateutil.parser import isoparse # Added for parsing dates in recurrence
 
+# --- Vector Storage Imports ---
+try:
+    import vector_storage
+    VECTOR_STORAGE_ENABLED = True
+    logger.info("Vector storage module imported successfully.")
+except ImportError:
+    vector_storage = None # type: ignore
+    VECTOR_STORAGE_ENABLED = False
+    logger.warning("vector_storage.py not found. Vector storage features disabled.")
+
 logger = logging.getLogger(__name__)
 
 
@@ -466,6 +476,7 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
 __all__ = [
     "init_db",
     "get_all_notes",
+    "get_engine", # Export the engine creation function/getter
     "add_message_to_history",
     "get_recent_history",
     "get_note_by_title",
@@ -483,6 +494,18 @@ __all__ = [
     "tasks_table",
     "engine",
     "metadata",
+    # Vector Storage Exports (conditional)
+]
+
+if VECTOR_STORAGE_ENABLED and vector_storage:
+    __all__.extend([
+        "init_vector_db",
+        "add_document",
+        "get_document_by_source_id",
+        "add_embedding",
+        "delete_document",
+        "query_vectors",
+    ])
 ]
 
 DATABASE_URL = os.getenv(
@@ -493,6 +516,10 @@ engine = create_async_engine(
     DATABASE_URL, echo=False
 )  # Set echo=True for debugging SQL
 metadata = MetaData()
+
+def get_engine():
+    """Returns the initialized SQLAlchemy async engine."""
+    return engine
 
 # Define the notes table (replaces key_value_store)
 notes_table = Table(
@@ -577,6 +604,11 @@ tasks_table = Table(
     ), # Links recurring instances to the first one
 )
 
+# Add vector storage models to the same metadata object if enabled
+if VECTOR_STORAGE_ENABLED and vector_storage:
+    vector_storage.Base.metadata = metadata
+)
+
 
 async def init_db():
     """Initializes the database, with retries."""
@@ -589,6 +621,13 @@ async def init_db():
                 logger.info(f"Initializing database schema (attempt {attempt+1})...")
                 await conn.run_sync(metadata.create_all)
                 logger.info("Database schema initialized.")
+                # Also initialize vector DB parts if enabled
+                if VECTOR_STORAGE_ENABLED and vector_storage:
+                    try:
+                        await vector_storage.init_vector_db() # This uses the engine from storage.py now
+                    except Exception as vec_e:
+                        logger.error(f"Failed to initialize vector database: {vec_e}", exc_info=True)
+                        raise # Propagate error if vector init fails
                 return  # Success
         except DBAPIError as e:
             logger.warning(
