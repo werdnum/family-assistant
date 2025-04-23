@@ -497,7 +497,6 @@ __all__ = [
     "metadata",
     # Vector Storage Exports (conditional)
 ]
-
 ]
 
 if VECTOR_STORAGE_ENABLED and vector_storage:
@@ -508,7 +507,6 @@ if VECTOR_STORAGE_ENABLED and vector_storage:
         "delete_document",
         "query_vectors",
     ])
-]
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db"
 )  # Default to SQLite async
@@ -612,7 +610,6 @@ tasks_table = Table(
 # Add vector storage models to the same metadata object if enabled
 if VECTOR_STORAGE_ENABLED:
     VectorBase.metadata = metadata # Use the imported Base from vector_storage
-)
 
 
 async def init_db():
