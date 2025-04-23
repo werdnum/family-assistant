@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 # --- Protocol Definition ---
-class IngestibleDocument(Protocol):
-    """Defines the interface for documents that can be ingested into vector storage."""
+class Document(Protocol):
+    """Defines the interface for documents that can be ingested into vector storage."""    """Defines the interface for document objects that can be ingested into vector storage."""
 
     @property
     def source_type(self) -> str:
@@ -64,8 +64,8 @@ class Base(DeclarativeBase):
     pass
 
 
-class Document(Base):
-    """SQLAlchemy model for the 'documents' table."""
+class DocumentRecord(Base):
+    """SQLAlchemy model for the 'documents' table."""    """SQLAlchemy model for the 'documents' table, representing stored document metadata."""
 
     __tablename__ = "documents"
 
@@ -82,8 +82,8 @@ class Document(Base):
     )
     metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
 
-    embeddings: Mapped[List["DocumentEmbedding"]] = sa.orm.relationship(
-        "DocumentEmbedding", back_populates="document", cascade="all, delete-orphan"
+    embeddings: Mapped[List["DocumentEmbeddingRecord"]] = sa.orm.relationship(
+        "DocumentEmbeddingRecord", back_populates="document_record", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
@@ -91,11 +91,11 @@ class Document(Base):
     )
 
 
-class DocumentEmbedding(Base):
+class DocumentEmbeddingRecord(Base):
     """SQLAlchemy model for the 'document_embeddings' table."""
+    """SQLAlchemy model for the 'document_embeddings' table, representing stored embeddings."""
 
     __tablename__ = "document_embeddings"
-
     id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
     document_id: Mapped[int] = mapped_column(
         sa.BigInteger, sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
@@ -111,8 +111,8 @@ class DocumentEmbedding(Base):
         sa.DateTime(timezone=True), server_default=sa.func.now()
     )
 
-    document: Mapped["Document"] = sa.orm.relationship(
-        "Document", back_populates="embeddings"
+    document_record: Mapped["DocumentRecord"] = sa.orm.relationship(
+        "DocumentRecord", back_populates="embeddings"
     )
 
     __table_args__ = (
@@ -172,18 +172,17 @@ async def init_vector_db():
 
 
 async def add_document(
-    doc: IngestibleDocument, # Changed parameter
+    doc: Document, # Use the renamed Protocol
     enriched_metadata: Optional[Dict[str, Any]] = None, # Allow passing LLM enriched metadata
 ) -> int:
     """
     Adds a document record to the database or retrieves the existing one based on source_id.
 
-    Uses the provided IngestibleDocument object to populate initial fields.
+    Uses the provided Document object (conforming to the protocol) to populate initial fields.
     Allows overriding or augmenting metadata with an optional enriched_metadata dictionary.
-    Adds a document record to the database or retrieves the existing one.
 
     Args:
-        doc: An object conforming to the IngestibleDocument protocol.
+        doc: An object conforming to the Document protocol.
         enriched_metadata: Optional dictionary containing metadata potentially enriched by an LLM,
                            which will be merged with or override doc.metadata.
 
@@ -197,7 +196,7 @@ async def add_document(
     #     async with session.begin():
     #         final_metadata = {**(doc.metadata or {}), **(enriched_metadata or {})}
     #         # Find existing or create new Document row using doc properties and final_metadata
-    #         # stmt = insert(Document).values(...).on_conflict_do_update(...)
+    #         # stmt = insert(DocumentRecord).values(...).on_conflict_do_update(...)
     #         # result = await session.execute(stmt)
     #         # doc_id = result.inserted_primary_key[0] or fetch existing id
     #         pass
@@ -278,8 +277,8 @@ __all__ = [
     "add_embedding",
     "delete_document",
     "query_vectors",
-    "Document",  # Export models if needed for type hinting or direct use
-    "DocumentEmbedding",
+    "DocumentRecord",  # Export renamed SQLAlchemy model
+    "DocumentEmbeddingRecord", # Export renamed SQLAlchemy model
     "Base", # Export Base if needed for defining other models elsewhere
-    "IngestibleDocument", # Export the protocol
+    "Document", # Export the protocol (formerly IngestibleDocument)
 ]

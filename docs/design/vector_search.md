@@ -20,7 +20,7 @@
 
 ## 2. Database Schema (PostgreSQL with pgvector)
 
-We'll use two main tables: `documents` to store metadata about the original items, and `document_embeddings` to store various vector embeddings related to each document (e.g., for title, summary, content chunks).
+We'll use two main tables: `documents` (the persistent storage table, mapped to the `DocumentRecord` SQLAlchemy model) to store metadata about the original items, and `document_embeddings` (the persistent storage table, mapped to the `DocumentEmbeddingRecord` SQLAlchemy model) to store various vector embeddings related to each document (e.g., for title, summary, content chunks). The API uses a `Document` protocol for the external interface.
 
 ```sql
 -- Enable pgvector extension (if not already enabled)
@@ -95,8 +95,8 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 
 **Schema Notes:**
 
-*   **`documents` Table:** Holds high-level information. `source_id` ensures we don't ingest the same item twice. `metadata` allows storing arbitrary key-value pairs. The `title` field itself can be embedded.
-*   **`document_embeddings` Table:** Stores individual embeddings.
+*   **`documents` Table:** Holds high-level information. `source_id` ensures we don't ingest the same item twice. `metadata` allows storing arbitrary key-value pairs. The `title` field itself can be embedded. (Mapped to `DocumentRecord` model).
+*   **`document_embeddings` Table:** Stores individual embeddings. (Mapped to `DocumentEmbeddingRecord` model).
     *   `document_id`: Links back to the parent document.
     *   `chunk_index`: Supports multiple chunks per document (initially just 0).
     *   `embedding_type`: Crucial field indicating what the `embedding` represents (e.g., 'title', 'summary', 'content_chunk', 'ocr_text', 'image_clip'). Part of the composite key.
@@ -121,7 +121,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
     *   Prompt the LLM to analyze the content and extract relevant metadata according to the predefined **Metadata Schema Definition** (see above). Explicitly request the output in a structured JSON format.
     *   Validate the LLM's JSON output against the expected schema. Handle potential errors or missing fields.
 4.  **Document Record Creation:** Store the initial and LLM-extracted metadata (combined into the `metadata` JSONB field), `source_type`, `source_id`, `title`, `created_at`, etc., in the `documents` table. Retrieve the generated `document.id`.
-    *   The `add_document` storage function accepts an `IngestibleDocument` object conforming to a defined protocol, providing access to `source_type`, `source_id`, `title`, `created_at`, and base `metadata`. It also accepts an optional `enriched_metadata` dictionary.
+    *   The `add_document` storage function accepts a `Document` object conforming to a defined protocol, providing access to `source_type`, `source_id`, `title`, `created_at`, and base `metadata`. It also accepts an optional `enriched_metadata` dictionary.
 5.  **Content Extraction (Post-Document Record):**
     *   **Emails:** Parse the body, strip HTML/signatures, potentially focus on the main content.
     *   **Emails:** Parse the body, strip HTML/signatures. Extract subject separately for potential 'title' embedding.
@@ -243,8 +243,8 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 
 ## 6. Implementation Tasks
 
-*   [x] Define database schema (`documents`, `document_embeddings`). (Committed: 888a793)
-*   [x] Implement SQLAlchemy models (`Document`, `DocumentEmbedding`). (Committed: 19c5154)
+*   [x] Define database schema (`documents`, `document_embeddings`). (Committed: 8bd8135)
+*   [x] Implement SQLAlchemy models (`DocumentRecord`, `DocumentEmbeddingRecord`). (Committed: 8bd8135)
 *   [x] Create skeleton API (`vector_storage.py`) with function signatures. (Committed: 19c5154)
 *   [x] Integrate API skeleton into `storage.py` (imports, `init_db` call, `__all__`). (Committed: 19c5154, dadf507)
 *   [x] Implement `init_vector_db` to create extension and necessary partial indexes (example for gemini). (Committed: 19c5154)
