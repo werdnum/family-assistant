@@ -82,6 +82,29 @@ async def store_incoming_email(form_data: Dict[str, Any]):
     """
     logger.info("Parsing incoming email data for storage...")
 
+    email_date_parsed: Optional[datetime] = None
+    email_date_str = form_data.get("Date")
+    if email_date_str:
+        try:
+            email_date_parsed = parse_datetime(email_date_str)
+            # Ensure timezone-aware
+            if email_date_parsed.tzinfo is None:
+                # Assuming UTC if timezone is missing, adjust if needed based on common sources
+                email_date_parsed = email_date_parsed.replace(tzinfo=timezone.utc)
+        except Exception as e:
+            logger.warning(
+                f"Could not parse email Date header '{email_date_str}': {e}"
+            )
+
+    # Extract headers (Mailgun sends this as a JSON string representation of list of lists)
+    headers_list = None
+    headers_raw = form_data.get("message-headers")
+    if headers_raw:
+        try:
+            headers_list = json.loads(headers_raw)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Could not decode message-headers JSON: {e}")
+
     # Prepare data for insertion
     parsed_data = {
         "message_id_header": form_data.get("Message-Id"),
