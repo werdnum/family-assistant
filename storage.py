@@ -44,6 +44,7 @@ try:
 except ImportError:
     # Define placeholder types if vector_storage is not available
     class Base: pass # type: ignore
+    VectorBase = Base # type: ignore # Define here even if module fails to load
 logger = logging.getLogger(__name__)
 
 
@@ -52,11 +53,11 @@ logger = logging.getLogger(__name__)
 from email_storage import received_emails_table, store_incoming_email
 logger.info("Email storage module imported.")
 
-VectorBase = Base # type: ignore # noqa: E305 Needs to be after logger
-def init_vector_db(): pass # type: ignore # noqa: E305
-vector_storage = None  # type: ignore # noqa: E305
-VECTOR_STORAGE_ENABLED = False # noqa: E305
-logger.warning("vector_storage.py not found. Vector storage features disabled.") # noqa: E305
+# Re-check and set placeholder if VECTOR_STORAGE_ENABLED is False
+if not VECTOR_STORAGE_ENABLED:
+    def init_vector_db(): pass # type: ignore # noqa: E305
+    # vector_storage is already None from the except block
+    logger.warning("Vector storage features are disabled (vector_storage.py import likely failed).") # noqa: E305
 
 # --- Task Queue Functions ---
 
@@ -417,12 +418,14 @@ async def reschedule_task_for_retry(
 
 
 async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
-    """
-    Retrieves all tasks from the database, ordered by status and scheduled_at, with a limit.
-    """
-    max_retries = 3
-    base_delay = 0.5  # seconds
-
+        #         # Custom sorting based on status
+        #         # This might require a CASE statement or similar depending on DB flavor
+        #         # For simplicity, fetching all and sorting in Python might be easier for now
+        #         # Or fetch ordered by created_at desc and let UI handle grouping/sorting
+        #         # Let's try ordering by created_at desc for now.
+        #         tasks_table.c.created_at.desc()
+        #     )
+        # )
     """
     Retrieves tasks from the database, ordered by creation time descending, with a limit.
     Includes recurrence columns.
@@ -437,40 +440,7 @@ async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     )
 
     for attempt in range(max_retries):
-        # "failed": 2,  <- Removed stray lines
-        # "done": 3,    <- Removed stray lines
-        # }             <- Removed stray lines
-
-        # stmt = (      <- Removed duplicate statement definition
-        #     select(tasks_table)
-        #     .order_by(
-        #         # Custom sorting based on status
-        #         # This might require a CASE statement or similar depending on DB flavor
-        #         # For simplicity, fetching all and sorting in Python might be easier for now
-        #         # Or fetch ordered by created_at desc and let UI handle grouping/sorting
-        #         # Let's try ordering by created_at desc for now.
-        #         tasks_table.c.created_at.desc()
-        #     )
-        #     .limit(limit)
-        # )
-
         try:
-            async with engine.connect() as conn:
-                result = await conn.execute(
-                    stmt
-                )  # Use the stmt defined before the loop
-                rows = result.fetchall()
-                # Convert rows to dictionaries
-                tasks_list = [row._mapping for row in rows]
-                # The `return tasks_list` should happen after the connection block,
-                # so this was misplaced anyway. The correct return is later.
-                # Removing the leftover block below fixes the syntax error.
-                return tasks_list  # Return *after* converting rows, inside the 'with' block
-
-            # The loop continues below to handle retries...
-            # The 'try' block should be inside the loop.
-
-            # The actual try/except block for the database operation starts here:
             async with engine.connect() as conn:
                 result = await conn.execute(
                     stmt
@@ -522,9 +492,7 @@ __all__ = [
     "get_grouped_message_history",
     "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
-    "tasks_table",
-    "received_emails_table", # Export new email table
-    "store_incoming_email", # Export email storage function
+    "tasks_table", # Export task table
     "received_emails_table", # Export new email table
     "store_incoming_email", # Export email storage function
     "engine",

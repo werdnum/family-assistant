@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
-import json # Added for parsing headers_raw
+import json
 from dateutil.parser import parse as parse_datetime
 
 # Import metadata and engine from the main storage module
@@ -121,14 +121,13 @@ async def store_incoming_email(form_data: Dict[str, Any]):
     }
     logger.info(f"Parsed email data (not yet stored): {parsed_data}")
 
-    # --- Actual Database Insertion (Uncomment when ready) ---
-    # Placeholder for actual insertion:
-    # engine = get_engine()
-    # async with engine.connect() as conn:
-    #     stmt = insert(received_emails_table).values(**parsed_data)
-    #     await conn.execute(stmt)
-    #     await conn.commit()
-    #     logger.info(f"Stored email with Message-ID: {parsed_data['message_id_header']}") # noqa: E501
+    # --- Actual Database Insertion ---
+    engine = get_engine()
+    async with engine.connect() as conn:
+        stmt = sa.insert(received_emails_table).values(**parsed_data)
+        await conn.execute(stmt)
+        await conn.commit()
+        logger.info(f"Stored email with Message-ID: {parsed_data['message_id_header']}") # noqa: E501
 
 # Export symbols for use elsewhere
 __all__ = ["received_emails_table", "store_incoming_email"]
