@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
+from sqlalchemy.sql import insert, functions # Import functions explicitly
 from sqlalchemy.sql import insert
 from sqlalchemy.dialects.postgresql import JSONB
 import json

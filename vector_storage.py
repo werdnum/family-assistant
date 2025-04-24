@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB # Import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.sql import functions # Import functions explicitly
 
 from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
@@ -77,7 +78,7 @@ class DocumentRecord(Base):
         sa.DateTime(timezone=True), index=True
     )
     added_at: Mapped[datetime] = mapped_column(
-        sa.DateTime(timezone=True), server_default=sa.sql.func.now() # Use sa.sql.func.now()
+        sa.DateTime(timezone=True), server_default=functions.now() # Use explicit import
     ) # Use sa.sql.func.now() for server default
     metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
 
@@ -107,7 +108,7 @@ class DocumentEmbeddingRecord(Base):
     content_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
-    ) # Use sa.sql.func.now() for server default
+    ) # Use explicit import
 
     document_record: Mapped["DocumentRecord"] = sa.orm.relationship(
         "DocumentRecord", back_populates="embeddings"
