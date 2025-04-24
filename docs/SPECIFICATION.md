@@ -273,6 +273,7 @@ Core operations are provided in `storage.py`:
 
 *   `enqueue_task(task_id, task_type, payload=None, scheduled_at=None, notify_event=None)`: Adds a new task with status `pending`. Requires a unique `task_id`. Can optionally trigger an `asyncio.Event` for immediate tasks.
 *   `enqueue_task(task_id, task_type, payload=None, scheduled_at=None, max_retries=None, notify_event=None)`: Adds a new task with status `pending`. Requires a unique `task_id`. Can optionally override `max_retries` and trigger an `asyncio.Event` for immediate tasks. Includes retry logic for the database operation itself.
+
 *   `dequeue_task(worker_id, task_types)`: Attempts to atomically retrieve and lock the oldest, ready (`status='pending'`, `scheduled_at` is past or NULL, `retry_count < max_retries`) task matching one of the provided `task_types`, prioritizing tasks with fewer retries.
     *   It uses `SELECT ... FOR UPDATE SKIP LOCKED` logic (via SQLAlchemy's `with_for_update(skip_locked=True)`). This provides good concurrency on **PostgreSQL**.
     *   **Note:** On **SQLite**, `SKIP LOCKED` is not natively supported. SQLAlchemy's implementation might result in table-level locking during the transaction, potentially limiting concurrency if multiple workers access the same SQLite database file (which is generally discouraged).
