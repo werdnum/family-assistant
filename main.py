@@ -347,7 +347,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                         task_type=task_type,  # Same type
                                         payload=payload,  # Same payload
                                         scheduled_at=next_scheduled_dt,
-                                        max_retries=task_max_retries,  # Same retry policy
+                                        max_retries_override=task_max_retries,  # Same retry policy
                                         recurrence_rule=recurrence_rule_str,  # Keep the rule
                                         original_task_id=original_task_id,  # Link back to original
                                         notify_event=new_task_event,  # Notify if immediate
@@ -1007,7 +1007,7 @@ async def _generate_llm_response_for_chat(
     # --- Call LLM ---
     # Note: Typing notifications are omitted here for simplicity in this refactored function.
     # They could be added back if needed, perhaps by passing the `context` object.
-    try: # Move try block here
+    try:  # Move try block here
         # Get both response content and tool info from get_llm_response
         llm_response_content, tool_info = await get_llm_response(
             messages,
@@ -1018,7 +1018,7 @@ async def _generate_llm_response_for_chat(
             tool_name_to_server_id,
         )
         # Return both parts as a tuple
-        return llm_response_content, tool_info # Return tuple
+        return llm_response_content, tool_info  # Return tuple
     except Exception as e:
         logger.error(
             f"Error during LLM interaction for chat {chat_id}: {e}", exc_info=True
