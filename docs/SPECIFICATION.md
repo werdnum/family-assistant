@@ -28,7 +28,7 @@ Family members who need a centralized way to manage shared information and recei
     *   (Future) A dashboard view of upcoming events, reminders, etc.
     *   (Future) An alternative way to interact with the assistant (chat interface).
     *   (Future) Configuration options.
-*   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail`. Currently stores the email data. Further processing is future work.
+*   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail` and stores the parsed email data in the `received_emails` table. Further processing (e.g., LLM ingestion) is future work.
 
 *   **Interaction Layer:** Manages communication across Telegram, Email, and Web interfaces. It receives user input, forwards it for processing, and delivers responses/updates back to the user via the appropriate channel.
 *   **Processing Layer:**
@@ -83,7 +83,7 @@ Family members who need a centralized way to manage shared information and recei
 *   **Process:**
     1.  **Interaction Layer** (or dedicated ingestion service) receives the data. Note: Image attachments in regular messages are handled by Direct Interaction.
     2.  **Processing Layer** attempts to parse structured data first (if applicable format is known, e.g., `.ics` files).
-    3.  If parsing fails or data is unstructured (e.g., plain email body), the **LLM** (Future) could be used to extract key information (dates, times, event names, confirmation numbers, etc.). Currently, raw email data is stored.
+    3.  If parsing fails or data is unstructured (e.g., plain email body), the **LLM** (Future) could be used to extract key information (dates, times, event names, confirmation numbers, etc.). Currently, raw email data is stored in the `received_emails` table.
     4.  Extracted/parsed information is structured and saved to the `memories` table in the **Data Store**, linked to the source and timestamp. If it's clearly a calendar event, it might also be added directly to the main calendar.
     5.  Optional: Assistant confirms successful ingestion via the **Interaction Layer**.
 *   **Examples:**
@@ -129,7 +129,7 @@ Family members who need a centralized way to manage shared information and recei
     *   Receive notifications for due reminders (likely requires a scheduled task to check the calendar).
 *   **(Future) Email Ingestion:** Process information from forwarded emails.
 *   **Email Storage:** Incoming emails received via webhook are parsed and stored in the database (basic storage, deeper processing/ingestion is Future).
-
+*   **(Future) External Data Integration:** Fetch data like weather forecasts directly or via MCP.
 ## 6. Data Store Design Considerations
 
 *   A structured relational database (e.g., SQLite, PostgreSQL) is recommended for easier querying and management.
@@ -138,7 +138,6 @@ Family members who need a centralized way to manage shared information and recei
     *   `notes`: Stores user-created notes (id, title, content, created\_at, updated\_at). Title is unique.
     *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info).
 *   External Data:
-    *   `received_emails`: Stores details of emails received via webhook. Columns include:
     *   `received_emails`: Stores details of emails received via webhook. Columns include:
         *   `id`: Internal auto-incrementing ID.
         *   `message_id_header`: Unique identifier from the email's `Message-ID` header (indexed).
@@ -237,7 +236,7 @@ The following features from the specification are currently implemented:
 
 *   Calendar Integration (writing events via CalDAV): Requires implementing write tools and enhanced configuration to specify target calendars.
 *   Reminders (setting/notifying): Dependent on calendar write access and configuration for a dedicated reminders calendar.
-*   Email Ingestion (processing beyond storage): Extracting structured information from stored emails.
+*   Email Ingestion (LLM processing beyond storage): Extracting structured information from stored emails using the LLM.
 *   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks): `APScheduler` is present but not integrated into the main loop.
 *   Advanced Web UI features (dashboard, chat).
 *   User profiles/preferences table.

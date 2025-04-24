@@ -69,7 +69,7 @@ received_emails_table = sa.Table(
 async def store_incoming_email(form_data: Dict[str, Any]):
     """
     Parses incoming email data (from Mailgun webhook form) and prepares it for storage.
-    Currently, this function only logs the parsed data and does NOT insert into the database.
+    Stores the parsed data in the `received_emails` table.
 
     Args:
         form_data: A dictionary representing the form data received from the webhook.
@@ -99,8 +99,7 @@ async def store_incoming_email(form_data: Dict[str, Any]):
         except json.JSONDecodeError as e:
             logger.warning(f"Could not decode message-headers JSON: {e}")
 
-    # TODO: Add database insertion logic here in the next step
-    # For now, just log the data we plan to insert
+    # Prepare data for insertion
     parsed_data = {
         "message_id_header": form_data.get("Message-Id"),
         "sender_address": form_data.get("sender"),
@@ -119,7 +118,7 @@ async def store_incoming_email(form_data: Dict[str, Any]):
         "mailgun_timestamp": form_data.get("timestamp"),
         "mailgun_token": form_data.get("token"),
     }
-    logger.info(f"Parsed email data (not yet stored): {parsed_data}")
+    logger.info(f"Parsed email data for storage: {parsed_data}")
 
     # --- Actual Database Insertion ---
     engine = get_engine()
@@ -131,4 +130,3 @@ async def store_incoming_email(form_data: Dict[str, Any]):
 
 # Export symbols for use elsewhere
 __all__ = ["received_emails_table", "store_incoming_email"]
-

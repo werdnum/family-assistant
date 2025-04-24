@@ -277,6 +277,6 @@ __all__ = [
     "query_vectors",
     "DocumentRecord",  # Export SQLAlchemy model
     "DocumentEmbeddingRecord", # Export SQLAlchemy model
-    "Base", # Export Base if needed for defining other models elsewhere
+    "Base", # Export Base if needed for defining other models elsewhere (already exported)
     "Document", # Export the protocol (formerly IngestibleDocument)
 ]

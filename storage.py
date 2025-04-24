@@ -39,7 +39,7 @@ try:
         query_vectors,
     )  # Explicit imports
 
-    VECTOR_STORAGE_ENABLED = True
+    VECTOR_STORAGE_ENABLED = True # Keep this True initially
     logger.info("Vector storage module imported successfully.")
 except ImportError:
     # Define placeholder types if vector_storage is not available
@@ -54,7 +54,8 @@ from email_storage import received_emails_table, store_incoming_email
 logger.info("Email storage module imported.")
 
 # Re-check and set placeholder if VECTOR_STORAGE_ENABLED is False
-if not VECTOR_STORAGE_ENABLED:
+# This should happen AFTER the initial attempt to import
+if 'VECTOR_STORAGE_ENABLED' not in locals() or not VECTOR_STORAGE_ENABLED:
     def init_vector_db(): pass # type: ignore # noqa: E305
     # vector_storage is already None from the except block
     logger.warning("Vector storage features are disabled (vector_storage.py import likely failed).") # noqa: E305
@@ -418,14 +419,6 @@ async def reschedule_task_for_retry(
 
 
 async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
-        #         # Custom sorting based on status
-        #         # This might require a CASE statement or similar depending on DB flavor
-        #         # For simplicity, fetching all and sorting in Python might be easier for now
-        #         # Or fetch ordered by created_at desc and let UI handle grouping/sorting
-        #         # Let's try ordering by created_at desc for now.
-        #         tasks_table.c.created_at.desc()
-        #     )
-        # )
     """
     Retrieves tasks from the database, ordered by creation time descending, with a limit.
     Includes recurrence columns.
