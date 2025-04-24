@@ -970,7 +970,7 @@ async def add_or_update_note(title: str, content: str):
 
                 await conn.execute(stmt)
                 await conn.commit()
-                return  # Success
+                return "Success"
             # End of with block for conn
         except DBAPIError as e:
             # Note: Retrying might lead to race conditions if two updates happen concurrently.
