@@ -85,7 +85,7 @@ async def schedule_recurring_task_tool(
             task_type=task_type,
             payload=payload,
             scheduled_at=initial_dt,
-            max_retries=max_retries,
+            max_retries_override=max_retries, # Correct argument name
             recurrence_rule=recurrence_rule,
             # original_task_id=None, # Let enqueue_task handle setting it to initial_task_id
             # notify_event=new_task_event # No immediate notification needed usually
