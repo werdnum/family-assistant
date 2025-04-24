@@ -17,8 +17,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
-# Import from db_base
 from db_base import metadata, get_engine
+# Import from db_base
 logger = logging.getLogger(__name__)
 
 
@@ -143,7 +143,7 @@ class DocumentEmbeddingRecord(Base):
 
 async def init_vector_db():
     """Initializes the vector database components (extension, indexes). Tables are created by storage.init_db."""
-    engine = get_engine()  # Use engine from db_base.py
+    engine = get_engine()  # Use engine from storage.py
     async with engine.begin() as conn:
         # Tables are created via Base.metadata in storage.init_db
         # Manually create extensions and partial indexes that SQLAlchemy might not handle directly
