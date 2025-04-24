@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
-from sqlalchemy.sql import insert # Explicit import
+from sqlalchemy.sql import insert, func # Import func for server_default
 from sqlalchemy.dialects.postgresql import JSONB
 import json
 from dateutil.parser import parse as parse_datetime
@@ -54,7 +54,7 @@ received_emails_table = sa.Table(
     sa.Column(
         "received_at",
         sa.DateTime(timezone=True),
-        server_default=sa.func.now, # Use sa.func.now directly for server default
+        server_default=func.now(), # Use sa.sql.func.now()
         nullable=False,
         index=True,
     ),  # Timestamp when the webhook was received
