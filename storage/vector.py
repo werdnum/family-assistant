@@ -26,7 +26,7 @@ from sqlalchemy.sql import functions  # Import functions explicitly
 
 from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
-from .db_base import metadata, get_engine  # Correctly import from db_base
+from storage.db_base import metadata, get_engine  # Correctly import from db_base
 
 logger = logging.getLogger(__name__)
 

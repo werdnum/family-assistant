@@ -8,25 +8,25 @@ from dateutil import rrule  # Added for recurrence calculation
 from dateutil.parser import isoparse  # Added for parsing dates in recurrence
 
 # Import base components
-from .db_base import metadata, get_engine, engine  # Import engine directly too
+from storage.db_base import metadata, get_engine, engine  # Import engine directly too
 
 # Import specific storage modules
-from .notes import (
+from storage.notes import (
     notes_table,
     add_or_update_note,
     get_all_notes,
     get_note_by_title,
     delete_note,
 )
-from .email import received_emails_table, store_incoming_email
-from .message_history import (
+from storage.email import received_emails_table, store_incoming_email
+from storage.message_history import (
     message_history_table,
     add_message_to_history,
     get_recent_history,
     get_message_by_id,
     get_grouped_message_history,
 )
-from .tasks import (
+from storage.tasks import (
     tasks_table,
     enqueue_task,
     dequeue_task,
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # --- Vector Storage Imports ---
 try:
-    from .vector import (
+    from storage.vector import (
         Base as VectorBase,
         init_vector_db,
         add_document,
