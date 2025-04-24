@@ -54,15 +54,16 @@ __all__ = [
     "init_db",
     "get_all_notes",
     "get_engine",  # Export the engine creation function/getter
-    "get_engine",  # Export the engine creation function/getter
     "add_message_to_history",
     "get_recent_history",
     "get_message_by_id",
+
     "add_or_update_note",
     "delete_note",
     "enqueue_task",
     "dequeue_task",
     "update_task_status",
+    "reschedule_task_for_retry",
     "reschedule_task_for_retry",
     "get_all_tasks",  # Added
     "get_grouped_message_history",

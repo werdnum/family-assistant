@@ -128,7 +128,7 @@ async def store_incoming_email(form_data: Dict[str, Any]):
     logger.info(f"Parsed email data for storage: {parsed_data}")
 
     # --- Actual Database Insertion ---
-    engine = get_engine()
+    async with engine.connect() as conn:
         stmt = insert(received_emails_table).values(**parsed_data) # Use explicit insert
         await conn.execute(stmt)
         await conn.commit()
