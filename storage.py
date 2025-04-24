@@ -22,6 +22,7 @@ from sqlalchemy import (
 import asyncio
 import random
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.dialects.postgresql import JSONB # For type hints if needed later
 from sqlalchemy.ext.asyncio import create_async_engine
 from dateutil import rrule  # Added for recurrence calculation
 from dateutil.parser import isoparse  # Added for parsing dates in recurrence
@@ -41,12 +42,22 @@ try:
     VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
 except ImportError:
+    # Define placeholder types if vector_storage is not available
+    class Base: pass # type: ignore
+    VectorBase = Base # type: ignore
+    def init_vector_db(): pass # type: ignore
+
     vector_storage = None  # type: ignore
     VECTOR_STORAGE_ENABLED = False
     logger.warning("vector_storage.py not found. Vector storage features disabled.")
 
 logger = logging.getLogger(__name__)
 
+
+# --- Email Storage Imports ---
+# Always import, the table definition needs to be attached to metadata
+from email_storage import received_emails_table, store_incoming_email
+logger.info("Email storage module imported.")
 
 # --- Task Queue Functions ---
 
@@ -513,6 +524,8 @@ __all__ = [
     "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
     "message_history",
     "tasks_table",
+    "received_emails_table", # Export new email table
+    "store_incoming_email", # Export email storage function
     "engine",
     "metadata",
     # Vector Storage Exports (conditional)
