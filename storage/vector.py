@@ -91,7 +91,7 @@ class DocumentRecord(Base):
         sa.DateTime(timezone=True),
         server_default=functions.now(),  # Use explicit import
     )  # Use sa.sql.func.now() for server default
-    metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    doc_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB) # Renamed from metadata
 
     embeddings: Mapped[List["DocumentEmbeddingRecord"]] = sa.orm.relationship(
         "DocumentEmbeddingRecord",
@@ -100,7 +100,7 @@ class DocumentRecord(Base):
     )
 
     __table_args__ = (
-        sa.Index("idx_documents_metadata", metadata, postgresql_using="gin"),
+        sa.Index("idx_documents_doc_metadata", doc_metadata, postgresql_using="gin"), # Updated index definition
     )
 
 
@@ -185,8 +185,8 @@ async def init_vector_db():
 
 async def add_document(
     doc: Document,  # Use the renamed Protocol
-    enriched_metadata: Optional[
-        Dict[str, Any]
+    enriched_doc_metadata: Optional[ # Renamed parameter for clarity
+        Dict[str, Any] # Renamed parameter for clarity
     ] = None,  # Allow passing LLM enriched metadata
 ) -> int:
     """
@@ -196,22 +196,24 @@ async def add_document(
     Allows overriding or augmenting metadata with an optional enriched_metadata dictionary.
 
     Args:
-        doc: An object conforming to the Document protocol.
-        enriched_metadata: Optional dictionary containing metadata potentially enriched by an LLM,
-                           which will be merged with or override doc.metadata.
+        doc: An object conforming to the Document protocol (which has a .metadata property).
+        enriched_doc_metadata: Optional dictionary containing metadata potentially enriched by an LLM,
+                           which will be merged with or override the data from doc.metadata.
 
     Returns:
         The database ID of the added or existing document.
     """
     # TODO: Implement actual insert/conflict handling logic
-    logger.info(f"Skeleton: Adding document with source_id {doc.source_id}")
+    logger.info(f"Skeleton: Adding document record with source_id {doc.source_id}")
     # Example (needs proper async session handling and error checking):
     # async with async_sessionmaker(get_engine())() as session:
     #     async with session.begin():
-    #         final_metadata = {**(doc.metadata or {}), **(enriched_metadata or {})}
-    #         # Find existing or create new Document row using doc properties and final_metadata
-    #         # stmt = insert(DocumentRecord).values(...).on_conflict_do_update(...)
-    #         # result = await session.execute(stmt)
+    #         # Merge data from doc.metadata (protocol method) and the enriched parameter
+    #         final_doc_metadata = {**(doc.metadata or {}), **(enriched_doc_metadata or {})}
+    #         # Find existing or create new DocumentRecord row using doc properties
+    #         # Store the merged data into the 'doc_metadata' database column
+    #         # stmt = insert(DocumentRecord).values(..., doc_metadata=final_doc_metadata, ...).on_conflict_do_update(...) # Store in renamed column
+    #         # result = await session.execute(stmt) # Store in renamed column
     #         # doc_id = result.inserted_primary_key[0] or fetch existing id
     #         pass
     return 1  # Placeholder
