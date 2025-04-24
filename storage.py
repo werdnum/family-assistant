@@ -49,6 +49,11 @@ logger = logging.getLogger(__name__)
 
 # Add vector storage models to the same metadata object if enabled
 if VECTOR_STORAGE_ENABLED:
+    if 'VectorBase' in locals() and hasattr(VectorBase, 'metadata'):
+        VectorBase.metadata = metadata
+    else:
+        # This case should ideally not happen if VECTOR_STORAGE_ENABLED is true, but defensively log.
+        logger.warning("VECTOR_STORAGE_ENABLED is True, but VectorBase not found or has no metadata attribute. Vector models might not be created.")
 
 __all__ = [
     "init_db",
