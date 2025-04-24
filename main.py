@@ -346,7 +346,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                         task_id=next_task_id,
                                         task_type=task_type,  # Same type
                                         payload=payload,  # Same payload
-                                        scheduled_at=next_scheduled_dt,
+                                        scheduled_at=next_scheduled_dt, # Use correct arg name
                                         max_retries=task_max_retries,  # Same retry policy
                                         recurrence_rule=recurrence_rule_str,  # Keep the rule
                                         original_task_id=original_task_id,  # Link back to original
