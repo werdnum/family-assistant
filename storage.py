@@ -44,13 +44,6 @@ try:
 except ImportError:
     # Define placeholder types if vector_storage is not available
     class Base: pass # type: ignore
-    VectorBase = Base # type: ignore
-    def init_vector_db(): pass # type: ignore
-
-    vector_storage = None  # type: ignore
-    VECTOR_STORAGE_ENABLED = False
-    logger.warning("vector_storage.py not found. Vector storage features disabled.")
-
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +51,12 @@ logger = logging.getLogger(__name__)
 # Always import, the table definition needs to be attached to metadata
 from email_storage import received_emails_table, store_incoming_email
 logger.info("Email storage module imported.")
+
+VectorBase = Base # type: ignore # noqa: E305 Needs to be after logger
+def init_vector_db(): pass # type: ignore # noqa: E305
+vector_storage = None  # type: ignore # noqa: E305
+VECTOR_STORAGE_ENABLED = False # noqa: E305
+logger.warning("vector_storage.py not found. Vector storage features disabled.") # noqa: E305
 
 # --- Task Queue Functions ---
 
@@ -526,6 +525,8 @@ __all__ = [
     "tasks_table",
     "received_emails_table", # Export new email table
     "store_incoming_email", # Export email storage function
+    "received_emails_table", # Export new email table
+    "store_incoming_email", # Export email storage function
     "engine",
     "metadata",
     # Vector Storage Exports (conditional)
@@ -535,6 +536,8 @@ if VECTOR_STORAGE_ENABLED and vector_storage:
     __all__.extend(
         [
             "add_document",
+            "VectorBase", # Export the Base class for models
+            "init_vector_db",
             "get_document_by_source_id",
             "add_embedding",
             "delete_document",
@@ -549,11 +552,6 @@ engine = create_async_engine(
     DATABASE_URL, echo=False
 )  # Set echo=True for debugging SQL
 metadata = MetaData()
-
-
-def get_engine():
-    """Returns the initialized SQLAlchemy async engine."""
-    return engine
 
 
 def get_engine():

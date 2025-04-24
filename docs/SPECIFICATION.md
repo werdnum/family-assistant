@@ -21,14 +21,14 @@ Family members who need a centralized way to manage shared information and recei
 *   **Email (Secondary):**
     *   Users can forward emails (e.g., confirmations, invites) to a dedicated address for ingestion.
     *   The assistant might send certain notifications or summaries via email (TBD).
-*   **Web (Secondary):** A web interface (implemented using FastAPI and Jinja2) provides:
-    *   A UI to view, add, edit, and delete notes stored in the database.
+*   **Web (Secondary):** A web interface (implemented using FastAPI and Jinja2) currently provides:
+    *   A UI to view, add, edit, and delete notes (`/`, `/notes/add`, `/notes/edit/{title}`).
+    *   A view of recent message history (`/history`).
+    *   A view of recent background tasks (`/tasks`).
     *   (Future) A dashboard view of upcoming events, reminders, etc.
     *   (Future) An alternative way to interact with the assistant (chat interface).
     *   (Future) Configuration options.
-*   **Email (Future):**
-    *   Users can forward emails (e.g., confirmations, invites) to a dedicated address for ingestion.
-    *   The assistant might send certain notifications or summaries via email.
+*   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail` for storage. Further processing is future work.
 
 ## 3. Architecture Overview
 
@@ -157,6 +157,20 @@ The system will consist of the following core components:
         *   `email_date`: Timestamp from the email's `Date` header (parsed, timezone-aware, nullable, indexed).
         *   `headers_json`: Raw headers stored as JSONB (nullable).
         *   `attachment_info`: Placeholder for JSONB array containing metadata about attachments (filename, content_type, size, storage_path) (nullable).
+    *   `received_emails`: Stores details of emails received via webhook. Columns include:
+        *   `id`: Internal auto-incrementing ID.
+        *   `message_id_header`: Unique identifier from the email's `Message-ID` header (indexed).
+        *   `sender_address`: Envelope sender address (e.g., from Mailgun's `sender` field, indexed).
+        *   `from_header`: Content of the `From` header.
+        *   `recipient_address`: Envelope recipient address (e.g., from Mailgun's `recipient` field, indexed).
+        *   `to_header`: Content of the `To` header.
+        *   `cc_header`: Content of the `Cc` header (nullable).
+        *   `subject`: Email subject (nullable).
+        *   `body_plain`, `body_html`, `stripped_text`, `stripped_html`: Various versions of the email body content (nullable).
+        *   `received_at`: Timestamp when the webhook was received (indexed).
+        *   `email_date`: Timestamp from the email's `Date` header (parsed, timezone-aware, nullable, indexed).
+        *   `headers_json`: Raw headers stored as JSONB (nullable).
+        *   `attachment_info`: Placeholder for JSONB array containing metadata about attachments (filename, content_type, size, storage_path) (nullable).
     *   Calendar events are fetched live via CalDAV/iCal and are *not* stored in the local database.
 *   (Future) Potential Tables:
     *   `events`: Could potentially cache calendar items or store locally managed events/deadlines.
@@ -210,6 +224,7 @@ The following features from the specification are currently implemented:
     *   `notes` table for storing notes (id, title, content, timestamps).
     *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info JSON).
     *   `tasks` table for the background task queue (see Section 10).
+    *   `received_emails` table for storing incoming email details (schema defined, basic webhook processing in place, no DB insertion yet).
     *   `received_emails` table for storing incoming email details (schema defined, basic webhook processing in place, no DB insertion yet).
 *   **LLM Context:**
     *   System prompt includes:

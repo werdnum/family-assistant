@@ -162,12 +162,13 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 4.  **Database Query:** Execute a SQL query combining vector search and metadata filtering:
     *   **Hybrid Approach:** Retrieve candidates using both vector similarity and FTS matching, then combine and re-rank the results. Reciprocal Rank Fusion (RRF) is a common technique.
     
+
     ```sql
     WITH relevant_docs AS (
         SELECT id
         FROM documents
-        WHERE source_type IN ('pdf', 'image') -- Example filter
-          AND created_at >= '2024-01-01'      -- Example filter
+        WHERE source_type IN ('pdf', 'image') -- Example filter based on query analysis
+          AND created_at >= '2024-01-01'      -- Example filter based on query analysis
           -- AND metadata->>'sender' = 'IRS' -- Example JSONB filter
           -- AND title ILIKE '%IRS%'       -- Example title filter
     )
@@ -179,7 +180,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
           ROW_NUMBER() OVER (ORDER BY de.embedding <=> $<query_embedding>::vector ASC) as vec_rank
       FROM document_embeddings de
       WHERE de.document_id IN (SELECT id FROM relevant_docs)
-        AND de.embedding_model = $<model_identifier> -- Filter to use the correct partial index
+        AND de.embedding_model = $<model_identifier> -- *REQUIRED* filter to use the correct partial index
         -- AND de.embedding_type IN ('title', 'summary', 'content_chunk') -- Optional filter
       ORDER BY distance ASC
       LIMIT 50 -- Retrieve more candidates for potential re-ranking
@@ -205,14 +206,15 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
         de.embedding_type,
         de.content AS embedding_source_content, -- The text that was embedded (if applicable)
         vr.distance,
+        vr.vec_rank, -- Include rank for RRF
         fr.score AS fts_score,
+        fr.fts_rank, -- Include rank for RRF
         -- Calculate RRF score (k=60 is a common default)
         COALESCE(1.0 / (60 + vr.vec_rank), 0.0) + COALESCE(1.0 / (60 + fr.fts_rank), 0.0) AS rrf_score
     FROM document_embeddings de
     JOIN documents d ON de.document_id = d.id
     LEFT JOIN vector_results vr ON de.id = vr.embedding_id
-    JOIN documents d ON de.document_id = d.id
-    WHERE de.document_id IN (SELECT id FROM relevant_docs)
+    LEFT JOIN fts_results fr ON de.id = fr.embedding_id
     WHERE vr.embedding_id IS NOT NULL OR fr.embedding_id IS NOT NULL -- Must appear in at least one result set
     ORDER BY rrf_score DESC -- Order by the combined RRF score
     LIMIT 10; -- Limit results
