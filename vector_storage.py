@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 # --- Protocol Definition ---
 class Document(Protocol):
     """Defines the interface for documents that can be ingested into vector storage."""    """Defines the interface for document objects that can be ingested into vector storage."""
-    """Defines the interface for document objects that can be ingested into vector storage."""
     @property
     def source_type(self) -> str:
         """The type of the source (e.g., 'email', 'pdf', 'note')."""
@@ -276,7 +275,8 @@ __all__ = [
     "add_embedding",
     "delete_document",
     "query_vectors",
-    "DocumentRecord",  # Export renamed SQLAlchemy model
-    "DocumentEmbeddingRecord", # Export renamed SQLAlchemy model    "Base", # Export Base if needed for defining other models elsewhere
+    "DocumentRecord",  # Export SQLAlchemy model
+    "DocumentEmbeddingRecord", # Export SQLAlchemy model
+    "Base", # Export Base if needed for defining other models elsewhere
     "Document", # Export the protocol (formerly IngestibleDocument)
 ]

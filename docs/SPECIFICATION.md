@@ -21,18 +21,14 @@ Family members who need a centralized way to manage shared information and recei
 *   **Email (Secondary):**
     *   Users can forward emails (e.g., confirmations, invites) to a dedicated address for ingestion.
     *   The assistant might send certain notifications or summaries via email (TBD).
-*   **Web (Secondary):** A web interface (implemented using FastAPI and Jinja2) currently provides:
+*   **Web (Secondary):** A web interface (implemented using FastAPI and Jinja2) provides:
     *   A UI to view, add, edit, and delete notes (`/`, `/notes/add`, `/notes/edit/{title}`).
     *   A view of recent message history (`/history`).
     *   A view of recent background tasks (`/tasks`).
     *   (Future) A dashboard view of upcoming events, reminders, etc.
     *   (Future) An alternative way to interact with the assistant (chat interface).
     *   (Future) Configuration options.
-*   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail` for storage. Further processing is future work.
-
-## 3. Architecture Overview
-
-The system will consist of the following core components:
+*   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail`. Currently stores the email data. Further processing is future work.
 
 *   **Interaction Layer:** Manages communication across Telegram, Email, and Web interfaces. It receives user input, forwards it for processing, and delivers responses/updates back to the user via the appropriate channel.
 *   **Processing Layer:**
@@ -87,7 +83,7 @@ The system will consist of the following core components:
 *   **Process:**
     1.  **Interaction Layer** (or dedicated ingestion service) receives the data. Note: Image attachments in regular messages are handled by Direct Interaction.
     2.  **Processing Layer** attempts to parse structured data first (if applicable format is known, e.g., `.ics` files).
-    3.  If parsing fails or data is unstructured (e.g., plain email body), the **LLM** (Future) is used to extract key information (dates, times, event names, confirmation numbers, etc.). Currently, raw email data is stored.
+    3.  If parsing fails or data is unstructured (e.g., plain email body), the **LLM** (Future) could be used to extract key information (dates, times, event names, confirmation numbers, etc.). Currently, raw email data is stored.
     4.  Extracted/parsed information is structured and saved to the `memories` table in the **Data Store**, linked to the source and timestamp. If it's clearly a calendar event, it might also be added directly to the main calendar.
     5.  Optional: Assistant confirms successful ingestion via the **Interaction Layer**.
 *   **Examples:**
@@ -128,7 +124,6 @@ The system will consist of the following core components:
     *   Introduce tools allowing the LLM to add or update events on specific calendars.
     *   This will require a more robust configuration system for calendars, allowing administrators to define multiple calendars with distinct purposes (e.g., "Main Family Calendar", "Work Calendar", "Kids Activities", "Reminders").
     *   The LLM will need context about these available calendars (names, descriptions of purpose) to choose the correct one when a user requests adding an event (e.g., "Add dentist appointment..." vs. "Remind me to...").
-    *   Implementation likely requires CalDAV write capabilities.
 *   **(Future) Reminders:**
     *   Set reminders via natural language (stored on a dedicated 'Reminders' calendar, requiring write access and configuration as described above).
     *   Receive notifications for due reminders (likely requires a scheduled task to check the calendar).
@@ -144,19 +139,6 @@ The system will consist of the following core components:
     *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info).
 *   External Data:
     *   `received_emails`: Stores details of emails received via webhook. Columns include:
-        *   `id`: Internal auto-incrementing ID.
-        *   `message_id_header`: Unique identifier from the email's `Message-ID` header (indexed).
-        *   `sender_address`: Envelope sender address (e.g., from Mailgun's `sender` field, indexed).
-        *   `from_header`: Content of the `From` header.
-        *   `recipient_address`: Envelope recipient address (e.g., from Mailgun's `recipient` field, indexed).
-        *   `to_header`: Content of the `To` header.
-        *   `cc_header`: Content of the `Cc` header (nullable).
-        *   `subject`: Email subject (nullable).
-        *   `body_plain`, `body_html`, `stripped_text`, `stripped_html`: Various versions of the email body content (nullable).
-        *   `received_at`: Timestamp when the webhook was received (indexed).
-        *   `email_date`: Timestamp from the email's `Date` header (parsed, timezone-aware, nullable, indexed).
-        *   `headers_json`: Raw headers stored as JSONB (nullable).
-        *   `attachment_info`: Placeholder for JSONB array containing metadata about attachments (filename, content_type, size, storage_path) (nullable).
     *   `received_emails`: Stores details of emails received via webhook. Columns include:
         *   `id`: Internal auto-incrementing ID.
         *   `message_id_header`: Unique identifier from the email's `Message-ID` header (indexed).
@@ -225,7 +207,6 @@ The following features from the specification are currently implemented:
     *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info JSON).
     *   `tasks` table for the background task queue (see Section 10).
     *   `received_emails` table for storing incoming email details (schema defined, basic webhook processing in place, no DB insertion yet).
-    *   `received_emails` table for storing incoming email details (schema defined, basic webhook processing in place, no DB insertion yet).
 *   **LLM Context:**
     *   System prompt includes:
         *   Current time (timezone-aware via `TIMEZONE` env var).
@@ -255,8 +236,8 @@ The following features from the specification are currently implemented:
 **Features Not Yet Implemented:**
 
 *   Calendar Integration (writing events via CalDAV): Requires implementing write tools and enhanced configuration to specify target calendars.
-*   Reminders (setting/notifying).
-*   Email Ingestion.
+*   Reminders (setting/notifying): Dependent on calendar write access and configuration for a dedicated reminders calendar.
+*   Email Ingestion (processing beyond storage): Extracting structured information from stored emails.
 *   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks): `APScheduler` is present but not integrated into the main loop.
 *   Advanced Web UI features (dashboard, chat).
 *   User profiles/preferences table.

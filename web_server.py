@@ -112,8 +112,7 @@ async def handle_mail_webhook(request: Request):
     try:
         # Mailgun sends data as multipart/form-data
         form_data = await request.form()
-        # Convert form_data (an immutable MultiDict) to a regular dict
-        await email_storage.store_incoming_email(dict(form_data))
+        await email_storage.store_incoming_email(dict(form_data)) # Convert MultiDict to dict
         # TODO: Add logic here to parse/store email content or trigger LLM processing
         # -----------------------------------------
 

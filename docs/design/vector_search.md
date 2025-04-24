@@ -169,6 +169,8 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
         FROM documents
         WHERE source_type IN ('pdf', 'image') -- Example filter based on query analysis
           AND created_at >= '2024-01-01'      -- Example filter based on query analysis
+        WHERE source_type IN ('pdf', 'image') -- Example filter based on query analysis
+          AND created_at >= '2024-01-01'      -- Example filter based on query analysis
           -- AND metadata->>'sender' = 'IRS' -- Example JSONB filter
           -- AND title ILIKE '%IRS%'       -- Example title filter
     )
@@ -180,6 +182,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
           ROW_NUMBER() OVER (ORDER BY de.embedding <=> $<query_embedding>::vector ASC) as vec_rank
       FROM document_embeddings de
       WHERE de.document_id IN (SELECT id FROM relevant_docs)
+        AND de.embedding_model = $<model_identifier> -- *REQUIRED* filter to use the correct partial index
         AND de.embedding_model = $<model_identifier> -- *REQUIRED* filter to use the correct partial index
         -- AND de.embedding_type IN ('title', 'summary', 'content_chunk') -- Optional filter
       ORDER BY distance ASC
@@ -208,7 +211,6 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
         vr.distance,
         vr.vec_rank, -- Include rank for RRF
         fr.score AS fts_score,
-        fr.fts_rank, -- Include rank for RRF
         -- Calculate RRF score (k=60 is a common default)
         COALESCE(1.0 / (60 + vr.vec_rank), 0.0) + COALESCE(1.0 / (60 + fr.fts_rank), 0.0) AS rrf_score
     FROM document_embeddings de

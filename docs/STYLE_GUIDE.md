@@ -21,6 +21,7 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Use `snake_case` for variables, functions, and methods.
 *   Use `PascalCase` for classes.
 
+*   Use `UPPER_SNAKE_CASE` for constants.
 ## Imports
 
 *   Group imports in the following order:
@@ -36,6 +37,7 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Obtain loggers using `logging.getLogger(__name__)` at the module level.
 *   Use appropriate log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL).
 *   Be mindful of sensitive information in logs.
+*   Keep log messages concise but informative.
 
 ## Error Handling
 
@@ -48,3 +50,4 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Use `async` and `await` consistently for I/O-bound operations.
 *   Be mindful of blocking operations in asynchronous code.
 *   Use `asyncio` primitives (locks, events, queues) correctly.
+*   Use `asyncio.TaskGroup` or `asyncio.gather` for concurrent operations where appropriate.
