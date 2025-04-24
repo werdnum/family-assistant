@@ -55,7 +55,7 @@ received_emails_table = sa.Table(
     sa.Column(
         "received_at",
         sa.DateTime(timezone=True),
-        server_default=sa.sql.functions.now(),
+        server_default=functions.now(), # Use explicit import
         nullable=False,
         index=True,
     ),  # Timestamp when the webhook was received
