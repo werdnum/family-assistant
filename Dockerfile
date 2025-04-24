@@ -21,10 +21,10 @@ WORKDIR /app
 # --- Install Python Dependencies ---
 # Define the cache directory for uv
 ENV UV_CACHE_DIR=/uv-cache
-# Copy only the requirements file first to leverage Docker cache
-COPY requirements.txt .
-# Create a virtual environment
+
 RUN uv venv /app/.venv
+
+COPY requirements.txt .
 # Install Python dependencies into the virtual environment
 # Note: uv pip install automatically detects and uses .venv in the current dir if it exists
 # We don't need --system anymore.
@@ -87,7 +87,7 @@ ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 
 # --- Copy Application Code ---
 # Copy the rest of the application code and configuration
-COPY main.py processing.py storage.py web_server.py calendar_integration.py ./
+COPY *.py ./
 COPY prompts.yaml mcp_config.json ./
 COPY templates/ ./templates/
 COPY static/ ./static/

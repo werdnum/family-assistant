@@ -16,13 +16,13 @@ logger = logging.getLogger(__name__)
 metadata = MetaData()
 
 # Define database engine
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db"
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db")
 engine = create_async_engine(DATABASE_URL, echo=False)
-logger.info(f"SQLAlchemy engine created for URL: {DATABASE_URL.split('@')[-1]}") # Log URL safely
+logger.info(
+    f"SQLAlchemy engine created for URL: {DATABASE_URL.split('@')[-1]}"
+)  # Log URL safely
+
 
 def get_engine():
     """Returns the initialized SQLAlchemy async engine."""
     return engine
-

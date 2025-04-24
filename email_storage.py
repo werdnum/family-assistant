@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
-from sqlalchemy.sql import insert, functions # Import functions explicitly
+from sqlalchemy.sql import insert, functions  # Import functions explicitly
 from sqlalchemy.sql import insert
 from sqlalchemy.dialects.postgresql import JSONB
 import json
@@ -55,7 +55,7 @@ received_emails_table = sa.Table(
     sa.Column(
         "received_at",
         sa.DateTime(timezone=True),
-        server_default=functions.now(), # Use explicit import
+        server_default=functions.now(),  # Use explicit import
         nullable=False,
         index=True,
     ),  # Timestamp when the webhook was received
@@ -69,8 +69,8 @@ received_emails_table = sa.Table(
         "attachment_info", JSONB, nullable=True
     ),  # JSON array [{filename, content_type, size, storage_path}, ...]
     # Add other potentially useful Mailgun fields if needed
-    sa.Column("mailgun_timestamp", sa.Text, nullable=True), # Mailgun 'timestamp' field
-    sa.Column("mailgun_token", sa.Text, nullable=True), # Mailgun 'token' field
+    sa.Column("mailgun_timestamp", sa.Text, nullable=True),  # Mailgun 'timestamp' field
+    sa.Column("mailgun_token", sa.Text, nullable=True),  # Mailgun 'token' field
 )
 
 
@@ -94,9 +94,7 @@ async def store_incoming_email(form_data: Dict[str, Any]):
                 # Assuming UTC if timezone is missing, adjust if needed based on common sources
                 email_date_parsed = email_date_parsed.replace(tzinfo=timezone.utc)
         except Exception as e:
-            logger.warning(
-                f"Could not parse email Date header '{email_date_str}': {e}"
-            )
+            logger.warning(f"Could not parse email Date header '{email_date_str}': {e}")
 
     # Extract headers (Mailgun sends this as a JSON string representation of list of lists)
     headers_list = None
@@ -114,7 +112,7 @@ async def store_incoming_email(form_data: Dict[str, Any]):
         "from_header": form_data.get("From"),
         "recipient_address": form_data.get("recipient"),
         "to_header": form_data.get("To"),
-        "cc_header": form_data.get("Cc"), # May not be present
+        "cc_header": form_data.get("Cc"),  # May not be present
         "subject": form_data.get("subject"),
         "body_plain": form_data.get("body-plain"),
         "body_html": form_data.get("body-html"),
@@ -122,7 +120,7 @@ async def store_incoming_email(form_data: Dict[str, Any]):
         "stripped_html": form_data.get("stripped-html"),
         "email_date": email_date_parsed,
         "headers_json": headers_list,
-        "attachment_info": None, # Placeholder
+        "attachment_info": None,  # Placeholder
         "mailgun_timestamp": form_data.get("timestamp"),
         "mailgun_token": form_data.get("token"),
     }
@@ -130,10 +128,15 @@ async def store_incoming_email(form_data: Dict[str, Any]):
 
     # --- Actual Database Insertion ---
     async with engine.connect() as conn:
-        stmt = insert(received_emails_table).values(**parsed_data) # Use explicit insert
+        stmt = insert(received_emails_table).values(
+            **parsed_data
+        )  # Use explicit insert
         await conn.execute(stmt)
         await conn.commit()
-        logger.info(f"Stored email with Message-ID: {parsed_data['message_id_header']}") # noqa: E501
+        logger.info(
+            f"Stored email with Message-ID: {parsed_data['message_id_header']}"
+        )  # noqa: E501
+
 
 # Export symbols for use elsewhere
 __all__ = ["received_emails_table", "store_incoming_email"]

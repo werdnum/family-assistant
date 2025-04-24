@@ -9,7 +9,16 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy import (
-    Table, Column, String, Integer, Text, DateTime, select, insert, update, delete
+    Table,
+    Column,
+    String,
+    Integer,
+    Text,
+    DateTime,
+    select,
+    insert,
+    update,
+    delete,
 )
 from sqlalchemy.exc import DBAPIError
 
@@ -22,12 +31,8 @@ engine = get_engine()
 notes_table = Table(
     "notes",
     metadata,
-    Column(
-        "id", Integer, primary_key=True, autoincrement=True
-    ),
-    Column(
-        "title", String, nullable=False, unique=True, index=True
-    ),
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("title", String, nullable=False, unique=True, index=True),
     Column("content", Text, nullable=False),
     Column(
         "created_at",
@@ -42,6 +47,7 @@ notes_table = Table(
     ),
 )
 
+
 async def get_all_notes() -> List[Dict[str, str]]:
     """Retrieves all notes, with retries."""
     max_retries = 3
@@ -55,11 +61,11 @@ async def get_all_notes() -> List[Dict[str, str]]:
                 )
                 result = await conn.execute(stmt)
                 rows = result.fetchall()
-                return [
-                    {"title": row.title, "content": row.content} for row in rows
-                ]
+                return [{"title": row.title, "content": row.content} for row in rows]
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in get_all_notes (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in get_all_notes (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
                 logger.error("Max retries exceeded for get_all_notes. Raising error.")
                 raise
@@ -68,14 +74,18 @@ async def get_all_notes() -> List[Dict[str, str]]:
         except Exception as e:
             logger.error(f"Non-retryable error in get_all_notes: {e}", exc_info=True)
             raise
-    raise RuntimeError("Database operation failed for get_all_notes after multiple retries")
+    raise RuntimeError(
+        "Database operation failed for get_all_notes after multiple retries"
+    )
 
 
 async def get_note_by_title(title: str) -> Optional[Dict[str, Any]]:
     """Retrieves a specific note by its title, with retries."""
     max_retries = 3
     base_delay = 0.5
-    stmt = select(notes_table.c.title, notes_table.c.content).where(notes_table.c.title == title)
+    stmt = select(notes_table.c.title, notes_table.c.content).where(
+        notes_table.c.title == title
+    )
 
     for attempt in range(max_retries):
         try:
@@ -84,16 +94,24 @@ async def get_note_by_title(title: str) -> Optional[Dict[str, Any]]:
                 row = result.fetchone()
                 return row._mapping if row else None
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in get_note_by_title (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in get_note_by_title (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for get_note_by_title({title}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for get_note_by_title({title}). Raising error."
+                )
                 raise
             delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-            logger.error(f"Non-retryable error in get_note_by_title({title}): {e}", exc_info=True)
+            logger.error(
+                f"Non-retryable error in get_note_by_title({title}): {e}", exc_info=True
+            )
             raise
-    raise RuntimeError(f"Database operation failed for get_note_by_title({title}) after multiple retries")
+    raise RuntimeError(
+        f"Database operation failed for get_note_by_title({title}) after multiple retries"
+    )
 
 
 async def add_or_update_note(title: str, content: str):
@@ -109,25 +127,40 @@ async def add_or_update_note(title: str, content: str):
                 existing_note = result.fetchone()
                 now = datetime.now(timezone.utc)
                 if existing_note:
-                    stmt = update(notes_table).where(notes_table.c.title == title).values(content=content, updated_at=now)
+                    stmt = (
+                        update(notes_table)
+                        .where(notes_table.c.title == title)
+                        .values(content=content, updated_at=now)
+                    )
                     logger.info(f"Updating note: {title}")
                 else:
-                    stmt = insert(notes_table).values(title=title, content=content, created_at=now, updated_at=now)
+                    stmt = insert(notes_table).values(
+                        title=title, content=content, created_at=now, updated_at=now
+                    )
                     logger.info(f"Inserting new note: {title}")
                 await conn.execute(stmt)
                 await conn.commit()
                 return "Success"
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in add_or_update_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in add_or_update_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for add_or_update_note({title}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for add_or_update_note({title}). Raising error."
+                )
                 raise
             delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-            logger.error(f"Non-retryable error in add_or_update_note({title}): {e}", exc_info=True)
+            logger.error(
+                f"Non-retryable error in add_or_update_note({title}): {e}",
+                exc_info=True,
+            )
             raise
-    raise RuntimeError(f"Database operation failed for add_or_update_note({title}) after multiple retries")
+    raise RuntimeError(
+        f"Database operation failed for add_or_update_note({title}) after multiple retries"
+    )
 
 
 async def delete_note(title: str) -> bool:
@@ -147,14 +180,21 @@ async def delete_note(title: str) -> bool:
                 logger.warning(f"Note not found for deletion: {title}")
                 return False
         except DBAPIError as e:
-            logger.warning(f"DBAPIError in delete_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            logger.warning(
+                f"DBAPIError in delete_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for delete_note({title}). Raising error.")
+                logger.error(
+                    f"Max retries exceeded for delete_note({title}). Raising error."
+                )
                 raise
             delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
             await asyncio.sleep(delay)
         except Exception as e:
-            logger.error(f"Non-retryable error in delete_note({title}): {e}", exc_info=True)
+            logger.error(
+                f"Non-retryable error in delete_note({title}): {e}", exc_info=True
+            )
             raise
-    raise RuntimeError(f"Database operation failed for delete_note({title}) after multiple retries")
-
+    raise RuntimeError(
+        f"Database operation failed for delete_note({title}) after multiple retries"
+    )

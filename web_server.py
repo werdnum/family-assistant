@@ -8,15 +8,21 @@ from typing import List, Dict, Optional
 from fastapi import Response  # Added Response
 from datetime import datetime, timezone
 import json  # Import json for payload rendering
-from fastapi.staticfiles import StaticFiles # Keep StaticFiles import
+from fastapi.staticfiles import StaticFiles  # Keep StaticFiles import
 
 # Import storage functions - adjust path if needed
 # Import facade and specific modules as needed
 import storage
+
 # Import specific functions/tables via the storage facade
 from storage import (
-    get_all_notes, get_note_by_title, add_or_update_note, delete_note,
-    store_incoming_email, get_grouped_message_history, get_all_tasks
+    get_all_notes,
+    get_note_by_title,
+    add_or_update_note,
+    delete_note,
+    store_incoming_email,
+    get_grouped_message_history,
+    get_all_tasks,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,13 +130,17 @@ async def handle_mail_webhook(request: Request):
             timestamp_str = now.strftime("%Y%m%d_%H%M%S_%f")
             # Sanitize content-type for filename part if available
             content_type = request.headers.get("content-type", "unknown_content_type")
-            safe_content_type = re.sub(r'[<>:"/\\|?*]', '_', content_type).split(';')[0].strip() # Get main type
+            safe_content_type = (
+                re.sub(r'[<>:"/\\|?*]', "_", content_type).split(";")[0].strip()
+            )  # Get main type
             filename = f"{timestamp_str}_{safe_content_type}.raw"
             filepath = os.path.join(MAILBOX_RAW_DIR, filename)
 
             with open(filepath, "wb") as f:
                 f.write(raw_body)
-            logger.info(f"Saved raw webhook request body ({len(raw_body)} bytes) to: {filepath}")
+            logger.info(
+                f"Saved raw webhook request body ({len(raw_body)} bytes) to: {filepath}"
+            )
         except Exception as e:
             # Log error but don't fail the request processing
             logger.error(f"Failed to save raw webhook request body: {e}", exc_info=True)
@@ -138,7 +148,9 @@ async def handle_mail_webhook(request: Request):
 
         # Mailgun sends data as multipart/form-data
         form_data = await request.form()
-        await store_incoming_email(dict(form_data)) # Pass the parsed form data to storage function
+        await store_incoming_email(
+            dict(form_data)
+        )  # Pass the parsed form data to storage function
         # TODO: Add logic here to parse/store email content or trigger LLM processing
         # -----------------------------------------
 

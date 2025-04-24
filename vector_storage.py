@@ -8,17 +8,26 @@ Provides functions for adding, retrieving, deleting, and querying documents and 
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Sequence, Protocol # Added Protocol
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Sequence,
+    Protocol,
+)  # Added Protocol
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB # Import JSONB
+from sqlalchemy.dialects.postgresql import JSONB  # Import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.sql import functions # Import functions explicitly
+from sqlalchemy.sql import functions  # Import functions explicitly
 
 from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
-from db_base import metadata, get_engine # Correctly import from db_base
+from db_base import metadata, get_engine  # Correctly import from db_base
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 # --- Protocol Definition ---
 class Document(Protocol):
-    """Defines the interface for documents that can be ingested into vector storage."""    """Defines the interface for document objects that can be ingested into vector storage."""
+    """Defines the interface for documents that can be ingested into vector storage.""" """Defines the interface for document objects that can be ingested into vector storage."""
+
     @property
     def source_type(self) -> str:
         """The type of the source (e.g., 'email', 'pdf', 'note')."""
@@ -78,12 +88,15 @@ class DocumentRecord(Base):
         sa.DateTime(timezone=True), index=True
     )
     added_at: Mapped[datetime] = mapped_column(
-        sa.DateTime(timezone=True), server_default=functions.now() # Use explicit import
-    ) # Use sa.sql.func.now() for server default
+        sa.DateTime(timezone=True),
+        server_default=functions.now(),  # Use explicit import
+    )  # Use sa.sql.func.now() for server default
     metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
 
     embeddings: Mapped[List["DocumentEmbeddingRecord"]] = sa.orm.relationship(
-        "DocumentEmbeddingRecord", back_populates="document_record", cascade="all, delete-orphan"
+        "DocumentEmbeddingRecord",
+        back_populates="document_record",
+        cascade="all, delete-orphan",
     )
 
     __table_args__ = (
@@ -107,8 +120,8 @@ class DocumentEmbeddingRecord(Base):
     embedding_model: Mapped[str] = mapped_column(sa.String(100), nullable=False)
     content_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
     added_at: Mapped[datetime] = mapped_column(
-        sa.DateTime(timezone=True), server_default=sa.func.now()
-    ) # Use explicit import
+        sa.DateTime(timezone=True), server_default=functions.now()
+    )  # Use explicit import
 
     document_record: Mapped["DocumentRecord"] = sa.orm.relationship(
         "DocumentRecord", back_populates="embeddings"
@@ -171,8 +184,10 @@ async def init_vector_db():
 
 
 async def add_document(
-    doc: Document, # Use the renamed Protocol
-    enriched_metadata: Optional[Dict[str, Any]] = None, # Allow passing LLM enriched metadata
+    doc: Document,  # Use the renamed Protocol
+    enriched_metadata: Optional[
+        Dict[str, Any]
+    ] = None,  # Allow passing LLM enriched metadata
 ) -> int:
     """
     Adds a document record to the database or retrieves the existing one based on source_id.
@@ -200,6 +215,7 @@ async def add_document(
     #         # doc_id = result.inserted_primary_key[0] or fetch existing id
     #         pass
     return 1  # Placeholder
+
 
 async def get_document_by_source_id(source_id: str) -> Optional[Dict[str, Any]]:
     """Retrieves a document by its source ID."""
@@ -277,7 +293,7 @@ __all__ = [
     "delete_document",
     "query_vectors",
     "DocumentRecord",  # Export SQLAlchemy model
-    "DocumentEmbeddingRecord", # Export SQLAlchemy model
-    "Base", # Export Base if needed for defining other models elsewhere (already exported)
-    "Document", # Export the protocol (formerly IngestibleDocument)
+    "DocumentEmbeddingRecord",  # Export SQLAlchemy model
+    "Base",  # Export Base if needed for defining other models elsewhere (already exported)
+    "Document",  # Export the protocol (formerly IngestibleDocument)
 ]
