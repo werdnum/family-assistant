@@ -137,7 +137,7 @@ Family members who need a centralized way to manage shared information and recei
 *   Implemented Tables:
     *   `notes`: Stores user-created notes (id, title, content, created\_at, updated\_at). Title is unique.
     *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info).
-*   External Data:
+*   Implemented Tables:
     *   `received_emails`: Stores details of emails received via webhook. Columns include:
         *   `id`: Internal auto-incrementing ID.
         *   `message_id_header`: Unique identifier from the email's `Message-ID` header (indexed).
@@ -204,7 +204,7 @@ The following features from the specification are currently implemented:
 *   **Data Storage (SQLAlchemy with SQLite/PostgreSQL):** Database operations include retry logic.
     *   `notes` table for storing notes (id, title, content, timestamps).
     *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info JSON).
-    *   `tasks` table for the background task queue (see Section 10).
+    *   `tasks` table for the background task queue (see Section 10).    *   `tasks` table for the background task queue (see Section 10).
     *   `received_emails` table for storing incoming email details (schema defined, basic webhook processing in place, no DB insertion yet).
 *   **LLM Context:**
     *   System prompt includes:
@@ -303,7 +303,7 @@ The task system supports recurring tasks using RRULE strings and a duplication a
     *   **Modification/Deletion:** Stopping a recurring task requires deleting or marking future *pending* instances and potentially preventing the creation of new ones (e.g., by nullifying the `recurrence_rule` on the *last completed* or *currently pending* instance linked to the `original_task_id`). This requires specific logic not yet implemented. Modifying the schedule requires similar careful handling.
 
 ### 10.6 Processing Model
-*   **Polling & Notification:** The primary mechanism is polling (`task_worker_loop` in `main.py`). An `asyncio.Event` (`new_task_event`) allows `enqueue_task` to wake the worker immediately for non-scheduled tasks, reducing latency.
+*   **Polling & Notification:** The primary mechanism is polling (`task_worker_loop` in `main.py`). An `asyncio.Event` (`new_task_event`) allows `task_storage.enqueue_task` to wake the worker immediately for non-scheduled tasks, reducing latency.
 *   **Worker Loop:** A background task (`asyncio` task) periodically calls `dequeue_task` or wakes up via the event.
 *   **Handler Registry:** A dictionary (`TASK_HANDLERS` in `main.py`) maps `task_type` strings to corresponding asynchronous handler functions.
 *   **Execution:** When a task is dequeued, the worker looks up the handler based on `task_type` and executes it with the task's `payload`.

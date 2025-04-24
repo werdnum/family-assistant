@@ -114,7 +114,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 
 ## 3. Ingestion and Embedding Process
 
-1.  **Item Acquisition:** Obtain the document/item (e.g., read email via IMAP, download file, receive webhook).
+1.  **Item Acquisition:** Obtain the document/item (e.g., read email via IMAP, download file, receive webhook via `web_server.py`, which calls `email_storage.store_incoming_email`).
 2.  **Initial Metadata & Content Extraction:** Perform basic parsing to get essential identifiers (`source_id`), the raw content (text, image data), and any easily obtainable metadata (e.g., email headers, file modification time). Extract the main text content for further processing.
 3.  **LLM-Powered Metadata Enrichment:**
     *   Feed the extracted text content (and potentially initial metadata like filename or subject) to an LLM.
@@ -122,8 +122,8 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
     *   Validate the LLM's JSON output against the expected schema. Handle potential errors or missing fields.
 4.  **Document Record Creation:** Store the initial and LLM-extracted metadata (combined into the `metadata` JSONB field), `source_type`, `source_id`, `title`, `created_at`, etc., in the `documents` table. Retrieve the generated `document.id`.
     *   The `add_document` storage function accepts a `Document` object conforming to a defined protocol, providing access to `source_type`, `source_id`, `title`, `created_at`, and base `metadata`. It also accepts an optional `enriched_metadata` dictionary.
-5.  **Content Extraction (Post-Document Record):**
-    *   **Emails:** Parse the body, strip HTML/signatures, potentially focus on the main content.
+5.  **Content Extraction/Preparation (Post-Document Record):**
+    *   **Emails:** Parse the body (e.g., from `received_emails` table), strip HTML/signatures. Extract subject separately for potential 'title' embedding.
     *   **Emails:** Parse the body, strip HTML/signatures. Extract subject separately for potential 'title' embedding.
     *   **PDFs/Images:** Use OCR (e.g., Tesseract, cloud services) to extract text.
     *   **Notes:** Use the note content directly.

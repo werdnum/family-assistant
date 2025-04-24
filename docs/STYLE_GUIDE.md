@@ -22,9 +22,11 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Use `PascalCase` for classes.
 
 *   Use `UPPER_SNAKE_CASE` for module-level constants.
+
 ## Imports
 
 *   Group imports in the following order:
+
     1.  Standard library imports
     2.  Third-party library imports
     3.  Local application/library specific imports

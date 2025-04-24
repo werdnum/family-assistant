@@ -51,13 +51,14 @@ from processing import get_llm_response
 from web_server import app as fastapi_app
 
 # Import storage functions
+# Import facade for primary access
 from storage import (
     init_db,
     get_all_notes,
     add_message_to_history,
     get_recent_history,
     get_message_by_id,
-    add_or_update_note,  # Import the function to be used as a tool
+    add_or_update_note,
 )
 import storage  # Import the whole module for task queue functions
 
@@ -911,7 +912,7 @@ async def _generate_llm_response_for_chat(
 
     # --- Prepare System Prompt Context ---
     system_prompt_template = PROMPTS.get(
-        "system_prompt", "You are a helpful assistant."
+        "system_prompt", "You are a helpful assistant. Current time is {current_time}."
     )
     try:
         local_tz = pytz.timezone(TIMEZONE_STR)
@@ -1006,7 +1007,7 @@ async def _generate_llm_response_for_chat(
     # --- Call LLM ---
     # Note: Typing notifications are omitted here for simplicity in this refactored function.
     # They could be added back if needed, perhaps by passing the `context` object.
-    try:
+    try: # Move try block here
         # Get both response content and tool info from get_llm_response
         llm_response_content, tool_info = await get_llm_response(
             messages,
@@ -1017,7 +1018,7 @@ async def _generate_llm_response_for_chat(
             tool_name_to_server_id,
         )
         # Return both parts as a tuple
-        return llm_response_content, tool_info
+        return llm_response_content, tool_info # Return tuple
     except Exception as e:
         logger.error(
             f"Error during LLM interaction for chat {chat_id}: {e}", exc_info=True
