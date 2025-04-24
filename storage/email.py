@@ -19,7 +19,7 @@ import json
 from dateutil.parser import parse as parse_datetime
 
 # Import metadata and engine from the main storage module
-from storage.db_base import metadata, get_engine
+from .base import metadata, get_engine # Use relative import from base.py
 
 logger = logging.getLogger(__name__)
 # Import metadata and engine from the base module
