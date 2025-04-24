@@ -78,7 +78,7 @@ class DocumentRecord(Base):
     )
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
-    )
+    ) # Use sa.func.now directly
     metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
 
     embeddings: Mapped[List["DocumentEmbeddingRecord"]] = sa.orm.relationship(
@@ -107,7 +107,7 @@ class DocumentEmbeddingRecord(Base):
     content_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
-    )
+    ) # Use sa.func.now directly
 
     document_record: Mapped["DocumentRecord"] = sa.orm.relationship(
         "DocumentRecord", back_populates="embeddings"

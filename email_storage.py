@@ -54,7 +54,7 @@ received_emails_table = sa.Table(
     sa.Column(
         "received_at",
         sa.DateTime(timezone=True),
-        server_default=sa.func.now(),
+        server_default=sa.func.now, # Use sa.func.now directly for server default
         nullable=False,
         index=True,
     ),  # Timestamp when the webhook was received
