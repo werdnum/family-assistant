@@ -88,14 +88,16 @@ ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 # --- Copy Application Code ---
 # Copy the rest of the application code and configuration
 COPY *.py ./
+COPY storage/*.py ./storage/
 COPY prompts.yaml mcp_config.json ./
 COPY templates/ ./templates/
 COPY static/ ./static/
 
 # --- Linting Step ---
 # Run pylint in errors-only mode after copying the code
+# Include files in storage directory
 RUN echo "Running pylint..." && \
-    /app/.venv/bin/pylint --errors-only *.py || \
+    /app/.venv/bin/pylint --errors-only *.py storage/*.py || \
     (echo "Pylint found errors. Please fix them." && exit 1)
 
 # --- Runtime Configuration ---
