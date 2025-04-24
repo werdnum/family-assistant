@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
+import email_storage # Import the new module
 from fastapi import Response  # Added Response
 import json  # Import json for payload rendering
 
@@ -12,6 +13,7 @@ from collections import defaultdict  # Import defaultdict
 
 # Import storage functions - adjust path if needed
 import storage
+import email_storage
 from storage import get_grouped_message_history, get_all_tasks  # Added get_all_tasks
 
 logger = logging.getLogger(__name__)
@@ -108,18 +110,10 @@ async def handle_mail_webhook(request: Request):
     """
     logger.info("Received POST request on /webhook/mail")
     try:
+        # Mailgun sends data as multipart/form-data
         form_data = await request.form()
-        # Log the form data keys and potentially values (be careful with sensitive data in logs)
-        log_data = {key: form_data.get(key) for key in form_data.keys()}
-        logger.info(f"Mail webhook form data received: {log_data}")
-
-        # --- Placeholder for future processing ---
-        # Example: Extract specific fields
-        # sender = form_data.get('sender')
-        # subject = form_data.get('subject')
-        # body_plain = form_data.get('body-plain')
-        # attachments = form_data.getlist('attachments') # Use getlist for multiple files
-
+        # Convert form_data (an immutable MultiDict) to a regular dict
+        await email_storage.store_incoming_email(dict(form_data))
         # TODO: Add logic here to parse/store email content or trigger LLM processing
         # -----------------------------------------
 

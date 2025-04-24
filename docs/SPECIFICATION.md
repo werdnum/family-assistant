@@ -87,7 +87,7 @@ The system will consist of the following core components:
 *   **Process:**
     1.  **Interaction Layer** (or dedicated ingestion service) receives the data. Note: Image attachments in regular messages are handled by Direct Interaction.
     2.  **Processing Layer** attempts to parse structured data first (if applicable format is known, e.g., `.ics` files).
-    3.  If parsing fails or data is unstructured (e.g., plain email body), the **LLM** is used to extract key information (dates, times, event names, confirmation numbers, etc.).
+    3.  If parsing fails or data is unstructured (e.g., plain email body), the **LLM** (Future) is used to extract key information (dates, times, event names, confirmation numbers, etc.). Currently, raw email data is stored.
     4.  Extracted/parsed information is structured and saved to the `memories` table in the **Data Store**, linked to the source and timestamp. If it's clearly a calendar event, it might also be added directly to the main calendar.
     5.  Optional: Assistant confirms successful ingestion via the **Interaction Layer**.
 *   **Examples:**
@@ -133,7 +133,7 @@ The system will consist of the following core components:
     *   Set reminders via natural language (stored on a dedicated 'Reminders' calendar, requiring write access and configuration as described above).
     *   Receive notifications for due reminders (likely requires a scheduled task to check the calendar).
 *   **(Future) Email Ingestion:** Process information from forwarded emails.
-*   **(Future) External Data Integration:** Fetch data like weather forecasts directly or via MCP.
+*   **Email Storage:** Incoming emails received via webhook are parsed and stored in the database (basic storage, deeper processing/ingestion is Future).
 
 ## 6. Data Store Design Considerations
 
@@ -143,6 +143,20 @@ The system will consist of the following core components:
     *   `notes`: Stores user-created notes (id, title, content, created\_at, updated\_at). Title is unique.
     *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info).
 *   External Data:
+    *   `received_emails`: Stores details of emails received via webhook. Columns include:
+        *   `id`: Internal auto-incrementing ID.
+        *   `message_id_header`: Unique identifier from the email's `Message-ID` header (indexed).
+        *   `sender_address`: Envelope sender address (e.g., from Mailgun's `sender` field, indexed).
+        *   `from_header`: Content of the `From` header.
+        *   `recipient_address`: Envelope recipient address (e.g., from Mailgun's `recipient` field, indexed).
+        *   `to_header`: Content of the `To` header.
+        *   `cc_header`: Content of the `Cc` header (nullable).
+        *   `subject`: Email subject (nullable).
+        *   `body_plain`, `body_html`, `stripped_text`, `stripped_html`: Various versions of the email body content (nullable).
+        *   `received_at`: Timestamp when the webhook was received (indexed).
+        *   `email_date`: Timestamp from the email's `Date` header (parsed, timezone-aware, nullable, indexed).
+        *   `headers_json`: Raw headers stored as JSONB (nullable).
+        *   `attachment_info`: Placeholder for JSONB array containing metadata about attachments (filename, content_type, size, storage_path) (nullable).
     *   Calendar events are fetched live via CalDAV/iCal and are *not* stored in the local database.
 *   (Future) Potential Tables:
     *   `events`: Could potentially cache calendar items or store locally managed events/deadlines.
@@ -196,6 +210,7 @@ The following features from the specification are currently implemented:
     *   `notes` table for storing notes (id, title, content, timestamps).
     *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info JSON).
     *   `tasks` table for the background task queue (see Section 10).
+    *   `received_emails` table for storing incoming email details (schema defined, basic webhook processing in place, no DB insertion yet).
 *   **LLM Context:**
     *   System prompt includes:
         *   Current time (timezone-aware via `TIMEZONE` env var).
@@ -225,7 +240,7 @@ The following features from the specification are currently implemented:
 **Features Not Yet Implemented:**
 
 *   Calendar Integration (writing events via CalDAV): Requires implementing write tools and enhanced configuration to specify target calendars.
-*   Reminders (setting/notifying): Dependent on calendar write access and configuration for a dedicated reminders calendar.
+*   Reminders (setting/notifying).
 *   Email Ingestion.
 *   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks): `APScheduler` is present but not integrated into the main loop.
 *   Advanced Web UI features (dashboard, chat).
@@ -332,4 +347,3 @@ Strategies to mitigate this include:
     *   **If the context is *not* tainted** (e.g., a direct user request without external data lookups involved in the *same* turn), sensitive tool calls might be allowed directly, depending on the tool's nature and configured policy.
 
 This approach describes *potential strategies* to balance functionality with security. Currently, **these mitigation strategies (context tainting, conditional tool access based on taint, user confirmation flows) are NOT implemented.** The system currently allows the LLM to call any available tool (local or MCP) based on its interpretation of the prompt and context, without explicit checks for context origin or user confirmation steps beyond the initial prompt.
-
