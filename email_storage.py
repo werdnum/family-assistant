@@ -18,10 +18,11 @@ import json
 from dateutil.parser import parse as parse_datetime
 
 # Import metadata and engine from the main storage module
-from storage import metadata, get_engine
+# Import metadata and engine from the base module
+from db_base import metadata, get_engine
 
 logger = logging.getLogger(__name__)
-
+engine = get_engine()
 # Define the received emails table
 received_emails_table = sa.Table(
     "received_emails",
@@ -127,7 +128,6 @@ async def store_incoming_email(form_data: Dict[str, Any]):
     logger.info(f"Parsed email data for storage: {parsed_data}")
 
     # --- Actual Database Insertion ---
-    engine = get_engine()
     async with engine.connect() as conn:
         stmt = insert(received_emails_table).values(**parsed_data) # Use explicit insert
         await conn.execute(stmt)

@@ -1,31 +1,22 @@
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
-from sqlalchemy import (
-    MetaData,
-    Table,
-    Column,
-    String,
-    select,
-    insert,
-    update,
-    delete,
-    ForeignKey,  # Added ForeignKey
-    BigInteger,
-    Integer,
-    DateTime,
-    Text,
-    JSON,
-    desc,
-)
 import asyncio
 import random
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.dialects.postgresql import JSONB # For type hints if needed later
-from sqlalchemy.ext.asyncio import create_async_engine
 from dateutil import rrule  # Added for recurrence calculation
 from dateutil.parser import isoparse  # Added for parsing dates in recurrence
+
+# Import base components
+from db_base import metadata, get_engine, engine # Import engine directly too
+
+# Import specific storage modules
+from notes_storage import notes_table, add_or_update_note, get_all_notes, get_note_by_title, delete_note
+from email_storage import received_emails_table, store_incoming_email
+from message_history_storage import message_history_table, add_message_to_history, get_recent_history, get_message_by_id, get_grouped_message_history
+from task_storage import tasks_table, enqueue_task, dequeue_task, update_task_status, reschedule_task_for_retry, get_all_tasks
+
+logger = logging.getLogger(__name__)
 
 # --- Vector Storage Imports ---
 try:
@@ -39,432 +30,25 @@ try:
         query_vectors,
     )  # Explicit imports
 
-    VECTOR_STORAGE_ENABLED = True # Keep this True initially
+    VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
 except ImportError:
     # Define placeholder types if vector_storage is not available
     class Base: pass # type: ignore
     VectorBase = Base # type: ignore # Define here even if module fails to load
+    logger.warning("vector_storage.py not found. Vector storage features disabled.")
+    VECTOR_STORAGE_ENABLED = False
+    # Define placeholders for the functions if the import failed
+    def init_vector_db(): pass # type: ignore # noqa: E305
+    vector_storage = None # Placeholder, though functions above handle the no-op
+    # No need to re-log warning here, already logged in except block
+
+# --- Global Init Function ---
 logger = logging.getLogger(__name__)
 
 
-# --- Email Storage Imports ---
-# Always import, the table definition needs to be attached to metadata
-from email_storage import received_emails_table, store_incoming_email
-logger.info("Email storage module imported.")
-
-# Re-check and set placeholder if VECTOR_STORAGE_ENABLED is False
-# This should happen AFTER the initial attempt to import
-if 'VECTOR_STORAGE_ENABLED' not in locals() or not VECTOR_STORAGE_ENABLED:
-    def init_vector_db(): pass # type: ignore # noqa: E305
-    # vector_storage is already None from the except block
-    logger.warning("Vector storage features are disabled (vector_storage.py import likely failed).") # noqa: E305
-
-# --- Task Queue Functions ---
-
-
-async def enqueue_task(
-    task_id: str,
-    task_type: str,
-    payload: Optional[Dict[str, Any]] = None,
-    scheduled_at: Optional[datetime] = None,
-    max_retries: Optional[int] = 3,  # Default max_retries
-    recurrence_rule: Optional[str] = None,  # Added recurrence_rule
-    original_task_id: Optional[
-        str
-    ] = None,  # Added original_task_id for subsequent runs
-    notify_event: Optional[asyncio.Event] = None,
-):  # noqa: PLR0913
-    """
-    Adds a new task to the queue.
-
-    - task_id: Must be unique for each task instance.
-    - task_type: Type of task for handler routing.
-    - payload: Data for the task handler.
-    - scheduled_at: When the task should run.
-    - max_retries: How many times to retry on failure.
-    - recurrence_rule: An RRULE string (e.g., 'FREQ=DAILY;INTERVAL=1') if the task should recur.
-    - original_task_id: For recurring tasks, this links subsequent instances back to the first one.
-                       Should be NULL for the very first instance of a recurring task.
-                       Must be populated when enqueueing the *next* instance.
-    - notify_event: Event to trigger immediate worker pickup.
-
-    If notify_event is provided and the task is scheduled for immediate execution
-    (scheduled_at is None or in the past), the event will be set.
-    """
-    max_retries = 3
-    base_delay = 0.5  # seconds
-
-    # Ensure scheduled_at is timezone-aware if provided (outside the loop)
-    if scheduled_at and scheduled_at.tzinfo is None:
-        raise ValueError("scheduled_at must be timezone-aware")
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:  # Start of with block
-                # Code below needs to be indented inside the 'with' block
-                values_to_insert = {
-                    "task_id": task_id,
-                    "task_type": task_type,
-                    "payload": payload,  # Stored as JSON/Text
-                    "scheduled_at": scheduled_at,
-                    "status": "pending",
-                    "retry_count": 0,
-                    "max_retries": (
-                        max_retries if max_retries is not None else 3
-                    ),  # Use provided or default
-                    "recurrence_rule": recurrence_rule,  # Store the rule
-                    # If original_task_id is not provided (i.e., this is the *first* instance),
-                    # set the original_task_id column to *this* task's task_id.
-                    # If original_task_id *is* provided (i.e., this is a subsequent instance), use it.
-                    "original_task_id": (
-                        original_task_id if original_task_id else task_id
-                    ),
-                    # created_at has a default in the DB
-                }
-                # Remove None values so DB defaults apply if needed (though most are handled above)
-                values_to_insert = {
-                    k: v
-                    for k, v in values_to_insert.items()
-                    if v is not None or k in ["payload", "error"]
-                }
-
-                stmt = insert(tasks_table).values(**values_to_insert)
-                # This inner try/except is specific to the insert/commit part
-                # and should also be inside the 'with' block
-                try:
-                    await conn.execute(stmt)
-                    await conn.commit()
-                    logger.info(
-                        f"Enqueued task {task_id} (Type: {task_type}, Original: {values_to_insert['original_task_id']}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
-                    )
-
-                    # Notify worker if task is immediate and event is provided
-                    # This block MUST be inside the try block, after successful commit.
-                    is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
-                        timezone.utc
-                    )
-                    if is_immediate and notify_event:
-                        notify_event.set()
-                        logger.debug(f"Notified worker about immediate task {task_id}.")
-
-                    return  # Success
-                except Exception as inner_e:  # Catch errors during execute/commit
-                    # Rollback might be needed if commit failed, but connection might be bad.
-                    # Let the outer exception handler manage retries.
-                    logger.error(
-                        f"Error during execute/commit in enqueue_task: {inner_e}",
-                        exc_info=True,
-                    )
-                    # Re-raise to be caught by the outer DBAPIError or generic Exception handler
-                    raise inner_e
-            # End of with block for conn
-
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in enqueue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for enqueue_task({task_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except ValueError:  # Catch specific non-retryable errors like timezone issue
-            raise  # Re-raise immediately
-        except Exception as e:
-            # Consider specific exception types (e.g., unique constraint violation)
-            # These might indicate non-retryable issues.
-            logger.error(
-                f"Non-retryable error in enqueue_task {task_id}: {e}", exc_info=True
-            )
-            # Should we rollback here? The connection might be dead. Rollback happens on context exit error anyway.
-            raise  # Re-raise other exceptions immediately
-
-    logger.error(f"enqueue_task({task_id}) failed after all retries.")
-    # Throwing an exception is better than returning None/False implicitly
-    raise RuntimeError(
-        f"Database operation failed for enqueue_task({task_id}) after multiple retries"
-    )
-
-
-async def dequeue_task(
-    worker_id: str, task_types: List[str]
-) -> Optional[Dict[str, Any]]:
-    """
-    Atomically dequeues the next available task matching the types and locks it.
-
-    Returns the task row as a dictionary, including recurrence info if present.
-    Uses SELECT FOR UPDATE SKIP LOCKED, best suited for PostgreSQL.
-    May behave differently or less concurrently on SQLite.
-
-    Args:
-        worker_id: An identifier for the worker attempting to dequeue.
-        task_types: A list of task types the worker can handle.
-
-    Returns:
-        A dictionary representing the task row, or None if no suitable task is found.
-    """
-    now = datetime.now(timezone.utc)
-    max_retries = 3
-    base_delay = 0.5  # seconds
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                async with conn.begin():  # Start transaction
-                    # Select the oldest, pending task of the specified types,
-                    # whose scheduled time is in the past (or null).
-                    # Use FOR UPDATE SKIP LOCKED to handle concurrency.
-                    # Note: This locking clause is PostgreSQL-specific via SQLAlchemy.
-                    # SQLite will likely lock the entire table during the transaction.
-                    # This block needs to be inside the transaction
-                    stmt = (
-                        select(tasks_table)
-                        .where(tasks_table.c.status == "pending")
-                        .where(tasks_table.c.task_type.in_(task_types))
-                        .where(
-                            (tasks_table.c.scheduled_at == None)  # noqa: E711
-                            | (tasks_table.c.scheduled_at <= now)
-                        )
-                        # Ensure we don't pick tasks that have exhausted retries
-                        .where(tasks_table.c.retry_count < tasks_table.c.max_retries)
-                        # Prioritize tasks with fewer retries, then by creation time
-                        .order_by(tasks_table.c.retry_count.asc())
-                        .order_by(tasks_table.c.created_at.asc())
-                        .limit(1)
-                        .with_for_update(skip_locked=True)
-                    )
-
-                    result = await conn.execute(stmt)
-                    task_row = result.fetchone()
-
-                    if task_row:
-                        # Lock acquired, update the status and lock info
-                        # This block needs to be indented under 'if task_row:'
-                        update_stmt = (
-                            update(tasks_table)
-                            .where(tasks_table.c.id == task_row.id)
-                            .where(
-                                tasks_table.c.status == "pending"
-                            )  # Ensure it wasn't somehow processed between SELECT and UPDATE
-                            .values(
-                                status="processing",
-                                locked_by=worker_id,
-                                locked_at=now,
-                            )
-                        )
-                        update_result = await conn.execute(update_stmt)
-
-                        if update_result.rowcount == 1:
-                            logger.info(
-                                f"Worker {worker_id} dequeued task {task_row.task_id}"
-                            )
-                            return task_row._mapping  # Return as dict
-                        else:
-                            # Extremely rare race condition or issue, row was modified
-                            # between SELECT FOR UPDATE and UPDATE. Transaction rollback
-                            # will handle cleanup.
-                            logger.warning(
-                                f"Worker {worker_id} failed to lock task {task_row.task_id} after selection."
-                            )
-                            return None  # Transaction will rollback changes implicitly
-                        # End of if task_row block
-
-            # If the loop completes without finding a task_row (e.g., SELECT returned None)
-            return None
-        # End of transaction block (async with conn.begin())
-        # End of connection block (async with engine.connect())
-
-        # These except blocks should be aligned with the 'try' on line 131
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in dequeue_task (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for dequeue_task. Raising error.")
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(f"Non-retryable error in dequeue_task: {e}", exc_info=True)
-            raise  # Re-raise immediately
-
-    logger.error("dequeue_task failed after all retries.")
-    raise RuntimeError(
-        "Database operation failed for dequeue_task after multiple retries"
-    )
-
-
-async def update_task_status(
-    task_id: str, status: str, error: Optional[str] = None
-) -> bool:
-    """Updates the status of a task (e.g., 'done', 'failed'), with retries."""
-    max_retries = 3
-    base_delay = 0.5  # seconds
-
-    values_to_update = {"status": status}
-    if status == "failed":
-        values_to_update["error"] = error
-    # Clear lock info when finishing or failing
-    values_to_update["locked_by"] = None
-    values_to_update["locked_at"] = None
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:  # Start of with block
-                # Code below needs to be indented inside the 'with' block
-                stmt = (
-                    update(tasks_table).where(tasks_table.c.task_id == task_id)
-                    # Optionally ensure it was being processed before marking done/failed
-                    # .where(tasks_table.c.status == 'processing')
-                    .values(**values_to_update)
-                )
-                result = await conn.execute(stmt)
-                await conn.commit()
-                if result.rowcount > 0:
-                    logger.info(f"Updated task {task_id} status to {status}.")
-                    return True
-                logger.warning(
-                    f"Task {task_id} not found or status unchanged when updating to {status}."
-                )
-                return False
-            # End connection block
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in update_task_status (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for update_task_status({task_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in update_task_status({task_id}): {e}",
-                exc_info=True,
-            )
-            raise  # Re-raise immediately
-
-    logger.error(f"update_task_status({task_id}) failed after all retries.")
-    raise RuntimeError(
-        f"Database operation failed for update_task_status({task_id}) after multiple retries"
-    )
-
-
-async def reschedule_task_for_retry(
-    task_id: str, next_scheduled_at: datetime, new_retry_count: int, error: str
-) -> bool:
-    """
-    Updates a task for a retry attempt: increments retry count, sets new schedule time,
-    updates last error, and resets status to 'pending', clearing lock info. Includes retries.
-    """
-    max_retries = 3
-    base_delay = 0.5  # seconds
-
-    if next_scheduled_at.tzinfo is None:
-        raise ValueError("next_scheduled_at must be timezone-aware")
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                stmt = (
-                    update(tasks_table)
-                    .where(tasks_table.c.task_id == task_id)
-                    .values(
-                        status="pending",  # Reset status for next attempt
-                        retry_count=new_retry_count,
-                        scheduled_at=next_scheduled_at,
-                        error=error,  # Store the latest error
-                        locked_by=None,  # Clear lock
-                        locked_at=None,  # Clear lock timestamp
-                    )
-                )
-                result = await conn.execute(stmt)
-                await conn.commit()
-                if result.rowcount > 0:
-                    logger.info(
-                        f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
-                    )
-                    return True
-                logger.warning(f"Task {task_id} not found when rescheduling for retry.")
-                return False
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in reschedule_task_for_retry (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for reschedule_task_for_retry({task_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except ValueError:  # Catch specific non-retryable errors like timezone issue
-            raise  # Re-raise immediately
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in reschedule_task_for_retry({task_id}): {e}",
-                exc_info=True,
-            )
-            raise
-
-    logger.error(f"reschedule_task_for_retry({task_id}) failed after all retries.")
-    raise RuntimeError(
-        f"Database operation failed for reschedule_task_for_retry({task_id}) after multiple retries"
-    )
-
-
-async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
-    """
-    Retrieves tasks from the database, ordered by creation time descending, with a limit.
-    Includes recurrence columns.
-    """
-    max_retries = 3
-    base_delay = 0.5  # seconds
-
-    stmt = (
-        select(tasks_table)  # Select all columns by default
-        .order_by(tasks_table.c.created_at.desc())
-        .limit(limit)
-    )
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                result = await conn.execute(
-                    stmt
-                )  # Use the stmt defined before the loop
-                rows = result.fetchall()
-                # Convert rows to dictionaries
-                tasks_list = [row._mapping for row in rows]
-                # Optional: Sort in Python if complex DB ordering is tricky
-                # tasks_list.sort(key=lambda t: (status_order.get(t['status'], 99), t['scheduled_at'] or datetime.max.replace(tzinfo=timezone.utc), t['created_at']))
-                return tasks_list  # Success, return from within the loop
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in get_all_tasks (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for get_all_tasks. Raising error.")
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(f"Non-retryable error in get_all_tasks: {e}", exc_info=True)
-            raise
-
-    logger.error("get_all_tasks failed after all retries.")
-    raise RuntimeError(
-        "Database operation failed for get_all_tasks after multiple retries"
-    )
-
-
-# --- End Task Queue Functions ---
-
+# Add vector storage models to the same metadata object if enabled
+if VECTOR_STORAGE_ENABLED:
 
 __all__ = [
     "init_db",
@@ -480,7 +64,7 @@ __all__ = [
     "enqueue_task",
     "dequeue_task",
     "update_task_status",
-    "reschedule_task_for_retry",
+    "reschedule_task_for_retry", # Added task functions
     "get_all_tasks",  # Added
     "get_grouped_message_history",
     "notes_table",  # Also export tables if needed elsewhere (e.g., tests)
@@ -494,6 +78,7 @@ __all__ = [
 ]
 
 if VECTOR_STORAGE_ENABLED and vector_storage:
+if VECTOR_STORAGE_ENABLED and 'vector_storage' in locals() and vector_storage: # Check locals() and existence
     __all__.extend(
         [
             "add_document",
@@ -612,7 +197,7 @@ async def init_db():
     """Initializes the database, with retries."""
     max_retries = 5  # Allow more retries for initial connection
     base_delay = 1.0  # seconds
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.begin() as conn:
@@ -646,12 +231,11 @@ async def init_db():
     logger.critical("Database initialization failed after all retries.")
     raise RuntimeError("Database initialization failed after multiple retries")
 
-
 async def get_all_notes() -> List[Dict[str, str]]:
     """Retrieves all notes, with retries."""
     max_retries = 3
     base_delay = 0.5  # seconds
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
@@ -705,7 +289,7 @@ async def add_message_to_history(
         content=content,
         tool_calls_info=tool_calls_info,  # Store the tool call info
     )
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
@@ -767,7 +351,7 @@ async def get_recent_history(
         .order_by(message_history.c.timestamp.desc())  # Get latest first
         .limit(limit)
     )
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
@@ -824,7 +408,7 @@ async def get_note_by_title(title: str) -> Optional[Dict[str, Any]]:
     ).where(  # Define stmt outside loop
         notes_table.c.title == title
     )
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
@@ -867,7 +451,7 @@ async def get_message_by_id(chat_id: int, message_id: int) -> Optional[Dict[str,
         .where(message_history.c.chat_id == chat_id)
         .where(message_history.c.message_id == message_id)
     )
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
@@ -910,7 +494,7 @@ async def add_or_update_note(title: str, content: str):
     """Adds/updates a note, with retries."""
     max_retries = 3
     base_delay = 0.5  # seconds
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:  # Start of with block
@@ -978,7 +562,7 @@ async def delete_note(title: str) -> bool:
     stmt = notes_table.delete().where(
         notes_table.c.title == title
     )  # Define stmt outside loop
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
@@ -1032,7 +616,7 @@ async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
         # Order by chat_id first, then by timestamp DESC within each chat
         .order_by(message_history.c.chat_id, message_history.c.timestamp.desc())
     )
-
+    engine = get_engine() # Get engine from db_base
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:

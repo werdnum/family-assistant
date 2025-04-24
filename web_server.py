@@ -4,20 +4,20 @@ import re
 from fastapi import FastAPI, Request, Form, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
-import email_storage # Import the new module
 from fastapi import Response  # Added Response
 from datetime import datetime, timezone
 import json  # Import json for payload rendering
-
-from collections import defaultdict  # Import defaultdict
+from fastapi.staticfiles import StaticFiles # Keep StaticFiles import
 
 # Import storage functions - adjust path if needed
+# Import facade and specific modules as needed
 import storage
-import email_storage
-from storage import get_grouped_message_history, get_all_tasks  # Added get_all_tasks
+# Import specific functions/tables via the storage facade
+from storage import (
+    get_all_notes, get_note_by_title, add_or_update_note, delete_note,
+    store_incoming_email, get_grouped_message_history, get_all_tasks
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     """Serves the main page listing all notes."""
-    notes = await storage.get_all_notes()
+    notes = await get_all_notes()
     return templates.TemplateResponse(
         "index.html", {"request": request, "notes": notes}
     )
@@ -61,9 +61,7 @@ async def add_note_form(request: Request):
 @app.get("/notes/edit/{title}", response_class=HTMLResponse)
 async def edit_note_form(request: Request, title: str):
     """Serves the form to edit an existing note."""
-    note = await storage.get_note_by_title(
-        title
-    )  # Need to add this function to storage.py
+    note = await get_note_by_title(title)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
@@ -83,14 +81,14 @@ async def save_note(
         if original_title and original_title != title:
             # Title changed - need to delete old and add new (or implement rename)
             # Simple approach: delete old, add new
-            await storage.delete_note(original_title)
-            await storage.add_or_update_note(title, content)
+            await delete_note(original_title)
+            await add_or_update_note(title, content)
             logger.info(
                 f"Renamed note '{original_title}' to '{title}' and updated content."
             )
         else:
             # New note or updating existing without title change
-            await storage.add_or_update_note(title, content)
+            await add_or_update_note(title, content)
             logger.info(f"Saved note: {title}")
         return RedirectResponse(url="/", status_code=303)  # Redirect back to list
     except Exception as e:
@@ -102,7 +100,7 @@ async def save_note(
 @app.post("/notes/delete/{title}")
 async def delete_note_post(request: Request, title: str):
     """Handles deleting a note."""
-    deleted = await storage.delete_note(title)
+    deleted = await delete_note(title)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found for deletion")
     return RedirectResponse(url="/", status_code=303)  # Redirect back to list
@@ -140,7 +138,7 @@ async def handle_mail_webhook(request: Request):
 
         # Mailgun sends data as multipart/form-data
         form_data = await request.form()
-        await email_storage.store_incoming_email(dict(form_data)) # Pass the parsed form data to storage
+        await store_incoming_email(dict(form_data)) # Pass the parsed form data to storage function
         # TODO: Add logic here to parse/store email content or trigger LLM processing
         # -----------------------------------------
 
