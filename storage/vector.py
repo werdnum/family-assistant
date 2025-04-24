@@ -16,7 +16,7 @@ from typing import (
     Tuple,
     Sequence,
     Protocol,
-)  # Added Protocol
+)
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB  # Import JSONB
@@ -134,7 +134,7 @@ class DocumentEmbeddingRecord(Base):
         # GIN expression index for FTS
         sa.Index(
             "idx_doc_embeddings_content_fts_gin",
-            sa.func.to_tsvector("english", content),
+            sa.func.to_tsvector(sa.literal_column("english"), content),
             postgresql_using="gin",
             postgresql_where=(content.isnot(None)),
         ),
