@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Sequence, Protocol # Added Protocol
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB # Import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -77,7 +77,7 @@ class DocumentRecord(Base):
         sa.DateTime(timezone=True), index=True
     )
     added_at: Mapped[datetime] = mapped_column(
-        sa.DateTime(timezone=True), server_default=sa.func.now()
+        sa.DateTime(timezone=True), server_default=sa.sql.func.now() # Use sa.sql.func.now()
     ) # Use sa.sql.func.now() for server default
     metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
 
