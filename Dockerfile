@@ -96,8 +96,9 @@ COPY static/ ./static/
 # --- Linting Step ---
 # Run pylint in errors-only mode after copying the code
 # Include files in storage directory
+# Run pylint on the storage package and top-level files
 RUN echo "Running pylint..." && \
-    /app/.venv/bin/pylint --errors-only *.py storage/*.py || \
+    /app/.venv/bin/pylint --errors-only storage *.py || \
     (echo "Pylint found errors. Please fix them." && exit 1)
 
 # --- Runtime Configuration ---

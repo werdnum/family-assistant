@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import DBAPIError
 
-from storage.db_base import metadata, get_engine
+from .base import metadata, get_engine # Use relative import from base.py
 
 logger = logging.getLogger(__name__)
 engine = get_engine()
