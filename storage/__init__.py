@@ -9,6 +9,7 @@ from dateutil.parser import isoparse  # Added for parsing dates in recurrence
 
 # Import base components
 from .base import metadata, get_engine, engine  # Use relative import from base.py
+from .context import DatabaseContext, get_db_context  # Import new context manager
 
 # Import specific storage modules
 from .notes import ( # Use relative import
@@ -145,6 +146,8 @@ __all__ = [
     "store_incoming_email",
     "engine",
     "metadata",
+    "DatabaseContext",  # Export the new context manager
+    "get_db_context",    # Export convenience function
     # Vector Storage Exports are added conditionally below
 ]
 
