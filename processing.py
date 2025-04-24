@@ -103,6 +103,13 @@ async def schedule_recurring_task_tool(
 
 
 async def schedule_future_callback_tool(callback_time: str, context: str, chat_id: int):
+    """Schedules a future callback task to execute at the specified time.
+    
+    The payload will be enhanced in main.py to include the application reference.
+    """
+    """Schedules a future callback by creating a task that will run the LLM at the specified time."""
+    # Implementation remains the same, but we add the application reference to the payload
+    global application
     """
     Schedules a task to trigger an LLM callback in a specific chat at a future time.
 
