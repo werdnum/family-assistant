@@ -1,4 +1,6 @@
 import logging
+import os
+import re
 from fastapi import FastAPI, Request, Form, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -7,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
 import email_storage # Import the new module
 from fastapi import Response  # Added Response
+from datetime import datetime, timezone
 import json  # Import json for payload rendering
 
 from collections import defaultdict  # Import defaultdict
@@ -17,6 +20,9 @@ import email_storage
 from storage import get_grouped_message_history, get_all_tasks  # Added get_all_tasks
 
 logger = logging.getLogger(__name__)
+
+# Directory to save raw webhook request bodies for debugging/replay
+MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests"
 
 app = FastAPI(title="Family Assistant Notes Editor")
 
@@ -110,9 +116,31 @@ async def handle_mail_webhook(request: Request):
     """
     logger.info("Received POST request on /webhook/mail")
     try:
+        # --- Save raw request body for debugging/replay ---
+        raw_body = await request.body()
+        try:
+            os.makedirs(MAILBOX_RAW_DIR, exist_ok=True)
+            # Use timestamp for filename, as parsing form data might consume the body stream
+            # depending on the framework version/internals. Reading body first is safer.
+            now = datetime.now(timezone.utc)
+            timestamp_str = now.strftime("%Y%m%d_%H%M%S_%f")
+            # Sanitize content-type for filename part if available
+            content_type = request.headers.get("content-type", "unknown_content_type")
+            safe_content_type = re.sub(r'[<>:"/\\|?*]', '_', content_type).split(';')[0].strip() # Get main type
+            filename = f"{timestamp_str}_{safe_content_type}.raw"
+            filepath = os.path.join(MAILBOX_RAW_DIR, filename)
+
+            with open(filepath, "wb") as f:
+                f.write(raw_body)
+            logger.info(f"Saved raw webhook request body ({len(raw_body)} bytes) to: {filepath}")
+        except Exception as e:
+            # Log error but don't fail the request processing
+            logger.error(f"Failed to save raw webhook request body: {e}", exc_info=True)
+        # --- End raw request saving ---
+
         # Mailgun sends data as multipart/form-data
         form_data = await request.form()
-        await email_storage.store_incoming_email(dict(form_data)) # Convert MultiDict to dict
+        await email_storage.store_incoming_email(dict(form_data)) # Pass the parsed form data to storage
         # TODO: Add logic here to parse/store email content or trigger LLM processing
         # -----------------------------------------
 
