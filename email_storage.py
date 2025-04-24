@@ -3,10 +3,16 @@ Handles storage and retrieval of received emails.
 """
 
 import logging
-from typing import Any, Dict, Optional, List
+import os
+import re
+import os
+import re
+import json
+from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
+from sqlalchemy.sql import insert # Explicit import
 from sqlalchemy.dialects.postgresql import JSONB
 import json
 from dateutil.parser import parse as parse_datetime
@@ -123,7 +129,7 @@ async def store_incoming_email(form_data: Dict[str, Any]):
     # --- Actual Database Insertion ---
     engine = get_engine()
     async with engine.connect() as conn:
-        stmt = sa.insert(received_emails_table).values(**parsed_data)
+        stmt = insert(received_emails_table).values(**parsed_data) # Use explicit insert
         await conn.execute(stmt)
         await conn.commit()
         logger.info(f"Stored email with Message-ID: {parsed_data['message_id_header']}") # noqa: E501
