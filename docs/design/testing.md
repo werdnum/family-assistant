@@ -1,0 +1,177 @@
+# Testing Design Document: Family Assistant
+
+**1. Introduction**
+
+The goal is to introduce a robust testing suite for the Family Assistant application. The primary focus will be on realistic functional and integration tests that verify the system's behavior, rather than exhaustive unit tests with heavy mocking. Key initial goals include testing database initialization and providing end-to-end smoke tests for core bot functionality.
+
+Testing will necessitate refactoring the codebase to improve testability, primarily through dependency injection.
+
+**2. Testing Strategy & Tools**
+
+We will employ a multi-layered testing approach:
+
+*   **Integration Tests:** Verify the interactions between different components of the system (e.g., processing logic interacting with storage, task worker handling tasks). These are crucial for ensuring components work together correctly.
+*   **Functional / End-to-End (E2E) Tests:** Simulate user interactions and verify the overall behavior of the application from an external perspective (e.g., sending a message via a simulated interface, checking the response and database state; accessing web UI endpoints).
+*   **Unit Tests:** While not the primary focus, simple unit tests might be used for specific, isolated logic (e.g., utility functions, complex parsing logic) if deemed necessary.
+
+**Chosen Tools:**
+
+*   **Test Runner:** `pytest` (with `pytest-asyncio` for async code).
+*   **Database:** `testcontainers-python` to run a real PostgreSQL instance in a Docker container for integration and functional tests. This provides high fidelity.
+*   **LLM:**
+    *   **Initial:** Use the *real* configured LLM (via OpenRouter/LiteLLM) for initial E2E tests. This requires configuring API keys in the test environment but provides the most realistic smoke test.
+    *   **Future:** Integrate `mockllm`. This tool can run as a separate server, mimicking OpenAI/Anthropic APIs based on a configuration file. It will allow for deterministic and faster testing of LLM interactions without actual API calls or costs.
+*   **Telegram Interface:**
+    *   **Initial:** We will *not* directly test the `python-telegram-bot` handlers using a framework like `ptbtestsuite` initially. Instead, we will refactor the handler logic (`message_handler`, `process_chat_queue`, `_generate_llm_response_for_chat`) into core, testable functions. Our functional tests will call these core functions directly, simulating the data that would come from a Telegram update.
+    *   **Future:** If more direct testing of the `python-telegram-bot` integration is needed, `ptbtestsuite` could be evaluated, but it seems potentially complex to integrate and may require significant refactoring beyond what's initially planned.
+*   **Web Server (FastAPI):** `httpx` (async client) to send requests to the FastAPI application running within the test setup (potentially managed by testcontainers or run directly).
+*   **MCP:** Direct testing of MCP server interactions is complex due to the `stdio_client` spawning external processes.
+    *   **Initial:** Tests will focus on the *logic within the assistant* that prepares MCP calls and handles their responses. We will refactor the code to allow injecting mock `mcp_sessions` and `tool_name_to_server_id` during tests. Actual MCP server connections will be skipped in the test environment.
+    *   **Future:** Mock MCP server processes could be developed if needed, potentially run via testcontainers.
+*   **Mocking:** `unittest.mock` (part of Python's standard library) for any necessary targeted mocking within tests.
+
+**3. Refactoring for Testability (Dependency Injection)**
+
+The current extensive use of global variables and direct imports of dependencies hinders testability. We need to refactor to use dependency injection:
+
+1.  **Database Engine:**
+    *   Modify `storage/base.py`'s `get_engine()` to potentially return a test-specific engine if available (e.g., via context var or passed config), or remove the global engine entirely.
+    *   Refactor all functions within `storage/*.py` (e.g., `add_or_update_note`, `enqueue_task`, `get_recent_history`) to accept an `sqlalchemy.ext.asyncio.AsyncEngine` or `sqlalchemy.ext.asyncio.AsyncSession` object as an argument instead of relying on the global `storage.base.engine`.
+    *   Update `storage.init_db` to accept an `AsyncEngine` argument.
+    *   Update all callers of storage functions (`main.py`, `web_server.py`, `task_worker.py`, `processing.py`) to obtain and pass the engine/session.
+
+2.  **Configuration:**
+    *   Eliminate global configuration variables loaded directly from `os.getenv` or `args` within modules like `main.py`, `processing.py`.
+    *   Create a dedicated configuration object (e.g., a Pydantic model or a simple dictionary) loaded centrally (e.g., in `main.py`'s startup).
+    *   Pass this configuration object explicitly to functions and classes that require configuration values (e.g., `_generate_llm_response_for_chat`, `load_mcp_config_and_connect`, database initialization, LLM client).
+
+3.  **LLM Client:**
+    *   Create a simple wrapper class (e.g., `LLMClient`) responsible for interacting with `litellm.acompletion`.
+    *   This class should be initialized with the necessary configuration (model name, API key).
+    *   It should expose an async method like `generate(messages, tools, tool_choice)`.
+    *   Inject an instance of this `LLMClient` into `processing.get_llm_response` instead of calling `litellm.acompletion` directly. This will allow swapping the real client with a mock client targeting `mockllm` in tests.
+
+4.  **Telegram Core Logic Decoupling:**
+    *   Refactor `message_handler` to primarily parse the `Update` object, extract essential data (chat_id, user_id, user_name, text, photo bytes, reply_to_message_id), and potentially enqueue this data or directly call a core processing function.
+    *   Refactor `process_chat_queue` and `_generate_llm_response_for_chat` into standalone, testable async functions. They should accept all necessary dependencies as arguments (e.g., `chat_id`, `trigger_content_parts`, `user_name`, `db_engine/session`, `llm_client`, `mcp_state`, `config`) and return the response content and tool call info. They should *not* depend directly on `telegram.ext.ContextTypes`.
+    *   The `python-telegram-bot` handlers in `main.py` will become thin wrappers around these core functions, responsible only for interacting with the Telegram API (sending actions, messages) based on the results from the core logic.
+
+5.  **MCP State:**
+    *   Refactor `load_mcp_config_and_connect` to *return* the `mcp_sessions` and `tool_name_to_server_id` dictionaries instead of setting global variables.
+    *   The main application setup (`main_async`) will hold this state.
+    *   Pass this state explicitly as arguments to functions that need it (e.g., `get_llm_response`, `task_worker.set_mcp_state` should be removed in favor of passing state to the worker loop/handlers).
+    *   Allow skipping the actual connection logic in `load_mcp_config_and_connect` based on configuration (for tests).
+
+6.  **Task Worker:**
+    *   Refactor `task_worker.task_worker_loop` to accept dependencies (DB engine, LLM generator function reference, MCP state, config, events) as arguments.
+    *   Remove the `task_worker.set_...` functions.
+    *   Task handlers (`handle_llm_callback`, etc.) should ideally also receive necessary dependencies via the loop or a context object, rather than relying on globals or module-level state.
+
+7.  **Web Server (FastAPI):**
+    *   Leverage FastAPI's built-in dependency injection (`Depends`).
+    *   Create dependency provider functions (e.g., `get_db_session`, `get_config`) that can be easily overridden in tests.
+    *   Endpoint functions (`save_note`, `view_message_history`, etc.) will declare their dependencies using `Depends`, receiving sessions, config, etc., automatically.
+
+**4. Test Structure**
+
+```
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py         # Pytest fixtures (DB container, engine, session factory, config, etc.)
+│   ├── integration/        # Tests for component interactions
+│   │   ├── __init__.py
+│   │   ├── test_storage.py
+│   │   ├── test_processing.py
+│   │   ├── test_task_worker.py
+│   │   └── ...
+│   ├── functional/         # End-to-end style tests simulating user flows
+│   │   ├── __init__.py
+│   │   ├── test_telegram_flow.py # Tests core logic triggered by messages
+│   │   ├── test_web_api.py       # Tests FastAPI endpoints via HTTP client
+│   │   └── ...
+│   └── unit/               # Optional: For highly isolated unit tests
+│       ├── __init__.py
+│       └── ...
+├── src/                    # Assuming source code is moved here (recommended)
+│   ├── family_assistant/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── processing.py
+│   │   ├── storage/
+│   │   ├── web_server.py
+│   │   └── ...
+│   └── ...
+├── pyproject.toml          # Or requirements.txt / requirements-dev.txt
+├── Dockerfile
+└── ...
+```
+
+*(Note: Moving source code into a `src/` directory is recommended practice when adding tests to avoid path issues.)*
+
+**5. Proposed Task List (Initial Phase)**
+
+1.  **Setup:**
+    *   Add `pytest`, `pytest-asyncio`, `testcontainers`, `psycopg2-binary` (or `asyncpg`), `httpx` to development dependencies.
+    *   Create the basic `tests/` directory structure and `tests/conftest.py`.
+    *   (Optional but Recommended) Move application code into a `src/` directory.
+
+2.  **Refactor Database Access:**
+    *   Implement dependency injection for the DB engine/session in `storage/*.py` and `storage.init_db`.
+    *   Update callers in `main.py`, `web_server.py`, `task_worker.py`, `processing.py`.
+
+3.  **Test Database Initialization & Storage:**
+    *   Create a fixture in `conftest.py` using `testcontainers` to provide a temporary PostgreSQL database engine for tests.
+    *   Write `tests/integration/test_storage_init.py` to call the refactored `init_db` using the test engine.
+    *   Write `tests/integration/test_storage.py` to test core storage functions (notes, tasks, history, email storage/retrieval) using the test DB fixture.
+
+4.  **Refactor Configuration:**
+    *   Implement a configuration object/dict.
+    *   Remove global config access and pass the config object explicitly where needed.
+
+5.  **Refactor LLM Access:**
+    *   Create and integrate the `LLMClient` wrapper.
+
+6.  **Refactor MCP State & Connection:**
+    *   Modify `load_mcp_config_and_connect` to return state and be skippable.
+    *   Pass MCP state explicitly.
+
+7.  **Test Processing Logic:**
+    *   Write `tests/integration/test_processing.py`.
+    *   Test `get_llm_response` and `execute_function_call`. Use the test DB fixture. Provide mock MCP state. Use the real LLM initially via the `LLMClient`.
+
+8.  **Refactor Task Worker:**
+    *   Inject dependencies into the loop and handlers.
+
+9.  **Test Task Worker:**
+    *   Write `tests/integration/test_task_worker.py`. Test dequeuing, handler execution (e.g., `handle_llm_callback`), and task status updates using the test DB. Mock LLM/MCP interactions triggered by handlers as needed.
+
+10. **Refactor Telegram Handlers & Core Logic:**
+    *   Decouple the core processing logic from `python-telegram-bot` handlers as described above.
+
+11. **Test Core Telegram Flow:**
+    *   Write `tests/functional/test_telegram_flow.py`.
+    *   Call the refactored core processing function (simulating a message event).
+    *   Use the test DB fixture and the `LLMClient` (real LLM initially).
+    *   Assert expected database changes (e.g., message history, note created via tool) and inspect the returned response content.
+
+12. **Refactor Web Server:**
+    *   Implement FastAPI dependency injection (`Depends`) for DB sessions, config, etc.
+
+13. **Test Web API:**
+    *   Write `tests/functional/test_web_api.py`.
+    *   Use `httpx` to make requests to the FastAPI endpoints (running against the test DB). Test CRUD operations for notes, history/task views.
+
+14. **CI Integration:**
+    *   Set up a GitHub Actions workflow (or similar) to automatically run the test suite on pushes/PRs. Ensure the workflow can run Docker for `testcontainers`.
+
+**6. Future Work**
+
+*   Integrate `mockllm` for deterministic LLM testing.
+*   Explore `ptbtestsuite` if direct testing of Telegram handlers becomes necessary.
+*   Add tests for MCP tool interactions using mock MCP servers.
+*   Expand E2E test coverage for more complex scenarios (e.g., recurring tasks, calendar interactions once implemented).
+*   Implement tests for email ingestion flow once developed.
+
+**7. Conclusion**
+
+This plan provides a phased approach to introducing testing, prioritizing realistic integration and functional tests. The initial focus is on refactoring for testability via dependency injection and establishing foundational tests for the database, storage layer, and core processing logic. Subsequent steps will build upon this foundation to cover Telegram and Web interfaces, eventually incorporating mock external services for more comprehensive and deterministic testing.
