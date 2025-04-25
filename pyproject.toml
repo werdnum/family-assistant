@@ -70,13 +70,13 @@ include-package-data = true
 family_assistant = ["templates/**/*", "static/**/*"]
 
 
-# --- Task Runner Configuration (poe-the-task) ---
+# --- Task Runner Configuration (poethepoet) ---
 [tool.poe.tasks.symbols]
 help = "Generate SYMBOLS.md map using symbex"
 # Runs symbex on the 'family_assistant' module, includes docstrings,
 # suppresses file path comments (-n), includes import statements (-i),
-# and saves the output to SYMBOLS.md
-cmd = "symbex -m family_assistant --docs -ni > SYMBOLS.md"
+# and saves the output to SYMBOLS.md using shell redirection.
+shell = "symbex -m family_assistant --docs -ni > SYMBOLS.md"
 
 
 # --- Tool Configuration (Example: Ruff) ---
