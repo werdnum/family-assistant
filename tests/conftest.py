@@ -10,9 +10,11 @@ from family_assistant.storage import init_db # Import init_db
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
+import pytest_asyncio # Import the correct decorator
+
 logger = logging.getLogger(__name__)
 
-@pytest.fixture(scope="function", autouse=True)
+@pytest_asyncio.fixture(scope="function", autouse=True) # Use pytest_asyncio.fixture
 async def test_db_engine(request): # Add request fixture
     """
     Pytest fixture to set up an in-memory SQLite database for testing.
