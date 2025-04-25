@@ -183,9 +183,9 @@ async def init_vector_db():
         except Exception as e:
             # This might happen if the index exists but with different params, etc.
             # In a real app, consider more robust migration management.
-                logger.warning(
-                    f"Could not create partial index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}"
-                )
+            logger.warning( # Corrected indentation
+                f"Could not create partial index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}"
+            )
         logger.info("PostgreSQL vector database components (extension, indexes) initialized.")
     else:
         logger.warning(
