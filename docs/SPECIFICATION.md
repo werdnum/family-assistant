@@ -30,6 +30,64 @@ Family members who need a centralized way to manage shared information and recei
     *   (Future) Configuration options.
 *   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail` and stores the parsed email data in the `received_emails` table. Further processing (e.g., LLM ingestion) is future work.
 
+## 3. Architecture Overview
+
+```mermaid
+graph TD
+    subgraph User Interfaces
+        UI_TG[Telegram Bot]
+        UI_Web[Web UI (FastAPI)]
+        UI_Email[Email (Webhook/Future Send)]
+    end
+
+    subgraph Core Application
+        Interaction[Interaction Layer]
+        Processing[Processing Layer (LLM, Tools)]
+        DataStore[Data Store (SQLAlchemy + DB)]
+        MCP[MCP Integration Layer]
+        TaskWorker[Task Worker (DB Queue)]
+        Config[Configuration (.env, .yaml, .json)]
+    end
+
+    subgraph External Services
+        Ext_LLM[LLM Service (OpenRouter)]
+        Ext_DB[Database (PostgreSQL/SQLite)]
+        Ext_MCP[MCP Servers (Time, Fetch, etc.)]
+        Ext_Calendar[Calendars (CalDAV/iCal)]
+        Ext_EmailProvider[Email Provider (e.g., Mailgun)]
+    end
+
+    UI_TG --> Interaction
+    UI_Web --> Interaction
+    UI_Email --> Interaction
+
+    Interaction -- User Input --> Processing
+    Processing -- Responses --> Interaction
+
+    Processing -- Uses Tools --> MCP
+    Processing -- Uses Tools --> DataStore
+    Processing -- Calls --> Ext_LLM
+    Processing -- Reads/Writes --> Ext_Calendar
+
+    TaskWorker -- Reads/Writes --> DataStore
+    TaskWorker -- Triggers --> Processing
+
+    MCP -- Connects To --> Ext_MCP
+
+    DataStore -- Connects To --> Ext_DB
+
+    UI_Web -- Reads/Writes --> DataStore
+
+    UI_Email -- Webhook --> Ext_EmailProvider
+    Ext_EmailProvider -- Webhook --> Interaction
+
+    Config -- Loaded By --> Core Application
+
+    style Core Application fill:#f9f,stroke:#333,stroke-width:2px
+    style User Interfaces fill:#ccf,stroke:#333,stroke-width:2px
+    style External Services fill:#cfc,stroke:#333,stroke-width:2px
+```
+
 *   **Interaction Layer:** Manages communication across Telegram, Email, and Web interfaces. It receives user input, forwards it for processing, and delivers responses/updates back to the user via the appropriate channel.
 *   **Processing Layer:**
     *   Utilizes a Large Language Model (LLM) (e.g., Claude, GPT) via LiteLLM to understand natural language requests, extract information from ingested data, generate summaries/briefs, and formulate responses.
@@ -343,3 +401,30 @@ Strategies to mitigate this include:
     *   **If the context is *not* tainted** (e.g., a direct user request without external data lookups involved in the *same* turn), sensitive tool calls might be allowed directly, depending on the tool's nature and configured policy.
 
 This approach describes *potential strategies* to balance functionality with security. Currently, **these mitigation strategies (context tainting, conditional tool access based on taint, user confirmation flows) are NOT implemented.** The system currently allows the LLM to call any available tool (local or MCP) based on its interpretation of the prompt and context, without explicit checks for context origin or user confirmation steps beyond the initial prompt.
+
+## 12. Testing Strategy
+
+The project employs a multi-layered testing strategy focusing on realistic functional and integration tests over exhaustive, heavily mocked unit tests. The primary goal is to ensure components work together correctly and the application behaves as expected from an end-user perspective.
+
+### 12.1 Layers
+*   **Integration Tests:** Verify interactions between components (e.g., Processing Layer <> Data Store, Task Worker <> Data Store).
+*   **Functional / End-to-End (E2E) Tests:** Simulate user flows (e.g., sending a message, checking DB state and response; using Web UI endpoints).
+*   **Unit Tests:** Used sparingly for specific, isolated, complex logic.
+
+### 12.2 Tools
+*   **Runner:** `pytest` with `pytest-asyncio`.
+*   **Database:** `testcontainers-python` manages a real PostgreSQL instance in Docker for high-fidelity testing.
+*   **LLM:** Initially uses the real configured LLM for smoke tests. Future plans include integrating `mockllm` for deterministic testing.
+*   **Telegram:** Core logic is refactored for direct testing. `python-telegram-bot` handlers are thin wrappers and not tested directly via frameworks like `ptbtestsuite` initially.
+*   **Web Server:** `httpx` is used to test FastAPI endpoints.
+*   **MCP:** Interactions are tested by mocking the MCP session state within the application logic. Direct testing of MCP server processes is deferred.
+*   **Mocking:** Standard `unittest.mock` for targeted mocking.
+
+### 12.3 Refactoring for Testability
+A key prerequisite for testing is refactoring the codebase to use **Dependency Injection**. This involves:
+*   Passing dependencies like database engines/sessions, configuration objects, LLM clients, and MCP state explicitly as arguments to functions and classes.
+*   Eliminating reliance on global variables and direct imports of dependencies within core logic modules.
+*   Decoupling core application logic (e.g., message processing) from interface-specific code (e.g., Telegram handlers).
+
+### 12.4 Structure
+Tests reside in a top-level `tests/` directory, organized into `integration/`, `functional/`, and potentially `unit/` subdirectories. Fixtures are managed in `tests/conftest.py`.
