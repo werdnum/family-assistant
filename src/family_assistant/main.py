@@ -790,13 +790,17 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
     try:
         # Use the new helper function to get the LLM response content and tool info
         async with typing_notifications(context, chat_id):
-            # Pass the model name from args down
+            # Retrieve model name from bot_data
+            model_name = context.bot_data.get("model_name", "default/model-not-set") # Provide a default fallback
+            if model_name == "default/model-not-set":
+                 logger.warning("Model name not found in context.bot_data, using fallback.")
+
             llm_response_content, tool_call_info = (
                 await _generate_llm_response_for_chat(
                     chat_id=chat_id,
                     trigger_content_parts=trigger_content_parts,
                     user_name=user_name,
-                    model_name=args.model, # Pass model name from args
+                    model_name=model_name, # Pass model name retrieved from context
                     # context=context
                 )
             )
