@@ -460,62 +460,6 @@ async def _generate_llm_response_for_chat(
     """
     Prepares context, message history, calls the LLM, and returns the response content
     along with any tool call information.
-        "Telegram Bot Token must be provided via --telegram-token or TELEGRAM_BOT_TOKEN env var"
-    )
-if not args.openrouter_api_key:
-    raise ValueError(
-        "OpenRouter API Key must be provided via --openrouter-api-key or OPENROUTER_API_KEY env var"
-    )
-
-# Set OpenRouter API key for LiteLLM
-os.environ["OPENROUTER_API_KEY"] = args.openrouter_api_key
-
-
-# --- Helper Functions & Context Managers ---
-@contextlib.asynccontextmanager
-async def typing_notifications(
-    context: ContextTypes.DEFAULT_TYPE, chat_id: int, action: str = ChatAction.TYPING
-):
-    """Context manager to send typing notifications periodically."""
-    stop_event = asyncio.Event()
-
-    async def typing_loop():
-        while not stop_event.is_set():
-            try:
-                await context.bot.send_chat_action(chat_id=chat_id, action=action)
-                # Wait slightly less than the 5-second timeout of the action
-                await asyncio.wait_for(stop_event.wait(), timeout=4.5)
-            except asyncio.TimeoutError:
-                pass
-            except Exception as e:
-                logger.warning(f"Error sending chat action: {e}")
-                await asyncio.sleep(5)  # Avoid busy-looping on persistent errors
-
-    typing_task = asyncio.create_task(typing_loop())
-    try:
-        yield
-    finally:
-        stop_event.set()
-        # Wait briefly for the task to finish cleanly
-        with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.wait_for(typing_task, timeout=1.0)
-
-
-# --- Core LLM Interaction Logic ---
-
-
-async def _generate_llm_response_for_chat(
-    chat_id: int,
-    trigger_content_parts: List[
-        Dict[str, Any]
-    ],  # Content of the triggering message (user text/photo or callback)
-    user_name: str,  # Name to use in system prompt
-    # TODO: Consider passing context explicitly instead of relying on globals/args
-    # context: ContextTypes.DEFAULT_TYPE # Needed for typing notifications?
-) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
-    """
-    Prepares context, message history, calls the LLM, and returns the response content
-    along with any tool call information.
 
     Args:
         chat_id: The target chat ID.
