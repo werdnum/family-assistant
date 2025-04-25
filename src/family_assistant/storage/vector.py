@@ -159,17 +159,21 @@ class DocumentEmbeddingRecord(Base):
 async def init_vector_db():
     """Initializes the vector database components (extension, indexes). Tables are created by storage.init_db."""
     engine = get_engine()  # Use engine from db_base.py
-    async with engine.begin() as conn:
-        # Tables are created via Base.metadata in storage.init_db
-        # Manually create extensions and partial indexes that SQLAlchemy might not handle directly
-        await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
-        # Example: Create the specific partial index for gemini-exp-03-07
-        # Note: Indexes might error if they already exist, add IF NOT EXISTS or handle errors
-        try:
-            await conn.execute(
-                sa.text(
-                    """
-                CREATE INDEX IF NOT EXISTS idx_doc_embeddings_gemini_1536_hnsw_cos ON document_embeddings
+
+    # Check if the dialect is PostgreSQL before running PG-specific commands
+    if engine.dialect.name == 'postgresql':
+        logger.info("PostgreSQL dialect detected. Initializing vector extension and indexes...")
+        async with engine.begin() as conn:
+            # Tables are created via Base.metadata in storage.init_db
+            # Manually create extensions and partial indexes that SQLAlchemy might not handle directly
+            await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            # Example: Create the specific partial index for gemini-exp-03-07
+            # Note: Indexes might error if they already exist, add IF NOT EXISTS or handle errors
+            try:
+                await conn.execute(
+                    sa.text(
+                        """
+                    CREATE INDEX IF NOT EXISTS idx_doc_embeddings_gemini_1536_hnsw_cos ON document_embeddings
                 USING hnsw ((embedding::vector(1536)) vector_cosine_ops)
                 WHERE embedding_model = 'gemini-exp-03-07'
                 WITH (m = 16, ef_construction = 64);
@@ -179,10 +183,14 @@ async def init_vector_db():
         except Exception as e:
             # This might happen if the index exists but with different params, etc.
             # In a real app, consider more robust migration management.
-            logger.warning(
-                f"Could not create partial index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}"
-            )
-    logger.info("Vector database components (extension, indexes) initialized.")
+                logger.warning(
+                    f"Could not create partial index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}"
+                )
+        logger.info("PostgreSQL vector database components (extension, indexes) initialized.")
+    else:
+        logger.warning(
+            f"Database dialect is '{engine.dialect.name}', not 'postgresql'. Skipping vector extension and index creation. Vector search functionality may be limited or unavailable."
+        )
 
 
 async def add_document(
