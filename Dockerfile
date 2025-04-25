@@ -24,7 +24,7 @@ ENV UV_CACHE_DIR=/uv-cache
 
 # Create virtual environment
 RUN uv venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH" # Activate venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy only pyproject.toml first to leverage Docker layer caching for dependencies
 COPY pyproject.toml ./
@@ -37,11 +37,11 @@ COPY pyproject.toml ./
 # 1. uv pip install --system --only-deps .
 # 2. uv pip install --system --no-deps .
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install . # Installs dependencies from pyproject.toml and the package
+    uv pip install .
 
 # --- Install Deno ---
 ARG DENO_VERSION=v2.2.11
-ARG TARGETARCH=amd64 # Default target architecture, Docker buildx sets this automatically
+ARG TARGETARCH=amd64
 # Select the correct Deno binary based on architecture
 RUN ARCHITECTURE="" && \
     if [ "$TARGETARCH" = "amd64" ]; then \
@@ -110,7 +110,7 @@ COPY prompts.yaml mcp_config.json ./
 # However, explicitly installing it after copying the 'src' ensures the code is included.
 # Use --no-deps as dependencies should already be installed.
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install . --no-deps # Install the package itself from the copied src
+    uv pip install . --no-deps
 
 # --- Linting Step (Optional but recommended) ---
 # Run linter (e.g., pylint) on the source code *after* copying it
