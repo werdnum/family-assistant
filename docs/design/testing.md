@@ -2,9 +2,9 @@
 
 **1. Introduction**
 
-The goal is to introduce a robust testing suite for the Family Assistant application. The primary focus will be on realistic functional and integration tests that verify the system's behavior, rather than exhaustive unit tests with heavy mocking. Key initial goals include testing database initialization and providing end-to-end smoke tests for core bot functionality.
+The goal is to introduce a robust testing suite for the Family Assistant application. The primary focus will be on realistic functional and integration tests that verify the system's behavior. A key initial goal is establishing an end-to-end smoke test for core bot functionality *before* significant refactoring, ensuring baseline functionality is preserved.
 
-Testing will necessitate refactoring the codebase to improve testability, primarily through dependency injection.
+Subsequent testing and refactoring will improve testability, primarily through dependency injection, and expand coverage.
 
 **2. Testing Strategy & Tools**
 
@@ -17,10 +17,13 @@ We will employ a multi-layered testing approach:
 **Chosen Tools:**
 
 *   **Test Runner:** `pytest` (with `pytest-asyncio` for async code).
-*   **Database:** `testcontainers-python` to run a real PostgreSQL instance in a Docker container for integration and functional tests. This provides high fidelity.
+*   **Database:**
+    *   **Initial Smoke Test:** Use the default database configuration (`sqlite+aiosqlite:///family_assistant.db` file) or potentially an in-memory SQLite database (`sqlite+aiosqlite:///:memory:`) directly, avoiding the need for the production PostgreSQL connection or immediate refactoring.
+    *   **Integration Tests:** After initial setup and LLM mocking, refactor to use dependency injection (likely via `storage.context.DatabaseContext`) and `pytest` fixtures providing an in-memory SQLite database for faster, isolated tests.
+    *   **Future (PostgreSQL-specific):** Use `testcontainers-python` to run PostgreSQL if/when testing features that specifically require it (e.g., vector search with `pgvector`).
 *   **LLM:**
-    *   **Initial:** Use the *real* configured LLM (via OpenRouter/LiteLLM) for initial E2E tests. This requires configuring API keys in the test environment but provides the most realistic smoke test.
-    *   **Future:** Integrate `mockllm`. This tool can run as a separate server, mimicking OpenAI/Anthropic APIs based on a configuration file. It will allow for deterministic and faster testing of LLM interactions without actual API calls or costs.
+    *   **Initial Smoke Test:** Use the *real* configured LLM (via LiteLLM) to verify the end-to-end flow works with actual LLM interaction. Requires API keys in the test environment.
+    *   **Mocking/Record-Replay:** Implement mocking using `litellm.CustomLLM` (see [LiteLLM Custom Provider Docs](https://docs.litellm.ai/docs/providers/custom_llm_server)). This allows creating mock providers for deterministic responses. LiteLLM's logging features may also aid in developing a record/replay mechanism based on captured real interactions. This will be prioritized after the initial smoke test.
 *   **Telegram Interface:**
     *   **Initial:** We will *not* directly test the `python-telegram-bot` handlers using a framework like `ptbtestsuite` initially. Instead, we will refactor the handler logic (`message_handler`, `process_chat_queue`, `_generate_llm_response_for_telegram`) into core, testable functions. Our functional tests will call these core functions directly, simulating the data that would come from a Telegram update.
     *   **Future:** If more direct testing of the `python-telegram-bot` integration is needed, `ptbtestsuite` could be evaluated, but it seems potentially complex to integrate and may require significant refactoring beyond what's initially planned.
@@ -108,77 +111,71 @@ The current extensive use of global variables and direct imports of dependencies
 
 *(Note: Moving source code into a `src/` directory is recommended practice when adding tests to avoid path issues.)*
 
-**5. Proposed Task List (Initial Phase)**
+**5. Proposed Task List (Revised Initial Phase)**
 
-*The first two refactoring steps (Database Access and LLM Access) are essential prerequisites for implementing the initial functional smoke tests, such as verifying the note saving/retrieval flow.*
+This revised list prioritizes establishing a baseline test and LLM mocking before major database refactoring.
 
-1.  **Refactor Database Access (Prerequisite 1):**
-    *   Implement dependency injection for the DB engine/session in `storage/*.py` and `storage.init_db`.
-    *   Update callers in `main.py`, `web_server.py`, `task_worker.py`, `processing.py` to obtain and pass the engine/session.
+1.  **Implement Baseline Smoke Test (Note Save/Retrieve):**
+    *   Write a basic functional test (e.g., `tests/functional/test_smoke_notes.py`).
+    *   This test will run against the *current* codebase structure with minimal changes.
+    *   **Database:** Use the default database URL (`sqlite+aiosqlite:///family_assistant.db`) or modify `storage/base.py` slightly to use an in-memory DB (`sqlite+aiosqlite:///:memory:`) if easier for cleanup. Ensure `storage.init_db()` is called at the start of the test run (perhaps via a fixture).
+    *   **LLM:** Use the *real* configured LLM via LiteLLM. Requires API keys in the test environment.
+    *   **Logic:** Call the necessary functions to simulate a user adding a note (e.g., "Test Note Smoke [timestamp]") and then asking about it. This might involve directly calling parts of `main._generate_llm_response_for_chat` or related functions.
+    *   **Assertions:** Verify the note is created in the database and that the subsequent LLM interaction shows awareness of the note (either in the final response or the context sent to the LLM).
+    *   *Goal:* Establish a working end-to-end test before refactoring.
 
-2.  **Refactor LLM Access (Prerequisite 2):**
-    *   Create and integrate the `LLMClient` wrapper class as described in Section 3.
-    *   Modify `processing.get_llm_response` to accept an `LLMClient` instance.
-    *   Update the caller (`main._generate_llm_response_for_chat`) to pass the `LLMClient`.
-
-3.  **Setup Test Environment:**
-    *   Add `pytest`, `pytest-asyncio`, `testcontainers`, `psycopg2-binary` (or `asyncpg`), `httpx`, `pytest-mock` (or use `unittest.mock`) to development dependencies.
-    *   Create the basic `tests/` directory structure and `tests/conftest.py`.
+2.  **Setup Test Environment:**
+    *   Add necessary development dependencies: `pytest`, `pytest-asyncio`, `aiosqlite` (if not already present), `httpx`, `pytest-mock` (or use `unittest.mock`).
+    *   Create the basic `tests/` directory structure (`functional`, `integration`, `unit`, `mocks`).
+    *   Create `tests/conftest.py` for future fixtures.
     *   (Optional but Recommended) Move application code into a `src/` directory if not already done.
 
-4.  **Test Database Initialization & Storage:**
-    *   Create a fixture in `conftest.py` using `testcontainers` (or in-memory SQLite initially) to provide a temporary database engine/session factory for tests.
-    *   Write `tests/integration/test_storage_init.py` to call the refactored `init_db` using the test engine.
-    *   Write `tests/integration/test_storage.py` to test core storage functions (notes, tasks, history, email storage/retrieval) using the test DB fixture and the refactored storage functions.
+3.  **Implement Basic LLM Mocking:**
+    *   Investigate and implement a mock LLM provider using `litellm.CustomLLM` (e.g., in `tests/mocks/mock_llm_provider.py`). This provider should return predefined responses suitable for testing the note-saving flow without real API calls.
+    *   Refactor the LLM call site (e.g., in `processing.get_llm_response`) to allow selecting the mock provider via a specific model name (e.g., `mock/test-completion-model`).
+    *   Configure `litellm.custom_provider_map` during test setup (likely in `conftest.py` or test modules) to register the mock provider.
+    *   Update the smoke test (or create new tests) to use the mock LLM provider, removing the dependency on real API keys for most tests going forward. Consider leveraging LiteLLM's logging for potential record/replay later.
 
-5.  **Implement Initial Smoke Test (Note Save/Retrieve):**
-    *   Write a basic test in `tests/functional/test_core_logic.py` (or similar).
-    *   This test will likely:
-        *   Use the test DB fixture.
-        *   Use a mock `LLMClient` fixture (using `pytest-mock` or `unittest.mock`) configured to:
-            *   Return a response requesting the `add_or_update_note` tool when given initial input.
-            *   Return a simple confirmation after the tool call.
-        *   Call a core processing function (e.g., a refactored version of `_generate_llm_response_for_chat` or `get_llm_response` directly) with the necessary dependencies (mock LLM client, test DB session).
-        *   Assert that the `add_or_update_note` function was called with the expected arguments (via the mock LLM response).
-        *   Assert that the note exists in the test database with the correct content after the call.
-        *   (Optional) Extend the test to simulate asking about the note and verify the context provided back to the (mock) LLM includes the note.
+4.  **Refactor Database Access & Add SQLite Fixtures:**
+    *   Refactor `storage/*.py` functions and `storage.init_db` to accept a `storage.context.DatabaseContext` instance instead of relying on the global engine. This encapsulates connection/session handling and retry logic.
+    *   Create fixtures in `conftest.py` for an in-memory SQLite engine (`test_engine`) and a `DatabaseContext` factory (`test_db_context`) using that engine (similar to `storage/testing.py`).
+    *   Update callers (`main.py`, `web_server.py`, `task_worker.py`, `processing.py`) to obtain and pass the `DatabaseContext`. This is a significant refactoring step.
+
+5.  **Test Database Initialization & Storage Layer:**
+    *   Write `tests/integration/test_storage_init.py` to call the refactored `init_db` using the `test_engine` fixture.
+    *   Write `tests/integration/test_storage.py` to test core storage functions (notes, tasks, history, etc.) using the `test_db_context` fixture and the refactored storage functions. Ensure retry logic within `DatabaseContext` is testable (might require mocking `asyncio.sleep`).
 
 6.  **Refactor Configuration:**
     *   Implement a configuration object/dict.
-    *   Remove global config access and pass the config object explicitly where needed.
+    *   Remove global config access and pass the config object explicitly where needed. Test configuration loading.
 
 7.  **Refactor MCP State & Connection:**
     *   Modify `load_mcp_config_and_connect` to return state and be skippable.
-    *   Pass MCP state explicitly.
+    *   Pass MCP state explicitly. Add tests mocking MCP state/interactions.
 
 8.  **Test Processing Logic (Further):**
-    *   Expand `tests/integration/test_processing.py`.
-    *   Test `get_llm_response` and `execute_function_call` more thoroughly. Use the test DB fixture. Provide mock MCP state. Use the mock `LLMClient`.
+    *   Expand `tests/integration/test_processing.py`. Test `get_llm_response` and `execute_function_call` thoroughly using the `test_db_context` fixture, mock LLM provider, and mock MCP state.
 
 9.  **Refactor Task Worker:**
-    *   Inject dependencies into the loop and handlers.
+    *   Inject dependencies (`DatabaseContext`, config, mock LLM/MCP if needed) into the loop and handlers.
 
 10. **Test Task Worker:**
-    *   Write `tests/integration/test_task_worker.py`. Test dequeuing, handler execution (e.g., `handle_llm_callback`), and task status updates using the test DB. Mock LLM/MCP interactions triggered by handlers as needed.
+    *   Write `tests/integration/test_task_worker.py`. Test dequeuing, handler execution, and task status updates using `test_db_context` and mocks.
 
 11. **Refactor Telegram Handlers & Core Logic:**
-    *   Decouple the core processing logic from `python-telegram-bot` handlers as described above.
+    *   Decouple the core processing logic from `python-telegram-bot` handlers.
 
 12. **Test Core Telegram Flow:**
-    *   Write `tests/functional/test_telegram_flow.py`.
-    *   Call the refactored core processing function (simulating a message event).
-    *   Use the test DB fixture and the mock `LLMClient`.
-    *   Assert expected database changes (e.g., message history) and inspect the returned response content.
+    *   Write `tests/functional/test_telegram_flow.py`. Call the refactored core processing function using `test_db_context` and mock LLM/MCP. Assert DB changes and response content.
 
 13. **Refactor Web Server:**
-    *   Implement FastAPI dependency injection (`Depends`) for DB sessions, config, etc.
+    *   Implement FastAPI dependency injection (`Depends`) for `DatabaseContext`, config, etc.
 
 14. **Test Web API:**
-    *   Write `tests/functional/test_web_api.py`.
-    *   Use `httpx` to make requests to the FastAPI endpoints (running against the test DB). Test CRUD operations for notes, history/task views.
+    *   Write `tests/functional/test_web_api.py` using `httpx` against the FastAPI app (configured with test dependencies).
 
 15. **CI Integration:**
-    *   Set up a GitHub Actions workflow (or similar) to automatically run the test suite on pushes/PRs. Ensure the workflow can run Docker for `testcontainers` if used.
+    *   Set up GitHub Actions (or similar) to run `pytest`.
 
 **6. Future Work**
 
