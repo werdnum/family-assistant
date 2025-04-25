@@ -9,6 +9,11 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Use type hints consistently.
 *   Keep functions and methods focused and concise.
 
+## Design and Testability
+
+* Design in a modular fashion for testability. Where possible accept external dependencies including configuration as interfaces.
+* Write all tests in a way that exercises as much code as oractical. Realistic tests are more important than testing components in isolation. However a good design naturally allows testing in isolation because components have sensible scope and their external dependencies can be easily replaced with fakes.
+
 ## Comments and Docstrings
 
 *   **Purpose:** Use comments primarily to explain *why* something is being done, especially if the reason is not immediately obvious from the code itself. Avoid comments that merely explain *what* the code does, as the code should ideally be self-explanatory.
