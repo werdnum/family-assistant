@@ -184,3 +184,16 @@ This plan provides a phased approach to introducing testing, prioritizing realis
 * Telegram handler decoupling can be delayed until core logic is stable; basic smoke tests on the thin wrapper suffice initially.
 * Web server DI and HTTP tests add value later—once chat flows work reliably, layer in FastAPI tests to round out coverage.
 * Integrate CI as soon as the first round of integration tests pass to catch regressions early and maintain momentum.
+
+## claude review
+
+* The storage-first approach is sound, but consider creating a `DatabaseContext` class early to encapsulate connection management, retries, and transactions. This would simplify dependency injection throughout the codebase and provide a clean testing seam.
+* For the LLM wrapper, implement a protocol/interface first rather than a concrete class. This allows for multiple implementations (real, mock, cached responses) without changing consumer code.
+* The task queue testing deserves special attention - consider adding specific fixtures for task creation/execution that can manipulate time (for scheduled tasks) and verify recurrence rules.
+* Add explicit test categories for "happy path" vs. error handling. The current design focuses on functionality but doesn't emphasize resilience testing (network failures, malformed responses, etc.).
+* For a hobbyist environment, consider implementing a simple record/replay mechanism for LLM interactions early. This would allow capturing real LLM responses during development and replaying them in tests, reducing API costs while maintaining realism.
+* The MCP testing strategy could be enhanced with a simple in-process mock server implementation rather than just mocking the client side. This would provide more realistic testing of the protocol interactions.
+* Consider adding property-based testing for specific components (especially the task scheduler and recurrence logic) to discover edge cases that might be missed in scenario-based tests.
+* For calendar integration testing, add fixtures that provide mock CalDAV/iCal servers or pre-populated response data to avoid external dependencies.
+* The proposed refactoring sequence is logical, but consider creating a minimal end-to-end test first (even with all the globals) to establish a baseline before refactoring. This provides confidence that functionality is preserved throughout the refactoring process.
+* Add explicit test coverage for the database retry logic, which is critical for application resilience but often overlooked in testing.
