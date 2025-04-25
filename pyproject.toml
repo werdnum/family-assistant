@@ -46,7 +46,7 @@ dev = [
     "pytest-asyncio",
     "pylint>=3.0.0", # Moved pylint here
     # "ruff", # Consider adding ruff later if desired
-    "poe-the-task>=0.11.0", # Add poe-the-task
+    "poethetask>=0.11.0", # Add poe-the-task (Corrected name)
     "symbex>=2.0",         # Add symbex
 ]
 
