@@ -18,11 +18,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 import json
 from dateutil.parser import parse as parse_datetime
 
-# Import metadata and engine from the main storage module
-from .base import metadata, get_engine # Use relative import from base.py
+# Import metadata and engine using absolute package path
+from family_assistant.storage.base import metadata, get_engine
 
 logger = logging.getLogger(__name__)
-# Import metadata and engine from the base module
 engine = get_engine()
 # Define the received emails table
 received_emails_table = sa.Table(

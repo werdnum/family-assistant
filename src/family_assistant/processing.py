@@ -15,9 +15,10 @@ from litellm import acompletion
 from litellm.types.completion import ChatCompletionMessageParam
 
 # Import storage functions for tools
-import storage
+# Import the whole module to access its functions via storage.*
+from family_assistant import storage
 
-# from storage import enqueue_task # Removed specific import
+# from family_assistant.storage import enqueue_task # Example if specific import needed
 
 # MCP state (mcp_sessions, tool_name_to_server_id) will be passed as arguments
 # Removed: from main import mcp_sessions, tool_name_to_server_id

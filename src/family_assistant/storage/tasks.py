@@ -23,7 +23,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import DBAPIError
 
-from .base import metadata, get_engine # Use relative import from base.py
+# Use absolute package path
+from family_assistant.storage.base import metadata, get_engine
 
 logger = logging.getLogger(__name__)
 engine = get_engine()

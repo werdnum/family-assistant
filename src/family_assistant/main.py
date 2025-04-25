@@ -41,19 +41,19 @@ import telegramify_markdown
 from telegram.helpers import escape_markdown
 import uvicorn
 
-# Import task worker module
-import task_worker
+# Import task worker module using absolute path
+from family_assistant import task_worker
 
 # Assuming processing.py contains the LLM interaction logic
-from processing import get_llm_response
-from processing import schedule_future_callback_tool, schedule_recurring_task_tool
+from family_assistant.processing import get_llm_response
+from family_assistant.processing import schedule_future_callback_tool, schedule_recurring_task_tool
 
 # Import the FastAPI app
-from web_server import app as fastapi_app
+from family_assistant.web_server import app as fastapi_app
 
 # Import storage functions
 # Import facade for primary access
-from storage import (
+from family_assistant.storage import (
     init_db,
     get_all_notes,
     add_message_to_history,
@@ -61,10 +61,11 @@ from storage import (
     get_message_by_id,
     add_or_update_note,
 )
-import storage  # Import the whole module for task queue functions
+# Import the whole storage module for task queue functions etc.
+from family_assistant import storage
 
 # Import calendar functions
-import calendar_integration
+from family_assistant import calendar_integration
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -661,7 +662,7 @@ async def _generate_llm_response_for_chat(
 
     # --- Combine local and MCP tools ---
     # Ensure processing.TOOLS_DEFINITION is accessible or imported
-    from processing import TOOLS_DEFINITION as local_tools_definition
+    from family_assistant.processing import TOOLS_DEFINITION as local_tools_definition
 
     all_tools = local_tools_definition + mcp_tools
 

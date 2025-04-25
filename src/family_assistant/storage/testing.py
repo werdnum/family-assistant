@@ -13,8 +13,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncConnection
 from sqlalchemy import event, MetaData
 
-from .base import metadata
-from .context import DatabaseContext
+# Use absolute package paths
+from family_assistant.storage.base import metadata
+from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
 

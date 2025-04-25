@@ -9,8 +9,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Callable
 
-import storage  # Import for task queue operations
-from processing import get_llm_response, TOOLS_DEFINITION as local_tools_definition
+# Use absolute imports based on the package structure
+from family_assistant import storage  # Import for task queue operations
+from family_assistant.processing import get_llm_response, TOOLS_DEFINITION as local_tools_definition
 from telegramify_markdown import markdownify
 from telegram.helpers import escape_markdown
 
@@ -248,7 +249,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                         f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
                                     )
 
-                                # Import here to avoid circular imports
+                                # Import here to avoid potential circular imports if task_worker is imported elsewhere early
                                 from dateutil import rrule
 
                                 # Calculate the next occurrence *after* the last scheduled time

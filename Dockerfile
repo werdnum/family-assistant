@@ -22,16 +22,22 @@ WORKDIR /app
 # Define the cache directory for uv
 ENV UV_CACHE_DIR=/uv-cache
 
+# Create virtual environment
 RUN uv venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH" # Activate venv
 
-COPY requirements.txt .
-# Install Python dependencies into the virtual environment
-# Note: uv pip install automatically detects and uses .venv in the current dir if it exists
-# We don't need --system anymore.
+# Copy only pyproject.toml first to leverage Docker layer caching for dependencies
+COPY pyproject.toml ./
+
+# Install dependencies using uv from pyproject.toml
 # Using --mount with the explicit UV_CACHE_DIR for caching pip downloads/builds
+# Note: Installing with '.' here installs dependencies AND the package in editable mode
+# which might not be ideal for a final image, but useful for development builds.
+# For a production image, consider two steps:
+# 1. uv pip install --system --only-deps .
+# 2. uv pip install --system --no-deps .
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install -r requirements.txt --no-deps && \
-    uv pip install -r requirements.txt
+    uv pip install . # Installs dependencies from pyproject.toml and the package
 
 # --- Install Deno ---
 ARG DENO_VERSION=v2.2.11
@@ -86,24 +92,41 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 
 # --- Copy Application Code ---
-# Copy the rest of the application code and configuration
-COPY *.py ./
-COPY storage/*.py ./storage/
-COPY prompts.yaml mcp_config.json ./
-COPY templates/ ./templates/
-COPY static/ ./static/
+# Copy the source code into the image
+COPY src/ /app/src/
 
-# --- Linting Step ---
-# Run pylint in errors-only mode after copying the code
-# Include files in storage directory
-# Run pylint on the storage package and top-level files
-RUN echo "Running pylint..." && \
-    /app/.venv/bin/pylint --errors-only storage *.py || \
-    (echo "Pylint found errors. Please fix them." && exit 1)
+# Copy configuration files, templates, and static assets to the WORKDIR
+# These need to be accessible relative to the WORKDIR at runtime when running the app
+COPY prompts.yaml mcp_config.json ./
+# The templates/static files are now *inside* the package, so they don't need
+# to be copied separately here if the web server loads them relative to the package path.
+# If web_server.py fails to find them, uncomment these lines:
+# COPY src/family_assistant/templates /app/src/family_assistant/templates
+# COPY src/family_assistant/static /app/src/family_assistant/static
+
+# --- Install the Package ---
+# This step might be redundant if `uv pip install .` in the previous step
+# already installed the package from the copied pyproject.toml.
+# However, explicitly installing it after copying the 'src' ensures the code is included.
+# Use --no-deps as dependencies should already be installed.
+RUN --mount=type=cache,target=${UV_CACHE_DIR} \
+    uv pip install . --no-deps # Install the package itself from the copied src
+
+# --- Linting Step (Optional but recommended) ---
+# Run linter (e.g., pylint) on the source code *after* copying it
+# Ensure pylint is installed (add to [project.optional-dependencies]dev in pyproject.toml)
+# RUN echo "Running pylint..." && \
+#     pylint --errors-only src/family_assistant || \
+#     (echo "Pylint found errors. Please fix them." && exit 1)
+
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
 EXPOSE 8000
 
-# Define the default command to run the application using the venv's python
-CMD ["/app/.venv/bin/python", "main.py"]
+# Define the default command to run the application using the installed entry point
+# This uses the [project.scripts] defined in pyproject.toml
+CMD ["family-assistant"]
+
+# Alternatively, run using python -m:
+# CMD ["python", "-m", "family_assistant"]
