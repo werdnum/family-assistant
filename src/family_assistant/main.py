@@ -408,14 +408,58 @@ parser.add_argument(
     default="openrouter/google/gemini-2.5-pro-preview-03-25",
     help="LLM model to use via OpenRouter (e.g., openrouter/google/gemini-2.5-pro-preview-03-25)",
 )
-args = parser.parse_args()
-
 # --- Initial Configuration Load ---
+# Load config from .env and prompts.yaml first
 load_config()
 
-# --- Validate Essential Config ---
-if not args.telegram_token:
-    raise ValueError(
+# Argument parsing will happen inside main()
+
+# --- Helper Functions & Context Managers ---
+@contextlib.asynccontextmanager
+async def typing_notifications(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int, action: str = ChatAction.TYPING
+):
+    """Context manager to send typing notifications periodically."""
+    stop_event = asyncio.Event()
+
+    async def typing_loop():
+        while not stop_event.is_set():
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action=action)
+                # Wait slightly less than the 5-second timeout of the action
+                await asyncio.wait_for(stop_event.wait(), timeout=4.5)
+            except asyncio.TimeoutError:
+                pass
+            except Exception as e:
+                logger.warning(f"Error sending chat action: {e}")
+                await asyncio.sleep(5)  # Avoid busy-looping on persistent errors
+
+    typing_task = asyncio.create_task(typing_loop())
+    try:
+        yield
+    finally:
+        stop_event.set()
+        # Wait briefly for the task to finish cleanly
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(typing_task, timeout=1.0)
+
+
+# --- Core LLM Interaction Logic ---
+
+
+async def _generate_llm_response_for_chat(
+    chat_id: int,
+    trigger_content_parts: List[
+        Dict[str, Any]
+    ],  # Content of the triggering message (user text/photo or callback)
+    user_name: str,  # Name to use in system prompt
+    model_name: str, # Pass model name explicitly
+    # TODO: Consider passing context explicitly instead of relying on globals/args
+    # context: ContextTypes.DEFAULT_TYPE # Needed for typing notifications?
+) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
+    """
+    Prepares context, message history, calls the LLM, and returns the response content
+    along with any tool call information.
         "Telegram Bot Token must be provided via --telegram-token or TELEGRAM_BOT_TOKEN env var"
     )
 if not args.openrouter_api_key:
@@ -671,10 +715,11 @@ async def _generate_llm_response_for_chat(
     # They could be added back if needed, perhaps by passing the `context` object.
     try:  # Move try block here
         # Get both response content and tool info from get_llm_response
+        # Pass model_name explicitly now
         llm_response_content, tool_info = await get_llm_response(
             messages,
             chat_id,
-            args.model,
+            model_name, # Use passed model_name
             all_tools,
             mcp_sessions,
             tool_name_to_server_id,
@@ -801,11 +846,13 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
     try:
         # Use the new helper function to get the LLM response content and tool info
         async with typing_notifications(context, chat_id):
+            # Pass the model name from args down
             llm_response_content, tool_call_info = (
                 await _generate_llm_response_for_chat(
                     chat_id=chat_id,
                     trigger_content_parts=trigger_content_parts,
                     user_name=user_name,
+                    model_name=args.model, # Pass model name from args
                     # context=context
                 )
             )
@@ -1077,17 +1124,30 @@ def reload_config_handler(signum, frame):
 
 
 # --- Main Application Setup & Run ---
-async def main_async() -> None:
+async def main_async(cli_args: argparse.Namespace) -> None: # Accept parsed args
     """Initializes and runs the bot application."""
     global application
-    logger.info(f"Using model: {args.model}")
+    logger.info(f"Using model: {cli_args.model}") # Use cli_args
+
+    # --- Validate Essential Config from args ---
+    if not cli_args.telegram_token:
+        raise ValueError(
+            "Telegram Bot Token must be provided via --telegram-token or TELEGRAM_BOT_TOKEN env var"
+        )
+    if not cli_args.openrouter_api_key:
+        raise ValueError(
+            "OpenRouter API Key must be provided via --openrouter-api-key or OPENROUTER_API_KEY env var"
+        )
+
+    # Set OpenRouter API key for LiteLLM
+    os.environ["OPENROUTER_API_KEY"] = cli_args.openrouter_api_key
 
     # --- Persistence Setup ---
     # Persistence is no longer used for history, but could be kept for user/bot data if needed
     # persistence = PicklePersistence(filepath="bot_persistence.pkl")
 
     application = (
-        ApplicationBuilder().token(args.telegram_token)
+        ApplicationBuilder().token(cli_args.telegram_token) # Use cli_args
         # .persistence(persistence) # Removed persistence
         .build()
     )
@@ -1129,9 +1189,15 @@ async def main_async() -> None:
     logger.info("Web server running on http://0.0.0.0:8000")  # Updated log message
 
     # Pass essential state to the task worker module
-    task_worker.set_llm_response_generator(_generate_llm_response_for_chat)
+    # Need to wrap _generate_llm_response_for_chat to include model name from args
+    async def llm_generator_wrapper(chat_id, trigger_content_parts, user_name):
+        return await _generate_llm_response_for_chat(
+            chat_id, trigger_content_parts, user_name, cli_args.model
+        )
+
+    task_worker.set_llm_response_generator(llm_generator_wrapper)
     task_worker.set_mcp_state(mcp_sessions, mcp_tools, tool_name_to_server_id)
-    
+
     # Start the task queue worker, passing the notification event
     worker_id = f"worker-{uuid.uuid4()}"
     task_worker_task = asyncio.create_task(task_worker.task_worker_loop(worker_id, new_task_event))
@@ -1159,11 +1225,32 @@ async def main_async() -> None:
     # Application shutdown is handled by the signal handler which calls shutdown_handler
 
 
-def main() -> None:
-    """Sets up the event loop and signal handlers."""
+def main() -> int: # Return an exit code
+    """Sets up argument parsing, event loop, and signal handlers."""
+    # --- Argument Parsing ---
+    # Moved here from module level
+    parser = argparse.ArgumentParser(description="Family Assistant Bot")
+    parser.add_argument(
+        "--telegram-token",
+        default=os.getenv("TELEGRAM_BOT_TOKEN"),
+        help="Telegram Bot Token (overrides .env)",
+    )
+    parser.add_argument(
+        "--openrouter-api-key",
+        default=os.getenv("OPENROUTER_API_KEY"),
+        help="OpenRouter API Key (overrides .env)",
+    )
+    parser.add_argument(
+        "--model",
+        # Default model updated based on previous usage
+        default=os.getenv("LLM_MODEL", "openrouter/google/gemini-flash-1.5"),
+        help="LLM model to use (e.g., openrouter/google/gemini-flash-1.5)",
+    )
+    args = parser.parse_args() # Parse args here
+
+    # --- Event Loop and Signal Handlers ---
     loop = asyncio.get_event_loop()
 
-    # Setup signal handlers
     signal_map = {
         signal.SIGINT: "SIGINT",
         signal.SIGTERM: "SIGTERM",
@@ -1185,7 +1272,11 @@ def main() -> None:
 
     try:
         logger.info("Starting application...")
-        loop.run_until_complete(main_async())
+        # Pass parsed args to main_async
+        loop.run_until_complete(main_async(args))
+    except ValueError as config_err: # Catch config validation errors
+        logger.critical(f"Configuration error: {config_err}")
+        return 1 # Return non-zero exit code
     except (KeyboardInterrupt, SystemExit) as ex:
         logger.warning(f"Received {type(ex).__name__}, initiating shutdown.")
         # Ensure shutdown runs if loop was interrupted directly
@@ -1197,7 +1288,8 @@ def main() -> None:
         logger.info("Closing event loop.")
         loop.close()
         logger.info("Application finished.")
+    return 0 # Return 0 on successful shutdown
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main()) # Exit with the return code from main()
