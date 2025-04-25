@@ -11,8 +11,10 @@ This document outlines the coding style, commenting philosophy, and conventions 
 
 ## Design and Testability
 
-* Design in a modular fashion for testability. Where possible accept external dependencies including configuration as interfaces.
-* Write all tests in a way that exercises as much code as oractical. Realistic tests are more important than testing components in isolation. However a good design naturally allows testing in isolation because components have sensible scope and their external dependencies can be easily replaced with fakes.
+*   **Dependency Injection:** Design components to receive their dependencies (like database connections, configuration objects, external service clients) as arguments or through a framework's DI mechanism (e.g., FastAPI's `Depends`). Avoid reliance on global variables or direct imports of dependencies within core logic modules. This is crucial for replacing dependencies with mocks or test instances during testing.
+*   **Modularity:** Create components with clear responsibilities and well-defined interfaces. This allows components to be tested more easily in isolation or replaced with fakes when testing other parts of the system.
+*   **Test Strategy Focus:** Prioritize realistic integration and functional tests that verify the behavior of components working together. Use `testcontainers` for dependencies like databases where possible. While unit tests have their place for complex, isolated logic, the primary goal is to ensure the system works correctly end-to-end.
+*   **Testable Core Logic:** Separate core application logic (e.g., processing a user request, handling a task) from interface-specific code (e.g., Telegram API interactions, FastAPI request/response handling). Test the core logic directly, making the interface layers thin wrappers.
 
 ## Comments and Docstrings
 
