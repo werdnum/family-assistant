@@ -137,13 +137,7 @@ class DocumentEmbeddingRecord(Base):
         sa.UniqueConstraint("document_id", "chunk_index", "embedding_type"),
         sa.Index("idx_doc_embeddings_type_model", embedding_type, embedding_model),
         sa.Index("idx_doc_embeddings_document_chunk", document_id, chunk_index),
-        # GIN expression index for FTS
-        sa.Index(
-            "idx_doc_embeddings_content_fts_gin",
-            sa.func.to_tsvector(sa.literal_column("english"), content),
-            postgresql_using="gin",
-            postgresql_where=(content.isnot(None)),
-        ),
+        # GIN expression index for FTS is now created conditionally in init_vector_db
         # Example Partial HNSW index for a specific model/dimension
         # Requires manual creation via raw SQL in init_vector_db or migrations
         # sa.Index(
@@ -186,14 +180,33 @@ async def init_vector_db():
                 """
                     )
                 )
+                logger.info("Created/verified HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos.")
             except Exception as e:
                 # This might happen if the index exists but with different params, etc.
                 # In a real app, consider more robust migration management.
-                logger.warning(  # Ensure this is not indented further
-                    f"Could not create partial index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}"
+                logger.warning(
+                    f"Could not create partial HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}"
                 )
+
+            # Also create the FTS index here
+            try:
+                await conn.execute(
+                    sa.text(
+                        """
+                    CREATE INDEX IF NOT EXISTS idx_doc_embeddings_content_fts_gin ON document_embeddings
+                    USING gin (to_tsvector('english', content))
+                    WHERE content IS NOT NULL;
+                    """
+                    )
+                )
+                logger.info("Created/verified FTS index idx_doc_embeddings_content_fts_gin.")
+            except Exception as e:
+                logger.warning(
+                    f"Could not create FTS index idx_doc_embeddings_content_fts_gin: {e}"
+                )
+
         logger.info(
-            "PostgreSQL vector database components (extension, indexes) initialized."
+            "PostgreSQL vector database components (extension, custom indexes) initialized."
         )
     else:
         logger.warning(
