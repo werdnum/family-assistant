@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Select, Insert, Update, Delete
 from sqlalchemy.exc import DBAPIError
 
-from .base import get_engine
+# Use absolute package path
+from family_assistant.storage.base import get_engine
 
 logger = logging.getLogger(__name__)
 

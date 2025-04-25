@@ -4,30 +4,30 @@ from typing import List, Dict, Any, Optional
 import asyncio
 import random
 from sqlalchemy.exc import DBAPIError
-from dateutil import rrule  # Added for recurrence calculation
-from dateutil.parser import isoparse  # Added for parsing dates in recurrence
+from dateutil import rrule
+from dateutil.parser import isoparse
 
-# Import base components
-from .base import metadata, get_engine, engine  # Use relative import from base.py
-from .context import DatabaseContext, get_db_context  # Import new context manager
+# Import base components using absolute package paths
+from family_assistant.storage.base import metadata, get_engine, engine
+from family_assistant.storage.context import DatabaseContext, get_db_context
 
-# Import specific storage modules
-from .notes import ( # Use relative import
+# Import specific storage modules using absolute package paths
+from family_assistant.storage.notes import (
     notes_table,
     add_or_update_note,
     get_all_notes,
     get_note_by_title,
     delete_note,
 )
-from .email import received_emails_table, store_incoming_email # Use relative import
-from .message_history import ( # Use relative import
+from family_assistant.storage.email import received_emails_table, store_incoming_email
+from family_assistant.storage.message_history import (
     message_history_table,
     add_message_to_history,
     get_recent_history,
     get_message_by_id,
     get_grouped_message_history,
 )
-from .tasks import ( # Use relative import
+from family_assistant.storage.tasks import (
     tasks_table,
     enqueue_task,
     dequeue_task,
@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 # --- Vector Storage Imports ---
 try:
-    from .vector import ( # Use relative import
+    # Use absolute package path
+    from family_assistant.storage.vector import (
         Base as VectorBase,
         init_vector_db,
         add_document,

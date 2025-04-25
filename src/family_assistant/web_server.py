@@ -7,15 +7,14 @@ from fastapi.templating import Jinja2Templates
 from typing import List, Dict, Optional
 from fastapi import Response  # Added Response
 from datetime import datetime, timezone
-import json  # Import json for payload rendering
-from fastapi.staticfiles import StaticFiles  # Keep StaticFiles import
+import json
+import pathlib # Import pathlib for finding template/static dirs
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
-# Import storage functions - adjust path if needed
-# Import facade and specific modules as needed
-import storage
-
-# Import specific functions/tables via the storage facade
-from storage import (
+# Import storage functions using absolute package path
+from family_assistant import storage
+from family_assistant.storage import (
     get_all_notes,
     get_note_by_title,
     add_or_update_note,
@@ -28,15 +27,43 @@ from storage import (
 logger = logging.getLogger(__name__)
 
 # Directory to save raw webhook request bodies for debugging/replay
-MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests"
+MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests" # TODO: Consider making this configurable via env var
 
-app = FastAPI(title="Family Assistant Notes Editor")
+app = FastAPI(title="Family Assistant Web Interface") # Updated title slightly
 
-# Configure templates
-templates = Jinja2Templates(directory="templates")
+# --- Determine base path for templates and static files ---
+# This assumes web_server.py is at src/family_assistant/web_server.py
+# We want the paths relative to the 'family_assistant' package directory
+try:
+    # Get the directory containing the current file (web_server.py)
+    current_file_dir = pathlib.Path(__file__).parent.resolve()
+    # Go up one level to the package root (src/family_assistant/)
+    package_root_dir = current_file_dir
+    # Define template and static directories relative to the package root
+    templates_dir = package_root_dir / "templates"
+    static_dir = package_root_dir / "static"
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+    if not templates_dir.is_dir():
+        logger.warning(f"Templates directory not found at expected location: {templates_dir}")
+        # Fallback or raise error? For now, log warning.
+    if not static_dir.is_dir():
+        logger.warning(f"Static directory not found at expected location: {static_dir}")
+        # Fallback or raise error?
+
+    # Configure templates using the calculated path
+    templates = Jinja2Templates(directory=templates_dir)
+
+    # Mount static files using the calculated path
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    logger.info(f"Templates directory set to: {templates_dir}")
+    logger.info(f"Static files directory set to: {static_dir}")
+
+except NameError:
+    # __file__ might not be defined in some execution contexts (e.g., interactive)
+    logger.error("Could not determine package path using __file__. Static/template files might not load.")
+    # Provide fallback paths relative to CWD, although this might not work reliably
+    templates = Jinja2Templates(directory="src/family_assistant/templates")
+    app.mount("/static", StaticFiles(directory="src/family_assistant/static"), name="static")
 
 # --- Helper for DB Session (if needed, but storage functions are standalone) ---
 # Example if storage functions required a session object
