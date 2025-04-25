@@ -55,6 +55,19 @@ family-assistant = "family_assistant.main:main"
 "Homepage" = "https://github.com/yourusername/family-assistant" # TODO: Update URL
 "Bug Tracker" = "https://github.com/yourusername/family-assistant/issues" # TODO: Update URL
 
+
+# --- Setuptools Configuration ---
+[tool.setuptools]
+# Include files specified in MANIFEST.in or via package_data/include_package_data
+# We'll use package_data below. Setting this true is good practice.
+include-package-data = true
+
+[tool.setuptools.package-data]
+# Specify that the 'family_assistant' package should include
+# all files within its 'templates' and 'static' subdirectories.
+family_assistant = ["templates/**/*", "static/**/*"]
+
+
 # --- Tool Configuration (Example: Ruff) ---
 # [tool.ruff]
 # line-length = 88
