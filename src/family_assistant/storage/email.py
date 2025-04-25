@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 from sqlalchemy.sql import insert, functions  # Import functions explicitly
 from sqlalchemy.sql import insert
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON # Import generic JSON type
 import json
 from dateutil.parser import parse as parse_datetime
 
