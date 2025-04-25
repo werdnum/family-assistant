@@ -19,6 +19,7 @@ from typing import (
 )
 
 import sqlalchemy as sa
+from sqlalchemy import JSON # Import generic JSON
 from sqlalchemy.dialects.postgresql import JSONB  # Import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -92,7 +93,7 @@ class DocumentRecord(Base):
         sa.DateTime(timezone=True),
         server_default=functions.now(),  # Use explicit import
     )  # Use sa.sql.func.now() for server default
-    doc_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB) # Renamed from metadata
+    doc_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON().with_variant(JSONB, 'postgresql')) # Use variant
 
     embeddings: Mapped[List["DocumentEmbeddingRecord"]] = sa.orm.relationship(
         "DocumentEmbeddingRecord",
