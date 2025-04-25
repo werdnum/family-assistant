@@ -48,11 +48,9 @@ The current extensive use of global variables and direct imports of dependencies
     *   Create a dedicated configuration object (e.g., a Pydantic model or a simple dictionary) loaded centrally (e.g., in `main.py`'s startup).
     *   Pass this configuration object explicitly to functions and classes that require configuration values (e.g., `_generate_llm_response_for_telegram`, `load_mcp_config_and_connect`, database initialization, LLM client).
 
-3.  **LLM Client:**
-    *   Create a simple wrapper class (e.g., `LLMClient`) responsible for interacting with `litellm.acompletion`.
-    *   This class should be initialized with the necessary configuration (model name, API key).
-    *   It should expose an async method like `generate(messages, tools, tool_choice)`.
-    *   Inject an instance of this `LLMClient` into `processing.get_llm_response` instead of calling `litellm.acompletion` directly. This will allow swapping the real client with a mock client targeting `mockllm` in tests.
+3.  **LLM Client / Mocking:**
+    *   Refactor the code calling `litellm.acompletion` (likely in `processing.get_llm_response` or `main._generate_llm_response_for_chat`) to allow specifying a model name that can be mapped to a custom LiteLLM provider during test setup (`litellm.custom_provider_map`).
+    *   Implement mock providers using `litellm.CustomLLM` for deterministic testing. This avoids needing a separate wrapper class initially.
 
 4.  **Telegram Core Logic Decoupling:**
     *   Refactor `message_handler` to primarily parse the `Update` object, extract essential data (chat_id, user_id, user_name, text, photo bytes, reply_to_message_id), and potentially enqueue this data or directly call a core processing function.
