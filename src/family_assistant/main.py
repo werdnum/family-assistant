@@ -1122,6 +1122,10 @@ async def main_async(cli_args: argparse.Namespace) -> None: # Accept parsed args
     # Initialize application (loads persistence, etc.)
     await application.initialize()
 
+    # Store model name in bot_data for access in handlers
+    application.bot_data["model_name"] = cli_args.model
+    logger.info(f"Stored model_name '{cli_args.model}' in bot_data.")
+
     # Start polling and job queue (if any)
     await application.start()
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
