@@ -19,7 +19,7 @@ from typing import (
 )
 
 import sqlalchemy as sa
-from sqlalchemy import JSON # Import generic JSON
+from sqlalchemy import JSON  # Import generic JSON
 from sqlalchemy.dialects.postgresql import JSONB  # Import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -93,7 +93,9 @@ class DocumentRecord(Base):
         sa.DateTime(timezone=True),
         server_default=functions.now(),  # Use explicit import
     )  # Use sa.sql.func.now() for server default
-    doc_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON().with_variant(JSONB, 'postgresql')) # Use variant
+    doc_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql")
+    )  # Use variant
 
     embeddings: Mapped[List["DocumentEmbeddingRecord"]] = sa.orm.relationship(
         "DocumentEmbeddingRecord",
@@ -102,7 +104,9 @@ class DocumentRecord(Base):
     )
 
     __table_args__ = (
-        sa.Index("idx_documents_doc_metadata", doc_metadata, postgresql_using="gin"), # Updated index definition
+        sa.Index(
+            "idx_documents_doc_metadata", doc_metadata, postgresql_using="gin"
+        ),  # Updated index definition
     )
 
 
@@ -161,8 +165,10 @@ async def init_vector_db():
     engine = get_engine()  # Use engine from db_base.py
 
     # Check if the dialect is PostgreSQL before running PG-specific commands
-    if engine.dialect.name == 'postgresql':
-        logger.info("PostgreSQL dialect detected. Initializing vector extension and indexes...")
+    if engine.dialect.name == "postgresql":
+        logger.info(
+            "PostgreSQL dialect detected. Initializing vector extension and indexes..."
+        )
         async with engine.begin() as conn:
             # Tables are created via Base.metadata in storage.init_db
             # Manually create extensions and partial indexes that SQLAlchemy might not handle directly
@@ -178,15 +184,17 @@ async def init_vector_db():
                 WHERE embedding_model = 'gemini-exp-03-07'
                 WITH (m = 16, ef_construction = 64);
                 """
+                    )
                 )
-            )
-        except Exception as e:
-            # This might happen if the index exists but with different params, etc.
-            # In a real app, consider more robust migration management.
-            logger.warning( # Ensure this is not indented further
-                f"Could not create partial index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}"
-            )
-        logger.info("PostgreSQL vector database components (extension, indexes) initialized.")
+            except Exception as e:
+                # This might happen if the index exists but with different params, etc.
+                # In a real app, consider more robust migration management.
+                logger.warning(  # Ensure this is not indented further
+                    f"Could not create partial index idx_doc_embeddings_gemini_1536_hnsw_cos: {e}"
+                )
+        logger.info(
+            "PostgreSQL vector database components (extension, indexes) initialized."
+        )
     else:
         logger.warning(
             f"Database dialect is '{engine.dialect.name}', not 'postgresql'. Skipping vector extension and index creation. Vector search functionality may be limited or unavailable."
@@ -195,8 +203,8 @@ async def init_vector_db():
 
 async def add_document(
     doc: Document,  # Use the renamed Protocol
-    enriched_doc_metadata: Optional[ # Renamed parameter for clarity
-        Dict[str, Any] # Renamed parameter for clarity
+    enriched_doc_metadata: Optional[  # Renamed parameter for clarity
+        Dict[str, Any]  # Renamed parameter for clarity
     ] = None,  # Allow passing LLM enriched metadata
 ) -> int:
     """
