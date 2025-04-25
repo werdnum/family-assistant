@@ -110,59 +110,75 @@ The current extensive use of global variables and direct imports of dependencies
 
 **5. Proposed Task List (Initial Phase)**
 
-1.  **Setup:**
-    *   Add `pytest`, `pytest-asyncio`, `testcontainers`, `psycopg2-binary` (or `asyncpg`), `httpx` to development dependencies.
-    *   Create the basic `tests/` directory structure and `tests/conftest.py`.
-    *   (Optional but Recommended) Move application code into a `src/` directory.
+*The first two refactoring steps (Database Access and LLM Access) are essential prerequisites for implementing the initial functional smoke tests, such as verifying the note saving/retrieval flow.*
 
-2.  **Refactor Database Access:**
+1.  **Refactor Database Access (Prerequisite 1):**
     *   Implement dependency injection for the DB engine/session in `storage/*.py` and `storage.init_db`.
-    *   Update callers in `main.py`, `web_server.py`, `task_worker.py`, `processing.py`.
+    *   Update callers in `main.py`, `web_server.py`, `task_worker.py`, `processing.py` to obtain and pass the engine/session.
 
-3.  **Test Database Initialization & Storage:**
-    *   Create a fixture in `conftest.py` using `testcontainers` to provide a temporary PostgreSQL database engine for tests.
+2.  **Refactor LLM Access (Prerequisite 2):**
+    *   Create and integrate the `LLMClient` wrapper class as described in Section 3.
+    *   Modify `processing.get_llm_response` to accept an `LLMClient` instance.
+    *   Update the caller (`main._generate_llm_response_for_chat`) to pass the `LLMClient`.
+
+3.  **Setup Test Environment:**
+    *   Add `pytest`, `pytest-asyncio`, `testcontainers`, `psycopg2-binary` (or `asyncpg`), `httpx`, `pytest-mock` (or use `unittest.mock`) to development dependencies.
+    *   Create the basic `tests/` directory structure and `tests/conftest.py`.
+    *   (Optional but Recommended) Move application code into a `src/` directory if not already done.
+
+4.  **Test Database Initialization & Storage:**
+    *   Create a fixture in `conftest.py` using `testcontainers` (or in-memory SQLite initially) to provide a temporary database engine/session factory for tests.
     *   Write `tests/integration/test_storage_init.py` to call the refactored `init_db` using the test engine.
-    *   Write `tests/integration/test_storage.py` to test core storage functions (notes, tasks, history, email storage/retrieval) using the test DB fixture.
+    *   Write `tests/integration/test_storage.py` to test core storage functions (notes, tasks, history, email storage/retrieval) using the test DB fixture and the refactored storage functions.
 
-4.  **Refactor Configuration:**
+5.  **Implement Initial Smoke Test (Note Save/Retrieve):**
+    *   Write a basic test in `tests/functional/test_core_logic.py` (or similar).
+    *   This test will likely:
+        *   Use the test DB fixture.
+        *   Use a mock `LLMClient` fixture (using `pytest-mock` or `unittest.mock`) configured to:
+            *   Return a response requesting the `add_or_update_note` tool when given initial input.
+            *   Return a simple confirmation after the tool call.
+        *   Call a core processing function (e.g., a refactored version of `_generate_llm_response_for_chat` or `get_llm_response` directly) with the necessary dependencies (mock LLM client, test DB session).
+        *   Assert that the `add_or_update_note` function was called with the expected arguments (via the mock LLM response).
+        *   Assert that the note exists in the test database with the correct content after the call.
+        *   (Optional) Extend the test to simulate asking about the note and verify the context provided back to the (mock) LLM includes the note.
+
+6.  **Refactor Configuration:**
     *   Implement a configuration object/dict.
     *   Remove global config access and pass the config object explicitly where needed.
 
-5.  **Refactor LLM Access:**
-    *   Create and integrate the `LLMClient` wrapper.
-
-6.  **Refactor MCP State & Connection:**
+7.  **Refactor MCP State & Connection:**
     *   Modify `load_mcp_config_and_connect` to return state and be skippable.
     *   Pass MCP state explicitly.
 
-7.  **Test Processing Logic:**
-    *   Write `tests/integration/test_processing.py`.
-    *   Test `get_llm_response` and `execute_function_call`. Use the test DB fixture. Provide mock MCP state. Use the real LLM initially via the `LLMClient`.
+8.  **Test Processing Logic (Further):**
+    *   Expand `tests/integration/test_processing.py`.
+    *   Test `get_llm_response` and `execute_function_call` more thoroughly. Use the test DB fixture. Provide mock MCP state. Use the mock `LLMClient`.
 
-8.  **Refactor Task Worker:**
+9.  **Refactor Task Worker:**
     *   Inject dependencies into the loop and handlers.
 
-9.  **Test Task Worker:**
+10. **Test Task Worker:**
     *   Write `tests/integration/test_task_worker.py`. Test dequeuing, handler execution (e.g., `handle_llm_callback`), and task status updates using the test DB. Mock LLM/MCP interactions triggered by handlers as needed.
 
-10. **Refactor Telegram Handlers & Core Logic:**
+11. **Refactor Telegram Handlers & Core Logic:**
     *   Decouple the core processing logic from `python-telegram-bot` handlers as described above.
 
-11. **Test Core Telegram Flow:**
+12. **Test Core Telegram Flow:**
     *   Write `tests/functional/test_telegram_flow.py`.
     *   Call the refactored core processing function (simulating a message event).
-    *   Use the test DB fixture and the `LLMClient` (real LLM initially).
-    *   Assert expected database changes (e.g., message history, note created via tool) and inspect the returned response content.
+    *   Use the test DB fixture and the mock `LLMClient`.
+    *   Assert expected database changes (e.g., message history) and inspect the returned response content.
 
-12. **Refactor Web Server:**
+13. **Refactor Web Server:**
     *   Implement FastAPI dependency injection (`Depends`) for DB sessions, config, etc.
 
-13.  **Test Web API:**
+14. **Test Web API:**
     *   Write `tests/functional/test_web_api.py`.
     *   Use `httpx` to make requests to the FastAPI endpoints (running against the test DB). Test CRUD operations for notes, history/task views.
 
-14.  **CI Integration:**
-    *   Set up a GitHub Actions workflow (or similar) to automatically run the test suite on pushes/PRs. Ensure the workflow can run Docker for `testcontainers`.
+15. **CI Integration:**
+    *   Set up a GitHub Actions workflow (or similar) to automatically run the test suite on pushes/PRs. Ensure the workflow can run Docker for `testcontainers` if used.
 
 **6. Future Work**
 
