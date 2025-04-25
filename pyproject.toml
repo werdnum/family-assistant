@@ -44,6 +44,9 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-asyncio",
+    "aiosqlite",         # Add async SQLite driver for testing
+    "httpx",             # Add HTTP client for future API tests
+    "pytest-mock",       # Add mocking library (or use unittest.mock)
     "pylint>=3.0.0", # Moved pylint here
     # "ruff", # Consider adding ruff later if desired
     "poethepoet>=0.11.0", # Add poe the poet task runner
