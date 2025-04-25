@@ -1179,8 +1179,7 @@ async def main_async(cli_args: argparse.Namespace) -> None: # Accept parsed args
 
 def main() -> int: # Return an exit code
     """Sets up argument parsing, event loop, and signal handlers."""
-    # --- Argument Parsing ---
-    # Moved here from module level
+    # --- Argument Parsing (Defined and Executed Here) ---
     parser = argparse.ArgumentParser(description="Family Assistant Bot")
     parser.add_argument(
         "--telegram-token",
@@ -1194,7 +1193,7 @@ def main() -> int: # Return an exit code
     )
     parser.add_argument(
         "--model",
-        # Default model updated based on previous usage
+        # Default model updated based on previous usage and module-level definition
         default=os.getenv("LLM_MODEL", "openrouter/google/gemini-flash-1.5"),
         help="LLM model to use (e.g., openrouter/google/gemini-flash-1.5)",
     )
