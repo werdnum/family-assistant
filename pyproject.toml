@@ -46,6 +46,8 @@ dev = [
     "pytest-asyncio",
     "pylint>=3.0.0", # Moved pylint here
     # "ruff", # Consider adding ruff later if desired
+    "poe-the-task>=0.11.0", # Add poe-the-task
+    "symbex>=2.0",         # Add symbex
 ]
 
 [project.scripts]
@@ -66,6 +68,15 @@ include-package-data = true
 # Specify that the 'family_assistant' package should include
 # all files within its 'templates' and 'static' subdirectories.
 family_assistant = ["templates/**/*", "static/**/*"]
+
+
+# --- Task Runner Configuration (poe-the-task) ---
+[tool.poe.tasks.symbols]
+help = "Generate SYMBOLS.md map using symbex"
+# Runs symbex on the 'family_assistant' module, includes docstrings,
+# suppresses file path comments (-n), includes import statements (-i),
+# and saves the output to SYMBOLS.md
+cmd = "symbex -m family_assistant --docs -ni > SYMBOLS.md"
 
 
 # --- Tool Configuration (Example: Ruff) ---
