@@ -2,6 +2,7 @@ import pytest
 import uuid
 import asyncio
 import logging
+import os # Import os to read environment variables
 from sqlalchemy import text # To query DB directly for assertion
 
 # Import the function we want to test directly
@@ -17,6 +18,8 @@ TEST_NOTE_TITLE_BASE = "Smoketest Note"
 TEST_NOTE_CONTENT = "This is the content for the smoke test."
 TEST_CHAT_ID = 12345  # Dummy chat ID
 TEST_USER_NAME = "TestUser"
+# Get model name from env var or use the same default as in main.py's arg parser
+TEST_MODEL_NAME = os.getenv("LLM_MODEL", "openrouter/google/gemini-flash-1.5")
 
 @pytest.mark.asyncio
 async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixture
@@ -44,6 +47,7 @@ async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixtur
         chat_id=TEST_CHAT_ID,
         trigger_content_parts=add_note_trigger,
         user_name=TEST_USER_NAME,
+        model_name=TEST_MODEL_NAME, # Pass the model name
     )
 
     logger.info(f"Add Note - LLM Response: {add_response_content}")
@@ -93,6 +97,7 @@ async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixtur
         chat_id=TEST_CHAT_ID,
         trigger_content_parts=retrieve_note_trigger,
         user_name=TEST_USER_NAME,
+        model_name=TEST_MODEL_NAME, # Pass the model name
     )
 
     logger.info(f"Retrieve Note - LLM Response: {retrieve_response_content}")
