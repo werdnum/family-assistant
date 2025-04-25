@@ -225,3 +225,16 @@ This plan provides a phased approach to introducing testing, prioritizing realis
 *   **Web Server Testing:** Using `httpx` against the FastAPI app is standard. Ensure tests cover not just success cases but also error responses (404s, validation errors if applicable).
 *   **Incremental Value:** The proposed task list is logical. Ensure each refactoring step is accompanied by corresponding tests *before* moving to the next refactoring. This maintains a working, tested state throughout the process. The idea of a baseline E2E test first (Claude review) is excellent for ensuring refactoring doesn't break existing functionality.
 *   **Property-Based Testing:** While powerful (Claude review), property-based testing might be overkill initially for a solo project unless specific complex logic (like recurrence rule parsing/generation) warrants it. Focus on scenario-based tests first.
+
+**8. Human Feedback & Practical Considerations**
+
+Based on developer feedback, the following practical considerations and priorities will guide implementation:
+
+*   **Initial Focus:** Implement a basic end-to-end smoke test (e.g., create/retrieve note) with minimal initial refactoring to establish a baseline and ensure core functionality isn't broken during subsequent changes.
+*   **Testing Trigger:** Integrate test execution into the pre-push workflow (e.g., via a `.build` script command) rather than setting up full CI initially.
+*   **LLM Mocking:** While `litellm` acts as an LLM abstraction layer, investigate creating a custom `litellm` provider (using `litellm.CustomLLM`, see [LiteLLM Custom Provider Docs](https://docs.litellm.ai/docs/providers/custom_llm_server)) for implementing mock responses or a record/replay mechanism. This seems preferable to a separate wrapper class if `litellm`'s built-in features are insufficient.
+*   **MCP Testing:** Low priority. If needed, create a minimal fake MCP server (e.g., echo/reverse input) to verify the basic interaction pattern rather than complex mocking.
+*   **Calendar Testing:** Lower priority. When implemented, testing can use a simple fake CalDAV server backed by static files.
+*   **Database Strategy:** Use SQLite (`sqlite+aiosqlite:///:memory:`) for faster initial tests where possible, ensuring graceful degradation if PostgreSQL-specific features are unavailable. However, tests for features like vector search will eventually require PostgreSQL (likely via `testcontainers`). Include tests for database retry logic.
+*   **Core Logic Isolation:** Prioritize refactoring and testing the core message processing logic (potentially the existing `processing` module functions). Consider exposing this core logic via a simple REST endpoint for easier manual testing and potential alternative integrations.
+*   **Test Scope & Goal:** Focus on integration and functional tests that prevent regressions and obvious breakages in key user flows. Aim for practical confidence rather than exhaustive 100% code coverage, aligning with the project's hobbyist nature.
