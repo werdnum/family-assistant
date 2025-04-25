@@ -62,10 +62,10 @@ received_emails_table = sa.Table(
         "email_date", sa.DateTime(timezone=True), nullable=True, index=True
     ),  # Timestamp from the email's 'Date' header
     sa.Column(
-        "headers_json", JSONB, nullable=True
+        "headers_json", JSON, nullable=True # Use generic JSON
     ),  # All headers stored as JSON (from message-headers)
     sa.Column(
-        "attachment_info", JSONB, nullable=True
+        "attachment_info", JSON, nullable=True # Use generic JSON
     ),  # JSON array [{filename, content_type, size, storage_path}, ...]
     # Add other potentially useful Mailgun fields if needed
     sa.Column("mailgun_timestamp", sa.Text, nullable=True),  # Mailgun 'timestamp' field
