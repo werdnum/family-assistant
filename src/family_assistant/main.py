@@ -1205,8 +1205,8 @@ def main() -> int:  # Return an exit code
     parser.add_argument(
         "--model",
         # Default model updated based on previous usage and module-level definition
-        default=os.getenv("LLM_MODEL", "openrouter/google/gemini-flash-1.5"),
-        help="LLM model to use (e.g., openrouter/google/gemini-flash-1.5)",
+        default=os.getenv("LLM_MODEL", "openrouter/google/gemini-2.5-flash-preview"),
+        help="LLM model to use (e.g., openrouter/google/gemini-flash-2.5-flash-preview)",
     )
     args = parser.parse_args()  # Parse args here
 
