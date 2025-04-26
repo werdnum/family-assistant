@@ -38,6 +38,7 @@ dependencies = [
     "telegramify-markdown>=0.5.1", # For converting Markdown to Telegram MarkdownV2
     "python-dateutil==2.9.0", # For robust datetime parsing
     "pytz>=2024.1", # For timezone handling
+    "aiofiles>=23.2.1", # For async file operations (LLM recording/playback)
 ]
 
 [project.optional-dependencies]
