@@ -23,250 +23,8 @@ from dateutil import rrule  # Added for validating recurrence rule
 logger = logging.getLogger(__name__)
 
 
-# --- Tool Implementation (Remains at module level for now) ---
-# Note: schedule_future_callback_tool currently relies on a global 'application'
-# which needs addressing in a future refactor for proper dependency injection.
-
-async def schedule_recurring_task_tool(
-    task_type: str,
-    initial_schedule_time: str,
-    recurrence_rule: str,
-    payload: Dict[str, Any],
-    max_retries: Optional[int] = 3,
-    description: Optional[str] = None,  # Optional description for the task ID
-):
-    """
-    Schedules a new recurring task.
-
-    Args:
-        task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
-        initial_schedule_time: ISO 8601 datetime string for the *first* run.
-        recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
-        payload: JSON object containing data needed by the task handler.
-        max_retries: Maximum number of retries for each instance (default 3).
-        description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief').
-    """
-    try:
-        # Validate recurrence rule format (basic validation)
-        try:
-            # We don't need dtstart here, just parsing validity
-            rrule.rrulestr(recurrence_rule)
-        except ValueError as rrule_err:
-            raise ValueError(f"Invalid recurrence_rule format: {rrule_err}")
-
-        # Parse the initial schedule time
-        initial_dt = isoparse(initial_schedule_time)
-        if initial_dt.tzinfo is None:
-            logger.warning(
-                f"Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming UTC."
-            )
-            initial_dt = initial_dt.replace(tzinfo=timezone.utc)
-
-        # Ensure it's in the future (optional, but good practice)
-        if initial_dt <= datetime.now(timezone.utc):
-            raise ValueError("Initial schedule time must be in the future.")
-
-        # Generate the *initial* unique task ID
-        base_id = f"recurring_{task_type}"
-        if description:
-            safe_desc = "".join(
-                c if c.isalnum() or c in ["-", "_"] else "_"
-                for c in description.lower()
-            )
-            base_id += f"_{safe_desc}"
-        # Add a unique element (UUID) to ensure the *first* ID is truly unique
-        initial_task_id = f"{base_id}_{uuid.uuid4()}"
-
-        # Enqueue the first instance. original_task_id is implicitly set to initial_task_id by enqueue_task logic.
-        await storage.enqueue_task(
-            task_id=initial_task_id,
-            task_type=task_type,
-            payload=payload,
-            scheduled_at=initial_dt,
-            max_retries_override=max_retries,  # Correct argument name
-            recurrence_rule=recurrence_rule,
-            # original_task_id=None, # Let enqueue_task handle setting it to initial_task_id
-            # notify_event=new_task_event # No immediate notification needed usually
-        )
-        logger.info(
-            f"Scheduled initial recurring task {initial_task_id} (Type: {task_type}) starting at {initial_dt} with rule '{recurrence_rule}'"
-        )
-        return f"OK. Recurring task '{initial_task_id}' scheduled starting {initial_schedule_time} with rule '{recurrence_rule}'."
-    except ValueError as ve:
-        logger.error(f"Invalid arguments for scheduling recurring task: {ve}")
-        return f"Error: Invalid arguments provided. {ve}"
-    except Exception as e:
-        logger.error(f"Failed to schedule recurring task: {e}", exc_info=True)
-        return "Error: Failed to schedule the recurring task."
-
-
-async def schedule_future_callback_tool(callback_time: str, context: str, chat_id: int):
-    """Schedules a future callback task to execute at the specified time.
-
-    The payload will be enhanced to include the application reference.
-    """
-    # We need the application instance from the global context
-    global application
-    """Schedules a future callback by creating a task that will run the LLM at the specified time."""
-    # Implementation remains the same, but we add the application reference to the payload
-    global application
-    """
-    Schedules a task to trigger an LLM callback in a specific chat at a future time.
-
-    Args:
-        callback_time: ISO 8601 formatted datetime string (including timezone).
-        context: The context/prompt for the future LLM callback.
-        chat_id: The chat ID where the callback should occur.
-    """
-    try:
-        # Parse the ISO 8601 string, ensuring it's timezone-aware
-        scheduled_dt = isoparse(callback_time)
-        if scheduled_dt.tzinfo is None:
-            # Or raise error, forcing LLM to provide timezone
-            logger.warning(
-                f"Callback time '{callback_time}' lacks timezone. Assuming UTC."
-            )
-            scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
-
-        # Ensure it's in the future (optional, but good practice)
-        if scheduled_dt <= datetime.now(timezone.utc):
-            raise ValueError("Callback time must be in the future.")
-
-        task_id = f"llm_callback_{uuid.uuid4()}"
-        payload = {
-            "chat_id": chat_id,
-            "callback_context": context,
-            "_application_ref": application,
-        }
-
-        # TODO: Need access to the new_task_event from main.py to notify worker
-        # For now, enqueue without immediate notification. Refactor may be needed
-        # if immediate notification is desired here.
-        await storage.enqueue_task(  # Use storage.enqueue_task
-            task_id=task_id,
-            task_type="llm_callback",
-            payload=payload,
-            scheduled_at=scheduled_dt,
-            # notify_event=new_task_event # Needs event passed down
-        )
-        logger.info(
-            f"Scheduled LLM callback task {task_id} for chat {chat_id} at {scheduled_dt}"
-        )
-        return f"OK. Callback scheduled for {callback_time}."
-    except ValueError as ve:
-        logger.error(f"Invalid callback time format or value: {callback_time} - {ve}")
-        return f"Error: Invalid callback time provided. Ensure it's a future ISO 8601 datetime with timezone. {ve}"
-    except Exception as e:
-        logger.error(f"Failed to schedule callback task: {e}", exc_info=True)
-        return "Error: Failed to schedule the callback."
-
-
-# Map tool names to their actual functions
-AVAILABLE_FUNCTIONS = {
-    "add_or_update_note": storage.add_or_update_note,
-    "schedule_future_callback": schedule_future_callback_tool,
-    "schedule_recurring_task": schedule_recurring_task_tool,
-}
-
-# Define local tools in the format LiteLLM expects (OpenAI format)
-# This definition will be used by the ProcessingService and potentially combined
-# with MCP tools by the caller.
-TOOLS_DEFINITION = [
-    {
-        "type": "function",
-        "function": {
-            "name": "add_or_update_note",
-            "description": "Add a new note or update an existing note with the given title. Use this to remember information provided by the user.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "The unique title of the note.",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The content of the note.",
-                    },
-                },
-                "required": ["title", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "schedule_future_callback",
-            "description": "Schedule a future trigger for yourself (the assistant) to continue processing or follow up on a topic at a specified time within the current chat context. Use this if the user asks you to do something later, or if a task requires waiting.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "callback_time": {
-                        "type": "string",
-                        "description": "The exact date and time (ISO 8601 format, including timezone, e.g., '2025-05-10T14:30:00+02:00') when the callback should be triggered.",
-                    },
-                    "context": {
-                        "type": "string",
-                        "description": "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan').",
-                    },
-                    "chat_id": {
-                        "type": "integer",
-                        "description": "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan').",
-                    },
-                    # chat_id is removed, it will be inferred from the current context
-                },
-                "required": ["callback_time", "context"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "schedule_recurring_task",
-            "description": "Schedule a task that will run repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like sending a daily summary or checking for updates periodically.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_type": {
-                        "type": "string",
-                        "description": "The identifier for the task handler that should process this task (e.g., 'send_daily_brief').",
-                    },
-                    "initial_schedule_time": {
-                        "type": "string",
-                        "description": "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the task should run.",
-                    },
-                    "recurrence_rule": {
-                        "type": "string",
-                        "description": "An RRULE string defining the recurrence schedule according to RFC 5545 (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0' for 8:00 AM daily, 'FREQ=WEEKLY;BYDAY=MO' for every Monday).",
-                    },
-                    "payload": {
-                        "type": "object",
-                        "description": "A JSON object containing any necessary data or parameters for the task handler.",
-                        "additionalProperties": True,  # Allow any structure within the payload
-                    },
-                    "max_retries": {
-                        "type": "integer",
-                        "description": "Optional. Maximum number of retries for each instance if it fails (default: 3).",
-                        "default": 3,
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief').",
-                    },
-                },
-                "required": [
-                    "task_type",
-                    "initial_schedule_time",
-                    "recurrence_rule",
-                    "payload",
-                ],
-            },
-        },
-    },
-]
-
-
 # --- Processing Service Class ---
+# Tool definitions and implementations are now moved to tools.py
 
 class ProcessingService:
     """
@@ -289,12 +47,12 @@ class ProcessingService:
             tool_name_to_server_id: Dictionary mapping MCP tool names to server IDs.
         """
         self.llm_client = llm_client
-        self.mcp_sessions = mcp_sessions
-        self.tool_name_to_server_id = tool_name_to_server_id
-        # Note: Local tool definitions (TOOLS_DEFINITION) and implementations (AVAILABLE_FUNCTIONS)
-        # are currently accessed from the module level. A full DI approach might inject these too.
+        # Dependencies for tool execution are removed, will be handled by injected ToolsProvider later
+        # self.mcp_sessions = mcp_sessions
+        # self.tool_name_to_server_id = tool_name_to_server_id
+        # TODO: Inject ToolsProvider here in the next step
 
-    async def _execute_function_call(
+    async def _execute_function_call( # TODO: This method will be removed when ToolsProvider is injected
         self,
         tool_call: Dict[str, Any], # Expecting dict from LLMOutput now
         chat_id: int,
@@ -343,10 +101,12 @@ class ProcessingService:
                 "content": f"Error: Invalid arguments format for {function_name}.",
             }
 
-        # Check if it's a local tool first (using module-level AVAILABLE_FUNCTIONS)
-        local_function_to_call = AVAILABLE_FUNCTIONS.get(function_name)
-        if local_function_to_call:
-            # Inject chat_id if the tool is schedule_future_callback
+        # Check if it's a local tool first (using module-level AVAILABLE_FUNCTIONS) # TODO: Remove this block
+        # This logic will move to LocalToolsProvider.execute_tool
+        # local_function_to_call = AVAILABLE_FUNCTIONS.get(function_name) # TODO: Remove
+        local_function_to_call = None # Placeholder
+        if local_function_to_call: # TODO: Remove this block
+            # Inject chat_id if the tool is schedule_future_callback # TODO: Remove
             if function_name == "schedule_future_callback":
                 function_args["chat_id"] = chat_id
                 logger.info(f"Injected chat_id {chat_id} into args for {function_name}")
@@ -379,12 +139,15 @@ class ProcessingService:
                 "content": function_response_content,
             }
 
-        # If not local, check if it's an MCP tool (using injected state)
-        server_id = self.tool_name_to_server_id.get(function_name)
-        if server_id:
-            session = self.mcp_sessions.get(server_id)
-            if session:
-                logger.info(
+        # If not local, check if it's an MCP tool (using injected state) # TODO: Remove this block
+        # This logic will move to MCPToolsProvider.execute_tool
+        # server_id = self.tool_name_to_server_id.get(function_name) # TODO: Remove
+        server_id = None # Placeholder
+        if server_id: # TODO: Remove this block
+            # session = self.mcp_sessions.get(server_id) # TODO: Remove
+            session = None # Placeholder
+            if session: # TODO: Remove this block
+                logger.info( # TODO: Remove
                     f"Executing MCP tool call: {function_name} on server '{server_id}' with args {function_args}"
                 )
                 try:
