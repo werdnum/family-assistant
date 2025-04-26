@@ -11,12 +11,15 @@ from typing import Dict, List, Any, Optional, Callable
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
+from family_assistant.processing import ProcessingService # Import the service
 from family_assistant.processing import (
-    get_llm_response,
-    TOOLS_DEFINITION as local_tools_definition,
+    TOOLS_DEFINITION as local_tools_definition, # Keep for combining tools if needed
 )
 from telegramify_markdown import markdownify
 from telegram.helpers import escape_markdown
+
+# Import LLM interface for type hinting if needed elsewhere
+# from family_assistant.llm import LLMInterface
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +37,15 @@ shutdown_event = asyncio.Event()
 new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 # --- Global state (references from main) ---
-mcp_sessions: Dict[str, Any] = {}  # Will be set from main
-mcp_tools: List[Dict[str, Any]] = []  # Will be set from main
-tool_name_to_server_id: Dict[str, str] = {}  # Will be set from main
+mcp_sessions: Dict[str, Any] = {}  # Still needed if handlers call MCP tools directly
+mcp_tools: List[Dict[str, Any]] = [] # Still needed for combining tool lists
+tool_name_to_server_id: Dict[str, str] = {} # Still needed
+processing_service_instance: Optional[ProcessingService] = None # To hold the service instance
 
 
-# Example Task Handler (can be moved elsewhere later)
+# --- Task Handlers ---
+
+# Example Task Handler
 async def handle_log_message(payload: Any):
     """Simple task handler that logs the received payload."""
     logger.info(f"[Task Worker] Handling log_message task. Payload: {payload}")
@@ -77,23 +83,16 @@ def format_llm_response_for_telegram(response_text: str) -> str:
         return escape_markdown(response_text, version=2)
 
 
-# Forward declaration of function that will be set from main.py
-_generate_llm_response_for_chat = None
-
-
 async def handle_llm_callback(payload: Any):
     """Task handler for LLM scheduled callbacks."""
-    global _generate_llm_response_for_chat  # Get the function from main
+    global processing_service_instance # Use the global service instance
 
-    if not _generate_llm_response_for_chat:
-        logger.error(
-            "Cannot handle LLM callback: _generate_llm_response_for_chat not set"
-        )
-        raise RuntimeError("Missing _generate_llm_response_for_chat function reference")
+    if not processing_service_instance:
+        logger.error("Cannot handle LLM callback: ProcessingService instance not set.")
+        raise RuntimeError("ProcessingService instance not available in task worker.")
 
-    application = payload.get(
-        "_application_ref"
-    )  # Special field for application reference
+    # Still need application reference to send messages back
+    application = payload.get("_application_ref")
 
     if not application:
         logger.error(
@@ -112,24 +111,30 @@ async def handle_llm_callback(payload: Any):
 
     logger.info(f"Handling LLM callback for chat_id {chat_id}")
     current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
-    message_to_send = f"System Callback: The time is now {current_time_str}.\n\nYou previously scheduled a callback with the following context:\n\n---\n{callback_context}\n---"
+    message_to_send = f"System Callback: The time is now {current_time_str}.\n\nYou previously scheduled a callback with the following context:\n\n---\n{callback_context}\n---" # This seems unused?
 
     try:
-        # Send the message *as the bot* into the chat.
         # Construct the trigger message content for the LLM
-        # Using a clear prefix to indicate it's a callback
         trigger_text = f"System Callback Trigger:\n\nThe time is now {current_time_str}.\nYour scheduled context was:\n---\n{callback_context}\n---"
-        trigger_content_parts = [{"type": "text", "text": trigger_text}]
+        # Prepare message history for the service call
+        # TODO: Should we retrieve actual history here? For now, just send the trigger.
+        # A more robust implementation might fetch recent history for better context.
+        messages_for_llm = [
+            {"role": "system", "content": "You are processing a scheduled callback."}, # Minimal system prompt
+            {"role": "user", "content": trigger_text} # Treat trigger as user input
+        ]
 
-        # Generate the LLM response using the refactored function
-        # Use a placeholder name like "System" or "Assistant" for the user_name in the prompt
-        llm_response_content, tool_call_info = await _generate_llm_response_for_chat(
+        # Combine local and MCP tools for the service call
+        all_tools = local_tools_definition + mcp_tools
+
+        # Call the ProcessingService directly
+        llm_response_content, tool_call_info = await processing_service_instance.process_message(
+            messages=messages_for_llm,
             chat_id=chat_id,
-            trigger_content_parts=trigger_content_parts,
-            user_name="System Trigger",  # Or "Assistant"? Needs testing for optimal LLM behavior.
+            all_tools=all_tools,
         )
 
-        if llm_response_content:  # Check if content exists
+        if llm_response_content:
             # Send the LLM's response back to the chat
             formatted_response = format_llm_response_for_telegram(
                 llm_response_content
@@ -150,16 +155,16 @@ async def handle_llm_callback(payload: Any):
                 )  # Crude pseudo-ID
                 await storage.add_message_to_history(
                     chat_id=chat_id,
-                    message_id=trigger_msg_id,
+                    message_id=trigger_msg_id, # Use pseudo-ID
                     timestamp=datetime.now(timezone.utc),
-                    role="system",  # Or 'user'/'assistant' depending on how trigger_message was structured
+                    role="system", # Role for the trigger message in history
                     content=trigger_text,
                 )
-                # Pseudo-ID for the bot response
-                response_msg_id = trigger_msg_id + 1
+                # Use the actual sent message ID if available and makes sense, else pseudo-ID
+                response_msg_id = sent_message.message_id if sent_message else trigger_msg_id + 1
                 await storage.add_message_to_history(
                     chat_id=chat_id,
-                    message_id=response_msg_id,
+                    message_id=response_msg_id, # Use actual or pseudo-ID
                     timestamp=datetime.now(timezone.utc),
                     role="assistant",
                     content=llm_response_content,  # Store the content string
@@ -408,11 +413,11 @@ def register_task_handler(task_type: str, handler: Callable):
     logger.info(f"Registered task handler for task type: {task_type}")
 
 
-def set_llm_response_generator(generator_func):
-    """Set the LLM response generator function from main.py"""
-    global _generate_llm_response_for_chat
-    _generate_llm_response_for_chat = generator_func
-    logger.info("Set LLM response generator function")
+def set_processing_service(service: ProcessingService):
+    """Set the ProcessingService instance from main.py"""
+    global processing_service_instance
+    processing_service_instance = service
+    logger.info("Set ProcessingService instance for task worker.")
 
 
 def set_mcp_state(sessions, tools, tool_name_mapping):

@@ -563,39 +563,5 @@ class ProcessingService:
                 f"Error during LLM interaction or tool handling in ProcessingService: {e}", exc_info=True
             )
             # Ensure tuple is returned even on error
+            # Ensure tuple is returned even on error
             return None, None
-
-
-# --- Shim Function (Temporary) ---
-# This function maintains the old interface but instantiates ProcessingService internally.
-
-async def get_llm_response(
-    messages: List[Dict[str, Any]],
-    chat_id: int,
-    model: str, # Keep model arg for shim compatibility
-    all_tools: List[Dict[str, Any]],
-    mcp_sessions: Dict[str, Any],
-    tool_name_to_server_id: Dict[str, str],
-) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
-    """
-    Shim for get_llm_response. Instantiates LiteLLMClient and ProcessingService
-    internally and calls the service's process_message method.
-
-    Maintains the original function signature for backward compatibility.
-    """
-    # Warning: This creates a new LLM client and service instance for every call. Not efficient.
-    logger.debug("Using shim function: get_llm_response")
-    try:
-        # Create the default LiteLLM client using the provided model name
-        llm_client = LiteLLMClient(model=model)
-
-        # Instantiate the service, injecting the client and MCP state
-        service = ProcessingService(llm_client, mcp_sessions, tool_name_to_server_id)
-
-        # Call the actual processing logic
-        return await service.process_message(messages, chat_id, all_tools)
-
-    except Exception as e:
-        # Log any error during shim execution (e.g., client/service instantiation)
-        logger.error(f"Error within get_llm_response shim: {e}", exc_info=True)
-        return None, None # Return None tuple on error within the shim itself
