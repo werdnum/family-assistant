@@ -65,12 +65,10 @@ class ToolsProvider(Protocol):
 
 
 # --- Local Tool Implementations (Moved from processing.py) ---
-# TODO: Refactor these to accept `context: ToolExecutionContext` instead of separate args/globals
-
-# Global reference needed by schedule_future_callback_tool (temporary)
-application: Optional[Application] = None # This needs to be set from main.py somehow
+# Refactored to accept context: ToolExecutionContext
 
 async def schedule_recurring_task_tool(
+    context: ToolExecutionContext, # Added context argument
     task_type: str,
     initial_schedule_time: str,
     recurrence_rule: str,
@@ -143,19 +141,27 @@ async def schedule_recurring_task_tool(
         return "Error: Failed to schedule the recurring task."
 
 
-async def schedule_future_callback_tool(callback_time: str, context: str, chat_id: int):
+async def schedule_future_callback_tool(
+    context_obj: ToolExecutionContext, # Renamed context arg to avoid conflict with LLM context string
+    callback_time: str,
+    context: str, # This is the LLM context string
+):
     """
     Schedules a task to trigger an LLM callback in a specific chat at a future time.
 
     Args:
+        context_obj: The ToolExecutionContext containing chat_id and application instance.
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback.
-        chat_id: The chat ID where the callback should occur. (Still passed directly for now)
     """
-    # We need the application instance from the global context (temporary)
-    global application
+    # Get application instance and chat_id from the context object
+    application = context_obj.application
+    chat_id = context_obj.chat_id
+
     if not application:
-         logger.error("Application context not available for schedule_future_callback_tool.")
+         logger.error("Application context not available in ToolExecutionContext for schedule_future_callback_tool.")
+         # Raise error instead of returning string to allow Composite provider to potentially try others?
+         # Or return error string as before? Let's return error string for now.
          return "Error: Application context not available."
 
     try:
@@ -323,22 +329,18 @@ class LocalToolsProvider:
         callable_func = self._implementations[name]
         logger.info(f"Executing local tool '{name}' with args: {arguments}")
         try:
-            # TODO: Modify local tool functions to accept context object
-            # For now, handle schedule_future_callback specially
-            if name == "schedule_future_callback":
-                 # Pass chat_id directly for now, application comes from global
-                 result = await callable_func(chat_id=context.chat_id, **arguments)
+            # Pass the context object as the first argument for tools that expect it
+            # Other arguments are passed as keyword arguments
+            if name in ["schedule_future_callback", "schedule_recurring_task"]:
+                # These tools now expect context_obj as the first arg
+                result = await callable_func(context, **arguments)
             elif name == "add_or_update_note":
-                 # Assumes storage function doesn't need context object yet
-                 result = await callable_func(**arguments)
-            elif name == "schedule_recurring_task":
-                 # Assumes this function doesn't need context object yet
+                 # Storage function doesn't need context object
                  result = await callable_func(**arguments)
             else:
-                 # Generic call attempt (might fail if context is needed)
-                 # result = await callable_func(context=context, **arguments)
-                 logger.warning(f"Executing local tool '{name}' without context object - may need refactoring.")
-                 result = await callable_func(**arguments) # Fallback call without context
+                 # Fallback for any other potential local tools - assume they don't need context for now
+                 logger.warning(f"Executing local tool '{name}' without context object (assuming it's not needed).")
+                 result = await callable_func(**arguments)
 
             # Ensure result is a string
             if not isinstance(result, str):
@@ -480,9 +482,4 @@ class CompositeToolsProvider:
         logger.error(f"Tool '{name}' not found in any registered provider.")
         raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
 
-# --- Helper to set global application reference (temporary) ---
-def set_application_instance(app_instance: Application):
-    """Sets the global application instance needed by schedule_future_callback_tool."""
-    global application
-    application = app_instance
-    logger.info("Global application instance set for tools module.")
+# Removed set_application_instance helper

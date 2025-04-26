@@ -55,6 +55,12 @@ from family_assistant.llm import (
 # Import tool definitions from the new tools module
 from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
+    AVAILABLE_FUNCTIONS as local_tool_implementations,
+    LocalToolsProvider,
+    MCPToolsProvider,
+    CompositeToolsProvider,
+    ToolExecutionContext,
+    ToolsProvider, # Import protocol for type hinting
 )
 
 # Import the FastAPI app
@@ -459,6 +465,7 @@ async def typing_notifications(
 
 async def _generate_llm_response_for_chat(
     processing_service: ProcessingService, # Inject the service instance
+    application: Application, # Inject application for context
     chat_id: int,
     trigger_content_parts: List[Dict[str, Any]],
     user_name: str,
@@ -653,18 +660,14 @@ async def _generate_llm_response_for_chat(
     messages.append(trigger_message)
     logger.debug(f"Appended trigger message to LLM history: {trigger_message}")
 
-    # --- Combine local and MCP tools ---
-    # Local tools are defined in processing.py (TOOLS_DEFINITION)
-    # MCP tools are stored globally in mcp_tools (set during startup)
-    all_tools = local_tools_definition + mcp_tools
-
     # --- Call Processing Service ---
+    # Tool definitions are now fetched inside process_message
     try:
-        # Call the process_message method of the injected service instance
+        # Call the process_message method, passing the application instance
         llm_response_content, tool_info = await processing_service.process_message(
             messages=messages,
             chat_id=chat_id,
-            all_tools=all_tools,
+            application=application, # Pass application for ToolExecutionContext
         )
         return llm_response_content, tool_info
     except Exception as e:
@@ -792,11 +795,12 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             await context.bot.send_message(chat_id, "Internal error: Processing service unavailable.")
             return # Exit processing if service is missing
 
-        # Use the helper function, passing the service instance
+        # Use the helper function, passing the service and application instances
         async with typing_notifications(context, chat_id):
             llm_response_content, tool_call_info = (
                 await _generate_llm_response_for_chat(
                     processing_service=processing_service, # Pass the service
+                    application=context.application, # Pass the application instance
                     chat_id=chat_id,
                     trigger_content_parts=trigger_content_parts,
                     user_name=user_name,
@@ -1100,16 +1104,36 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
 
     # Initialize database schema first (needed by ProcessingService potentially via tools)
     await init_db()
-    # Load MCP config and connect to servers (needed by ProcessingService)
-    await load_mcp_config_and_connect()
+    # Load MCP config and connect to servers
+    await load_mcp_config_and_connect() # Populates mcp_sessions, mcp_tools, tool_name_to_server_id
 
-    # Instantiate the ProcessingService, injecting dependencies
+    # --- Instantiate Tool Providers ---
+    local_provider = LocalToolsProvider(
+        definitions=local_tools_definition,
+        implementations=local_tool_implementations
+    )
+    mcp_provider = MCPToolsProvider(
+        mcp_definitions=mcp_tools, # Use discovered MCP tool definitions
+        mcp_sessions=mcp_sessions,
+        tool_name_to_server_id=tool_name_to_server_id
+    )
+    # Combine providers
+    try:
+        composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
+        # Eagerly fetch definitions once to cache and validate
+        await composite_provider.get_tool_definitions()
+        logger.info("CompositeToolsProvider initialized and validated.")
+    except ValueError as provider_err:
+        logger.critical(f"Failed to initialize CompositeToolsProvider: {provider_err}", exc_info=True)
+        # Exit or handle error appropriately - critical failure
+        raise SystemExit(f"Tool provider initialization failed: {provider_err}")
+
+    # --- Instantiate Processing Service ---
     processing_service = ProcessingService(
         llm_client=llm_client,
-        mcp_sessions=mcp_sessions,
-        tool_name_to_server_id=tool_name_to_server_id,
+        tools_provider=composite_provider, # Inject the composite provider
     )
-    logger.info(f"ProcessingService initialized with {type(llm_client).__name__}.")
+    logger.info(f"ProcessingService initialized with {type(llm_client).__name__} and {type(composite_provider).__name__}.")
 
     # --- Telegram Application Setup ---
     application = (
@@ -1153,10 +1177,10 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
     logger.info("Web server running on http://0.0.0.0:8000")
 
     # Pass the ProcessingService instance to the task worker module
+    # The task worker will use this service, which internally uses the tools provider
     task_worker.set_processing_service(processing_service)
-    # Pass MCP state (still needed if tools are executed within task worker handlers directly)
-    # TODO: Refactor task handlers to potentially use ProcessingService for tool calls too?
-    task_worker.set_mcp_state(mcp_sessions, mcp_tools, tool_name_to_server_id)
+    # No longer need to pass MCP state separately to task worker
+    # task_worker.set_mcp_state(mcp_sessions, mcp_tools, tool_name_to_server_id) # Removed
 
     # Start the task queue worker, passing the notification event
     worker_id = f"worker-{uuid.uuid4()}" # Generate a unique ID for this worker instance

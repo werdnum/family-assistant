@@ -38,9 +38,10 @@ shutdown_event = asyncio.Event()
 new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 # --- Global state (references from main) ---
-mcp_sessions: Dict[str, Any] = {}  # Still needed if handlers call MCP tools directly
-mcp_tools: List[Dict[str, Any]] = [] # Still needed for combining tool lists
-tool_name_to_server_id: Dict[str, str] = {} # Still needed
+# MCP state is no longer needed here, it's encapsulated in ToolsProvider used by ProcessingService
+# mcp_sessions: Dict[str, Any] = {}
+# mcp_tools: List[Dict[str, Any]] = []
+# tool_name_to_server_id: Dict[str, str] = {}
 processing_service_instance: Optional[ProcessingService] = None # To hold the service instance
 
 
@@ -125,14 +126,14 @@ async def handle_llm_callback(payload: Any):
             {"role": "user", "content": trigger_text} # Treat trigger as user input
         ]
 
-        # Combine local and MCP tools for the service call
-        all_tools = local_tools_definition + mcp_tools
+        # Tool definitions are fetched within process_message now
+        # all_tools = local_tools_definition + mcp_tools # Removed
 
-        # Call the ProcessingService directly
+        # Call the ProcessingService directly, passing the application instance
         llm_response_content, tool_call_info = await processing_service_instance.process_message(
             messages=messages_for_llm,
             chat_id=chat_id,
-            all_tools=all_tools,
+            application=application, # Pass application for ToolExecutionContext
         )
 
         if llm_response_content:
@@ -421,14 +422,7 @@ def set_processing_service(service: ProcessingService):
     logger.info("Set ProcessingService instance for task worker.")
 
 
-def set_mcp_state(sessions, tools, tool_name_mapping):
-    """Set MCP state from main.py"""
-    global mcp_sessions, mcp_tools, tool_name_to_server_id
-    mcp_sessions = sessions
-    mcp_tools = tools
-    tool_name_to_server_id = tool_name_mapping
-    logger.info(f"Set MCP state: {len(sessions)} sessions, {len(tools)} tools")
-
+# Removed set_mcp_state function
 
 def get_task_handlers():
     """Return the current task handlers dictionary"""
