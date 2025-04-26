@@ -7,18 +7,20 @@ from typing import List, Dict, Any, Optional, Callable, Tuple  # Added Tuple
 
 from dateutil.parser import isoparse  # Added for parsing datetime strings
 
+import logging
+import json
+import asyncio
+import uuid
+from typing import List, Dict, Any, Optional, Tuple
+
 # Import the LLM interface and output structure
-from .llm import LLMInterface, LLMOutput, LiteLLMClient
+from .llm import LLMInterface, LLMOutput
 
-# Import storage functions for tools
-from family_assistant import storage
+# Import ToolsProvider interface and context
+from .tools import ToolsProvider, ToolExecutionContext, ToolNotFoundError
 
-# from family_assistant.storage import enqueue_task # Example if specific import needed
-
-# MCP state (mcp_sessions, tool_name_to_server_id) will be passed as arguments
-# Removed: from main import mcp_sessions, tool_name_to_server_id
-
-from dateutil import rrule  # Added for validating recurrence rule
+# Import Application type hint
+from telegram.ext import Application
 
 logger = logging.getLogger(__name__)
 
@@ -32,29 +34,22 @@ class ProcessingService:
     and handling tool calls.
     """
 
-    def __init__(
-        self,
-        llm_client: LLMInterface,
-        mcp_sessions: Dict[str, Any], # Using Any for ClientSession to avoid MCP import here
-        tool_name_to_server_id: Dict[str, str],
-    ):
+    def __init__(self, llm_client: LLMInterface, tools_provider: ToolsProvider):
         """
         Initializes the ProcessingService.
 
         Args:
             llm_client: An object implementing the LLMInterface protocol.
-            mcp_sessions: Dictionary mapping MCP server IDs to their client sessions.
-            tool_name_to_server_id: Dictionary mapping MCP tool names to server IDs.
+            tools_provider: An object implementing the ToolsProvider protocol.
         """
         self.llm_client = llm_client
-        # Dependencies for tool execution are removed, will be handled by injected ToolsProvider later
-        # self.mcp_sessions = mcp_sessions
-        # self.tool_name_to_server_id = tool_name_to_server_id
-        # TODO: Inject ToolsProvider here in the next step
+        self.tools_provider = tools_provider
 
-    async def _execute_function_call( # TODO: This method will be removed when ToolsProvider is injected
+    # Removed _execute_function_call method
+
+    async def process_message(
         self,
-        tool_call: Dict[str, Any], # Expecting dict from LLMOutput now
+        messages: List[Dict[str, Any]],
         chat_id: int,
     ) -> Dict[str, Any]:
         """
@@ -215,17 +210,18 @@ class ProcessingService:
         self,
         messages: List[Dict[str, Any]],
         chat_id: int,
-        all_tools: List[Dict[str, Any]], # Accept combined tool list per call
+        application: Application, # Added application instance for context
+        # all_tools argument removed, will be fetched from provider
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
         """
-        Sends the conversation history (and tools) to the LLM via the injected client,
-        handles potential tool calls using internal methods, and returns the final
-        response content along with details of any tool calls made.
+        Sends the conversation history to the LLM via the injected client,
+        handles potential tool calls using the injected tools provider,
+        and returns the final response content along with details of any tool calls made.
 
         Args:
             messages: A list of message dictionaries for the LLM.
-            chat_id: The chat ID for context, primarily for tool execution.
-            all_tools: The combined list of local and MCP tools available for this call.
+            chat_id: The chat ID for context.
+            application: The Telegram Application instance for context.
 
         Returns:
             A tuple containing:
@@ -236,10 +232,15 @@ class ProcessingService:
         logger.info(
             f"Processing {len(messages)} messages for chat {chat_id}. Last message: {messages[-1]['content'][:100]}..."
         )
-        if all_tools:
-            logger.info(f"Providing {len(all_tools)} tools to LLM.")
 
         try:
+            # --- Get Tool Definitions ---
+            all_tools = await self.tools_provider.get_tool_definitions()
+            if all_tools:
+                logger.info(f"Providing {len(all_tools)} tools to LLM.")
+            else:
+                logger.info("No tools available from provider.")
+
             # --- First LLM Call via Injected Client ---
             llm_output: LLMOutput = await self.llm_client.generate_response(
                 messages=messages,
@@ -260,31 +261,66 @@ class ProcessingService:
                     assistant_message_with_calls["tool_calls"] = tool_calls
                 messages.append(assistant_message_with_calls)
 
-                # Execute all tool calls using the internal method
-                tool_responses = await asyncio.gather(
-                    *(self._execute_function_call(tc, chat_id) for tc in tool_calls)
-                )
+                # --- Execute Tool Calls using ToolsProvider ---
+                tool_response_messages = []
+                tool_execution_context = ToolExecutionContext(chat_id=chat_id, application=application)
 
-                # Store tool call details before appending responses to history
-                for i, tool_call_dict in enumerate(tool_calls):
-                    # Arguments are already parsed in _execute_function_call, but we need them here.
-                    # Re-parse or extract from the dict if needed for logging/storage.
+                for tool_call_dict in tool_calls:
+                    call_id = tool_call_dict.get("id")
+                    function_info = tool_call_dict.get("function", {})
+                    function_name = function_info.get("name")
+                    function_args_str = function_info.get("arguments", "{}")
+
+                    if not call_id or not function_name:
+                        logger.error(f"Skipping invalid tool call dict: {tool_call_dict}")
+                        # Add an error response message for this specific call
+                        tool_response_messages.append({
+                            "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                            "role": "tool",
+                            "name": function_name or "unknown_function",
+                            "content": "Error: Invalid tool call structure received from LLM.",
+                        })
+                        continue
+
                     try:
-                        arguments = json.loads(tool_call_dict.get("function", {}).get("arguments", "{}"))
+                        arguments = json.loads(function_args_str)
                     except json.JSONDecodeError:
-                        arguments = {"error": "Failed to parse arguments"}
+                        logger.error(f"Failed to parse arguments for tool call {function_name}: {function_args_str}")
+                        arguments = {"error": "Failed to parse arguments"} # Store error for logging
+                        tool_response_content = f"Error: Invalid arguments format for {function_name}."
+                    else:
+                        # Arguments parsed successfully, execute the tool
+                        try:
+                            tool_response_content = await self.tools_provider.execute_tool(
+                                name=function_name,
+                                arguments=arguments,
+                                context=tool_execution_context,
+                            )
+                        except ToolNotFoundError as tnfe:
+                            logger.error(f"Tool execution failed: {tnfe}")
+                            tool_response_content = f"Error: {tnfe}"
+                        except Exception as exec_err:
+                            logger.error(f"Unexpected error executing tool {function_name}: {exec_err}", exc_info=True)
+                            tool_response_content = f"Error: Unexpected error executing {function_name}."
 
-                    executed_tool_info.append(
-                        {
-                            "call_id": tool_call_dict.get("id"),
-                            "function_name": tool_call_dict.get("function", {}).get("name"),
-                            "arguments": arguments,
-                            "response_content": tool_responses[i].get("content", "Error retrieving response content"),
-                        }
-                    )
+                    # Store details for history
+                    executed_tool_info.append({
+                        "call_id": call_id,
+                        "function_name": function_name,
+                        "arguments": arguments, # Store parsed args (or error dict)
+                        "response_content": tool_response_content,
+                    })
 
-                # Append tool responses to the message history for the next LLM call
-                messages.extend(tool_responses)
+                    # Append the response message for the LLM
+                    tool_response_messages.append({
+                        "tool_call_id": call_id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": tool_response_content,
+                    })
+
+                # Append all tool response messages to the history for the next LLM call
+                messages.extend(tool_response_messages)
 
                 # --- Second LLM Call ---
                 logger.info("Sending updated messages back to LLM after tool execution.")
