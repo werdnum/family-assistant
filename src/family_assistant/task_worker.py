@@ -12,8 +12,9 @@ from typing import Dict, List, Any, Optional, Callable
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
 from family_assistant.processing import ProcessingService # Import the service
-from family_assistant.processing import (
-    TOOLS_DEFINITION as local_tools_definition, # Keep for combining tools if needed
+# Import tool definitions from the new tools module
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
 )
 from telegramify_markdown import markdownify
 from telegram.helpers import escape_markdown

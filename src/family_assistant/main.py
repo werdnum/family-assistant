@@ -52,11 +52,9 @@ from family_assistant.llm import (
     RecordingLLMClient,
     PlaybackLLMClient,
 )
-# Import tool definitions if needed directly (though ProcessingService handles them)
-from family_assistant.processing import (
+# Import tool definitions from the new tools module
+from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
-    # schedule_future_callback_tool, # Tool implementations are used internally by ProcessingService
-    # schedule_recurring_task_tool,
 )
 
 # Import the FastAPI app
