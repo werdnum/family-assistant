@@ -11,7 +11,8 @@ from typing import List, Dict, Any, Optional, Protocol, AsyncGenerator, AsyncIte
 
 from litellm import acompletion
 from litellm.exceptions import APIConnectionError, Timeout, RateLimitError, ServiceUnavailableError, APIError
-from litellm.types.completion import ChatCompletionMessageParam, ChatCompletionToolParam
+# Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
+from litellm.types.completion import ChatCompletionMessageParam
 
 logger = logging.getLogger(__name__)
 
