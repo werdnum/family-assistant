@@ -11,7 +11,10 @@ from typing import Dict, List, Any, Optional, Callable
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
-from family_assistant.processing import get_llm_response, TOOLS_DEFINITION as local_tools_definition
+from family_assistant.processing import (
+    get_llm_response,
+    TOOLS_DEFINITION as local_tools_definition,
+)
 from telegramify_markdown import markdownify
 from telegram.helpers import escape_markdown
 
@@ -81,15 +84,21 @@ _generate_llm_response_for_chat = None
 async def handle_llm_callback(payload: Any):
     """Task handler for LLM scheduled callbacks."""
     global _generate_llm_response_for_chat  # Get the function from main
-    
+
     if not _generate_llm_response_for_chat:
-        logger.error("Cannot handle LLM callback: _generate_llm_response_for_chat not set")
+        logger.error(
+            "Cannot handle LLM callback: _generate_llm_response_for_chat not set"
+        )
         raise RuntimeError("Missing _generate_llm_response_for_chat function reference")
 
-    application = payload.get("_application_ref")  # Special field for application reference
-    
+    application = payload.get(
+        "_application_ref"
+    )  # Special field for application reference
+
     if not application:
-        logger.error("Cannot handle LLM callback: Telegram application reference not set")
+        logger.error(
+            "Cannot handle LLM callback: Telegram application reference not set"
+        )
         raise RuntimeError("Missing application reference in payload")
 
     chat_id = payload.get("chat_id")
@@ -97,7 +106,9 @@ async def handle_llm_callback(payload: Any):
 
     if not chat_id or not callback_context:
         logger.error(f"Invalid payload for llm_callback task: {payload}")
-        raise ValueError("Missing required fields in payload: chat_id or callback_context")
+        raise ValueError(
+            "Missing required fields in payload: chat_id or callback_context"
+        )
 
     logger.info(f"Handling LLM callback for chat_id {chat_id}")
     current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -418,4 +429,6 @@ def get_task_handlers():
     return TASK_HANDLERS
 
 
-logger.info(f"Task worker module initialized with {len(TASK_HANDLERS)} handlers: {list(TASK_HANDLERS.keys())}")
+logger.info(
+    f"Task worker module initialized with {len(TASK_HANDLERS)} handlers: {list(TASK_HANDLERS.keys())}"
+)

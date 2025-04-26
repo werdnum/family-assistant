@@ -26,7 +26,6 @@ from sqlalchemy.exc import DBAPIError
 from family_assistant.storage.base import metadata, get_engine
 
 logger = logging.getLogger(__name__)
-engine = get_engine()
 
 # Define the message history table
 message_history_table = Table(
@@ -52,6 +51,7 @@ async def add_message_to_history(
     """Adds a message to the history table, including optional tool call info, with retries."""
     max_retries = 3
     base_delay = 0.5
+    engine = get_engine()
     stmt = insert(message_history_table).values(
         chat_id=chat_id,
         message_id=message_id,
@@ -99,6 +99,7 @@ async def get_recent_history(
     cutoff_time = datetime.now(timezone.utc) - max_age
     max_retries = 3
     base_delay = 0.5
+    engine = get_engine()
     stmt = (
         select(
             message_history_table.c.role,
@@ -149,6 +150,7 @@ async def get_message_by_id(chat_id: int, message_id: int) -> Optional[Dict[str,
     """Retrieves a specific message by its chat and message ID, with retries."""
     max_retries = 3
     base_delay = 0.5
+    engine = get_engine()
     stmt = (
         select(message_history_table.c.role, message_history_table.c.content)
         .where(message_history_table.c.chat_id == chat_id)
@@ -187,6 +189,7 @@ async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
     """Retrieves all message history, grouped by chat_id and ordered by timestamp."""
     max_retries = 3
     base_delay = 0.5
+    engine = get_engine()
     stmt = select(message_history_table).order_by(  # Select all columns
         message_history_table.c.chat_id, message_history_table.c.timestamp.desc()
     )
