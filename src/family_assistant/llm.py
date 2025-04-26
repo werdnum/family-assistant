@@ -190,51 +190,59 @@ class RecordingLLMClient:
 class PlaybackLLMClient:
     """
     An LLM client that plays back previously recorded interactions from a file.
-    Plays back interactions sequentially based on the order in the file.
+    Plays back recorded interactions by matching the input arguments.
     """
 
     def __init__(self, recording_path: str):
         """
-        Initializes the playback client.
+        Initializes the playback client by loading all recorded interactions.
 
         Args:
             recording_path: Path to the JSON Lines file containing recorded interactions.
+
+        Raises:
+            FileNotFoundError: If the recording file does not exist.
+            ValueError: If the recording file is empty or contains invalid JSON.
         """
         self.recording_path = recording_path
-        self._iterator: Optional[AsyncIterator[LLMOutput]] = None
-        logger.info(f"PlaybackLLMClient initialized. Reading from: {self.recording_path}")
-
-    async def _load_recording(self) -> AsyncGenerator[LLMOutput, None]:
-        """Async generator to load recorded outputs one by one."""
+        self.recorded_interactions: List[Dict[str, Any]] = []
+        logger.info(f"PlaybackLLMClient initializing. Reading from: {self.recording_path}")
         try:
-            async with aiofiles.open(self.recording_path, mode="r", encoding="utf-8") as f:
+            # Load all interactions into memory synchronously during init
+            # For async loading, this would need to be an async factory or method
+            with open(self.recording_path, mode="r", encoding="utf-8") as f:
                 line_num = 0
-                async for line in f:
+                for line in f:
                     line_num += 1
                     line = line.strip()
                     if not line:
                         continue
                     try:
                         record = json.loads(line)
-                        if "output" not in record:
-                             logger.warning(f"Skipping line {line_num} in {self.recording_path}: Missing 'output' key.")
-                             continue
-                        # Reconstruct LLMOutput from the recorded dict
-                        output_data = record["output"]
-                        yield LLMOutput(
-                            content=output_data.get("content"),
-                            tool_calls=output_data.get("tool_calls")
-                        )
+                        if "input" not in record or "output" not in record:
+                            logger.warning(f"Skipping line {line_num} in {self.recording_path}: Missing 'input' or 'output' key.")
+                            continue
+                        self.recorded_interactions.append(record)
                     except json.JSONDecodeError:
                         logger.warning(f"Skipping invalid JSON on line {line_num} in {self.recording_path}: {line[:100]}...")
                     except Exception as parse_err:
-                         logger.warning(f"Error parsing record on line {line_num} in {self.recording_path}: {parse_err}")
+                        logger.warning(f"Error parsing record on line {line_num} in {self.recording_path}: {parse_err}")
+
+            if not self.recorded_interactions:
+                 logger.warning(f"Recording file {self.recording_path} is empty or contains no valid records.")
+                 # Decide whether to raise an error or allow initialization with empty list
+                 # Raising error is safer to prevent unexpected behavior later.
+                 raise ValueError(f"No valid interactions loaded from {self.recording_path}")
+
+            logger.info(f"PlaybackLLMClient initialized. Loaded {len(self.recorded_interactions)} interactions from: {self.recording_path}")
+
         except FileNotFoundError:
             logger.error(f"Recording file not found: {self.recording_path}")
             raise # Re-raise FileNotFoundError
         except Exception as e:
             logger.error(f"Failed to read or parse recording file {self.recording_path}: {e}", exc_info=True)
-            raise # Re-raise other critical errors
+            # Wrap other errors in a ValueError for consistent init failure reporting
+            raise ValueError(f"Failed to load recording file {self.recording_path}: {e}") from e
 
     async def generate_response(
         self,
@@ -242,20 +250,42 @@ class PlaybackLLMClient:
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[str] = "auto",
     ) -> LLMOutput:
-        """Returns the next recorded response from the file."""
-        if self._iterator is None:
-            self._iterator = self._load_recording()
+        """
+        Finds a recorded interaction matching the input arguments and returns its output.
 
+        Raises:
+            LookupError: If no matching recorded interaction is found for the given input.
+        """
+        current_input = {
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        logger.debug(f"PlaybackLLMClient attempting to find match for input: {json.dumps(current_input, indent=2)[:500]}...") # Log truncated input
+
+        # Iterate through loaded interactions to find a match
+        for record in self.recorded_interactions:
+            # Simple direct comparison of the input dictionaries.
+            # NOTE: This can be brittle if there are minor variations (e.g., timestamps in system prompts, dict key order).
+            # Consider more robust matching (e.g., comparing specific fields, canonical serialization) if needed.
+            if record.get("input") == current_input:
+                logger.info(f"Found matching interaction in {self.recording_path}.")
+                output_data = record["output"]
+                # Reconstruct LLMOutput from the recorded dict
+                matched_output = LLMOutput(
+                    content=output_data.get("content"),
+                    tool_calls=output_data.get("tool_calls")
+                )
+                logger.debug(f"Playing back matched response. Content: {bool(matched_output.content)}. Tool Calls: {len(matched_output.tool_calls) if matched_output.tool_calls else 0}")
+                return matched_output
+
+        # If no match is found after checking all records
+        logger.error(f"PlaybackLLMClient: No matching interaction found in {self.recording_path} for the provided input.")
+        # Log the input that failed to match for debugging
         try:
-            # Get the next recorded output sequentially
-            recorded_output = await self._iterator.__anext__()
-            logger.debug(f"Playing back recorded response. Content: {bool(recorded_output.content)}. Tool Calls: {len(recorded_output.tool_calls) if recorded_output.tool_calls else 0}")
-            # TODO: Add optional input matching logic here if needed in the future
-            # For now, just return the next item regardless of input args.
-            return recorded_output
-        except StopAsyncIteration:
-            logger.error(f"PlaybackLLMClient: Reached end of recording file {self.recording_path}.")
-            raise EOFError(f"End of recording file reached: {self.recording_path}")
-        except Exception as e:
-            logger.error(f"Error retrieving next item during playback: {e}", exc_info=True)
-            raise # Re-raise other errors encountered during iteration
+            failed_input_str = json.dumps(current_input, indent=2)
+        except Exception:
+            failed_input_str = str(current_input) # Fallback if JSON serialization fails
+        logger.error(f"Failed Input:\n{failed_input_str}")
+
+        raise LookupError(f"No matching recorded interaction found in {self.recording_path} for the current input.")
