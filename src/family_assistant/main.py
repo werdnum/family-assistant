@@ -44,11 +44,19 @@ import uvicorn
 # Import task worker module using absolute path
 from family_assistant import task_worker
 
-# Assuming processing.py contains the LLM interaction logic
-from family_assistant.processing import get_llm_response
+# Import the ProcessingService and LLM interface/clients
+from family_assistant.processing import ProcessingService
+from family_assistant.llm import (
+    LLMInterface,
+    LiteLLMClient,
+    RecordingLLMClient,
+    PlaybackLLMClient,
+)
+# Import tool definitions if needed directly (though ProcessingService handles them)
 from family_assistant.processing import (
-    schedule_future_callback_tool,
-    schedule_recurring_task_tool,
+    TOOLS_DEFINITION as local_tools_definition,
+    # schedule_future_callback_tool, # Tool implementations are used internally by ProcessingService
+    # schedule_recurring_task_tool,
 )
 
 # Import the FastAPI app
@@ -449,22 +457,16 @@ async def typing_notifications(
             await asyncio.wait_for(typing_task, timeout=1.0)
 
 
-# --- Core LLM Interaction Logic ---
-
+# --- Core LLM Interaction Logic (Refactored) ---
 
 async def _generate_llm_response_for_chat(
+    processing_service: ProcessingService, # Inject the service instance
     chat_id: int,
-    trigger_content_parts: List[
-        Dict[str, Any]
-    ],  # Content of the triggering message (user text/photo or callback)
-    user_name: str,  # Name to use in system prompt
-    model_name: str,  # Pass model name explicitly
-    # TODO: Consider passing context explicitly instead of relying on globals/args
-    # context: ContextTypes.DEFAULT_TYPE # Needed for typing notifications?
+    trigger_content_parts: List[Dict[str, Any]],
+    user_name: str,
 ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
     """
-    Prepares context, message history, calls the LLM, and returns the response content
-    along with any tool call information.
+    Prepares context, message history, calls the ProcessingService, and returns the response.
 
     Args:
         chat_id: The target chat ID.
@@ -654,30 +656,22 @@ async def _generate_llm_response_for_chat(
     logger.debug(f"Appended trigger message to LLM history: {trigger_message}")
 
     # --- Combine local and MCP tools ---
-    # Ensure processing.TOOLS_DEFINITION is accessible or imported
-    from family_assistant.processing import TOOLS_DEFINITION as local_tools_definition
-
+    # Local tools are defined in processing.py (TOOLS_DEFINITION)
+    # MCP tools are stored globally in mcp_tools (set during startup)
     all_tools = local_tools_definition + mcp_tools
 
-    # --- Call LLM ---
-    # Note: Typing notifications are omitted here for simplicity in this refactored function.
-    # They could be added back if needed, perhaps by passing the `context` object.
-    try:  # Move try block here
-        # Get both response content and tool info from get_llm_response
-        # Pass model_name explicitly now
-        llm_response_content, tool_info = await get_llm_response(
-            messages,
-            chat_id,
-            model_name,  # Use passed model_name
-            all_tools,
-            mcp_sessions,
-            tool_name_to_server_id,
+    # --- Call Processing Service ---
+    try:
+        # Call the process_message method of the injected service instance
+        llm_response_content, tool_info = await processing_service.process_message(
+            messages=messages,
+            chat_id=chat_id,
+            all_tools=all_tools,
         )
-        # Return both parts as a tuple
-        return llm_response_content, tool_info  # Return tuple
+        return llm_response_content, tool_info
     except Exception as e:
         logger.error(
-            f"Error during LLM interaction for chat {chat_id}: {e}", exc_info=True
+            f"Error during ProcessingService interaction for chat {chat_id}: {e}", exc_info=True
         )
         # Return None for both parts on error
         return None, None
@@ -793,24 +787,21 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
     logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
     try:
-        # Use the new helper function to get the LLM response content and tool info
-        async with typing_notifications(context, chat_id):
-            # Retrieve model name from bot_data
-            model_name = context.bot_data.get(
-                "model_name", "default/model-not-set"
-            )  # Provide a default fallback
-            if model_name == "default/model-not-set":
-                logger.warning(
-                    "Model name not found in context.bot_data, using fallback."
-                )
+        # Retrieve the ProcessingService instance from bot_data
+        processing_service: Optional[ProcessingService] = context.bot_data.get("processing_service")
+        if not processing_service:
+            logger.error("ProcessingService not found in bot_data. Cannot generate response.")
+            await context.bot.send_message(chat_id, "Internal error: Processing service unavailable.")
+            return # Exit processing if service is missing
 
+        # Use the helper function, passing the service instance
+        async with typing_notifications(context, chat_id):
             llm_response_content, tool_call_info = (
                 await _generate_llm_response_for_chat(
+                    processing_service=processing_service, # Pass the service
                     chat_id=chat_id,
                     trigger_content_parts=trigger_content_parts,
                     user_name=user_name,
-                    model_name=model_name,  # Pass model name retrieved from context
-                    # context=context
                 )
             )
 
@@ -1096,20 +1087,43 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
             "OpenRouter API Key must be provided via --openrouter-api-key or OPENROUTER_API_KEY env var"
         )
 
-    # Set OpenRouter API key for LiteLLM
+    # Set OpenRouter API key for LiteLLM (if using LiteLLMClient)
     os.environ["OPENROUTER_API_KEY"] = cli_args.openrouter_api_key
 
-    # --- Persistence Setup ---
-    # Persistence is no longer used for history, but could be kept for user/bot data if needed
-    # persistence = PicklePersistence(filepath="bot_persistence.pkl")
+    # --- LLM Client and Processing Service Instantiation ---
+    # TODO: Add logic to choose LLM client based on config (e.g., args, env vars)
+    # For now, default to LiteLLMClient
+    llm_client: LLMInterface = LiteLLMClient(model=cli_args.model)
+    # Example for recording:
+    # live_client = LiteLLMClient(model=cli_args.model)
+    # llm_client = RecordingLLMClient(wrapped_client=live_client, recording_path="llm_interactions.jsonl")
+    # Example for playback:
+    # llm_client = PlaybackLLMClient(recording_path="llm_interactions.jsonl")
 
+    # Initialize database schema first (needed by ProcessingService potentially via tools)
+    await init_db()
+    # Load MCP config and connect to servers (needed by ProcessingService)
+    await load_mcp_config_and_connect()
+
+    # Instantiate the ProcessingService, injecting dependencies
+    processing_service = ProcessingService(
+        llm_client=llm_client,
+        mcp_sessions=mcp_sessions,
+        tool_name_to_server_id=tool_name_to_server_id,
+    )
+    logger.info(f"ProcessingService initialized with {type(llm_client).__name__}.")
+
+    # --- Telegram Application Setup ---
     application = (
-        ApplicationBuilder().token(cli_args.telegram_token)  # Use cli_args
-        # .persistence(persistence) # Removed persistence
+        ApplicationBuilder().token(cli_args.telegram_token)
         .build()
     )
 
-    # Register handlers
+    # Store the ProcessingService instance in bot_data for access in handlers
+    application.bot_data["processing_service"] = processing_service
+    logger.info("Stored ProcessingService instance in application.bot_data.")
+
+    # Register Telegram handlers
     application.add_handler(CommandHandler("start", start))
     # Handle text OR photo messages (with optional caption)
     # filters.PHOTO will match messages containing photos, potentially with captions
@@ -1123,19 +1137,10 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
     # Register error handler
     application.add_error_handler(error_handler)
 
-    # Initialize database schema
-    await init_db()
-    # Load MCP config and connect to servers
-    await load_mcp_config_and_connect()
-
     # Initialize application (loads persistence, etc.)
     await application.initialize()
 
-    # Store model name in bot_data for access in handlers
-    application.bot_data["model_name"] = cli_args.model
-    logger.info(f"Stored model_name '{cli_args.model}' in bot_data.")
-
-    # Start polling and job queue (if any)
+    # Start polling
     await application.start()
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     logger.info("Bot polling started.")  # Updated log message
@@ -1147,20 +1152,16 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
     # Run Uvicorn server concurrently (polling is already running)
     # telegram_task = asyncio.create_task(application.updater.start_polling(allowed_updates=Update.ALL_TYPES)) # Removed duplicate start_polling
     web_server_task = asyncio.create_task(server.serve())
-    logger.info("Web server running on http://0.0.0.0:8000")  # Updated log message
+    logger.info("Web server running on http://0.0.0.0:8000")
 
-    # Pass essential state to the task worker module
-    # Need to wrap _generate_llm_response_for_chat to include model name from args
-    async def llm_generator_wrapper(chat_id, trigger_content_parts, user_name):
-        return await _generate_llm_response_for_chat(
-            chat_id, trigger_content_parts, user_name, cli_args.model
-        )
-
-    task_worker.set_llm_response_generator(llm_generator_wrapper)
+    # Pass the ProcessingService instance to the task worker module
+    task_worker.set_processing_service(processing_service)
+    # Pass MCP state (still needed if tools are executed within task worker handlers directly)
+    # TODO: Refactor task handlers to potentially use ProcessingService for tool calls too?
     task_worker.set_mcp_state(mcp_sessions, mcp_tools, tool_name_to_server_id)
 
     # Start the task queue worker, passing the notification event
-    worker_id = f"worker-{uuid.uuid4()}"
+    worker_id = f"worker-{uuid.uuid4()}" # Generate a unique ID for this worker instance
     task_worker_task = asyncio.create_task(
         task_worker.task_worker_loop(worker_id, new_task_event)
     )
