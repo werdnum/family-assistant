@@ -105,7 +105,7 @@ async def schedule_recurring_task_tool(
 
 async def schedule_future_callback_tool(callback_time: str, context: str, chat_id: int):
     """Schedules a future callback task to execute at the specified time.
-    
+
     The payload will be enhanced to include the application reference.
     """
     # We need the application instance from the global context
@@ -136,7 +136,11 @@ async def schedule_future_callback_tool(callback_time: str, context: str, chat_i
             raise ValueError("Callback time must be in the future.")
 
         task_id = f"llm_callback_{uuid.uuid4()}"
-        payload = {"chat_id": chat_id, "callback_context": context, "_application_ref": application}
+        payload = {
+            "chat_id": chat_id,
+            "callback_context": context,
+            "_application_ref": application,
+        }
 
         # TODO: Need access to the new_task_event from main.py to notify worker
         # For now, enqueue without immediate notification. Refactor may be needed

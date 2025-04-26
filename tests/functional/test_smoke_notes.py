@@ -2,11 +2,12 @@ import pytest
 import uuid
 import asyncio
 import logging
-import os # Import os to read environment variables
-from sqlalchemy import text # To query DB directly for assertion
+import os  # Import os to read environment variables
+from sqlalchemy import text  # To query DB directly for assertion
 
 # Import the function we want to test directly
 from family_assistant.main import _generate_llm_response_for_chat
+
 # Import storage functions for assertion (will use the patched engine)
 # from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
 
@@ -21,8 +22,9 @@ TEST_USER_NAME = "TestUser"
 # Get model name from env var or use the same default as in main.py's arg parser
 TEST_MODEL_NAME = os.getenv("LLM_MODEL", "openrouter/google/gemini-flash-1.5")
 
+
 @pytest.mark.asyncio
-async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixture
+async def test_add_and_retrieve_note_smoke(test_db_engine):  # Request the fixture
     """
     Smoke test:
     1. Simulate adding a note via LLM interaction (using real LLM).
@@ -47,7 +49,7 @@ async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixtur
         chat_id=TEST_CHAT_ID,
         trigger_content_parts=add_note_trigger,
         user_name=TEST_USER_NAME,
-        model_name=TEST_MODEL_NAME, # Pass the model name
+        model_name=TEST_MODEL_NAME,  # Pass the model name
     )
 
     logger.info(f"Add Note - LLM Response: {add_response_content}")
@@ -58,13 +60,15 @@ async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixtur
     note_in_db = None
     logger.info("Checking database for the new note...")
     async with test_db_engine.connect() as connection:
-         result = await connection.execute(
-             text("SELECT title, content FROM notes WHERE title = :title"),
-             {"title": test_note_title}
-         )
-         note_in_db = result.fetchone()
+        result = await connection.execute(
+            text("SELECT title, content FROM notes WHERE title = :title"),
+            {"title": test_note_title},
+        )
+        note_in_db = result.fetchone()
 
-    assert note_in_db is not None, f"Note '{test_note_title}' not found in the database after add attempt."
+    assert (
+        note_in_db is not None
+    ), f"Note '{test_note_title}' not found in the database after add attempt."
     assert note_in_db.content == TEST_NOTE_CONTENT, "Note content in DB does not match."
     logger.info(f"Verified note '{test_note_title}' exists in DB.")
 
@@ -75,14 +79,16 @@ async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixtur
     # For now, we'll just check that *if* tool info is present, it looks correct.
     if add_tool_info:
         assert len(add_tool_info) == 1, "Expected one tool call if tool info is present"
-        assert add_tool_info[0]['function_name'] == 'add_or_update_note'
+        assert add_tool_info[0]["function_name"] == "add_or_update_note"
         # Check response content *within* the tool info dict
-        assert "Error:" not in add_tool_info[0].get('response_content', ''), \
-            f"Tool response content indicates an error: {add_tool_info[0].get('response_content')}"
-        logger.info("Tool info check passed (or no tool info returned, which is acceptable).")
+        assert "Error:" not in add_tool_info[0].get(
+            "response_content", ""
+        ), f"Tool response content indicates an error: {add_tool_info[0].get('response_content')}"
+        logger.info(
+            "Tool info check passed (or no tool info returned, which is acceptable)."
+        )
     else:
         logger.info("No tool info returned by LLM for add_note (might be acceptable).")
-
 
     # --- Add a small delay before the next step (optional, mimics user pause) ---
     await asyncio.sleep(1)
@@ -93,11 +99,13 @@ async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixtur
     retrieve_note_trigger = [{"type": "text", "text": retrieve_note_text}]
 
     # Call the core logic again
-    retrieve_response_content, retrieve_tool_info = await _generate_llm_response_for_chat(
-        chat_id=TEST_CHAT_ID,
-        trigger_content_parts=retrieve_note_trigger,
-        user_name=TEST_USER_NAME,
-        model_name=TEST_MODEL_NAME, # Pass the model name
+    retrieve_response_content, retrieve_tool_info = (
+        await _generate_llm_response_for_chat(
+            chat_id=TEST_CHAT_ID,
+            trigger_content_parts=retrieve_note_trigger,
+            user_name=TEST_USER_NAME,
+            model_name=TEST_MODEL_NAME,  # Pass the model name
+        )
     )
 
     logger.info(f"Retrieve Note - LLM Response: {retrieve_response_content}")
@@ -106,10 +114,13 @@ async def test_add_and_retrieve_note_smoke(test_db_engine): # Request the fixtur
     # Assertion 3: Check the final LLM response contains the note content
     assert retrieve_response_content is not None, "LLM response for retrieval was None."
     # Use lower() for case-insensitive comparison
-    assert TEST_NOTE_CONTENT.lower() in retrieve_response_content.lower(), \
-        f"LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {retrieve_response_content}"
+    assert (
+        TEST_NOTE_CONTENT.lower() in retrieve_response_content.lower()
+    ), f"LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {retrieve_response_content}"
     # Assertion 4: Ensure no tool was called for retrieval (LLM should use context)
-    assert retrieve_tool_info is None, f"Expected no tool call for simple retrieval, but got: {retrieve_tool_info}"
+    assert (
+        retrieve_tool_info is None
+    ), f"Expected no tool call for simple retrieval, but got: {retrieve_tool_info}"
 
     logger.info("Verified LLM response contains note content and no tool was called.")
     logger.info("--- Smoke Test Passed ---")

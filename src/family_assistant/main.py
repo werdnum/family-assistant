@@ -46,7 +46,10 @@ from family_assistant import task_worker
 
 # Assuming processing.py contains the LLM interaction logic
 from family_assistant.processing import get_llm_response
-from family_assistant.processing import schedule_future_callback_tool, schedule_recurring_task_tool
+from family_assistant.processing import (
+    schedule_future_callback_tool,
+    schedule_recurring_task_tool,
+)
 
 # Import the FastAPI app
 from family_assistant.web_server import app as fastapi_app
@@ -61,6 +64,7 @@ from family_assistant.storage import (
     get_message_by_id,
     add_or_update_note,
 )
+
 # Import the whole storage module for task queue functions etc.
 from family_assistant import storage
 
@@ -414,6 +418,7 @@ load_config()
 
 # Argument parsing will happen inside main()
 
+
 # --- Helper Functions & Context Managers ---
 @contextlib.asynccontextmanager
 async def typing_notifications(
@@ -453,7 +458,7 @@ async def _generate_llm_response_for_chat(
         Dict[str, Any]
     ],  # Content of the triggering message (user text/photo or callback)
     user_name: str,  # Name to use in system prompt
-    model_name: str, # Pass model name explicitly
+    model_name: str,  # Pass model name explicitly
     # TODO: Consider passing context explicitly instead of relying on globals/args
     # context: ContextTypes.DEFAULT_TYPE # Needed for typing notifications?
 ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
@@ -663,7 +668,7 @@ async def _generate_llm_response_for_chat(
         llm_response_content, tool_info = await get_llm_response(
             messages,
             chat_id,
-            model_name, # Use passed model_name
+            model_name,  # Use passed model_name
             all_tools,
             mcp_sessions,
             tool_name_to_server_id,
@@ -791,16 +796,20 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
         # Use the new helper function to get the LLM response content and tool info
         async with typing_notifications(context, chat_id):
             # Retrieve model name from bot_data
-            model_name = context.bot_data.get("model_name", "default/model-not-set") # Provide a default fallback
+            model_name = context.bot_data.get(
+                "model_name", "default/model-not-set"
+            )  # Provide a default fallback
             if model_name == "default/model-not-set":
-                 logger.warning("Model name not found in context.bot_data, using fallback.")
+                logger.warning(
+                    "Model name not found in context.bot_data, using fallback."
+                )
 
             llm_response_content, tool_call_info = (
                 await _generate_llm_response_for_chat(
                     chat_id=chat_id,
                     trigger_content_parts=trigger_content_parts,
                     user_name=user_name,
-                    model_name=model_name, # Pass model name retrieved from context
+                    model_name=model_name,  # Pass model name retrieved from context
                     # context=context
                 )
             )
@@ -1072,10 +1081,10 @@ def reload_config_handler(signum, frame):
 
 
 # --- Main Application Setup & Run ---
-async def main_async(cli_args: argparse.Namespace) -> None: # Accept parsed args
+async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed args
     """Initializes and runs the bot application."""
     global application
-    logger.info(f"Using model: {cli_args.model}") # Use cli_args
+    logger.info(f"Using model: {cli_args.model}")  # Use cli_args
 
     # --- Validate Essential Config from args ---
     if not cli_args.telegram_token:
@@ -1095,7 +1104,7 @@ async def main_async(cli_args: argparse.Namespace) -> None: # Accept parsed args
     # persistence = PicklePersistence(filepath="bot_persistence.pkl")
 
     application = (
-        ApplicationBuilder().token(cli_args.telegram_token) # Use cli_args
+        ApplicationBuilder().token(cli_args.telegram_token)  # Use cli_args
         # .persistence(persistence) # Removed persistence
         .build()
     )
@@ -1152,7 +1161,9 @@ async def main_async(cli_args: argparse.Namespace) -> None: # Accept parsed args
 
     # Start the task queue worker, passing the notification event
     worker_id = f"worker-{uuid.uuid4()}"
-    task_worker_task = asyncio.create_task(task_worker.task_worker_loop(worker_id, new_task_event))
+    task_worker_task = asyncio.create_task(
+        task_worker.task_worker_loop(worker_id, new_task_event)
+    )
 
     # Wait until shutdown signal is received
     await shutdown_event.wait()
@@ -1177,7 +1188,7 @@ async def main_async(cli_args: argparse.Namespace) -> None: # Accept parsed args
     # Application shutdown is handled by the signal handler which calls shutdown_handler
 
 
-def main() -> int: # Return an exit code
+def main() -> int:  # Return an exit code
     """Sets up argument parsing, event loop, and signal handlers."""
     # --- Argument Parsing (Defined and Executed Here) ---
     parser = argparse.ArgumentParser(description="Family Assistant Bot")
@@ -1197,7 +1208,7 @@ def main() -> int: # Return an exit code
         default=os.getenv("LLM_MODEL", "openrouter/google/gemini-flash-1.5"),
         help="LLM model to use (e.g., openrouter/google/gemini-flash-1.5)",
     )
-    args = parser.parse_args() # Parse args here
+    args = parser.parse_args()  # Parse args here
 
     # --- Event Loop and Signal Handlers ---
     loop = asyncio.get_event_loop()
@@ -1225,9 +1236,9 @@ def main() -> int: # Return an exit code
         logger.info("Starting application...")
         # Pass parsed args to main_async
         loop.run_until_complete(main_async(args))
-    except ValueError as config_err: # Catch config validation errors
+    except ValueError as config_err:  # Catch config validation errors
         logger.critical(f"Configuration error: {config_err}")
-        return 1 # Return non-zero exit code
+        return 1  # Return non-zero exit code
     except (KeyboardInterrupt, SystemExit) as ex:
         logger.warning(f"Received {type(ex).__name__}, initiating shutdown.")
         # Ensure shutdown runs if loop was interrupted directly
@@ -1239,8 +1250,8 @@ def main() -> int: # Return an exit code
         logger.info("Closing event loop.")
         loop.close()
         logger.info("Application finished.")
-    return 0 # Return 0 on successful shutdown
+    return 0  # Return 0 on successful shutdown
 
 
 if __name__ == "__main__":
-    sys.exit(main()) # Exit with the return code from main()
+    sys.exit(main())  # Exit with the return code from main()

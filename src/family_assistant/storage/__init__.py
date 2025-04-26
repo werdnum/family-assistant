@@ -148,7 +148,7 @@ __all__ = [
     "engine",
     "metadata",
     "DatabaseContext",  # Export the new context manager
-    "get_db_context",    # Export convenience function
+    "get_db_context",  # Export convenience function
     # Vector Storage Exports are added conditionally below
 ]
 

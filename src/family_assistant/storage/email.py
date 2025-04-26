@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 from sqlalchemy.sql import insert, functions  # Import functions explicitly
 from sqlalchemy.sql import insert
-from sqlalchemy import JSON # Import generic JSON type
-from sqlalchemy.dialects.postgresql import JSONB # Import PostgreSQL specific JSONB
+from sqlalchemy import JSON  # Import generic JSON type
+from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 import json
 from dateutil.parser import parse as parse_datetime
 
@@ -63,10 +63,10 @@ received_emails_table = sa.Table(
         "email_date", sa.DateTime(timezone=True), nullable=True, index=True
     ),  # Timestamp from the email's 'Date' header
     sa.Column(
-        "headers_json", JSON().with_variant(JSONB, 'postgresql'), nullable=True
+        "headers_json", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),  # Use JSONB for Postgres, JSON otherwise
     sa.Column(
-        "attachment_info", JSON().with_variant(JSONB, 'postgresql'), nullable=True
+        "attachment_info", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),  # Use JSONB for Postgres, JSON otherwise
     # Add other potentially useful Mailgun fields if needed
     sa.Column("mailgun_timestamp", sa.Text, nullable=True),  # Mailgun 'timestamp' field

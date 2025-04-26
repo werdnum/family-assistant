@@ -54,7 +54,7 @@ async def get_all_notes() -> List[Dict[str, str]]:
     max_retries = 3
     base_delay = 0.5  # seconds
 
-    engine = get_engine() # Get engine inside the function
+    engine = get_engine()  # Get engine inside the function
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
@@ -89,7 +89,7 @@ async def get_note_by_title(title: str) -> Optional[Dict[str, Any]]:
         notes_table.c.title == title
     )
 
-    engine = get_engine() # Get engine inside the function
+    engine = get_engine()  # Get engine inside the function
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
@@ -121,7 +121,7 @@ async def add_or_update_note(title: str, content: str):
     """Adds/updates a note, with retries."""
     max_retries = 3
     base_delay = 0.5
-    engine = get_engine() # Get engine inside the function
+    engine = get_engine()  # Get engine inside the function
 
     for attempt in range(max_retries):
         try:
@@ -129,7 +129,9 @@ async def add_or_update_note(title: str, content: str):
                 # Use begin_nested() or rely on autocommit if appropriate for the operation
                 # For insert/update/delete, explicit transaction might be safer
                 async with conn.begin():
-                    select_stmt = select(notes_table).where(notes_table.c.title == title)
+                    select_stmt = select(notes_table).where(
+                        notes_table.c.title == title
+                    )
                     result = await conn.execute(select_stmt)
                     existing_note = result.fetchone()
                     now = datetime.now(timezone.utc)
@@ -147,7 +149,7 @@ async def add_or_update_note(title: str, content: str):
                         logger.info(f"Inserting new note: {title}")
                     await conn.execute(stmt)
                     # Removed await conn.commit() - handled by async with conn.begin()
-                return "Success" # Return success outside the transaction block
+                return "Success"  # Return success outside the transaction block
         except DBAPIError as e:
             logger.warning(
                 f"DBAPIError in add_or_update_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
@@ -175,12 +177,12 @@ async def delete_note(title: str) -> bool:
     max_retries = 3
     base_delay = 0.5
     stmt = delete(notes_table).where(notes_table.c.title == title)
-    engine = get_engine() # Get engine inside the function
+    engine = get_engine()  # Get engine inside the function
 
     for attempt in range(max_retries):
         try:
             async with engine.connect() as conn:
-                async with conn.begin(): # Use transaction
+                async with conn.begin():  # Use transaction
                     result = await conn.execute(stmt)
                     # Removed await conn.commit() - handled by async with conn.begin()
                 if result.rowcount > 0:
@@ -207,4 +209,6 @@ async def delete_note(title: str) -> bool:
     raise RuntimeError(
         f"Database operation failed for delete_note({title}) after multiple retries"
     )
+
+
 # --- Removed duplicated code block from here ---

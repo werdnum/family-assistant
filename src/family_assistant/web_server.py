@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 from fastapi import Response  # Added Response
 from datetime import datetime, timezone
 import json
-import pathlib # Import pathlib for finding template/static dirs
+import pathlib  # Import pathlib for finding template/static dirs
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -27,9 +27,9 @@ from family_assistant.storage import (
 logger = logging.getLogger(__name__)
 
 # Directory to save raw webhook request bodies for debugging/replay
-MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests" # TODO: Consider making this configurable via env var
+MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests"  # TODO: Consider making this configurable via env var
 
-app = FastAPI(title="Family Assistant Web Interface") # Updated title slightly
+app = FastAPI(title="Family Assistant Web Interface")  # Updated title slightly
 
 # --- Determine base path for templates and static files ---
 # This assumes web_server.py is at src/family_assistant/web_server.py
@@ -44,7 +44,9 @@ try:
     static_dir = package_root_dir / "static"
 
     if not templates_dir.is_dir():
-        logger.warning(f"Templates directory not found at expected location: {templates_dir}")
+        logger.warning(
+            f"Templates directory not found at expected location: {templates_dir}"
+        )
         # Fallback or raise error? For now, log warning.
     if not static_dir.is_dir():
         logger.warning(f"Static directory not found at expected location: {static_dir}")
@@ -60,10 +62,14 @@ try:
 
 except NameError:
     # __file__ might not be defined in some execution contexts (e.g., interactive)
-    logger.error("Could not determine package path using __file__. Static/template files might not load.")
+    logger.error(
+        "Could not determine package path using __file__. Static/template files might not load."
+    )
     # Provide fallback paths relative to CWD, although this might not work reliably
     templates = Jinja2Templates(directory="src/family_assistant/templates")
-    app.mount("/static", StaticFiles(directory="src/family_assistant/static"), name="static")
+    app.mount(
+        "/static", StaticFiles(directory="src/family_assistant/static"), name="static"
+    )
 
 # --- Helper for DB Session (if needed, but storage functions are standalone) ---
 # Example if storage functions required a session object
