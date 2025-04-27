@@ -17,13 +17,17 @@ from sqlalchemy.sql import insert
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 import json
+from dataclasses import dataclass, field # Add dataclass imports
 from dateutil.parser import parse as parse_datetime
 from sqlalchemy.exc import SQLAlchemyError # Use broader exception
+from sqlalchemy.engine import RowMapping # Import RowMapping needed for EmailDocument.from_row
 
 # Import metadata and engine using absolute package path
 from family_assistant.storage.base import metadata # Keep metadata
 # Remove get_engine import
 from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
+# Import the Document protocol
+from family_assistant.storage.vector import Document
 
 logger = logging.getLogger(__name__)
 # Remove engine = get_engine()
