@@ -56,6 +56,7 @@ tasks_table = Table(
 
 
 async def enqueue_task(
+    db_context: DatabaseContext, # Added context
     task_id: str,
     task_type: str,
     payload: Optional[Dict[str, Any]] = None,
@@ -65,10 +66,7 @@ async def enqueue_task(
     original_task_id: Optional[str] = None,
     notify_event: Optional[asyncio.Event] = None,
 ):  # noqa: PLR0913
-    """Adds a task, handles retry logic, optional notification."""
-    max_db_retries = 3
-    base_delay = 0.5
-
+    """Adds a task to the queue, optional notification."""
     if scheduled_at and scheduled_at.tzinfo is None:
         raise ValueError("scheduled_at must be timezone-aware")
 
@@ -85,252 +83,193 @@ async def enqueue_task(
         "recurrence_rule": recurrence_rule,
         "original_task_id": original_task_id if original_task_id else task_id,
     }
+    # Filter out None values unless they are allowed (payload, error)
     values_to_insert = {
         k: v
         for k, v in values_to_insert.items()
         if v is not None or k in ["payload", "error"]
     }
 
-    for attempt in range(max_db_retries):
-        try:
-            async with engine.connect() as conn:
-                stmt = insert(tasks_table).values(**values_to_insert)
-                await conn.execute(stmt)
-                await conn.commit()
-                logger.info(
-                    f"Enqueued task {task_id} (Type: {task_type}, Original: {values_to_insert['original_task_id']}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
-                )
-                is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
-                    timezone.utc
-                )
-                if is_immediate and notify_event:
-                    notify_event.set()
-                    logger.debug(f"Notified worker about immediate task {task_id}.")
-                return
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in enqueue_task (attempt {attempt + 1}/{max_db_retries}): {e}. Retrying..."
-            )
-            if attempt == max_db_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for enqueue_task({task_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except ValueError:
-            raise
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in enqueue_task {task_id}: {e}", exc_info=True
-            )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for enqueue_task({task_id}) after multiple retries"
-    )
+    try:
+        stmt = insert(tasks_table).values(**values_to_insert)
+        await db_context.execute_and_commit(stmt)
+        logger.info(
+            f"Enqueued task {task_id} (Type: {task_type}, Original: {values_to_insert.get('original_task_id')}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
+        )
+        is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
+            timezone.utc
+        )
+        if is_immediate and notify_event:
+            notify_event.set()
+            logger.debug(f"Notified worker about immediate task {task_id}.")
+    except ValueError: # Re-raise specific errors
+        raise
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error in enqueue_task {task_id}: {e}", exc_info=True
+        )
+        raise
 
 
 async def dequeue_task(
-    worker_id: str, task_types: List[str]
+    db_context: DatabaseContext, # Added context
+    worker_id: str,
+    task_types: List[str]
 ) -> Optional[Dict[str, Any]]:
-    """Atomically dequeues the next available task, handles retries."""
+    """Atomically dequeues the next available task."""
     now = datetime.now(timezone.utc)
-    max_db_retries = 3
-    base_delay = 0.5
 
-    for attempt in range(max_db_retries):
-        try:
-            async with engine.connect() as conn:
-                async with conn.begin():
-                    stmt = (
-                        select(tasks_table)
-                        .where(tasks_table.c.status == "pending")
-                        .where(tasks_table.c.task_type.in_(task_types))
-                        .where(
-                            (tasks_table.c.scheduled_at == None)
-                            | (tasks_table.c.scheduled_at <= now)
-                        )  # noqa: E711
-                        .where(tasks_table.c.retry_count < tasks_table.c.max_retries)
-                        .order_by(
-                            tasks_table.c.retry_count.asc(),
-                            tasks_table.c.created_at.asc(),
-                        )
-                        .limit(1)
-                        .with_for_update(skip_locked=True)
-                    )
-                    result = await conn.execute(stmt)
-                    task_row = result.fetchone()
+    # This operation needs to be atomic (SELECT FOR UPDATE + UPDATE)
+    # DatabaseContext doesn't directly expose SELECT FOR UPDATE easily with retry.
+    # We'll perform this within an explicit transaction managed by the context.
+    try:
+        await db_context.begin() # Start transaction
 
-                    if task_row:
-                        update_stmt = (
-                            update(tasks_table)
-                            .where(tasks_table.c.id == task_row.id)
-                            .where(tasks_table.c.status == "pending")
-                            .values(
-                                status="processing", locked_by=worker_id, locked_at=now
-                            )
-                        )
-                        update_result = await conn.execute(update_stmt)
-                        if update_result.rowcount == 1:
-                            logger.info(
-                                f"Worker {worker_id} dequeued task {task_row.task_id}"
-                            )
-                            return task_row._mapping
-                        else:
-                            logger.warning(
-                                f"Worker {worker_id} failed to lock task {task_row.task_id} after selection."
-                            )
-                            return None  # Transaction rollback handles cleanup
-                    else:
-                        return None  # No suitable task found
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in dequeue_task (attempt {attempt + 1}/{max_db_retries}): {e}. Retrying..."
+        stmt = (
+            select(tasks_table)
+            .where(tasks_table.c.status == "pending")
+            .where(tasks_table.c.task_type.in_(task_types))
+            .where(
+                (tasks_table.c.scheduled_at == None)
+                | (tasks_table.c.scheduled_at <= now)
+            )  # noqa: E711
+            .where(tasks_table.c.retry_count < tasks_table.c.max_retries)
+            .order_by(
+                tasks_table.c.retry_count.asc(),
+                tasks_table.c.created_at.asc(),
             )
-            if attempt == max_db_retries - 1:
-                logger.error("Max retries exceeded for dequeue_task. Raising error.")
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(f"Non-retryable error in dequeue_task: {e}", exc_info=True)
-            raise
-    raise RuntimeError(
-        "Database operation failed for dequeue_task after multiple retries"
-    )
+            .limit(1)
+            .with_for_update(skip_locked=True) # Lock the selected row
+        )
+        # Execute within the transaction, using the context's retry logic
+        result = await db_context.execute_with_retry(stmt)
+        task_row = result.fetchone() # Use fetchone directly on the result proxy
+
+        if task_row:
+            update_stmt = (
+                update(tasks_table)
+                .where(tasks_table.c.id == task_row.id)
+                .where(tasks_table.c.status == "pending") # Ensure status hasn't changed
+                .values(
+                    status="processing", locked_by=worker_id, locked_at=now
+                )
+            )
+            # Execute update within the same transaction
+            update_result = await db_context.execute_with_retry(update_stmt)
+
+            if update_result.rowcount == 1:
+                await db_context.commit() # Commit the transaction
+                logger.info(
+                    f"Worker {worker_id} dequeued task {task_row.task_id}"
+                )
+                return task_row._mapping # Return the original row data
+            else:
+                # This means the row was locked or status changed between select and update
+                logger.warning(
+                    f"Worker {worker_id} failed to lock task {task_row.task_id} after selection (rowcount={update_result.rowcount}). Rolling back."
+                )
+                await db_context.rollback()
+                return None
+        else:
+            await db_context.rollback() # Rollback if no task found
+            return None # No suitable task found
+
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in dequeue_task: {e}", exc_info=True)
+        # Ensure rollback happens on error if transaction was started
+        if db_context._in_transaction: # Check internal flag (use with caution)
+             await db_context.rollback()
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in dequeue_task: {e}", exc_info=True)
+        if db_context._in_transaction:
+             await db_context.rollback()
+        raise
 
 
 async def update_task_status(
-    task_id: str, status: str, error: Optional[str] = None
+    db_context: DatabaseContext, # Added context
+    task_id: str,
+    status: str,
+    error: Optional[str] = None
 ) -> bool:
-    """Updates task status, handles retries."""
-    max_db_retries = 3
-    base_delay = 0.5
+    """Updates task status."""
     values_to_update = {"status": status, "locked_by": None, "locked_at": None}
     if status == "failed":
         values_to_update["error"] = error
 
-    for attempt in range(max_db_retries):
-        try:
-            async with engine.connect() as conn:
-                stmt = (
-                    update(tasks_table)
-                    .where(tasks_table.c.task_id == task_id)
-                    .values(**values_to_update)
-                )
-                result = await conn.execute(stmt)
-                await conn.commit()
-                if result.rowcount > 0:
-                    logger.info(f"Updated task {task_id} status to {status}.")
-                    return True
-                logger.warning(
-                    f"Task {task_id} not found or status unchanged when updating to {status}."
-                )
-                return False
-        except DBAPIError as e:
+    try:
+        stmt = (
+            update(tasks_table)
+            .where(tasks_table.c.task_id == task_id)
+            .values(**values_to_update)
+        )
+        result = await db_context.execute_and_commit(stmt)
+        if result.rowcount > 0:
+            logger.info(f"Updated task {task_id} status to {status}.")
+            return True
+        else:
             logger.warning(
-                f"DBAPIError in update_task_status (attempt {attempt + 1}/{max_db_retries}): {e}. Retrying..."
+                f"Task {task_id} not found or status unchanged when updating to {status}."
             )
-            if attempt == max_db_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for update_task_status({task_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in update_task_status({task_id}): {e}",
-                exc_info=True,
-            )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for update_task_status({task_id}) after multiple retries"
-    )
+            return False
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error in update_task_status({task_id}): {e}",
+            exc_info=True,
+        )
+        raise
 
 
 async def reschedule_task_for_retry(
-    task_id: str, next_scheduled_at: datetime, new_retry_count: int, error: str
+    db_context: DatabaseContext, # Added context
+    task_id: str,
+    next_scheduled_at: datetime,
+    new_retry_count: int,
+    error: str
 ) -> bool:
-    """Reschedules a task for retry, handles retries."""
-    max_db_retries = 3
-    base_delay = 0.5
-
+    """Reschedules a task for retry."""
     if next_scheduled_at.tzinfo is None:
         raise ValueError("next_scheduled_at must be timezone-aware")
 
-    for attempt in range(max_db_retries):
-        try:
-            async with engine.connect() as conn:
-                stmt = (
-                    update(tasks_table)
-                    .where(tasks_table.c.task_id == task_id)
-                    .values(
-                        status="pending",
-                        retry_count=new_retry_count,
-                        scheduled_at=next_scheduled_at,
-                        error=error,
-                        locked_by=None,
-                        locked_at=None,
-                    )
-                )
-                result = await conn.execute(stmt)
-                await conn.commit()
-                if result.rowcount > 0:
-                    logger.info(
-                        f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
-                    )
-                    return True
-                logger.warning(f"Task {task_id} not found when rescheduling for retry.")
-                return False
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in reschedule_task_for_retry (attempt {attempt + 1}/{max_db_retries}): {e}. Retrying..."
+    try:
+        stmt = (
+            update(tasks_table)
+            .where(tasks_table.c.task_id == task_id)
+            .values(
+                status="pending",
+                retry_count=new_retry_count,
+                scheduled_at=next_scheduled_at,
+                error=error,
+                locked_by=None,
+                locked_at=None,
             )
-            if attempt == max_db_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for reschedule_task_for_retry({task_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except ValueError:
-            raise
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in reschedule_task_for_retry({task_id}): {e}",
-                exc_info=True,
+        )
+        result = await db_context.execute_and_commit(stmt)
+        if result.rowcount > 0:
+            logger.info(
+                f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
             )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for reschedule_task_for_retry({task_id}) after multiple retries"
-    )
+            return True
+        else:
+            logger.warning(f"Task {task_id} not found when rescheduling for retry.")
+            return False
+    except ValueError: # Re-raise specific errors
+        raise
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error in reschedule_task_for_retry({task_id}): {e}",
+            exc_info=True,
+        )
+        raise
 
 
-async def get_all_tasks(limit: int = 100) -> List[Dict[str, Any]]:
-    """Retrieves tasks, ordered by creation descending, handles retries."""
-    max_db_retries = 3
-    base_delay = 0.5
-    stmt = select(tasks_table).order_by(tasks_table.c.created_at.desc()).limit(limit)
-
-    for attempt in range(max_db_retries):
-        try:
-            async with engine.connect() as conn:
-                result = await conn.execute(stmt)
-                rows = result.fetchall()
-                return [row._mapping for row in rows]
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in get_all_tasks (attempt {attempt + 1}/{max_db_retries}): {e}. Retrying..."
-            )
-            if attempt == max_db_retries - 1:
-                logger.error("Max retries exceeded for get_all_tasks. Raising error.")
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(f"Non-retryable error in get_all_tasks: {e}", exc_info=True)
-            raise
-    raise RuntimeError(
-        "Database operation failed for get_all_tasks after multiple retries"
-    )
+async def get_all_tasks(db_context: DatabaseContext, limit: int = 100) -> List[Dict[str, Any]]:
+    """Retrieves tasks, ordered by creation descending."""
+    try:
+        stmt = select(tasks_table).order_by(tasks_table.c.created_at.desc()).limit(limit)
+        rows = await db_context.fetch_all(stmt)
+        return rows # fetch_all already returns list of dict-like mappings
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_all_tasks: {e}", exc_info=True)
+        raise

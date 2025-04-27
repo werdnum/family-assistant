@@ -41,6 +41,7 @@ message_history_table = Table(
 
 
 async def add_message_to_history(
+    db_context: DatabaseContext, # Added context
     chat_id: int,
     message_id: int,
     timestamp: datetime,
@@ -48,182 +49,106 @@ async def add_message_to_history(
     content: str,
     tool_calls_info: Optional[List[Dict[str, Any]]] = None,
 ):
-    """Adds a message to the history table, including optional tool call info, with retries."""
-    max_retries = 3
-    base_delay = 0.5
-    engine = get_engine()
-    stmt = insert(message_history_table).values(
-        chat_id=chat_id,
-        message_id=message_id,
-        timestamp=timestamp,
-        role=role,
-        content=content,
-        tool_calls_info=tool_calls_info,
-    )
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                await conn.execute(stmt)
-                await conn.commit()
-                logger.debug(
-                    f"Added message {message_id} from chat {chat_id} to history."
-                )
-                return
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in add_message_to_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for add_message_to_history({chat_id}, {message_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in add_message_to_history({chat_id}, {message_id}): {e}",
-                exc_info=True,
-            )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for add_message_to_history({chat_id}, {message_id}) after multiple retries"
-    )
+    """Adds a message to the history table, including optional tool call info."""
+    try:
+        stmt = insert(message_history_table).values(
+            chat_id=chat_id,
+            message_id=message_id,
+            timestamp=timestamp,
+            role=role,
+            content=content,
+            tool_calls_info=tool_calls_info,
+        )
+        await db_context.execute_and_commit(stmt)
+        logger.debug(
+            f"Added message {message_id} from chat {chat_id} to history."
+        )
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error in add_message_to_history({chat_id}, {message_id}): {e}",
+            exc_info=True,
+        )
+        raise
 
 
 async def get_recent_history(
-    chat_id: int, limit: int, max_age: timedelta
+    db_context: DatabaseContext, # Added context
+    chat_id: int,
+    limit: int,
+    max_age: timedelta
 ) -> List[Dict[str, Any]]:
-    """Retrieves recent messages for a chat, including tool call info, with retries."""
-    cutoff_time = datetime.now(timezone.utc) - max_age
-    max_retries = 3
-    base_delay = 0.5
-    engine = get_engine()
-    stmt = (
-        select(
-            message_history_table.c.role,
-            message_history_table.c.content,
-            message_history_table.c.tool_calls_info,
+    """Retrieves recent messages for a chat, including tool call info."""
+    try:
+        cutoff_time = datetime.now(timezone.utc) - max_age
+        stmt = (
+            select(
+                message_history_table.c.role,
+                message_history_table.c.content,
+                message_history_table.c.tool_calls_info,
+            )
+            .where(message_history_table.c.chat_id == chat_id)
+            .where(message_history_table.c.timestamp >= cutoff_time)
+            .order_by(message_history_table.c.timestamp.desc())
+            .limit(limit)
         )
-        .where(message_history_table.c.chat_id == chat_id)
-        .where(message_history_table.c.timestamp >= cutoff_time)
-        .order_by(message_history_table.c.timestamp.desc())
-        .limit(limit)
-    )
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                result = await conn.execute(stmt)
-                rows = result.fetchall()
-                formatted_rows = []
-                for row in reversed(rows):
-                    msg = {"role": row.role, "content": row.content}
-                    if row.role == "assistant" and row.tool_calls_info:
-                        msg["tool_calls_info_raw"] = row.tool_calls_info
-                    formatted_rows.append(msg)
-                return formatted_rows
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in get_recent_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for get_recent_history({chat_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in get_recent_history({chat_id}): {e}",
-                exc_info=True,
-            )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for get_recent_history({chat_id}) after multiple retries"
-    )
+        rows = await db_context.fetch_all(stmt)
+        formatted_rows = []
+        for row in reversed(rows): # Reverse here to get chronological order
+            msg = {"role": row["role"], "content": row["content"]}
+            if row["role"] == "assistant" and row["tool_calls_info"]:
+                msg["tool_calls_info_raw"] = row["tool_calls_info"]
+            formatted_rows.append(msg)
+        return formatted_rows
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error in get_recent_history({chat_id}): {e}",
+            exc_info=True,
+        )
+        raise
 
 
-async def get_message_by_id(chat_id: int, message_id: int) -> Optional[Dict[str, Any]]:
-    """Retrieves a specific message by its chat and message ID, with retries."""
-    max_retries = 3
-    base_delay = 0.5
-    engine = get_engine()
-    stmt = (
-        select(message_history_table.c.role, message_history_table.c.content)
-        .where(message_history_table.c.chat_id == chat_id)
-        .where(message_history_table.c.message_id == message_id)
-    )
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                result = await conn.execute(stmt)
-                row = result.fetchone()
-                return {"role": row.role, "content": row.content} if row else None
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in get_message_by_id (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for get_message_by_id({chat_id}, {message_id}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in get_message_by_id({chat_id}, {message_id}): {e}",
-                exc_info=True,
-            )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for get_message_by_id({chat_id}, {message_id}) after multiple retries"
-    )
+async def get_message_by_id(
+    db_context: DatabaseContext, # Added context
+    chat_id: int,
+    message_id: int
+) -> Optional[Dict[str, Any]]:
+    """Retrieves a specific message by its chat and message ID."""
+    try:
+        stmt = (
+            select(message_history_table.c.role, message_history_table.c.content)
+            .where(message_history_table.c.chat_id == chat_id)
+            .where(message_history_table.c.message_id == message_id)
+        )
+        row = await db_context.fetch_one(stmt)
+        return {"role": row["role"], "content": row["content"]} if row else None
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error in get_message_by_id({chat_id}, {message_id}): {e}",
+            exc_info=True,
+        )
+        raise
 
 
-async def get_grouped_message_history() -> Dict[int, List[Dict[str, Any]]]:
+async def get_grouped_message_history(
+    db_context: DatabaseContext # Added context
+) -> Dict[int, List[Dict[str, Any]]]:
     """Retrieves all message history, grouped by chat_id and ordered by timestamp."""
-    max_retries = 3
-    base_delay = 0.5
-    engine = get_engine()
-    stmt = select(message_history_table).order_by(  # Select all columns
-        message_history_table.c.chat_id, message_history_table.c.timestamp.desc()
-    )
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                result = await conn.execute(stmt)
-                rows = result.fetchall()
-                grouped_history = {}
-                for row in rows:
-                    chat_id = row.chat_id
-                    if chat_id not in grouped_history:
-                        grouped_history[chat_id] = []
-                    # Convert row to dict for easier handling
-                    grouped_history[chat_id].append(row._mapping)
-                return grouped_history
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in get_grouped_message_history (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    "Max retries exceeded for get_grouped_message_history. Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in get_grouped_message_history: {e}",
-                exc_info=True,
-            )
-            raise
-    raise RuntimeError(
-        "Database operation failed for get_grouped_message_history after multiple retries"
-    )
+    try:
+        stmt = select(message_history_table).order_by(  # Select all columns
+            message_history_table.c.chat_id, message_history_table.c.timestamp.desc()
+        )
+        rows = await db_context.fetch_all(stmt)
+        grouped_history = {}
+        for row in rows:
+            chat_id = row["chat_id"]
+            if chat_id not in grouped_history:
+                grouped_history[chat_id] = []
+            # row is already a dict-like mapping from fetch_all
+            grouped_history[chat_id].append(row)
+        return grouped_history
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error in get_grouped_message_history: {e}",
+            exc_info=True,
+        )
+        raise

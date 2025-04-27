@@ -24,10 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+@dataclass
 class ToolExecutionContext:
     """Context passed to tool execution functions."""
 
     chat_id: int
+    db_context: DatabaseContext # Add database context
     application: Optional[Application] = (
         None  # Still needed for schedule_future_callback
     )
@@ -78,7 +80,7 @@ class ToolsProvider(Protocol):
 
 
 async def schedule_recurring_task_tool(
-    context: ToolExecutionContext,  # Added context argument
+    exec_context: ToolExecutionContext,  # Renamed to avoid conflict
     task_type: str,
     initial_schedule_time: str,
     recurrence_rule: str,
@@ -125,11 +127,11 @@ async def schedule_recurring_task_tool(
                 for c in description.lower()
             )
             base_id += f"_{safe_desc}"
-        # Add a unique element (UUID) to ensure the *first* ID is truly unique
         initial_task_id = f"{base_id}_{uuid.uuid4()}"
 
-        # Enqueue the first instance. original_task_id is implicitly set to initial_task_id by enqueue_task logic.
+        # Enqueue the first instance using the db_context from exec_context
         await storage.enqueue_task(
+            db_context=exec_context.db_context, # Pass db_context
             task_id=initial_task_id,
             task_type=task_type,
             payload=payload,
@@ -152,7 +154,7 @@ async def schedule_recurring_task_tool(
 
 
 async def schedule_future_callback_tool(
-    context_obj: ToolExecutionContext,  # Renamed context arg to avoid conflict with LLM context string
+    exec_context: ToolExecutionContext,  # Use execution context
     callback_time: str,
     context: str,  # This is the LLM context string
 ):
@@ -160,13 +162,14 @@ async def schedule_future_callback_tool(
     Schedules a task to trigger an LLM callback in a specific chat at a future time.
 
     Args:
-        context_obj: The ToolExecutionContext containing chat_id and application instance.
+        exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback.
     """
-    # Get application instance and chat_id from the context object
-    application = context_obj.application
-    chat_id = context_obj.chat_id
+    # Get application instance, chat_id, and db_context from the execution context object
+    application = exec_context.application
+    chat_id = exec_context.chat_id
+    db_context = exec_context.db_context # Get db_context
 
     if not application:
         logger.error(
@@ -197,10 +200,10 @@ async def schedule_future_callback_tool(
             "_application_ref": application,  # Pass the global application reference
         }
 
-        # TODO: Need access to the new_task_event from main.py to notify worker
-        # For now, enqueue without immediate notification. Refactor may be needed
-        # if immediate notification is desired here.
-        await storage.enqueue_task(  # Use storage.enqueue_task
+        # TODO: Need access to the new_task_event from main.py to notify worker.
+        # This refactor doesn't address passing the event down yet.
+        await storage.enqueue_task(
+            db_context=db_context, # Pass db_context
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
@@ -348,23 +351,28 @@ class LocalToolsProvider:
         callable_func = self._implementations[name]
         logger.info(f"Executing local tool '{name}' with args: {arguments}")
         try:
-            # Pass the context object as the first argument for tools that expect it
-            # Other arguments are passed as keyword arguments
+            # Extract db_context from the ToolExecutionContext
+            db_context = context.db_context
+
+            # Pass the ToolExecutionContext or db_context as needed
             if name in ["schedule_future_callback", "schedule_recurring_task"]:
-                # These tools now expect context_obj as the first arg
+                # These tools expect the full ToolExecutionContext
                 result = await callable_func(context, **arguments)
             elif name == "add_or_update_note":
-                # Storage function doesn't need context object
-                result = await callable_func(**arguments)
+                # Storage function now needs db_context
+                result = await callable_func(db_context=db_context, **arguments)
             else:
-                # Fallback for any other potential local tools - assume they don't need context for now
+                # Fallback for other potential local tools - assume they don't need context
                 logger.warning(
-                    f"Executing local tool '{name}' without context object (assuming it's not needed)."
+                    f"Executing local tool '{name}' without db_context (assuming it's not needed)."
                 )
-                result = await callable_func(**arguments)
+                result = await callable_func(**arguments) # Call without context
 
             # Ensure result is a string
-            if not isinstance(result, str):
+            if result is None: # Handle None case explicitly
+                 result_str = "Tool executed successfully (returned None)."
+                 logger.info(f"Local tool '{name}' returned None.")
+            elif not isinstance(result, str):
                 result_str = str(result)
                 logger.warning(
                     f"Tool '{name}' returned non-string result ({type(result)}), converted to: '{result_str[:100]}...'"
