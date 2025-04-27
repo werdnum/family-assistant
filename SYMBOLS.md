@@ -22,43 +22,32 @@ async def fetch_upcoming_events(calendar_config: Dict[(str, Any)]) -> List[Dict[
 def format_events_for_prompt(events: List[Dict[(str, Any)]], prompts: Dict[(str, str)]) -> Tuple[(str, str)]:
     "Formats the fetched events into strings suitable for the prompt."
 
-# from .processing import schedule_recurring_task_tool
-async def schedule_recurring_task_tool(task_type: str, initial_schedule_time: str, recurrence_rule: str, payload: Dict[(str, Any)], max_retries: Optional[int]=3, description: Optional[str]):
-    """Schedules a new recurring task.
+# from .processing import ProcessingService
+class ProcessingService:
+    """Encapsulates the logic for processing messages, interacting with the LLM,
+    and handling tool calls."""
 
-    Args:
-        task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
-        initial_schedule_time: ISO 8601 datetime string for the *first* run.
-        recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
-        payload: JSON object containing data needed by the task handler.
-        max_retries: Maximum number of retries for each instance (default 3).
-        description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief')."""
+# from .llm import LLMOutput
+class LLMOutput:
+    "Standardized output structure from an LLM call."
 
-# from .processing import schedule_future_callback_tool
-async def schedule_future_callback_tool(callback_time: str, context: str, chat_id: int):
-    """Schedules a future callback task to execute at the specified time.
+# from .llm import LLMInterface
+class LLMInterface(Protocol):
+    "Protocol defining the interface for interacting with an LLM."
 
-    The payload will be enhanced to include the application reference."""
+# from .llm import LiteLLMClient
+class LiteLLMClient:
+    "LLM client implementation using the LiteLLM library."
 
-# from .processing import execute_function_call
-async def execute_function_call(tool_call: Any, chat_id: int, mcp_sessions: Dict[(str, Any)], tool_name_to_server_id: Dict[(str, str)]) -> Dict[(str, Any)]:
-    """Executes a function call requested by the LLM, checking local and MCP tools.
+# from .llm import RecordingLLMClient
+class RecordingLLMClient:
+    """An LLM client wrapper that records interactions (inputs and outputs)
+    to a file while proxying calls to another LLM client."""
 
-    Injects chat_id for specific local tools like schedule_future_callback."""
-
-# from .processing import get_llm_response
-async def get_llm_response(messages: List[Dict[(str, Any)]], chat_id: int, model: str, all_tools: List[Dict[(str, Any)]], mcp_sessions: Dict[(str, Any)], tool_name_to_server_id: Dict[(str, str)]) -> Tuple[(Optional[str], Optional[List[Dict[(str, Any)]]])]:
-    """Sends the conversation history (and tools) to the LLM, handles potential tool calls,
-    and returns the final response content along with details of any tool calls made.
-
-    Args:
-        messages: A list of message dictionaries.
-        model: The identifier of the LLM model.
-
-    Returns:
-        A tuple containing:
-        - The final response content string from the LLM (or None).
-        - A list of dictionaries detailing executed tool calls (or None)."""
+# from .llm import PlaybackLLMClient
+class PlaybackLLMClient:
+    """An LLM client that plays back previously recorded interactions from a file.
+    Plays back recorded interactions by matching the input arguments."""
 
 # from .main import load_config
 def load_config():
@@ -73,9 +62,8 @@ async def typing_notifications(context: ?, chat_id: int, action: str=...):
     "Context manager to send typing notifications periodically."
 
 # from .main import _generate_llm_response_for_chat
-async def _generate_llm_response_for_chat(chat_id: int, trigger_content_parts: List[Dict[(str, Any)]], user_name: str, model_name: str) -> Tuple[(Optional[str], Optional[List[Dict[(str, Any)]]])]:
-    """Prepares context, message history, calls the LLM, and returns the response content
-    along with any tool call information.
+async def _generate_llm_response_for_chat(processing_service: ProcessingService, application: Application, chat_id: int, trigger_content_parts: List[Dict[(str, Any)]], user_name: str) -> Tuple[(Optional[str], Optional[List[Dict[(str, Any)]]])]:
+    """Prepares context, message history, calls the ProcessingService, and returns the response.
 
     Args:
         chat_id: The target chat ID.
@@ -116,6 +104,51 @@ async def main_async(cli_args: ?) -> ?:
 # from .main import main
 def main() -> int:
     "Sets up argument parsing, event loop, and signal handlers."
+
+# from .tools import ToolExecutionContext
+class ToolExecutionContext:
+    "Context passed to tool execution functions."
+
+# from .tools import ToolNotFoundError
+class ToolNotFoundError(LookupError):
+    "Custom exception raised when a tool cannot be found by any provider."
+
+# from .tools import ToolsProvider
+class ToolsProvider(Protocol):
+    "Protocol defining the interface for a tool provider."
+
+# from .tools import schedule_recurring_task_tool
+async def schedule_recurring_task_tool(context: ToolExecutionContext, task_type: str, initial_schedule_time: str, recurrence_rule: str, payload: Dict[(str, Any)], max_retries: Optional[int]=3, description: Optional[str]):
+    """Schedules a new recurring task.
+
+    Args:
+        task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
+        initial_schedule_time: ISO 8601 datetime string for the *first* run.
+        recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
+        payload: JSON object containing data needed by the task handler.
+        max_retries: Maximum number of retries for each instance (default 3).
+        description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief')."""
+
+# from .tools import schedule_future_callback_tool
+async def schedule_future_callback_tool(context_obj: ToolExecutionContext, callback_time: str, context: str):
+    """Schedules a task to trigger an LLM callback in a specific chat at a future time.
+
+    Args:
+        context_obj: The ToolExecutionContext containing chat_id and application instance.
+        callback_time: ISO 8601 formatted datetime string (including timezone).
+        context: The context/prompt for the future LLM callback."""
+
+# from .tools import LocalToolsProvider
+class LocalToolsProvider:
+    "Provides and executes locally defined Python functions as tools."
+
+# from .tools import MCPToolsProvider
+class MCPToolsProvider:
+    "Provides and executes tools hosted on MCP servers."
+
+# from .tools import CompositeToolsProvider
+class CompositeToolsProvider:
+    "Combines multiple tool providers into a single interface."
 
 # from .web_server import read_root
 async def read_root(request: Request):
@@ -174,13 +207,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: ?):
 def register_task_handler(task_type: str, handler: Callable):
     "Register a new task handler function for a specific task type."
 
-# from .task_worker import set_llm_response_generator
-def set_llm_response_generator(generator_func):
-    "Set the LLM response generator function from main.py"
-
-# from .task_worker import set_mcp_state
-def set_mcp_state(sessions, tools, tool_name_mapping):
-    "Set MCP state from main.py"
+# from .task_worker import set_processing_service
+def set_processing_service(service: ProcessingService):
+    "Set the ProcessingService instance from main.py"
 
 # from .task_worker import get_task_handlers
 def get_task_handlers():
