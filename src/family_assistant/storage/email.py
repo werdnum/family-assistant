@@ -17,15 +17,19 @@ from sqlalchemy.sql import insert
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 import json
-from dataclasses import dataclass, field # Add dataclass imports
+from dataclasses import dataclass, field  # Add dataclass imports
 from dateutil.parser import parse as parse_datetime
-from sqlalchemy.exc import SQLAlchemyError # Use broader exception
-from sqlalchemy.engine import RowMapping # Import RowMapping needed for EmailDocument.from_row
+from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
+from sqlalchemy.engine import (
+    RowMapping,
+)  # Import RowMapping needed for EmailDocument.from_row
 
 # Import metadata and engine using absolute package path
-from family_assistant.storage.base import metadata # Keep metadata
+from family_assistant.storage.base import metadata  # Keep metadata
+
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
+from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+
 # Import the Document protocol
 from family_assistant.storage.vector import Document
 
@@ -83,19 +87,21 @@ received_emails_table = sa.Table(
 
 # --- EmailDocument Class ---
 
-@dataclass(frozen=True) # Use dataclass for simplicity and immutability
+
+@dataclass(frozen=True)  # Use dataclass for simplicity and immutability
 class EmailDocument(Document):
     """
     Represents an email document conforming to the Document protocol
     for vector storage ingestion. Includes methods to convert from
     a received_emails table row.
     """
+
     _source_id: str
     _title: Optional[str] = None
     _created_at: Optional[datetime] = None
     _source_uri: Optional[str] = None
     _base_metadata: Dict[str, Any] = field(default_factory=dict)
-    _content_plain: Optional[str] = None # Store plain text content separately
+    _content_plain: Optional[str] = None  # Store plain text content separately
 
     @property
     def source_type(self) -> str:
@@ -110,7 +116,7 @@ class EmailDocument(Document):
     @property
     def source_uri(self) -> Optional[str]:
         """URI or path to the original item (not typically available for emails)."""
-        return self._source_uri # Could potentially be a mail archive link if available
+        return self._source_uri  # Could potentially be a mail archive link if available
 
     @property
     def title(self) -> Optional[str]:
@@ -141,7 +147,9 @@ class EmailDocument(Document):
         # Ensure required fields are present
         message_id = row.get("message_id_header")
         if not message_id:
-            raise ValueError("Cannot create EmailDocument: 'message_id_header' is missing from row.")
+            raise ValueError(
+                "Cannot create EmailDocument: 'message_id_header' is missing from row."
+            )
 
         # Extract base metadata
         base_metadata = {
@@ -152,14 +160,16 @@ class EmailDocument(Document):
                 "recipient_address",
                 "to_header",
                 "cc_header",
-                "mailgun_timestamp", # Include mailgun timestamp if useful
+                "mailgun_timestamp",  # Include mailgun timestamp if useful
             ]
-            if row.get(key) is not None # Only include if not None
+            if row.get(key) is not None  # Only include if not None
         }
         # Add headers JSON if present and not None
         headers_json = row.get("headers_json")
         if headers_json:
-            base_metadata["headers"] = headers_json # Store raw headers under 'headers' key
+            base_metadata["headers"] = (
+                headers_json  # Store raw headers under 'headers' key
+            )
 
         # Prefer stripped_text for cleaner content
         content = row.get("stripped_text") or row.get("body_plain")
@@ -167,7 +177,7 @@ class EmailDocument(Document):
         return cls(
             _source_id=message_id,
             _title=row.get("subject"),
-            _created_at=row.get("email_date"), # Already parsed to datetime or None
+            _created_at=row.get("email_date"),  # Already parsed to datetime or None
             _base_metadata=base_metadata,
             _content_plain=content,
             # _source_uri could be set if a web view link exists, otherwise None
@@ -187,6 +197,7 @@ class EmailDocument(Document):
 
 
 # --- Database Operations ---
+
 
 async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[str, Any]):
     """
@@ -243,15 +254,17 @@ async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[str,
     # (though most are nullable here)
     parsed_data_filtered = {k: v for k, v in parsed_data.items() if v is not None}
     # Ensure message_id_header is present even if None initially (it's nullable=False)
-    if 'message_id_header' not in parsed_data_filtered and 'message_id_header' in parsed_data:
-         parsed_data_filtered['message_id_header'] = parsed_data['message_id_header']
+    if (
+        "message_id_header" not in parsed_data_filtered
+        and "message_id_header" in parsed_data
+    ):
+        parsed_data_filtered["message_id_header"] = parsed_data["message_id_header"]
 
     if not parsed_data_filtered.get("message_id_header"):
         logger.error("Cannot store email: Message-ID header is missing.")
         # Decide how to handle this - raise error or just log and return?
         # Raising an error might be better to signal failure.
         raise ValueError("Cannot store email: Message-ID header is missing.")
-
 
     logger.debug(f"Attempting to store email data: {parsed_data_filtered}")
 
@@ -266,7 +279,7 @@ async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[str,
     except SQLAlchemyError as e:
         logger.error(
             f"Database error storing email with Message-ID {parsed_data_filtered.get('message_id_header', 'N/A')}: {e}",
-            exc_info=True
+            exc_info=True,
         )
         raise
 
