@@ -88,6 +88,9 @@ from family_assistant.storage.context import DatabaseContext, get_db_context # I
 # Import calendar functions
 from family_assistant import calendar_integration
 
+# Import the Telegram bot handler class
+from .telegram_bot import TelegramBotHandler
+
 # --- Logging Configuration ---
 # Set root logger level back to INFO
 logging.basicConfig(
