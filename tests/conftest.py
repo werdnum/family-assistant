@@ -63,18 +63,17 @@ async def test_db_engine(request):  # Add request fixture
 
 # --- PostgreSQL Test Fixtures (using testcontainers) ---
 
+import docker # Import the docker library to catch its exceptions
+
 @pytest.fixture(scope="session")
 def postgres_container():
-    """Starts and manages a PostgreSQL container for the test session."""
-    # Ensure Docker is running and accessible
-    docker_socket = "/var/run/docker.sock"
-    if not os.path.exists(docker_socket):
-        # Fail the test session if Docker socket is missing
-        pytest.fail(f"Docker socket not found at {docker_socket}. Is Docker running? PostgreSQL tests require Docker.", pytrace=False)
-    elif not os.access(docker_socket, os.R_OK | os.W_OK):
-         # Fail the test session if Docker socket has incorrect permissions
-         pytest.fail(f"Insufficient permissions for Docker socket at {docker_socket}. Check user permissions. PostgreSQL tests require Docker access.", pytrace=False)
-    # Add more robust checks here if needed (e.g., try connecting with docker client)
+    """
+    Starts and manages a PostgreSQL container for the test session.
+    Respects DOCKER_HOST environment variable.
+    """
+    # Removed explicit checks for local /var/run/docker.sock.
+    # Rely on the docker library (used by testcontainers) to connect
+    # using DOCKER_HOST or defaults, and handle errors during startup.
 
     # Use an image that includes postgresql-contrib for extensions like pgvector
     # Note: pgvector might need explicit installation depending on the base image.
@@ -83,12 +82,28 @@ def postgres_container():
     # Using a dedicated pgvector image simplifies this.
     # image = "postgres:16-alpine" # Standard image, might need manual extension creation
     image = "ankane/pgvector:v0.7.0-pg16" # Image with pgvector pre-installed
-    logger.info(f"Starting PostgreSQL container with image: {image}")
-    with PostgresContainer(image=image) as container:
-        logger.info("PostgreSQL container started.")
-        # Optional: Add readiness checks if needed
-        yield container
-    logger.info("PostgreSQL container stopped.")
+    logger.info(f"Attempting to start PostgreSQL container with image: {image}")
+    logger.info(f"Using Docker configuration from environment (DOCKER_HOST={os.getenv('DOCKER_HOST', 'Not Set')})")
+    try:
+        with PostgresContainer(image=image) as container:
+            # Attempt to connect to check readiness early
+            container.get_container_host_ip()
+            logger.info("PostgreSQL container started successfully.")
+            yield container
+        logger.info("PostgreSQL container stopped.")
+    except docker.errors.DockerException as e:
+        # Catch errors during container startup (e.g., connection refused, image not found)
+        pytest.fail(
+            f"Failed to start PostgreSQL container. Docker error: {e}. "
+            f"Check Docker daemon status and DOCKER_HOST ({os.getenv('DOCKER_HOST', 'default')}).",
+            pytrace=False
+        )
+    except Exception as e:
+        # Catch other potential errors during setup
+        pytest.fail(
+            f"An unexpected error occurred during PostgreSQL container setup: {e}",
+            pytrace=False
+        )
 
 
 @pytest_asyncio.fixture(scope="function") # Use function scope for engine to ensure isolation
