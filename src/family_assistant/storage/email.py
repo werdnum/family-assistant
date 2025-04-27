@@ -26,7 +26,7 @@ from family_assistant.storage.base import metadata # Keep metadata
 from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
-engine = get_engine()
+# Remove engine = get_engine()
 # Define the received emails table
 received_emails_table = sa.Table(
     "received_emails",
