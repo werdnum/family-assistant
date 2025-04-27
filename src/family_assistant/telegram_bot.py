@@ -76,6 +76,7 @@ class TelegramUpdateHandler: # Renamed from TelegramBotHandler
         self.storage = storage
 
 
+    @contextlib.asynccontextmanager
     async def _typing_notifications(
         self,
         context: ContextTypes.DEFAULT_TYPE,
