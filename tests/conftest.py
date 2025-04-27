@@ -81,7 +81,7 @@ def postgres_container():
     # `CREATE EXTENSION IF NOT EXISTS vector;` after connection.
     # Using a dedicated pgvector image simplifies this.
     # image = "postgres:16-alpine" # Standard image, might need manual extension creation
-    image = "ankane/pgvector:v0.7.0-pg16" # Image with pgvector pre-installed
+    image = "pgvector/pgvector:0.8.0-pg17" # Image with pgvector pre-installed
     logger.info(f"Attempting to start PostgreSQL container with image: {image}")
     logger.info(f"Using Docker configuration from environment (DOCKER_HOST={os.getenv('DOCKER_HOST', 'Not Set')})")
     try:
