@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 import numpy as np # Using numpy for easy random vector generation
+from sqlalchemy import text # Add this import
 
 # Import the functions and classes we want to test
 from family_assistant.storage.vector import (
