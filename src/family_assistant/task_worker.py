@@ -428,16 +428,16 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         f"Worker {worker_id}: Wait timed out, continuing poll cycle."
                     )
                     pass # Continue the loop normally after timeout
-                # --- This except block now correctly corresponds to the inner try (line 238) ---
-                except Exception as e:
-                    logger.error(
-                        f"Error during task processing or DB operation within context for worker {worker_id}: {e}",
-                        exc_info=True,
-                    )
-                    # If an error occurs *within* the db_context block (e.g., during dequeue or handler execution),
-                    # the context manager will handle rollback/commit based on the exception.
-                    # We might still want a delay before the next iteration's context attempt.
-                    await asyncio.sleep(TASK_POLLING_INTERVAL) # Short delay after error within context
+            # --- This except block now correctly corresponds to the inner try (line 238) ---
+            except Exception as e:
+                logger.error(
+                    f"Error during task processing or DB operation within context for worker {worker_id}: {e}",
+                    exc_info=True,
+                )
+                # If an error occurs *within* the db_context block (e.g., during dequeue or handler execution),
+                # the context manager will handle rollback/commit based on the exception.
+                # We might still want a delay before the next iteration's context attempt.
+                await asyncio.sleep(TASK_POLLING_INTERVAL) # Short delay after error within context
 
         # --- Exception handling for the outer try block (whole loop iteration) ---
         except asyncio.CancelledError:
