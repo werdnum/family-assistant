@@ -10,6 +10,9 @@ from unittest.mock import MagicMock  # For mocking Application
 # Import the function we want to test directly
 from family_assistant.main import _generate_llm_response_for_chat
 
+# Import DatabaseContext and getter
+from family_assistant.storage.context import DatabaseContext, get_db_context
+
 # Import necessary classes for instantiation
 from family_assistant.processing import ProcessingService
 from family_assistant.llm import LLMInterface, LLMOutput # Keep Interface and Output

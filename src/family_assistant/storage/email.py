@@ -18,9 +18,12 @@ from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 import json
 from dateutil.parser import parse as parse_datetime
+from sqlalchemy.exc import SQLAlchemyError # Use broader exception
 
 # Import metadata and engine using absolute package path
-from family_assistant.storage.base import metadata, get_engine
+from family_assistant.storage.base import metadata # Keep metadata
+# Remove get_engine import
+from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
 engine = get_engine()
