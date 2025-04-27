@@ -199,8 +199,7 @@ async def init_vector_db(db_context: DatabaseContext):
                     """
                 CREATE INDEX IF NOT EXISTS idx_doc_embeddings_gemini_1536_hnsw_cos ON document_embeddings
                 USING hnsw ((embedding::vector(1536)) vector_cosine_ops)
-                WHERE embedding_model = 'gemini-exp-03-07'
-                WITH (m = 16, ef_construction = 64);
+                WHERE embedding_model = 'gemini-exp-03-07' WITH (m = 16, ef_construction = 64);
                 """
                     )
                 )
