@@ -4,10 +4,17 @@ Task worker implementation for background processing.
 
 import asyncio
 import logging
+import asyncio
+import logging
 import random
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Awaitable
+
+# Use absolute imports based on the package structure
+from family_assistant import storage  # Import for task queue operations
+from family_assistant.processing import ProcessingService  # Import the service
+from family_assistant.storage.context import DatabaseContext, get_db_context
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
@@ -30,9 +37,9 @@ TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 
 # --- Task Queue Handler Registry ---
 # Maps task_type strings to async handler functions
-# Handler functions should accept the task payload as an argument
-# Example: async def handle_my_task(payload: Any): ...
-TASK_HANDLERS: Dict[str, callable] = {}
+# Handler functions accept db_context and task payload
+# Example: async def handle_my_task(db_context: DatabaseContext, payload: Any): ...
+TASK_HANDLERS: Dict[str, Callable[[DatabaseContext, Any], Awaitable[None]]] = {}
 
 # --- Events for coordination ---
 shutdown_event = asyncio.Event()
@@ -52,9 +59,11 @@ processing_service_instance: Optional[ProcessingService] = (
 
 
 # Example Task Handler
-async def handle_log_message(payload: Any):
+async def handle_log_message(db_context: DatabaseContext, payload: Any):
     """Simple task handler that logs the received payload."""
-    logger.info(f"[Task Worker] Handling log_message task. Payload: {payload}")
+    logger.info(
+        f"[Task Worker] Handling log_message task. Payload: {payload}"
+    )  # db_context is available if needed
     # Simulate some work
     await asyncio.sleep(1)
     # In a real handler, you might interact with APIs, DB, etc.
@@ -89,7 +98,7 @@ def format_llm_response_for_telegram(response_text: str) -> str:
         return escape_markdown(response_text, version=2)
 
 
-async def handle_llm_callback(payload: Any):
+async def handle_llm_callback(db_context: DatabaseContext, payload: Any):
     """Task handler for LLM scheduled callbacks."""
     global processing_service_instance  # Use the global service instance
 
@@ -137,12 +146,11 @@ async def handle_llm_callback(payload: Any):
         # all_tools = local_tools_definition + mcp_tools # Removed
 
         # Call the ProcessingService directly, passing the application instance
-        llm_response_content, tool_call_info = (
-            await processing_service_instance.process_message(
-                messages=messages_for_llm,
-                chat_id=chat_id,
-                application=application,  # Pass application for ToolExecutionContext
-            )
+        llm_response_content, tool_call_info = await processing_service_instance.process_message(
+            db_context=db_context,  # Pass db_context
+            messages=messages_for_llm,
+            chat_id=chat_id,
+            application=application,  # Pass application for ToolExecutionContext
         )
 
         if llm_response_content:
@@ -165,6 +173,7 @@ async def handle_llm_callback(payload: Any):
                     datetime.now(timezone.utc).timestamp() * 1000
                 )  # Crude pseudo-ID
                 await storage.add_message_to_history(
+                    db_context=db_context,  # Pass db_context
                     chat_id=chat_id,
                     message_id=trigger_msg_id,  # Use pseudo-ID
                     timestamp=datetime.now(timezone.utc),
@@ -176,6 +185,7 @@ async def handle_llm_callback(payload: Any):
                     sent_message.message_id if sent_message else trigger_msg_id + 1
                 )
                 await storage.add_message_to_history(
+                    db_context=db_context,  # Pass db_context
                     chat_id=chat_id,
                     message_id=response_msg_id,  # Use actual or pseudo-ID
                     timestamp=datetime.now(timezone.utc),
@@ -222,22 +232,26 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 
     while not shutdown_event.is_set():
         task = None
-        try:
-            # Dequeue a task of a type this worker handles
-            task = await storage.dequeue_task(
-                worker_id, task_types_handled
-            )  # Use storage.dequeue_task
+        # Create a database context for this iteration
+        async with get_db_context() as db_context:
+            try:
+                # Dequeue a task of a type this worker handles
+                task = await storage.dequeue_task(
+                    db_context=db_context,  # Pass db_context
+                    worker_id=worker_id,
+                    task_types=task_types_handled,
+                )
 
-            if task:
-                logger.info(
+                if task:
+                    logger.info(
                     f"Worker {worker_id} processing task {task['task_id']} (type: {task['task_type']})"
                 )
                 handler = TASK_HANDLERS.get(task["task_type"])
 
                 if handler:
                     try:
-                        # Execute the handler with the payload
-                        await handler(task["payload"])
+                        # Execute the handler with db_context and payload
+                        await handler(db_context, task["payload"])
                         task_id = task["task_id"]
                         task_type = task["task_type"]
                         payload = task["payload"]
@@ -248,7 +262,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         task_max_retries = task.get("max_retries", 3)
 
                         # Mark task as done
-                        await storage.update_task_status(task_id, "done")
+                        await storage.update_task_status(
+                            db_context=db_context, task_id=task_id, status="done"
+                        )
                         logger.info(
                             f"Worker {worker_id} completed task {task_id} (Original: {original_task_id})"
                         )
@@ -298,6 +314,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 
                                     # Enqueue the next task instance
                                     await storage.enqueue_task(
+                                        db_context=db_context,  # Pass db_context
                                         task_id=next_task_id,
                                         task_type=task_type,  # Same type
                                         payload=payload,  # Same payload
@@ -348,6 +365,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                             )
                             try:
                                 await storage.reschedule_task_for_retry(
+                                    db_context=db_context,  # Pass db_context
                                     task_id=task["task_id"],
                                     next_scheduled_at=next_attempt_time,
                                     new_retry_count=current_retry + 1,
@@ -360,8 +378,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                     exc_info=True,
                                 )
                                 await storage.update_task_status(
-                                    task["task_id"],
-                                    "failed",
+                                    db_context=db_context,  # Pass db_context
+                                    task_id=task["task_id"],
+                                    status="failed",
                                     error=f"Handler Error: {error_str}. Reschedule Failed: {reschedule_err}",
                                 )
                         else:
@@ -370,20 +389,36 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                             )
                             # Mark task as permanently failed
                             await storage.update_task_status(
-                                task["task_id"], "failed", error=error_str
+                                db_context=db_context,  # Pass db_context
+                                task_id=task["task_id"],
+                                status="failed",
+                                error=error_str,
                             )
                 else:
                     # This shouldn't happen if dequeue_task respects task_types properly
                     logger.error(
                         f"Worker {worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
                     )
-                    await storage.update_task_status(  # Use storage.update_task_status
-                        task["task_id"],
-                        "failed",
+                    await storage.update_task_status(
+                        db_context=db_context,  # Pass db_context
+                        task_id=task["task_id"],
+                        status="failed",
                         error=f"No handler registered for type {task['task_type']}",
                     )
 
-            else:
+            except Exception as e:
+                logger.error(
+                    f"Error during task processing or DB operation within context for worker {worker_id}: {e}",
+                    exc_info=True,
+                )
+                # If an error occurs *within* the db_context block (e.g., during dequeue or handler execution),
+                # the context manager will handle rollback/commit based on the exception.
+                # We might still want a delay before the next iteration's context attempt.
+                await asyncio.sleep(TASK_POLLING_INTERVAL) # Short delay after error within context
+
+            # --- Code moved outside the 'if task:' block and the 'try/except' for handler execution ---
+            # --- This part handles waiting if no task was found or after a task was processed ---
+            if not task: # Only wait if no task was dequeued in this iteration
                 # No task found, wait for the polling interval OR the wake-up event
                 try:
                     logger.debug(
@@ -401,22 +436,30 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                     logger.debug(
                         f"Worker {worker_id}: Wait timed out, continuing poll cycle."
                     )
-                    pass  # Continue the loop normally after timeout
+                    pass # Continue the loop normally after timeout
 
+        # --- Moved exception handling outside the db_context manager ---
         except asyncio.CancelledError:
             logger.info(f"Task worker {worker_id} received cancellation signal.")
             # If a task was being processed, try to mark it as pending again?
             # Or rely on lock expiry/manual intervention for now.
             # For simplicity, we just exit.
-            break  # Exit the loop cleanly on cancellation
+            break # Exit the loop cleanly on cancellation
         except Exception as e:
             logger.error(
-                f"Task worker {worker_id} encountered an error: {e}", exc_info=True
+                f"Task worker {worker_id} encountered an unexpected error outside DB context: {e}", exc_info=True
             )
-            # If an error occurs during dequeue or status update, wait before retrying
-            await asyncio.sleep(TASK_POLLING_INTERVAL * 2)  # Longer sleep after error
+            # If an error occurs outside the db_context (e.g., getting context itself), wait before retrying
+            await asyncio.sleep(TASK_POLLING_INTERVAL * 2) # Longer sleep after error
 
     logger.info(f"Task worker {worker_id} stopped.")
+
+
+# --- Module initialization ---
+def register_task_handler(task_type: str, handler: Callable[[DatabaseContext, Any], Awaitable[None]]):
+    """Register a new task handler function for a specific task type."""
+    TASK_HANDLERS[task_type] = handler
+    logger.info(f"Registered task handler for task type: {task_type}")
 
 
 # --- Module initialization ---
