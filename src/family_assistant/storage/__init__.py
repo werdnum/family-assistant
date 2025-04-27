@@ -96,7 +96,9 @@ async def init_db():
                 # Also initialize vector DB parts if enabled
                 if VECTOR_STORAGE_ENABLED:
                     try:
-                        await init_vector_db()  # Call the imported function directly
+                        # Create a context specifically for vector init using the current engine
+                        async with get_db_context(engine=engine) as vector_init_context:
+                            await init_vector_db(db_context=vector_init_context)
                     except Exception as vec_e:
                         logger.error(
                             f"Failed to initialize vector database components: {vec_e}",
