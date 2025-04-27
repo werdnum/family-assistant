@@ -439,11 +439,11 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                     )
                     pass # Continue the loop normally after timeout
 
-        # --- Moved exception handling outside the db_context manager ---
+        # --- Exception handling for the outer try block (whole loop iteration) ---
         except asyncio.CancelledError:
             logger.info(f"Task worker {worker_id} received cancellation signal.")
-            # If a task was being processed, try to mark it as pending again?
-            # Or rely on lock expiry/manual intervention for now.
+            # If a task was being processed when cancelled, it might remain locked.
+            # Rely on lock expiry/manual intervention for now.
             # For simplicity, we just exit.
             break # Exit the loop cleanly on cancellation
         except Exception as e:
