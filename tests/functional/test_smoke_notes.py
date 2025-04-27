@@ -143,7 +143,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
 
     # Create a DatabaseContext using the test engine provided by the fixture
     # Note: test_db_engine fixture comes from the root conftest.py
-    async with get_db_context(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the core logic function directly, passing the db_context and ProcessingService
         add_response_content, add_tool_info = await _generate_llm_response_for_chat(
             db_context=db_context, # Pass the context
@@ -198,7 +198,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     retrieve_note_trigger = [{"type": "text", "text": retrieve_note_text}]
 
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
-    async with get_db_context(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the core logic again, passing the db_context and ProcessingService
         retrieve_response_content, retrieve_tool_info = (
             await _generate_llm_response_for_chat(
