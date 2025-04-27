@@ -212,7 +212,6 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
             )
         )
             # model_name argument removed from _generate_llm_response_for_chat call
-        )
 
 
     logger.info(f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}")
