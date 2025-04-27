@@ -74,12 +74,13 @@ received_emails_table = sa.Table(
 )
 
 
-async def store_incoming_email(form_data: Dict[str, Any]):
+async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[str, Any]):
     """
     Parses incoming email data (from Mailgun webhook form) and prepares it for storage.
-    Stores the parsed data in the `received_emails` table.
+    Stores the parsed data in the `received_emails` table using the provided context.
 
     Args:
+        db_context: The DatabaseContext to use for the operation.
         form_data: A dictionary representing the form data received from the webhook.
     """
     logger.info("Parsing incoming email data for storage...")
@@ -124,18 +125,35 @@ async def store_incoming_email(form_data: Dict[str, Any]):
         "mailgun_timestamp": form_data.get("timestamp"),
         "mailgun_token": form_data.get("token"),
     }
-    logger.info(f"Parsed email data for storage: {parsed_data}")
+    # Filter out None values before insertion if the column is not nullable
+    # (though most are nullable here)
+    parsed_data_filtered = {k: v for k, v in parsed_data.items() if v is not None}
+    # Ensure message_id_header is present even if None initially (it's nullable=False)
+    if 'message_id_header' not in parsed_data_filtered and 'message_id_header' in parsed_data:
+         parsed_data_filtered['message_id_header'] = parsed_data['message_id_header']
+
+    if not parsed_data_filtered.get("message_id_header"):
+        logger.error("Cannot store email: Message-ID header is missing.")
+        # Decide how to handle this - raise error or just log and return?
+        # Raising an error might be better to signal failure.
+        raise ValueError("Cannot store email: Message-ID header is missing.")
+
+
+    logger.debug(f"Attempting to store email data: {parsed_data_filtered}")
 
     # --- Actual Database Insertion ---
-    async with engine.connect() as conn:
-        stmt = insert(received_emails_table).values(
-            **parsed_data
-        )  # Use explicit insert
-        await conn.execute(stmt)
-        await conn.commit()
+    try:
+        stmt = insert(received_emails_table).values(**parsed_data_filtered)
+        await db_context.execute_and_commit(stmt)
         logger.info(
-            f"Stored email with Message-ID: {parsed_data['message_id_header']}"
-        )  # noqa: E501
+            f"Stored email with Message-ID: {parsed_data_filtered['message_id_header']}"
+        )
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error storing email with Message-ID {parsed_data_filtered.get('message_id_header', 'N/A')}: {e}",
+            exc_info=True
+        )
+        raise
 
 
 # Export symbols for use elsewhere

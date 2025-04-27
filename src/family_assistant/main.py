@@ -466,8 +466,9 @@ async def typing_notifications(
 
 
 async def _generate_llm_response_for_chat(
-    processing_service: ProcessingService,  # Inject the service instance
-    application: Application,  # Inject application for context
+    db_context: DatabaseContext, # Added db_context
+    processing_service: ProcessingService,
+    application: Application,
     chat_id: int,
     trigger_content_parts: List[Dict[str, Any]],
     user_name: str,
@@ -476,8 +477,11 @@ async def _generate_llm_response_for_chat(
     Prepares context, message history, calls the ProcessingService, and returns the response.
 
     Args:
+        db_context: The database context to use for storage operations.
+        processing_service: The processing service instance.
+        application: The Telegram application instance.
         chat_id: The target chat ID.
-        trigger_content_parts: List of content parts (text, image_url) for the triggering message.
+        trigger_content_parts: List of content parts for the triggering message.
         user_name: The user name to format into the system prompt.
 
     Returns:
@@ -489,10 +493,16 @@ async def _generate_llm_response_for_chat(
 
     # --- History and Context Preparation ---
     messages: List[Dict[str, Any]] = []
-    history_messages = await storage.get_recent_history(  # Use storage directly
-        chat_id,
-        limit=MAX_HISTORY_MESSAGES,
-        max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
+    try:
+        history_messages = await storage.get_recent_history( # Use storage directly with context
+            db_context=db_context, # Pass context
+            chat_id=chat_id,
+            limit=MAX_HISTORY_MESSAGES,
+            max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
+        )
+    except Exception as hist_err:
+        logger.error(f"Failed to get message history for chat {chat_id}: {hist_err}", exc_info=True)
+        history_messages = [] # Continue with empty history on error
     )
 
     # Process history messages, formatting assistant tool calls correctly
@@ -615,7 +625,7 @@ async def _generate_llm_response_for_chat(
 
     notes_context_str = ""
     try:
-        all_notes = await storage.get_all_notes()  # Use storage directly
+        all_notes = await storage.get_all_notes(db_context=db_context) # Use storage directly with context
         if all_notes:
             notes_list_str = ""
             note_item_format = PROMPTS.get("note_item_format", "- {title}: {content}")
@@ -665,11 +675,12 @@ async def _generate_llm_response_for_chat(
     # --- Call Processing Service ---
     # Tool definitions are now fetched inside process_message
     try:
-        # Call the process_message method, passing the application instance
+        # Call the process_message method, passing db_context and application instance
         llm_response_content, tool_info = await processing_service.process_message(
+            db_context=db_context, # Pass context
             messages=messages,
             chat_id=chat_id,
-            application=application,  # Pass application for ToolExecutionContext
+            application=application,
         )
         return llm_response_content, tool_info
     except Exception as e:
@@ -804,14 +815,19 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             )
             return  # Exit processing if service is missing
 
-        # Use the helper function, passing the service and application instances
-        async with typing_notifications(context, chat_id):
-            llm_response_content, tool_call_info = (
-                await _generate_llm_response_for_chat(
-                    processing_service=processing_service,  # Pass the service
-                    application=context.application,  # Pass the application instance
-                    chat_id=chat_id,
-                    trigger_content_parts=trigger_content_parts,
+        # Use the helper function, passing the db_context, service and application instances
+        # Create a db context for this processing run
+        async with get_db_context() as db_context: # Create context here
+            async with typing_notifications(context, chat_id):
+                llm_response_content, tool_call_info = (
+                    await _generate_llm_response_for_chat(
+                        db_context=db_context, # Pass context
+                        processing_service=processing_service,
+                        application=context.application,
+                        chat_id=chat_id,
+                        trigger_content_parts=trigger_content_parts,
+                    )
+                )
                     user_name=user_name,
                 )
             )
@@ -882,38 +898,47 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             f"Finished processing batch for chat {chat_id}, proceeding to finally block."
         )
     finally:
-        # --- Store messages in DB (Store combined user message, single bot response with tool info) ---
+        # --- Store messages in DB (using the same db_context) ---
+        # Need to ensure db_context is available here if created inside the try block
+        # Let's create db_context outside the main try block for the queue processing
+        db_context_for_history = None
         try:
-            # Store combined user message first
-            if reply_target_message_id:
-                history_user_content = combined_text  # Start with combined text
-                if first_photo_bytes:  # Check if a photo was processed
-                    history_user_content += " [Image(s) Attached]"
-                await storage.add_message_to_history(
-                    chat_id=chat_id,
-                    message_id=reply_target_message_id,
-                    timestamp=datetime.now(timezone.utc),  # Use processing time
-                    role="user",
-                    content=history_user_content,
-                    tool_calls_info=None,  # User messages don't have tool calls
-                )
-            else:
-                logger.warning(
-                    f"Could not store batched user message for chat {chat_id} due to missing message ID."
-                )
+            # Create context specifically for history storage if needed, or reuse if possible
+            # Reusing the context from the main processing block is better if no errors occurred
+            # If an error occurred before context creation, we need a new one.
+            # Let's assume we always create one here for simplicity in the finally block.
+             async with get_db_context() as db_context_for_history:
+                # Store combined user message first
+                if reply_target_message_id:
+                    history_user_content = combined_text  # Start with combined text
+                    if first_photo_bytes:  # Check if a photo was processed
+                        history_user_content += " [Image(s) Attached]"
+                    await storage.add_message_to_history(
+                        db_context=db_context_for_history, # Pass context
+                        chat_id=chat_id,
+                        message_id=reply_target_message_id,
+                        timestamp=datetime.now(timezone.utc),  # Use processing time
+                        role="user",
+                        content=history_user_content,
+                        tool_calls_info=None,
+                    )
+                else:
+                    logger.warning(
+                        f"Could not store batched user message for chat {chat_id} due to missing message ID."
+                    )
 
-            # Store bot response if successful, including tool call info
-            if llm_response_content and reply_target_message_id:
-                # Need bot's actual message ID if possible, otherwise use pseudo-ID
-                bot_message_pseudo_id = reply_target_message_id + 1
-                await storage.add_message_to_history(
-                    chat_id=chat_id,
-                    message_id=bot_message_pseudo_id,  # Placeholder ID
-                    timestamp=datetime.now(timezone.utc),
-                    role="assistant",
-                    content=llm_response_content,
-                    tool_calls_info=tool_call_info,  # Pass the captured tool info
-                )
+                # Store bot response if successful, including tool call info
+                if llm_response_content and reply_target_message_id:
+                    bot_message_pseudo_id = reply_target_message_id + 1
+                    await storage.add_message_to_history(
+                        db_context=db_context_for_history, # Pass context
+                        chat_id=chat_id,
+                        message_id=bot_message_pseudo_id,
+                        timestamp=datetime.now(timezone.utc),
+                        role="assistant",
+                        content=llm_response_content,
+                        tool_calls_info=tool_call_info,
+                    )
         except Exception as db_err:
             logger.error(
                 f"Failed to store batched message history in DB for chat {chat_id}: {db_err}",

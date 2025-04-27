@@ -50,14 +50,14 @@ class ProcessingService:
 
     async def process_message(
         self,
+        db_context: DatabaseContext, # Added db_context
         messages: List[Dict[str, Any]],
         chat_id: int,
-        application: Application,  # Added application instance for context
-        # all_tools argument removed, will be fetched from provider
+        application: Application,
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
         """
         Sends the conversation history to the LLM via the injected client,
-        handles potential tool calls using the injected tools provider,
+        handles potential tool calls using the injected tools provider and database context,
         and returns the final response content along with details of any tool calls made.
 
         Args:
@@ -110,8 +110,11 @@ class ProcessingService:
 
                 # --- Execute Tool Calls using ToolsProvider ---
                 tool_response_messages = []
+                # Create execution context including the db_context
                 tool_execution_context = ToolExecutionContext(
-                    chat_id=chat_id, application=application
+                    chat_id=chat_id,
+                    db_context=db_context, # Pass db_context here
+                    application=application
                 )
 
                 for tool_call_dict in tool_calls:

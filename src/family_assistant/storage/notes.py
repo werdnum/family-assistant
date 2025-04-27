@@ -49,166 +49,77 @@ notes_table = Table(
 )
 
 
-async def get_all_notes() -> List[Dict[str, str]]:
-    """Retrieves all notes, with retries."""
-    max_retries = 3
-    base_delay = 0.5  # seconds
+async def get_all_notes(db_context: DatabaseContext) -> List[Dict[str, str]]:
+    """Retrieves all notes."""
+    try:
+        stmt = select(notes_table.c.title, notes_table.c.content).order_by(
+            notes_table.c.title
+        )
+        rows = await db_context.fetch_all(stmt)
+        return [{"title": row["title"], "content": row["content"]} for row in rows]
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_all_notes: {e}", exc_info=True)
+        raise # Re-raise after logging
 
-    engine = get_engine()  # Get engine inside the function
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                stmt = select(notes_table.c.title, notes_table.c.content).order_by(
-                    notes_table.c.title
-                )
-                result = await conn.execute(stmt)
-                rows = result.fetchall()
-                return [{"title": row.title, "content": row.content} for row in rows]
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in get_all_notes (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+
+async def get_note_by_title(db_context: DatabaseContext, title: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a specific note by its title."""
+    try:
+        stmt = select(notes_table.c.title, notes_table.c.content).where(
+            notes_table.c.title == title
+        )
+        row = await db_context.fetch_one(stmt)
+        return row if row else None
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_note_by_title({title}): {e}", exc_info=True)
+        raise
+
+
+async def add_or_update_note(db_context: DatabaseContext, title: str, content: str) -> str:
+    """Adds a new note or updates an existing note with the given title."""
+    try:
+        # Check if note exists first (within the same transaction context if possible)
+        # Note: fetch_one doesn't participate in the outer transaction automatically
+        # A better approach might be to use INSERT ... ON CONFLICT DO UPDATE if using PostgreSQL
+        # For cross-DB compatibility, check then insert/update.
+        # We'll use execute_and_commit which handles the transaction.
+
+        select_stmt = select(notes_table.c.id).where(notes_table.c.title == title)
+        existing_note = await db_context.fetch_one(select_stmt) # Check outside transaction for simplicity here
+
+        now = datetime.now(timezone.utc)
+        if existing_note:
+            stmt = (
+                update(notes_table)
+                .where(notes_table.c.title == title)
+                .values(content=content, updated_at=now)
             )
-            if attempt == max_retries - 1:
-                logger.error("Max retries exceeded for get_all_notes. Raising error.")
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(f"Non-retryable error in get_all_notes: {e}", exc_info=True)
-            raise
-    raise RuntimeError(
-        "Database operation failed for get_all_notes after multiple retries"
-    )
-
-
-async def get_note_by_title(title: str) -> Optional[Dict[str, Any]]:
-    """Retrieves a specific note by its title, with retries."""
-    max_retries = 3
-    base_delay = 0.5
-    stmt = select(notes_table.c.title, notes_table.c.content).where(
-        notes_table.c.title == title
-    )
-
-    engine = get_engine()  # Get engine inside the function
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                result = await conn.execute(stmt)
-                row = result.fetchone()
-                return row._mapping if row else None
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in get_note_by_title (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            logger.info(f"Updating note: {title}")
+        else:
+            stmt = insert(notes_table).values(
+                title=title, content=content, created_at=now, updated_at=now
             )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for get_note_by_title({title}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in get_note_by_title({title}): {e}", exc_info=True
-            )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for get_note_by_title({title}) after multiple retries"
-    )
+            logger.info(f"Inserting new note: {title}")
+
+        await db_context.execute_and_commit(stmt)
+        return "Success"
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in add_or_update_note({title}): {e}", exc_info=True)
+        raise
 
 
-async def add_or_update_note(title: str, content: str):
-    """Adds/updates a note, with retries."""
-    max_retries = 3
-    base_delay = 0.5
-    engine = get_engine()  # Get engine inside the function
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                # Use begin_nested() or rely on autocommit if appropriate for the operation
-                # For insert/update/delete, explicit transaction might be safer
-                async with conn.begin():
-                    select_stmt = select(notes_table).where(
-                        notes_table.c.title == title
-                    )
-                    result = await conn.execute(select_stmt)
-                    existing_note = result.fetchone()
-                    now = datetime.now(timezone.utc)
-                    if existing_note:
-                        stmt = (
-                            update(notes_table)
-                            .where(notes_table.c.title == title)
-                            .values(content=content, updated_at=now)
-                        )
-                        logger.info(f"Updating note: {title}")
-                    else:
-                        stmt = insert(notes_table).values(
-                            title=title, content=content, created_at=now, updated_at=now
-                        )
-                        logger.info(f"Inserting new note: {title}")
-                    await conn.execute(stmt)
-                    # Removed await conn.commit() - handled by async with conn.begin()
-                return "Success"  # Return success outside the transaction block
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in add_or_update_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for add_or_update_note({title}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in add_or_update_note({title}): {e}",
-                exc_info=True,
-            )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for add_or_update_note({title}) after multiple retries"
-    )
-
-
-async def delete_note(title: str) -> bool:
-    """Deletes a note by title, with retries."""
-    max_retries = 3
-    base_delay = 0.5
-    stmt = delete(notes_table).where(notes_table.c.title == title)
-    engine = get_engine()  # Get engine inside the function
-
-    for attempt in range(max_retries):
-        try:
-            async with engine.connect() as conn:
-                async with conn.begin():  # Use transaction
-                    result = await conn.execute(stmt)
-                    # Removed await conn.commit() - handled by async with conn.begin()
-                if result.rowcount > 0:
-                    logger.info(f"Deleted note: {title}")
-                    return True
-                logger.warning(f"Note not found for deletion: {title}")
-                return False
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError in delete_note (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error(
-                    f"Max retries exceeded for delete_note({title}). Raising error."
-                )
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(
-                f"Non-retryable error in delete_note({title}): {e}", exc_info=True
-            )
-            raise
-    raise RuntimeError(
-        f"Database operation failed for delete_note({title}) after multiple retries"
-    )
-
-
-# --- Removed duplicated code block from here ---
+async def delete_note(db_context: DatabaseContext, title: str) -> bool:
+    """Deletes a note by title."""
+    try:
+        stmt = delete(notes_table).where(notes_table.c.title == title)
+        result = await db_context.execute_and_commit(stmt)
+        deleted_count = result.rowcount
+        if deleted_count > 0:
+            logger.info(f"Deleted note: {title}")
+            return True
+        else:
+            logger.warning(f"Note not found for deletion: {title}")
+            return False
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in delete_note({title}): {e}", exc_info=True)
+        raise
