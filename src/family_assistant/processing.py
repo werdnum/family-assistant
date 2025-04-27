@@ -169,10 +169,10 @@ class ProcessingService:
                                 f"Error: Unexpected error executing {function_name}."
                             )
 
-                    # Store details for history
+                    # Store details for history, including the original tool_call_id
                     executed_tool_info.append(
                         {
-                            "call_id": call_id,
+                            "tool_call_id": call_id, # Add the original ID here
                             "function_name": function_name,
                             "arguments": arguments,  # Store parsed args (or error dict)
                             "response_content": tool_response_content,
