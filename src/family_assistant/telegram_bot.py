@@ -38,7 +38,7 @@ class TelegramBotHandler:
         application: Application,
         allowed_chat_ids: List[int],
         developer_chat_id: Optional[int],
-        generate_llm_response_func: Callable[..., Coroutine[Any, Any, Tuple[Optional[str], Optional[List[Dict[str, Any]]]]]],
+        processing_service: "ProcessingService", # Use string quote for forward reference
         get_db_context_func: Callable[..., contextlib.AbstractAsyncContextManager["DatabaseContext"]],
     ):
         """
@@ -48,13 +48,16 @@ class TelegramBotHandler:
             application: The telegram.ext.Application instance.
             allowed_chat_ids: List of chat IDs allowed to interact with the bot.
             developer_chat_id: Optional chat ID for sending error notifications.
-            generate_llm_response_func: Async function to generate LLM responses.
+            processing_service: The ProcessingService instance.
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
+        # Import ProcessingService locally for type checking if needed, or rely on quotes
+        from family_assistant.processing import ProcessingService
+
         self.application = application
         self.allowed_chat_ids = allowed_chat_ids
         self.developer_chat_id = developer_chat_id
-        self._generate_llm_response_for_chat = generate_llm_response_func
+        self.processing_service = processing_service # Store the service instance
         self.get_db_context = get_db_context_func
 
         # Internal state for message batching
@@ -188,11 +191,11 @@ class TelegramBotHandler:
 
             async with self.get_db_context() as db_context:
                 async with self._typing_notifications(context, chat_id):
-                    # Use the passed-in function
-                    llm_response_content, tool_call_info = await self._generate_llm_response_for_chat(
+                    # Call the method on the ProcessingService instance
+                    llm_response_content, tool_call_info = await self.processing_service.generate_llm_response_for_chat(
                         db_context=db_context,
-                        processing_service=processing_service,
-                        application=self.application, # Use self.application
+                        # processing_service is now self.processing_service, no need to pass
+                        application=self.application,
                         chat_id=chat_id,
                         trigger_content_parts=trigger_content_parts,
                         user_name=user_name,
