@@ -22,21 +22,28 @@ logger = logging.getLogger(__name__)
 
 # --- Tool Execution Context ---
 
+
 @dataclass
 class ToolExecutionContext:
     """Context passed to tool execution functions."""
+
     chat_id: int
-    application: Optional[Application] = None # Still needed for schedule_future_callback
+    application: Optional[Application] = (
+        None  # Still needed for schedule_future_callback
+    )
 
 
 # --- Custom Exception ---
 
+
 class ToolNotFoundError(LookupError):
     """Custom exception raised when a tool cannot be found by any provider."""
+
     pass
 
 
 # --- Tool Provider Interface ---
+
 
 class ToolsProvider(Protocol):
     """Protocol defining the interface for a tool provider."""
@@ -45,7 +52,9 @@ class ToolsProvider(Protocol):
         """Returns a list of tool definitions in LLM-compatible format."""
         ...
 
-    async def execute_tool(self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext) -> str:
+    async def execute_tool(
+        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+    ) -> str:
         """
         Executes the specified tool.
 
@@ -67,8 +76,9 @@ class ToolsProvider(Protocol):
 # --- Local Tool Implementations (Moved from processing.py) ---
 # Refactored to accept context: ToolExecutionContext
 
+
 async def schedule_recurring_task_tool(
-    context: ToolExecutionContext, # Added context argument
+    context: ToolExecutionContext,  # Added context argument
     task_type: str,
     initial_schedule_time: str,
     recurrence_rule: str,
@@ -142,9 +152,9 @@ async def schedule_recurring_task_tool(
 
 
 async def schedule_future_callback_tool(
-    context_obj: ToolExecutionContext, # Renamed context arg to avoid conflict with LLM context string
+    context_obj: ToolExecutionContext,  # Renamed context arg to avoid conflict with LLM context string
     callback_time: str,
-    context: str, # This is the LLM context string
+    context: str,  # This is the LLM context string
 ):
     """
     Schedules a task to trigger an LLM callback in a specific chat at a future time.
@@ -159,10 +169,12 @@ async def schedule_future_callback_tool(
     chat_id = context_obj.chat_id
 
     if not application:
-         logger.error("Application context not available in ToolExecutionContext for schedule_future_callback_tool.")
-         # Raise error instead of returning string to allow Composite provider to potentially try others?
-         # Or return error string as before? Let's return error string for now.
-         return "Error: Application context not available."
+        logger.error(
+            "Application context not available in ToolExecutionContext for schedule_future_callback_tool."
+        )
+        # Raise error instead of returning string to allow Composite provider to potentially try others?
+        # Or return error string as before? Let's return error string for now.
+        return "Error: Application context not available."
 
     try:
         # Parse the ISO 8601 string, ensuring it's timezone-aware
@@ -182,7 +194,7 @@ async def schedule_future_callback_tool(
         payload = {
             "chat_id": chat_id,
             "callback_context": context,
-            "_application_ref": application, # Pass the global application reference
+            "_application_ref": application,  # Pass the global application reference
         }
 
         # TODO: Need access to the new_task_event from main.py to notify worker
@@ -311,18 +323,25 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
 
 # --- Tool Provider Implementations ---
 
+
 class LocalToolsProvider:
     """Provides and executes locally defined Python functions as tools."""
 
-    def __init__(self, definitions: List[Dict[str, Any]], implementations: Dict[str, Callable]):
+    def __init__(
+        self, definitions: List[Dict[str, Any]], implementations: Dict[str, Callable]
+    ):
         self._definitions = definitions
         self._implementations = implementations
-        logger.info(f"LocalToolsProvider initialized with {len(self._definitions)} tools: {list(self._implementations.keys())}")
+        logger.info(
+            f"LocalToolsProvider initialized with {len(self._definitions)} tools: {list(self._implementations.keys())}"
+        )
 
     async def get_tool_definitions(self) -> List[Dict[str, Any]]:
         return self._definitions
 
-    async def execute_tool(self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext) -> str:
+    async def execute_tool(
+        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+    ) -> str:
         if name not in self._implementations:
             raise ToolNotFoundError(f"Local tool '{name}' not found.")
 
@@ -335,17 +354,21 @@ class LocalToolsProvider:
                 # These tools now expect context_obj as the first arg
                 result = await callable_func(context, **arguments)
             elif name == "add_or_update_note":
-                 # Storage function doesn't need context object
-                 result = await callable_func(**arguments)
+                # Storage function doesn't need context object
+                result = await callable_func(**arguments)
             else:
-                 # Fallback for any other potential local tools - assume they don't need context for now
-                 logger.warning(f"Executing local tool '{name}' without context object (assuming it's not needed).")
-                 result = await callable_func(**arguments)
+                # Fallback for any other potential local tools - assume they don't need context for now
+                logger.warning(
+                    f"Executing local tool '{name}' without context object (assuming it's not needed)."
+                )
+                result = await callable_func(**arguments)
 
             # Ensure result is a string
             if not isinstance(result, str):
                 result_str = str(result)
-                logger.warning(f"Tool '{name}' returned non-string result ({type(result)}), converted to: '{result_str[:100]}...'")
+                logger.warning(
+                    f"Tool '{name}' returned non-string result ({type(result)}), converted to: '{result_str[:100]}...'"
+                )
             else:
                 result_str = result
 
@@ -363,19 +386,25 @@ class LocalToolsProvider:
 class MCPToolsProvider:
     """Provides and executes tools hosted on MCP servers."""
 
-    def __init__(self,
-                 mcp_definitions: List[Dict[str, Any]],
-                 mcp_sessions: Dict[str, ClientSession],
-                 tool_name_to_server_id: Dict[str, str]):
+    def __init__(
+        self,
+        mcp_definitions: List[Dict[str, Any]],
+        mcp_sessions: Dict[str, ClientSession],
+        tool_name_to_server_id: Dict[str, str],
+    ):
         self._definitions = mcp_definitions
         self._sessions = mcp_sessions
         self._tool_map = tool_name_to_server_id
-        logger.info(f"MCPToolsProvider initialized with {len(self._definitions)} tools from {len(self._sessions)} sessions.")
+        logger.info(
+            f"MCPToolsProvider initialized with {len(self._definitions)} tools from {len(self._sessions)} sessions."
+        )
 
     async def get_tool_definitions(self) -> List[Dict[str, Any]]:
         return self._definitions
 
-    async def execute_tool(self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext) -> str:
+    async def execute_tool(
+        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+    ) -> str:
         server_id = self._tool_map.get(name)
         if not server_id:
             raise ToolNotFoundError(f"MCP tool '{name}' not found in tool map.")
@@ -384,10 +413,14 @@ class MCPToolsProvider:
         if not session:
             # This case should ideally be prevented by ensuring sessions are active,
             # but handle defensively.
-            logger.error(f"Session for server '{server_id}' (tool '{name}') not found or inactive.")
+            logger.error(
+                f"Session for server '{server_id}' (tool '{name}') not found or inactive."
+            )
             raise ToolNotFoundError(f"Session for MCP tool '{name}' is unavailable.")
 
-        logger.info(f"Executing MCP tool '{name}' on server '{server_id}' with args: {arguments}")
+        logger.info(
+            f"Executing MCP tool '{name}' on server '{server_id}' with args: {arguments}"
+        )
         try:
             mcp_result = await session.call_tool(name=name, arguments=arguments)
 
@@ -399,16 +432,27 @@ class MCPToolsProvider:
                         response_parts.append(content_item.text)
                     # Handle other content types if needed (e.g., image, resource)
 
-            result_str = "\n".join(response_parts) if response_parts else "Tool executed successfully."
+            result_str = (
+                "\n".join(response_parts)
+                if response_parts
+                else "Tool executed successfully."
+            )
 
             if mcp_result.isError:
-                logger.error(f"MCP tool '{name}' on server '{server_id}' returned an error: {result_str}")
-                return f"Error executing tool '{name}': {result_str}" # Prepend error indication
+                logger.error(
+                    f"MCP tool '{name}' on server '{server_id}' returned an error: {result_str}"
+                )
+                return f"Error executing tool '{name}': {result_str}"  # Prepend error indication
             else:
-                logger.info(f"MCP tool '{name}' on server '{server_id}' executed successfully.")
+                logger.info(
+                    f"MCP tool '{name}' on server '{server_id}' executed successfully."
+                )
                 return result_str
         except Exception as e:
-            logger.error(f"Error calling MCP tool '{name}' on server '{server_id}': {e}", exc_info=True)
+            logger.error(
+                f"Error calling MCP tool '{name}' on server '{server_id}': {e}",
+                exc_info=True,
+            )
             return f"Error calling MCP tool '{name}': {e}"
 
 
@@ -418,8 +462,10 @@ class CompositeToolsProvider:
     def __init__(self, providers: List[ToolsProvider]):
         self._providers = providers
         self._tool_definitions: Optional[List[Dict[str, Any]]] = None
-        self._validate_providers() # Check for name collisions on init
-        logger.info(f"CompositeToolsProvider initialized with {len(providers)} providers.")
+        self._validate_providers()  # Check for name collisions on init
+        logger.info(
+            f"CompositeToolsProvider initialized with {len(providers)} providers."
+        )
 
     def _validate_providers(self):
         """Checks for duplicate tool names across providers."""
@@ -432,19 +478,26 @@ class CompositeToolsProvider:
                 # This assumes get_tool_definitions can be called without await if needed,
                 # or we need an async init pattern. Let's assume sync access is ok for now.
                 # A better approach might be an async factory for the composite provider.
-                definitions = asyncio.run(provider.get_tool_definitions()) # Run async getter synchronously (use with caution)
+                definitions = asyncio.run(
+                    provider.get_tool_definitions()
+                )  # Run async getter synchronously (use with caution)
                 for tool_def in definitions:
                     name = tool_def.get("function", {}).get("name")
                     if name:
                         if name in all_names:
-                            raise ValueError(f"Duplicate tool name '{name}' found in provider {i} ({type(provider).__name__}). Tool names must be unique across all providers.")
+                            raise ValueError(
+                                f"Duplicate tool name '{name}' found in provider {i} ({type(provider).__name__}). Tool names must be unique across all providers."
+                            )
                         all_names.add(name)
             except Exception as e:
-                 logger.error(f"Error getting definitions from provider {i} ({type(provider).__name__}) during validation: {e}")
-                 # Decide whether to raise or just warn
-                 raise ValueError(f"Could not validate provider {i}: {e}") from e
-        logger.info(f"Tool name collision check passed for {len(all_names)} unique tools.")
-
+                logger.error(
+                    f"Error getting definitions from provider {i} ({type(provider).__name__}) during validation: {e}"
+                )
+                # Decide whether to raise or just warn
+                raise ValueError(f"Could not validate provider {i}: {e}") from e
+        logger.info(
+            f"Tool name collision check passed for {len(all_names)} unique tools."
+        )
 
     async def get_tool_definitions(self) -> List[Dict[str, Any]]:
         # Cache definitions after first async fetch
@@ -455,31 +508,46 @@ class CompositeToolsProvider:
                     definitions = await provider.get_tool_definitions()
                     all_definitions.extend(definitions)
                 except Exception as e:
-                    logger.error(f"Failed to get tool definitions from provider {type(provider).__name__}: {e}", exc_info=True)
+                    logger.error(
+                        f"Failed to get tool definitions from provider {type(provider).__name__}: {e}",
+                        exc_info=True,
+                    )
                     # Optionally re-raise or continue with partial list
             self._tool_definitions = all_definitions
-            logger.info(f"Fetched and cached {len(self._tool_definitions)} tool definitions from providers.")
+            logger.info(
+                f"Fetched and cached {len(self._tool_definitions)} tool definitions from providers."
+            )
         return self._tool_definitions
 
-    async def execute_tool(self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext) -> str:
+    async def execute_tool(
+        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+    ) -> str:
         logger.debug(f"Composite provider attempting to execute tool '{name}'...")
         for provider in self._providers:
             try:
                 # Attempt to execute with the current provider
                 result = await provider.execute_tool(name, arguments, context)
-                logger.debug(f"Tool '{name}' executed successfully by {type(provider).__name__}.")
-                return result # Return immediately on success
+                logger.debug(
+                    f"Tool '{name}' executed successfully by {type(provider).__name__}."
+                )
+                return result  # Return immediately on success
             except ToolNotFoundError:
-                logger.debug(f"Tool '{name}' not found in provider {type(provider).__name__}. Trying next.")
-                continue # Try the next provider
+                logger.debug(
+                    f"Tool '{name}' not found in provider {type(provider).__name__}. Trying next."
+                )
+                continue  # Try the next provider
             except Exception as e:
                 # Handle unexpected errors during execution attempt
-                logger.error(f"Error executing tool '{name}' with provider {type(provider).__name__}: {e}", exc_info=True)
+                logger.error(
+                    f"Error executing tool '{name}' with provider {type(provider).__name__}: {e}",
+                    exc_info=True,
+                )
                 # Return an error string immediately, as something went wrong beyond just not finding the tool
                 return f"Error during execution attempt with {type(provider).__name__}: {e}"
 
         # If loop completes, no provider handled the tool
         logger.error(f"Tool '{name}' not found in any registered provider.")
         raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
+
 
 # Removed set_application_instance helper
