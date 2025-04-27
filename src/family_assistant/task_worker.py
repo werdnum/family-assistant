@@ -235,209 +235,209 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
             task = None
             # Create a database context for this iteration
             async with get_db_context() as db_context:
-                try: # Inner try for task processing within the context
+                try: # Inner try for dequeue, task processing, and waiting logic
                     # Dequeue a task of a type this worker handles
                     task = await storage.dequeue_task(
-                    db_context=db_context,  # Pass db_context
-                    worker_id=worker_id,
-                    task_types=task_types_handled,
-                )
+                        db_context=db_context,  # Pass db_context
+                        worker_id=worker_id,
+                        task_types=task_types_handled,
+                    )
 
-                if task:
-                    logger.info(
-                    f"Worker {worker_id} processing task {task['task_id']} (type: {task['task_type']})"
-                )
-                handler = TASK_HANDLERS.get(task["task_type"])
-
-                if handler:
-                    try:
-                        # Execute the handler with db_context and payload
-                        await handler(db_context, task["payload"])
-                        task_id = task["task_id"]
-                        task_type = task["task_type"]
-                        payload = task["payload"]
-                        recurrence_rule_str = task.get("recurrence_rule")
-                        original_task_id = task.get(
-                            "original_task_id", task_id
-                        )  # Use task_id if original is missing (first run)
-                        task_max_retries = task.get("max_retries", 3)
-
-                        # Mark task as done
-                        await storage.update_task_status(
-                            db_context=db_context, task_id=task_id, status="done"
-                        )
+                    # --- Task Processing Logic (inside inner try) ---
+                    if task:
                         logger.info(
-                            f"Worker {worker_id} completed task {task_id} (Original: {original_task_id})"
+                            f"Worker {worker_id} processing task {task['task_id']} (type: {task['task_type']})"
                         )
+                        handler = TASK_HANDLERS.get(task["task_type"])
 
-                        # --- Handle Recurrence ---
-                        if recurrence_rule_str:
-                            logger.info(
-                                f"Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
-                            )
+                        if handler:
                             try:
-                                # Use the *scheduled_at* time of the completed task as the base for the next occurrence
-                                last_scheduled_at = task.get("scheduled_at")
-                                if not last_scheduled_at:
-                                    # If somehow scheduled_at is missing, use created_at as fallback
-                                    last_scheduled_at = task.get(
-                                        "created_at", datetime.now(timezone.utc)
-                                    )
-                                    logger.warning(
-                                        f"Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base."
-                                    )
-                                # Ensure the base time is timezone-aware for rrule
-                                if last_scheduled_at.tzinfo is None:
-                                    last_scheduled_at = last_scheduled_at.replace(
-                                        tzinfo=timezone.utc
-                                    )
-                                    logger.warning(
-                                        f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
-                                    )
+                                # Execute the handler with db_context and payload
+                                await handler(db_context, task["payload"])
+                                task_id = task["task_id"]
+                                task_type = task["task_type"]
+                                payload = task["payload"]
+                                recurrence_rule_str = task.get("recurrence_rule")
+                                original_task_id = task.get(
+                                    "original_task_id", task_id
+                                )  # Use task_id if original is missing (first run)
+                                task_max_retries = task.get("max_retries", 3)
 
-                                # Import here to avoid potential circular imports if task_worker is imported elsewhere early
-                                from dateutil import rrule
-
-                                # Calculate the next occurrence *after* the last scheduled time
-                                rule = rrule.rrulestr(
-                                    recurrence_rule_str, dtstart=last_scheduled_at
-                                )
-                                next_scheduled_dt = rule.after(last_scheduled_at)
-
-                                if next_scheduled_dt:
-                                    # Generate a new unique task ID for the next instance
-                                    # Format: <original_task_id>_recur_<next_iso_timestamp>
-                                    next_task_id = f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
-
-                                    logger.info(
-                                        f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
-                                    )
-
-                                    # Enqueue the next task instance
-                                    await storage.enqueue_task(
-                                        db_context=db_context,  # Pass db_context
-                                        task_id=next_task_id,
-                                        task_type=task_type,  # Same type
-                                        payload=payload,  # Same payload
-                                        scheduled_at=next_scheduled_dt,
-                                        max_retries_override=task_max_retries,  # Same retry policy
-                                        recurrence_rule=recurrence_rule_str,  # Keep the rule
-                                        original_task_id=original_task_id,  # Link back to original
-                                        notify_event=new_task_event,  # Notify if immediate
-                                    )
-                                    logger.info(
-                                        f"Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
-                                    )
-                                else:
-                                    logger.info(
-                                        f"No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
-                                    )
-
-                            except Exception as recur_err:
-                                logger.error(
-                                    f"Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
-                                    exc_info=True,
-                                )
-                                # Don't mark the original task as failed, just log the recurrence error.
-                                # Potentially send notification to developer?
-
-                    except Exception as handler_exc:
-                        current_retry = task.get("retry_count", 0)
-                        max_retries = task.get(
-                            "max_retries", 3  # Use DB default if missing somehow
-                        )  # Use DB default if missing somehow
-                        error_str = str(handler_exc)
-                        logger.error(
-                            f"Worker {worker_id} failed task {task['task_id']} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
-                            exc_info=True,
-                        )
-
-                        if current_retry < max_retries:
-                            # Calculate exponential backoff with jitter
-                            # Base delay: 5 seconds, increases with retries
-                            backoff_delay = (5 * (2**current_retry)) + random.uniform(
-                                0, 2
-                            )
-                            next_attempt_time = datetime.now(timezone.utc) + timedelta(
-                                seconds=backoff_delay
-                            )
-                            logger.info(
-                                f"Scheduling retry {current_retry + 1} for task {task['task_id']} at {next_attempt_time} (delay: {backoff_delay:.2f}s)"
-                            )
-                            try:
-                                await storage.reschedule_task_for_retry(
-                                    db_context=db_context,  # Pass db_context
-                                    task_id=task["task_id"],
-                                    next_scheduled_at=next_attempt_time,
-                                    new_retry_count=current_retry + 1,
-                                    error=error_str,
-                                )
-                            except Exception as reschedule_err:
-                                # If rescheduling fails, log critical error and mark as failed to avoid infinite loops
-                                logger.critical(
-                                    f"CRITICAL: Failed to reschedule task {task['task_id']} for retry after handler error. Marking as failed. Error: {reschedule_err}",
-                                    exc_info=True,
-                                )
+                                # Mark task as done
                                 await storage.update_task_status(
-                                    db_context=db_context,  # Pass db_context
-                                    task_id=task["task_id"],
-                                    status="failed",
-                                    error=f"Handler Error: {error_str}. Reschedule Failed: {reschedule_err}",
+                                    db_context=db_context, task_id=task_id, status="done"
                                 )
+                                logger.info(
+                                    f"Worker {worker_id} completed task {task_id} (Original: {original_task_id})"
+                                )
+
+                                # --- Handle Recurrence ---
+                                if recurrence_rule_str:
+                                    logger.info(
+                                        f"Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
+                                    )
+                                    try:
+                                        # Use the *scheduled_at* time of the completed task as the base for the next occurrence
+                                        last_scheduled_at = task.get("scheduled_at")
+                                        if not last_scheduled_at:
+                                            # If somehow scheduled_at is missing, use created_at as fallback
+                                            last_scheduled_at = task.get(
+                                                "created_at", datetime.now(timezone.utc)
+                                            )
+                                            logger.warning(
+                                                f"Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base."
+                                            )
+                                        # Ensure the base time is timezone-aware for rrule
+                                        if last_scheduled_at.tzinfo is None:
+                                            last_scheduled_at = last_scheduled_at.replace(
+                                                tzinfo=timezone.utc
+                                            )
+                                            logger.warning(
+                                                f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
+                                            )
+
+                                        # Import here to avoid potential circular imports if task_worker is imported elsewhere early
+                                        from dateutil import rrule
+
+                                        # Calculate the next occurrence *after* the last scheduled time
+                                        rule = rrule.rrulestr(
+                                            recurrence_rule_str, dtstart=last_scheduled_at
+                                        )
+                                        next_scheduled_dt = rule.after(last_scheduled_at)
+
+                                        if next_scheduled_dt:
+                                            # Generate a new unique task ID for the next instance
+                                            # Format: <original_task_id>_recur_<next_iso_timestamp>
+                                            next_task_id = f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
+
+                                            logger.info(
+                                                f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
+                                            )
+
+                                            # Enqueue the next task instance
+                                            await storage.enqueue_task(
+                                                db_context=db_context,  # Pass db_context
+                                                task_id=next_task_id,
+                                                task_type=task_type,  # Same type
+                                                payload=payload,  # Same payload
+                                                scheduled_at=next_scheduled_dt,
+                                                max_retries_override=task_max_retries,  # Same retry policy
+                                                recurrence_rule=recurrence_rule_str,  # Keep the rule
+                                                original_task_id=original_task_id,  # Link back to original
+                                                notify_event=new_task_event,  # Notify if immediate
+                                            )
+                                            logger.info(
+                                                f"Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
+                                            )
+                                        else:
+                                            logger.info(
+                                                f"No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
+                                            )
+
+                                    except Exception as recur_err:
+                                        logger.error(
+                                            f"Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
+                                            exc_info=True,
+                                        )
+                                        # Don't mark the original task as failed, just log the recurrence error.
+                                        # Potentially send notification to developer?
+
+                            except Exception as handler_exc:
+                                current_retry = task.get("retry_count", 0)
+                                max_retries = task.get(
+                                    "max_retries", 3  # Use DB default if missing somehow
+                                )  # Use DB default if missing somehow
+                                error_str = str(handler_exc)
+                                logger.error(
+                                    f"Worker {worker_id} failed task {task['task_id']} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
+                                    exc_info=True,
+                                )
+
+                                if current_retry < max_retries:
+                                    # Calculate exponential backoff with jitter
+                                    # Base delay: 5 seconds, increases with retries
+                                    backoff_delay = (5 * (2**current_retry)) + random.uniform(
+                                        0, 2
+                                    )
+                                    next_attempt_time = datetime.now(timezone.utc) + timedelta(
+                                        seconds=backoff_delay
+                                    )
+                                    logger.info(
+                                        f"Scheduling retry {current_retry + 1} for task {task['task_id']} at {next_attempt_time} (delay: {backoff_delay:.2f}s)"
+                                    )
+                                    try:
+                                        await storage.reschedule_task_for_retry(
+                                            db_context=db_context,  # Pass db_context
+                                            task_id=task["task_id"],
+                                            next_scheduled_at=next_attempt_time,
+                                            new_retry_count=current_retry + 1,
+                                            error=error_str,
+                                        )
+                                    except Exception as reschedule_err:
+                                        # If rescheduling fails, log critical error and mark as failed to avoid infinite loops
+                                        logger.critical(
+                                            f"CRITICAL: Failed to reschedule task {task['task_id']} for retry after handler error. Marking as failed. Error: {reschedule_err}",
+                                            exc_info=True,
+                                        )
+                                        await storage.update_task_status(
+                                            db_context=db_context,  # Pass db_context
+                                            task_id=task["task_id"],
+                                            status="failed",
+                                            error=f"Handler Error: {error_str}. Reschedule Failed: {reschedule_err}",
+                                        )
+                                else:
+                                    logger.warning(
+                                        f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
+                                    )
+                                    # Mark task as permanently failed
+                                    await storage.update_task_status(
+                                        db_context=db_context,  # Pass db_context
+                                        task_id=task["task_id"],
+                                        status="failed",
+                                        error=error_str,
+                                    )
                         else:
-                            logger.warning(
-                                f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
+                            # This shouldn't happen if dequeue_task respects task_types properly
+                            logger.error(
+                                f"Worker {worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
                             )
-                            # Mark task as permanently failed
                             await storage.update_task_status(
                                 db_context=db_context,  # Pass db_context
                                 task_id=task["task_id"],
                                 status="failed",
-                                error=error_str,
+                                error=f"No handler registered for type {task['task_type']}",
                             )
-                else:
-                    # This shouldn't happen if dequeue_task respects task_types properly
-                    logger.error(
-                        f"Worker {worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
-                    )
-                    await storage.update_task_status(
-                        db_context=db_context,  # Pass db_context
-                        task_id=task["task_id"],
-                        status="failed",
-                        error=f"No handler registered for type {task['task_type']}",
-                    )
+                    # --- Waiting Logic (inside inner try, if no task was found) ---
+                    else: # Changed from 'if not task:'
+                        # No task found, wait for the polling interval OR the wake-up event
+                        try:
+                            logger.debug(
+                                f"Worker {worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
+                            )
+                            # Wait for the event to be set, with a timeout
+                            await asyncio.wait_for(
+                                wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL
+                            )
+                            # If wait_for completes without timeout, the event was set
+                            logger.debug(f"Worker {worker_id}: Woken up by event.")
+                            wake_up_event.clear()  # Reset the event for the next notification
+                        except asyncio.TimeoutError:
+                            # Event didn't fire, timeout reached, proceed to next polling cycle
+                            logger.debug(
+                                f"Worker {worker_id}: Wait timed out, continuing poll cycle."
+                            )
+                            pass # Continue the loop normally after timeout
 
-            # --- Code moved outside the 'if task:' block and the 'try/except' for handler execution ---
-            # --- This part handles waiting if no task was found or after a task was processed ---
-            if not task: # Only wait if no task was dequeued in this iteration
-                # No task found, wait for the polling interval OR the wake-up event
-                try:
-                    logger.debug(
-                        f"Worker {worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
+                # --- Exception handling for the inner try block (catches dequeue, task processing, or waiting errors) ---
+                except Exception as e:
+                    logger.error(
+                        f"Error during task processing or DB operation within context for worker {worker_id}: {e}",
+                        exc_info=True,
                     )
-                    # Wait for the event to be set, with a timeout
-                    await asyncio.wait_for(
-                        wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL
-                    )
-                    # If wait_for completes without timeout, the event was set
-                    logger.debug(f"Worker {worker_id}: Woken up by event.")
-                    wake_up_event.clear()  # Reset the event for the next notification
-                except asyncio.TimeoutError:
-                    # Event didn't fire, timeout reached, proceed to next polling cycle
-                    logger.debug(
-                        f"Worker {worker_id}: Wait timed out, continuing poll cycle."
-                    )
-                    pass # Continue the loop normally after timeout
-            # --- This except block now correctly corresponds to the inner try (line 238) ---
-            except Exception as e:
-                logger.error(
-                    f"Error during task processing or DB operation within context for worker {worker_id}: {e}",
-                    exc_info=True,
-                )
-                # If an error occurs *within* the db_context block (e.g., during dequeue or handler execution),
-                # the context manager will handle rollback/commit based on the exception.
-                # We might still want a delay before the next iteration's context attempt.
-                await asyncio.sleep(TASK_POLLING_INTERVAL) # Short delay after error within context
+                    # If an error occurs *within* the db_context block (e.g., during dequeue, handler execution, or waiting),
+                    # the context manager will handle rollback/commit based on the exception.
+                    # We might still want a delay before the next iteration's context attempt.
+                    await asyncio.sleep(TASK_POLLING_INTERVAL) # Short delay after error within context
 
         # --- Exception handling for the outer try block (whole loop iteration) ---
         except asyncio.CancelledError:
