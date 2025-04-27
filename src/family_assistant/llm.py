@@ -118,7 +118,9 @@ class LiteLLMClient:
                 )
                 # Raise an error or return empty output? Let's raise for clarity.
                 raise APIError(
-                    "Received empty or unexpected response from LiteLLM.",
+                    message="Received empty or unexpected response from LiteLLM.",
+                    llm_provider="litellm",
+                    model=self.model,
                     status_code=500,
                 )  # Simulate server error
 
@@ -159,7 +161,12 @@ class LiteLLMClient:
                 exc_info=True,
             )
             # Wrap unexpected errors in a generic APIError or a custom exception
-            raise APIError(f"Unexpected error: {e}", status_code=500) from e
+            raise APIError(
+                message=f"Unexpected error: {e}",
+                llm_provider="litellm",
+                model=self.model,
+                status_code=500
+            ) from e
 
 
 class RecordingLLMClient:
