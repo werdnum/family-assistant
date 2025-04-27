@@ -5,18 +5,19 @@ Handles storage and retrieval of received emails.
 import logging
 import os
 import re
-import os
-import re
+# import os # Removed duplicate
+# import re # Removed duplicate
 import json
+import uuid # Add uuid import
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
-from sqlalchemy.sql import insert, functions  # Import functions explicitly
-from sqlalchemy.sql import insert
+from sqlalchemy.sql import insert, functions, update # Consolidate and add update
+# from sqlalchemy.sql import insert # Removed duplicate
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
-import json
+# import json # Removed duplicate
 from dateutil.parser import parse as parse_datetime
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
 
