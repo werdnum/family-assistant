@@ -19,7 +19,7 @@ classifiers = [
 # Dependencies migrated from requirements.txt
 dependencies = [
     "python-telegram-bot[ext]>=21.0,<22.0", # Use [ext] instead of [job-queue] for v21+
-    "litellm>=1.38.1",
+    "litellm>=1.38.1,<1.67.3",
     "python-dotenv>=1.0.0",
     "sqlalchemy[asyncio]>=2.0.0",
     "aiosqlite>=0.19.0", # Async driver for SQLite (default)
@@ -43,7 +43,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
     "pytest",
     "pytest-asyncio",
     "aiosqlite",         # Add async SQLite driver for testing
