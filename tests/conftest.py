@@ -141,6 +141,34 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
         await init_db() # Call without engine argument, relies on patch
         logger.info("Main database schema initialized on PostgreSQL.")
 
+        # --- Create PostgreSQL-specific Indexes AFTER tables exist ---
+        logger.info("Creating PostgreSQL-specific indexes (HNSW, FTS)...")
+        async with DatabaseContext(engine=engine) as db_context_for_indexes:
+            # HNSW Index (copy logic from original init_vector_db)
+            await db_context_for_indexes.execute_with_retry(
+                sa.text(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_doc_embeddings_gemini_1536_hnsw_cos ON document_embeddings
+                    USING hnsw ((embedding::vector(1536)) vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64) WHERE embedding_model = 'gemini-exp-03-07';
+                    """
+                )
+            )
+            logger.info("Ensured HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos exists.")
+
+            # FTS Index (copy logic from original init_vector_db)
+            await db_context_for_indexes.execute_with_retry(
+                sa.text(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_doc_embeddings_content_fts_gin ON document_embeddings
+                    USING gin (to_tsvector('english', content))
+                    WHERE content IS NOT NULL;
+                    """
+                )
+            )
+            logger.info("Ensured FTS index idx_doc_embeddings_content_fts_gin exists.")
+        logger.info("PostgreSQL-specific indexes created.")
+
         yield engine # Provide the initialized engine to tests
 
     finally:

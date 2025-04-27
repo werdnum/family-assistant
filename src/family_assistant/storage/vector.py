@@ -189,40 +189,16 @@ async def init_vector_db(db_context: DatabaseContext):
         try:
             # Use execute_with_retry for DDL statements within the context
             # Commit/rollback is handled by the context manager (__aexit__)
+            # Only create the extension here. Indexes will be created separately after tables exist.
             await db_context.execute_with_retry(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
             logger.info("Ensured 'vector' extension exists.")
 
-            # Example: Create the specific partial index for gemini-exp-03-07
-            # Note: Indexes might error if they already exist, add IF NOT EXISTS or handle errors
-            await db_context.execute_with_retry(
-                sa.text(
-                    """
-                CREATE INDEX IF NOT EXISTS idx_doc_embeddings_gemini_1536_hnsw_cos ON document_embeddings
-                USING hnsw ((embedding::vector(1536)) vector_cosine_ops)
-                WITH (m = 16, ef_construction = 64) WHERE embedding_model = 'gemini-exp-03-07';
-                """
-                    )
-                )
-            logger.info("Ensured HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos exists.")
-
-            # Also create the FTS index here
-            await db_context.execute_with_retry(
-                sa.text(
-                    """
-                CREATE INDEX IF NOT EXISTS idx_doc_embeddings_content_fts_gin ON document_embeddings
-                    USING gin (to_tsvector('english', content))
-                    WHERE content IS NOT NULL;
-                    """
-                    )
-                )
-            logger.info("Ensured FTS index idx_doc_embeddings_content_fts_gin exists.")
-
         except SQLAlchemyError as e:
-            # Catch potential errors during DDL execution
+            # Catch potential errors during extension creation
             logger.error(f"Database error during vector DB initialization: {e}", exc_info=True)
             raise # Re-raise to indicate failure
 
-        logger.info("PostgreSQL vector database components (extension, custom indexes) initialized.")
+        logger.info("PostgreSQL vector database extension initialized.")
     else:
         logger.warning(
             f"Database dialect is '{db_context.engine.dialect.name}', not 'postgresql'. Skipping vector extension and index creation. Vector search functionality may be limited or unavailable."
