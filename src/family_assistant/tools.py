@@ -475,14 +475,20 @@ class CompositeToolsProvider:
             # If providers fetched definitions async, validation would need to be async too.
             try:
                 # Temporarily get definitions synchronously for validation
-                # This assumes get_tool_definitions can be called without await if needed,
-                # or we need an async init pattern. Let's assume sync access is ok for now.
-                # A better approach might be an async factory for the composite provider.
-                definitions = asyncio.run(
-                    provider.get_tool_definitions()
-                )  # Run async getter synchronously (use with caution)
+                # Since our current provider implementations just return stored lists,
+                # we can call get_tool_definitions directly here without await or asyncio.run.
+                # If a future provider *did* need async IO here, we'd need an async init pattern.
+                definitions = provider.get_tool_definitions() # Call synchronously
                 for tool_def in definitions:
-                    name = tool_def.get("function", {}).get("name")
+                    # Ensure the definition is a dictionary before accessing keys
+                    if not isinstance(tool_def, dict):
+                        logger.warning(f"Provider {i} ({type(provider).__name__}) returned non-dict item in definitions: {tool_def}")
+                        continue
+                    function_def = tool_def.get("function", {})
+                    if not isinstance(function_def, dict):
+                         logger.warning(f"Provider {i} ({type(provider).__name__}) returned non-dict 'function' field: {function_def}")
+                         continue
+                    name = function_def.get("name")
                     if name:
                         if name in all_names:
                             raise ValueError(
