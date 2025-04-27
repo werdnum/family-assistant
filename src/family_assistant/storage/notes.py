@@ -118,9 +118,8 @@ async def add_or_update_note(db_context: DatabaseContext, title: str, content: s
             return "Success"
         except SQLAlchemyError as e:
             # Check specifically for unique constraint violation (IntegrityError in SQLAlchemy)
-            # Adapt the check based on specific driver if needed, but IntegrityError is common
             from sqlalchemy.exc import IntegrityError
-            if isinstance(e, IntegrityError) or (isinstance(e.orig, Exception) and "UNIQUE constraint failed" in str(e.orig)):
+            if isinstance(e, IntegrityError): # Check only for IntegrityError
                 logger.info(f"Note '{title}' already exists (SQLite fallback), attempting update.")
                 # Perform UPDATE if INSERT failed due to unique constraint
                 update_stmt = (
