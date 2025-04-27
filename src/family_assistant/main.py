@@ -830,10 +830,10 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                         application=context.application,
                         chat_id=chat_id,
                         trigger_content_parts=trigger_content_parts,
+                        user_name=user_name, # Moved inside the call
                     )
                 )
-                    user_name=user_name,
-                )
+                # Removed extra parenthesis here
             )
 
         if llm_response_content:
