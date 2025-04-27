@@ -154,7 +154,6 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
             user_name=TEST_USER_NAME,
             # model_name argument removed
         )
-        user_name=TEST_USER_NAME,
         # model_name argument removed from _generate_llm_response_for_chat call
     )
 
