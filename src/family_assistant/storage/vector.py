@@ -19,11 +19,29 @@ from typing import (
 )
 
 import sqlalchemy as sa
-from sqlalchemy import JSON  # Import generic JSON
-from sqlalchemy.dialects.postgresql import JSONB  # Import JSONB
+from sqlalchemy import (
+    JSON,
+    Select,
+    TextClause,
+    and_,
+    delete,
+    func,
+    select,
+    text,
+    literal_column,
+    CTE,
+    alias,
+    cast,
+    or_,
+)
+from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy.dialects.postgresql.dml import OnConflictDoUpdate
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, aliased
 from sqlalchemy.sql import functions  # Import functions explicitly
+from sqlalchemy.sql.expression import ColumnElement
+from sqlalchemy.engine import RowMapping
 
 from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
@@ -237,28 +255,94 @@ async def add_document(
 
     Returns:
         The database ID of the added or existing document.
-    """
-    # TODO: Implement actual insert/conflict handling logic
-    logger.info(f"Skeleton: Adding document record with source_id {doc.source_id}")
-    # Example (needs proper async session handling and error checking):
-    # async with async_sessionmaker(get_engine())() as session:
-    #     async with session.begin():
-    #         # Merge data from doc.metadata (protocol method) and the enriched parameter
-    #         final_doc_metadata = {**(doc.metadata or {}), **(enriched_doc_metadata or {})}
-    #         # Find existing or create new DocumentRecord row using doc properties
-    #         # Store the merged data into the 'doc_metadata' database column
-    #         # stmt = insert(DocumentRecord).values(..., doc_metadata=final_doc_metadata, ...).on_conflict_do_update(...) # Store in renamed column
-    #         # result = await session.execute(stmt) # Store in renamed column
-    #         # doc_id = result.inserted_primary_key[0] or fetch existing id
-    #         pass
-    return 1  # Placeholder
+    engine = get_engine()
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+
+    # Merge metadata
+    final_doc_metadata = {**(doc.metadata or {}), **(enriched_doc_metadata or {})}
+
+    values_to_insert = {
+        "source_type": doc.source_type,
+        "source_id": doc.source_id,
+        "source_uri": doc.source_uri,
+        "title": doc.title,
+        "created_at": doc.created_at,
+        "doc_metadata": final_doc_metadata,
+    }
+
+    # Prepare the insert statement with ON CONFLICT DO UPDATE
+    # This requires PostgreSQL dialect features
+    if engine.dialect.name != "postgresql":
+        logger.error(
+            "Database dialect is not PostgreSQL. ON CONFLICT clause is not supported. Document upsert might fail."
+        )
+        # Fallback or raise error - for now, let it potentially fail
+        stmt = insert(DocumentRecord).values(**values_to_insert)
+    else:
+        stmt = insert(DocumentRecord).values(**values_to_insert)
+        # Define columns to update on conflict
+        update_dict = {
+            col: getattr(stmt.excluded, col)
+            for col in values_to_insert
+            if col != "source_id"  # Don't update the conflict target
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["source_id"],  # The unique constraint column
+            set_=update_dict,
+        ).returning(DocumentRecord.id)
+
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                result = await session.execute(stmt)
+                doc_id = result.scalar_one()  # Get the inserted or existing ID
+                logger.info(
+                    f"Successfully added/updated document with source_id {doc.source_id}, got ID: {doc_id}"
+                )
+                return doc_id
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error adding/updating document with source_id {doc.source_id}: {e}",
+            exc_info=True,
+        )
+        raise  # Re-raise the exception after logging
+    except Exception as e:
+        logger.error(
+            f"Unexpected error adding/updating document with source_id {doc.source_id}: {e}",
+            exc_info=True,
+        )
+        raise
 
 
-async def get_document_by_source_id(source_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieves a document by its source ID."""
-    # TODO: Implement actual select logic
-    logger.info(f"Skeleton: Getting document by source_id {source_id}")
-    return None  # Placeholder
+async def get_document_by_source_id(source_id: str) -> Optional[DocumentRecord]:
+    """Retrieves a document ORM object by its source ID."""
+    engine = get_engine()
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+
+    stmt = select(DocumentRecord).where(DocumentRecord.source_id == source_id)
+
+    try:
+        async with async_session() as session:
+            result = await session.execute(stmt)
+            record = result.scalar_one_or_none()
+            if record:
+                logger.debug(f"Found document with source_id {source_id}")
+                return record
+            else:
+                logger.debug(f"No document found with source_id {source_id}")
+                return None
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error retrieving document with source_id {source_id}: {e}",
+            exc_info=True,
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            f"Unexpected error retrieving document with source_id {source_id}: {e}",
+            exc_info=True,
+        )
+        raise
 
 
 async def add_embedding(
@@ -269,20 +353,96 @@ async def add_embedding(
     embedding_model: str,
     content: Optional[str] = None,
     content_hash: Optional[str] = None,
-):
-    """Adds an embedding record linked to a document."""
-    # TODO: Implement actual insert logic
-    logger.info(
-        f"Skeleton: Adding embedding for doc {document_id}, type {embedding_type}, model {embedding_model}"
-    )
-    pass
+) -> None:
+    """Adds an embedding record linked to a document, updating if it already exists."""
+    engine = get_engine()
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+
+    values_to_insert = {
+        "document_id": document_id,
+        "chunk_index": chunk_index,
+        "embedding_type": embedding_type,
+        "embedding": embedding,
+        "embedding_model": embedding_model,
+        "content": content,
+        "content_hash": content_hash,
+    }
+
+    if engine.dialect.name != "postgresql":
+        logger.error(
+            "Database dialect is not PostgreSQL. ON CONFLICT clause is not supported. Embedding upsert might fail."
+        )
+        # Fallback or raise error
+        stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
+    else:
+        stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
+        # Define columns to update on conflict
+        update_dict = {
+            col: getattr(stmt.excluded, col)
+            for col in values_to_insert
+            if col not in ["document_id", "chunk_index", "embedding_type"]
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["document_id", "chunk_index", "embedding_type"],
+            set_=update_dict,
+        )
+
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                await session.execute(stmt)
+                logger.info(
+                    f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+                )
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error adding/updating embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}: {e}",
+            exc_info=True,
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            f"Unexpected error adding/updating embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}: {e}",
+            exc_info=True,
+        )
+        raise
 
 
-async def delete_document(document_id: int):
-    """Deletes a document and its associated embeddings."""
-    # TODO: Implement actual delete logic using cascade
-    logger.info(f"Skeleton: Deleting document {document_id} and its embeddings")
-    pass
+async def delete_document(document_id: int) -> bool:
+    """
+    Deletes a document and its associated embeddings (via CASCADE constraint).
+
+    Returns:
+        True if a document was deleted, False otherwise.
+    """
+    engine = get_engine()
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+
+    stmt = delete(DocumentRecord).where(DocumentRecord.id == document_id)
+
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                result = await session.execute(stmt)
+                deleted_count = result.rowcount
+                if deleted_count > 0:
+                    logger.info(
+                        f"Successfully deleted document {document_id} and its embeddings (via cascade)."
+                    )
+                    return True
+                else:
+                    logger.warning(f"No document found with ID {document_id} to delete.")
+                    return False
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error deleting document {document_id}: {e}", exc_info=True
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            f"Unexpected error deleting document {document_id}: {e}", exc_info=True
+        )
+        raise
 
 
 async def query_vectors(
@@ -308,17 +468,202 @@ async def query_vectors(
 
     Returns:
         A list of dictionaries, each representing a relevant document chunk/embedding
-        with its metadata and scores. Returns an empty list if skeleton.
+        with its metadata and scores.
     """
-    # TODO: Implement the complex SQL query with RRF as shown in the design doc.
-    #       This will involve constructing the WHERE clauses based on filters,
-    #       using the correct vector dimension based on embedding_model,
-    #       and performing the RRF calculation.
-    logger.info(
-        f"Skeleton: Querying vectors with model {embedding_model}. Keywords: {keywords}, Limit: {limit}"
+    engine = get_engine()
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+
+    if engine.dialect.name != "postgresql":
+        logger.error(
+            "Vector search query requires PostgreSQL dialect. Skipping query."
+        )
+        return []
+
+    # --- 1. Build Document Filter ---
+    doc_filter_conditions = []
+    if filters:
+        for key, value in filters.items():
+            if hasattr(DocumentRecord, key):
+                column = getattr(DocumentRecord, key)
+                # Handle common filter types (add more as needed)
+                if isinstance(value, (str, int, bool)):
+                    doc_filter_conditions.append(column == value)
+                elif key.endswith("_gte") and isinstance(value, datetime):
+                    actual_key = key[:-4]
+                    if hasattr(DocumentRecord, actual_key):
+                        doc_filter_conditions.append(getattr(DocumentRecord, actual_key) >= value)
+                elif key.endswith("_lte") and isinstance(value, datetime):
+                    actual_key = key[:-4]
+                    if hasattr(DocumentRecord, actual_key):
+                         doc_filter_conditions.append(getattr(DocumentRecord, actual_key) <= value)
+                # Add more complex filter handling here (e.g., IN, JSONB contains)
+            else:
+                logger.warning(f"Ignoring unknown filter key: {key}")
+
+    doc_filter = and_(*doc_filter_conditions) if doc_filter_conditions else sa.true()
+
+    # --- 2. Build Embedding Filter ---
+    embedding_filter_conditions = [
+        DocumentEmbeddingRecord.embedding_model == embedding_model
+    ]
+    if embedding_type_filter:
+        embedding_filter_conditions.append(
+            DocumentEmbeddingRecord.embedding_type.in_(embedding_type_filter)
+        )
+    embedding_filter = and_(*embedding_filter_conditions)
+
+    # --- 3. Vector Search CTE ---
+    # Determine distance operator based on common practice for models (cosine often preferred)
+    # This might need adjustment based on the specific model and index used.
+    # Assuming cosine distance (<=>) for this example.
+    # IMPORTANT: The dimension in cast() MUST match the query_embedding and the index definition
+    # We cannot easily get dimension from model name here, so we rely on the caller providing
+    # a query_embedding with the correct dimension that matches the index being used.
+    # A more robust solution might involve storing dimensions with model names.
+    distance_op = DocumentEmbeddingRecord.embedding.cosine_distance # Example, adjust as needed
+    # distance_op = DocumentEmbeddingRecord.embedding.l2_distance
+    # distance_op = DocumentEmbeddingRecord.embedding.max_inner_product
+
+    vector_subquery = (
+        select(
+            DocumentEmbeddingRecord.id.label("embedding_id"),
+            DocumentEmbeddingRecord.document_id,
+            distance_op(query_embedding).label("distance"),
+        )
+        .join(DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id)
+        .where(doc_filter)
+        .where(embedding_filter)
+        .order_by(literal_column("distance").asc())
+        .limit(limit * 5) # Retrieve more candidates for RRF, adjust multiplier as needed
+        .subquery("vector_subquery") # Use subquery first
     )
-    logger.debug(f"Filters: {filters}, Embedding Types: {embedding_type_filter}")
-    return []  # Placeholder
+
+    vector_results_cte = select(
+        vector_subquery.c.embedding_id,
+        vector_subquery.c.document_id,
+        vector_subquery.c.distance,
+        func.row_number().over(order_by=vector_subquery.c.distance.asc()).label("vec_rank")
+    ).cte("vector_results")
+
+
+    # --- 4. FTS Search CTE (Conditional) ---
+    fts_results_cte = None
+    if keywords:
+        # Use the GIN index expression directly in the query
+        tsvector_col = func.to_tsvector('english', DocumentEmbeddingRecord.content)
+        tsquery = func.plainto_tsquery('english', keywords)
+
+        fts_subquery = (
+            select(
+                DocumentEmbeddingRecord.id.label("embedding_id"),
+                DocumentEmbeddingRecord.document_id,
+                func.ts_rank(tsvector_col, tsquery).label("score"),
+            )
+            .join(DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id)
+            .where(doc_filter)
+            # Optionally apply embedding_filter here too if FTS should be restricted
+            # .where(embedding_filter)
+            .where(DocumentEmbeddingRecord.content != None) # Ensure content exists for FTS
+            .where(tsvector_col.op("@@")(tsquery)) # Use the @@ operator for matching
+            .order_by(literal_column("score").desc())
+            .limit(limit * 5) # Retrieve more candidates for RRF
+            .subquery("fts_subquery")
+        )
+
+        fts_results_cte = select(
+            fts_subquery.c.embedding_id,
+            fts_subquery.c.document_id,
+            fts_subquery.c.score,
+            func.row_number().over(order_by=fts_subquery.c.score.desc()).label("fts_rank")
+        ).cte("fts_results")
+
+
+    # --- 5. Final Query Construction ---
+    final_select_cols = [
+        DocumentEmbeddingRecord.id.label("embedding_id"),
+        DocumentEmbeddingRecord.document_id,
+        DocumentRecord.title,
+        DocumentRecord.source_type,
+        DocumentRecord.source_id,
+        DocumentRecord.source_uri,
+        DocumentRecord.created_at,
+        DocumentRecord.doc_metadata,
+        DocumentEmbeddingRecord.embedding_type,
+        DocumentEmbeddingRecord.content.label("embedding_source_content"),
+        DocumentEmbeddingRecord.chunk_index,
+        vector_results_cte.c.distance,
+        vector_results_cte.c.vec_rank,
+    ]
+
+    # Base query joining documents and embeddings
+    final_query = select(*final_select_cols).select_from(
+        DocumentEmbeddingRecord
+    ).join(
+        DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id
+    )
+
+    # Join with Vector CTE
+    final_query = final_query.join(
+        vector_results_cte,
+        DocumentEmbeddingRecord.id == vector_results_cte.c.embedding_id,
+        isouter=True, # Left join
+    )
+
+    # Conditionally join with FTS CTE and add FTS columns/score
+    if fts_results_cte is not None:
+        final_select_cols.extend([
+            fts_results_cte.c.score.label("fts_score"),
+            fts_results_cte.c.fts_rank,
+        ])
+        final_query = final_query.join(
+            fts_results_cte,
+            DocumentEmbeddingRecord.id == fts_results_cte.c.embedding_id,
+            isouter=True, # Left join
+        )
+        # RRF Score Calculation (k=60 is common default)
+        rrf_score = (
+            func.coalesce(1.0 / (60 + vector_results_cte.c.vec_rank), 0.0) +
+            func.coalesce(1.0 / (60 + fts_results_cte.c.fts_rank), 0.0)
+        ).label("rrf_score")
+        final_select_cols.append(rrf_score)
+        # Filter: Must appear in at least one result set
+        final_query = final_query.where(
+            or_(
+                vector_results_cte.c.embedding_id != None,
+                fts_results_cte.c.embedding_id != None
+            )
+        )
+        final_query = final_query.order_by(rrf_score.desc())
+    else:
+        # If no FTS, just filter by vector results and order by distance
+        final_query = final_query.where(vector_results_cte.c.embedding_id != None)
+        final_query = final_query.order_by(vector_results_cte.c.distance.asc()) # Or vec_rank
+
+    # Apply final limit
+    final_query = final_query.limit(limit)
+
+    # Update the select clause with potentially added columns
+    final_query = final_query.with_only_columns(*final_select_cols)
+
+
+    # --- 6. Execute and Return ---
+    try:
+        async with async_session() as session:
+            logger.debug(f"Executing vector search query: {final_query}")
+            result = await session.execute(final_query)
+            rows = result.mappings().all()
+            logger.info(f"Vector query returned {len(rows)} results.")
+            # Convert RowMappings to plain dicts
+            return [dict(row) for row in rows]
+    except SQLAlchemyError as e:
+        logger.error(f"Database error during vector query: {e}", exc_info=True)
+        # You might want to inspect the compiled query in case of SQL errors:
+        # from sqlalchemy.dialects import postgresql
+        # logger.error(f"Compiled query: {final_query.compile(dialect=postgresql.dialect())}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during vector query: {e}", exc_info=True)
+        raise
 
 
 # Export functions explicitly for clarity when importing elsewhere
@@ -329,8 +674,7 @@ __all__ = [
     "add_embedding",
     "delete_document",
     "query_vectors",
-    "DocumentRecord",  # Export SQLAlchemy model
-    "DocumentEmbeddingRecord",  # Export SQLAlchemy model
-    "Base",  # Export Base if needed for defining other models elsewhere (already exported)
-    "Document",  # Export the protocol (formerly IngestibleDocument)
+    "DocumentRecord",  # Export SQLAlchemy ORM model
+    "DocumentEmbeddingRecord",  # Export SQLAlchemy ORM model
+    "Document",  # Export the protocol
 ]
