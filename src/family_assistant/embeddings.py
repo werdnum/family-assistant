@@ -3,8 +3,20 @@ Module defining the interface and implementations for generating text embeddings
 """
 
 import logging
+import asyncio
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Protocol
+
+# Import sentence-transformers if available, otherwise skip the class definition
+try:
+    from sentence_transformers import SentenceTransformer
+    # sentence-transformers returns numpy arrays or torch tensors, need numpy for conversion
+    import numpy as np
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    SentenceTransformer = None # Define as None to satisfy type checkers if needed
+    np = None # Define as None
 
 from litellm import aembedding
 from litellm.exceptions import (
@@ -131,6 +143,100 @@ class LiteLLMEmbeddingGenerator:
             ) from e
 
 
+# --- Sentence Transformer Implementation (Conditional) ---
+
+if SENTENCE_TRANSFORMERS_AVAILABLE:
+    class SentenceTransformerEmbeddingGenerator:
+        """
+        Embedding generator implementation using the sentence-transformers library
+        for local embedding generation.
+        """
+
+        def __init__(self, model_name_or_path: str, device: Optional[str] = None, **kwargs: Any):
+            """
+            Initializes the SentenceTransformer embedding generator.
+
+            Args:
+                model_name_or_path: The name of a model from HuggingFace Hub (e.g., 'all-MiniLM-L6-v2')
+                                    or a path to a local model directory.
+                device: The device to run the model on (e.g., 'cpu', 'cuda', 'mps'). If None,
+                        sentence-transformers will attempt auto-detection.
+                **kwargs: Additional keyword arguments passed to the SentenceTransformer constructor.
+            """
+            if not model_name_or_path:
+                raise ValueError("SentenceTransformer model name or path cannot be empty.")
+
+            self._model_name = model_name_or_path # Store the identifier used
+            self.model_kwargs = kwargs
+            try:
+                logger.info(f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}")
+                # Ensure SentenceTransformer is not None before calling
+                if SentenceTransformer is None:
+                     raise RuntimeError("SentenceTransformer class is None, library likely not installed.")
+                self.model = SentenceTransformer(model_name_or_path, device=device, **self.model_kwargs)
+                logger.info(f"SentenceTransformer model {model_name_or_path} loaded successfully.")
+            except Exception as e:
+                logger.error(f"Failed to load SentenceTransformer model '{model_name_or_path}': {e}", exc_info=True)
+                raise ValueError(f"Could not load SentenceTransformer model '{model_name_or_path}'") from e
+
+        @property
+        def model_name(self) -> str:
+            # Return the identifier used, which might be a path or a hub name
+            return self._model_name
+
+        async def generate_embeddings(self, texts: List[str]) -> EmbeddingResult:
+            """Generates embeddings using the loaded SentenceTransformer model."""
+            if not texts:
+                logger.warning("generate_embeddings called with empty list of texts.")
+                return EmbeddingResult(embeddings=[], model_name=self.model_name)
+
+            logger.debug(
+                f"Generating embeddings with SentenceTransformer model {self.model_name} for {len(texts)} texts."
+            )
+            try:
+                # sentence-transformers encode is synchronous, run it in an executor
+                # to avoid blocking the asyncio event loop.
+                loop = asyncio.get_running_loop()
+                # The encode method might return numpy arrays or torch tensors depending on config
+                embeddings_np = await loop.run_in_executor(
+                    None, # Use default executor
+                    self.model.encode,
+                    texts,
+                    # convert_to_numpy=True # Ensure numpy output for consistent handling
+                    # Note: convert_to_numpy might not be needed if output is already numpy
+                    # Or handle tensor conversion if necessary
+                )
+
+                # Convert numpy arrays to lists of floats
+                # Ensure np is available due to conditional import
+                if np is None:
+                    raise RuntimeError("Numpy is required but not available.")
+                embeddings_list = [arr.tolist() for arr in embeddings_np]
+
+                logger.debug(
+                    f"SentenceTransformer generated {len(embeddings_list)} embeddings."
+                )
+                return EmbeddingResult(
+                    embeddings=embeddings_list, model_name=self.model_name
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error during SentenceTransformer embedding generation for model {self.model_name}: {e}",
+                    exc_info=True,
+                )
+                # Wrap errors appropriately
+                raise RuntimeError(f"Failed to generate embeddings with SentenceTransformer: {e}") from e
+else:
+    logger.warning(
+        "sentence-transformers library not found. SentenceTransformerEmbeddingGenerator will not be available."
+    )
+    # Define a placeholder if the library is missing, so imports don't break elsewhere
+    # if code explicitly tries to import SentenceTransformerEmbeddingGenerator
+    class SentenceTransformerEmbeddingGenerator:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator.")
+
+
 class MockEmbeddingGenerator:
     """
     A mock embedding generator that returns predefined embeddings based on input text.
@@ -192,5 +298,10 @@ __all__ = [
     "EmbeddingResult",
     "EmbeddingGenerator",
     "LiteLLMEmbeddingGenerator",
+    "SentenceTransformerEmbeddingGenerator", # Add the new class
     "MockEmbeddingGenerator",
 ]
+
+# Conditionally remove SentenceTransformerEmbeddingGenerator from __all__ if not available
+if not SENTENCE_TRANSFORMERS_AVAILABLE:
+    __all__.remove("SentenceTransformerEmbeddingGenerator")
