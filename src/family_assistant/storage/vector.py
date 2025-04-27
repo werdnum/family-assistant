@@ -255,6 +255,7 @@ async def add_document(
 
     Returns:
         The database ID of the added or existing document.
+    """
     engine = get_engine()
     async_session = async_sessionmaker(engine, expire_on_commit=False)
 
