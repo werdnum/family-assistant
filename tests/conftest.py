@@ -117,12 +117,19 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
     async_url = postgres_container.get_connection_url()
     logger.info(f"Creating async engine for test PostgreSQL using URL from container: {async_url.split('@')[-1]}")
     engine = create_async_engine(async_url, echo=False) # Set echo=True for debugging SQL
-
+    patcher = None
     try:
-        # Initialize the main database schema (all tables)
-        logger.info("Initializing main database schema...")
-        await init_db(engine=engine) # Pass the engine explicitly
-        logger.info("Main database schema initialized.")
+        # Patch the global engine used by storage modules to use the PG engine
+        # The patch needs to target where the 'engine' object is *looked up*
+        # by the storage functions (i.e., in storage.base).
+        patcher = patch("family_assistant.storage.base.engine", engine)
+        patcher.start()
+        logger.info("Patched storage.base.engine with PostgreSQL test engine.")
+
+        # Initialize the main database schema (all tables) using the patched engine
+        logger.info("Initializing main database schema on PostgreSQL...")
+        await init_db() # Call without engine argument, relies on patch
+        logger.info("Main database schema initialized on PostgreSQL.")
 
         # Initialize vector-specific components (extension, indexes)
         # This needs to run after tables are created by init_db
@@ -135,6 +142,10 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
         yield engine # Provide the initialized engine to tests
 
     finally:
+        # Cleanup: Stop the patch and dispose the engine
+        if patcher:
+            patcher.stop()
+            logger.info("Restored original storage.base.engine after PG test.")
         logger.info("Disposing PostgreSQL test engine...")
         await engine.dispose()
         logger.info("PostgreSQL test engine disposed.")
