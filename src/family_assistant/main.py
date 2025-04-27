@@ -438,238 +438,8 @@ load_config()
 # Argument parsing will happen inside main()
 
 
-# --- Helper Functions & Context Managers ---
-# typing_notifications moved to TelegramBotHandler
-
-
-# --- Core LLM Interaction Logic (Remains here as it uses many main.py components) ---
-
-
-async def _generate_llm_response_for_chat(
-    db_context: DatabaseContext, # Added db_context
-    processing_service: ProcessingService,
-    application: Application,
-    chat_id: int,
-    trigger_content_parts: List[Dict[str, Any]],
-    user_name: str,
-) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
-    """
-    Prepares context, message history, calls the ProcessingService, and returns the response.
-
-    Args:
-        db_context: The database context to use for storage operations.
-        processing_service: The processing service instance.
-        application: The Telegram application instance.
-        chat_id: The target chat ID.
-        trigger_content_parts: List of content parts for the triggering message.
-        user_name: The user name to format into the system prompt.
-
-    Returns:
-        A tuple: (LLM response string or None, List of tool call info dicts or None).
-    """
-    logger.debug(
-        f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
-    )
-
-    # --- History and Context Preparation ---
-    messages: List[Dict[str, Any]] = []
-    try:
-        history_messages = await storage.get_recent_history( # Use storage directly with context
-            db_context=db_context, # Pass context
-            chat_id=chat_id,
-            limit=MAX_HISTORY_MESSAGES,
-            max_age=timedelta(hours=HISTORY_MAX_AGE_HOURS),
-        )
-    except Exception as hist_err:
-        logger.error(f"Failed to get message history for chat {chat_id}: {hist_err}", exc_info=True)
-        history_messages = [] # Continue with empty history on error
-
-
-    # Process history messages, formatting assistant tool calls correctly
-    for msg in history_messages:
-        if msg["role"] == "assistant" and "tool_calls_info_raw" in msg:
-            # Construct the 'tool_calls' structure expected by LiteLLM/OpenAI
-            # from the stored 'tool_calls_info_raw'
-            reformatted_tool_calls = []
-            raw_info_list = msg.get("tool_calls_info_raw", [])
-            if isinstance(raw_info_list, list):  # Ensure it's a list
-                for raw_call in raw_info_list:
-                    # Assuming raw_call is a dict like:
-                    # {'call_id': '...', 'function_name': '...', 'arguments': {...}, 'response_content': '...'}
-                    if isinstance(raw_call, dict):
-                        reformatted_tool_calls.append(
-                            {
-                                "id": raw_call.get(
-                                    "call_id", f"call_{uuid.uuid4()}"
-                                ),  # Generate ID if missing
-                                "type": "function",
-                                "function": {
-                                    "name": raw_call.get(
-                                        "function_name", "unknown_tool"
-                                    ),
-                                    # Arguments should already be a JSON string or dict from storage
-                                    "arguments": (
-                                        json.dumps(raw_call.get("arguments", {}))
-                                        if isinstance(raw_call.get("arguments"), dict)
-                                        else raw_call.get("arguments", "{}")
-                                    ),
-                                },
-                            }
-                        )
-                        # Also need to append the corresponding tool response message
-                        # The history mechanism currently stores this *within* the assistant message's info block.
-                        # We need separate 'assistant' (with tool_calls) and 'tool' messages.
-                        # Let's adjust history storage/retrieval or formatting here.
-
-                        # OPTION 1 (Simpler formatting here): Append tool response immediately after
-                        messages.append(
-                            {
-                                "role": "assistant",
-                                "content": msg.get(
-                                    "content"
-                                ),  # Include original content if any
-                                "tool_calls": reformatted_tool_calls,
-                            }
-                        )
-                        # Now append the corresponding tool result message for each call
-                        for raw_call in raw_info_list:
-                            if isinstance(raw_call, dict):
-                                messages.append(
-                                    {
-                                        "role": "tool",
-                                        "tool_call_id": raw_call.get(
-                                            "call_id", "missing_id"
-                                        ),
-                                        "content": raw_call.get(
-                                            "response_content",
-                                            "Error: Missing tool response content",
-                                        ),
-                                    }
-                                )
-                    else:
-                        logger.warning(
-                            f"Skipping non-dict item in raw_tool_calls_info: {raw_call}"
-                        )
-            else:
-                logger.warning(
-                    f"Expected list for raw_tool_calls_info, got {type(raw_info_list)}. Skipping tool call reconstruction."
-                )
-            # Skip adding the original combined message dictionary 'msg' as we added parts separately
-        else:
-            # Add regular user or assistant messages (without tool calls)
-            messages.append({"role": msg["role"], "content": msg["content"]})
-
-    # messages.extend(history_messages) # Removed this line, processing is now done above
-    logger.debug(
-        f"Processed {len(history_messages)} DB history messages into LLM format."
-    )
-
-    # --- Prepare System Prompt Context ---
-    system_prompt_template = PROMPTS.get(
-        "system_prompt", "You are a helpful assistant. Current time is {current_time}."
-    )
-    try:
-        local_tz = pytz.timezone(TIMEZONE_STR)
-        current_local_time = datetime.now(local_tz)
-        current_time_str = current_local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
-    except Exception as tz_err:
-        logger.error(
-            f"Error applying timezone {TIMEZONE_STR}: {tz_err}. Defaulting time format."
-        )
-        current_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-    calendar_context_str = ""
-    if CALENDAR_CONFIG:
-        try:
-            upcoming_events = await calendar_integration.fetch_upcoming_events(
-                CALENDAR_CONFIG
-            )
-            today_events_str, future_events_str = (
-                calendar_integration.format_events_for_prompt(upcoming_events, PROMPTS)
-            )
-            calendar_header_template = PROMPTS.get(
-                "calendar_context_header",
-                "{today_tomorrow_events}\n{next_two_weeks_events}",
-            )
-            calendar_context_str = calendar_header_template.format(
-                today_tomorrow_events=today_events_str,
-                next_two_weeks_events=future_events_str,
-            ).strip()
-        except Exception as cal_err:
-            logger.error(
-                f"Failed to fetch or format calendar events: {cal_err}", exc_info=True
-            )
-            calendar_context_str = f"Error retrieving calendar events: {str(cal_err)}"
-    else:
-        calendar_context_str = "Calendar integration not configured."
-
-    notes_context_str = ""
-    try:
-        all_notes = await storage.get_all_notes(db_context=db_context) # Use storage directly with context
-        if all_notes:
-            notes_list_str = ""
-            note_item_format = PROMPTS.get("note_item_format", "- {title}: {content}")
-            for note in all_notes:
-                notes_list_str += (
-                    note_item_format.format(
-                        title=note["title"], content=note["content"]
-                    )
-                    + "\n"
-                )
-            notes_context_header_template = PROMPTS.get(
-                "notes_context_header", "Relevant notes:\n{notes_list}"
-            )
-            notes_context_str = notes_context_header_template.format(
-                notes_list=notes_list_str.strip()
-            )
-        else:
-            notes_context_str = PROMPTS.get("no_notes", "No notes available.")
-    except Exception as note_err:
-        logger.error(f"Failed to get notes for context: {note_err}", exc_info=True)
-        notes_context_str = "Error retrieving notes."
-
-    final_system_prompt = system_prompt_template.format(
-        user_name=user_name,
-        current_time=current_time_str,
-        calendar_context=calendar_context_str,
-        notes_context=notes_context_str,
-    ).strip()
-
-    if final_system_prompt:
-        messages.insert(0, {"role": "system", "content": final_system_prompt})
-        logger.debug("Prepended system prompt to LLM messages.")
-    else:
-        logger.warning("Generated empty system prompt.")
-
-    # --- Add the triggering message content ---
-    # Note: For callbacks, the role might ideally be 'system' or a specific 'callback' role,
-    # but using 'user' is often necessary for the LLM to properly attend to it as the primary input.
-    # If LLM behavior is odd, consider experimenting with the role here.
-    trigger_message = {
-        "role": "user",  # Treat trigger as user input for processing flow
-        "content": trigger_content_parts,
-    }
-    messages.append(trigger_message)
-    logger.debug(f"Appended trigger message to LLM history: {trigger_message}")
-
-    # --- Call Processing Service ---
-    # Tool definitions are now fetched inside process_message
-    try:
-        # Call the process_message method, passing db_context and application instance
-        llm_response_content, tool_info = await processing_service.process_message(
-            db_context=db_context, # Pass context
-            messages=messages,
-            chat_id=chat_id,
-            application=application,
-        )
-        return llm_response_content, tool_info
-    except Exception as e:
-        logger.error(
-            f"Error during ProcessingService interaction for chat {chat_id}: {e}",
-            exc_info=True,
-        )
-        # Return None for both parts on error
-        return None, None
+# --- Core LLM Interaction Logic (Moved to ProcessingService) ---
+# _generate_llm_response_for_chat moved
 
 
 # --- Telegram Bot Handlers (Moved to TelegramBotHandler) ---
@@ -790,9 +560,15 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,  # Inject the composite provider
+        # Pass configuration needed for context building
+        prompts=PROMPTS,
+        calendar_config=CALENDAR_CONFIG,
+        timezone_str=TIMEZONE_STR,
+        max_history_messages=MAX_HISTORY_MESSAGES,
+        history_max_age_hours=HISTORY_MAX_AGE_HOURS,
     )
     logger.info(
-        f"ProcessingService initialized with {type(llm_client).__name__} and {type(composite_provider).__name__}."
+        f"ProcessingService initialized with {type(llm_client).__name__}, {type(composite_provider).__name__} and configuration."
     )
 
     # --- Telegram Application Setup ---
@@ -807,7 +583,7 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
         application=application,
         allowed_chat_ids=ALLOWED_CHAT_IDS,
         developer_chat_id=DEVELOPER_CHAT_ID,
-        generate_llm_response_func=_generate_llm_response_for_chat, # Pass the helper function
+        processing_service=processing_service, # Pass the service instance
         get_db_context_func=get_db_context, # Pass the context getter
     )
     telegram_bot_handler.register_handlers() # Register handlers from the class
