@@ -207,23 +207,28 @@ class DatabaseContext:
         if self.conn is None:
             raise RuntimeError("No active database connection")
 
-        # Check if we're in a transaction already
+        # Check if we're in a transaction already managed by this context instance
         was_in_transaction = self._in_transaction
 
         if not was_in_transaction:
+            # Only begin a transaction if this context instance isn't already managing one.
+            # This allows calling execute_and_commit within an explicit transaction block.
             await self.begin()
 
         try:
             result = await self.execute_with_retry(query, params)
 
             if not was_in_transaction:
+                # Only commit if this specific call started the transaction.
                 await self.commit()
 
             return result
         except Exception:
             if not was_in_transaction:
+                # Only rollback if this specific call started the transaction.
+                # If called within an outer transaction, let the outer handler manage rollback.
                 await self.rollback()
-            raise
+            raise # Re-raise the exception regardless
 
 
 # Convenience function to create a database context
