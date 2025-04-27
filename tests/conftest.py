@@ -85,10 +85,11 @@ def postgres_container():
     logger.info(f"Attempting to start PostgreSQL container with image: {image}")
     logger.info(f"Using Docker configuration from environment (DOCKER_HOST={os.getenv('DOCKER_HOST', 'Not Set')})")
     try:
-        with PostgresContainer(image=image) as container:
+        # Specify the asyncpg driver directly
+        with PostgresContainer(image=image, driver="asyncpg") as container:
             # Attempt to connect to check readiness early
             container.get_container_host_ip()
-            logger.info("PostgreSQL container started successfully.")
+            logger.info("PostgreSQL container started successfully with asyncpg driver configuration.")
             yield container
         logger.info("PostgreSQL container stopped.")
     except docker.errors.DockerException as e:
@@ -112,11 +113,9 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
     Creates an AsyncEngine connected to the test PostgreSQL container,
     initializes the schema (including vector components), and yields the engine.
     """
-    # Get sync connection URL and adapt for asyncpg
-    sync_url = postgres_container.get_connection_url()
-    # Replace postgresql:// with postgresql+asyncpg://
-    async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    logger.info(f"Creating async engine for test PostgreSQL: {async_url.split('@')[-1]}")
+    # Get the connection URL directly from the container (should include +asyncpg)
+    async_url = postgres_container.get_connection_url()
+    logger.info(f"Creating async engine for test PostgreSQL using URL from container: {async_url.split('@')[-1]}")
     engine = create_async_engine(async_url, echo=False) # Set echo=True for debugging SQL
 
     try:
