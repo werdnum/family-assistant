@@ -283,7 +283,7 @@ async def add_document(
         ).returning(DocumentRecord.id)
 
     try:
-        # Use execute_with_retry for the upsert operation
+        # Use execute_with_retry as commit is handled by context manager
         result = await db_context.execute_with_retry(stmt)
         doc_id = result.scalar_one() # Get the inserted or existing ID
         logger.info(
