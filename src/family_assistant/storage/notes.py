@@ -77,36 +77,70 @@ async def get_note_by_title(db_context: DatabaseContext, title: str) -> Optional
 
 
 async def add_or_update_note(db_context: DatabaseContext, title: str, content: str) -> str:
-    """Adds a new note or updates an existing note with the given title."""
-    try:
-        # Check if note exists first (within the same transaction context if possible)
-        # Note: fetch_one doesn't participate in the outer transaction automatically
-        # A better approach might be to use INSERT ... ON CONFLICT DO UPDATE if using PostgreSQL
-        # For cross-DB compatibility, check then insert/update.
-        # We'll use execute_and_commit which handles the transaction.
+    """Adds a new note or updates an existing note with the given title (upsert)."""
+    now = datetime.now(timezone.utc)
 
-        select_stmt = select(notes_table.c.id).where(notes_table.c.title == title)
-        existing_note = await db_context.fetch_one(select_stmt) # Check outside transaction for simplicity here
+    if db_context.engine.dialect.name == "postgresql":
+        # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
+        try:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        now = datetime.now(timezone.utc)
-        if existing_note:
-            stmt = (
-                update(notes_table)
-                .where(notes_table.c.title == title)
-                .values(content=content, updated_at=now)
-            )
-            logger.info(f"Updating note: {title}")
-        else:
-            stmt = insert(notes_table).values(
+            stmt = pg_insert(notes_table).values(
                 title=title, content=content, created_at=now, updated_at=now
             )
-            logger.info(f"Inserting new note: {title}")
+            # Define columns to update on conflict
+            update_dict = {
+                "content": stmt.excluded.content,
+                "updated_at": stmt.excluded.updated_at,
+            }
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["title"],  # The unique constraint column
+                set_=update_dict,
+            )
+            # Use execute_with_retry as commit is handled by context manager
+            await db_context.execute_with_retry(stmt)
+            logger.info(f"Successfully added/updated note: {title} (using ON CONFLICT)")
+            return "Success"
+        except SQLAlchemyError as e:
+            logger.error(f"PostgreSQL error in add_or_update_note({title}): {e}", exc_info=True)
+            raise
 
-        await db_context.execute_and_commit(stmt)
-        return "Success"
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in add_or_update_note({title}): {e}", exc_info=True)
-        raise
+    else:
+        # Fallback for SQLite and other dialects: Try INSERT, then UPDATE on IntegrityError.
+        # The surrounding DatabaseContext handles the overall transaction commit/rollback.
+        try:
+            # Attempt INSERT first
+            insert_stmt = insert(notes_table).values(
+                title=title, content=content, created_at=now, updated_at=now
+            )
+            await db_context.execute_with_retry(insert_stmt)
+            logger.info(f"Inserted new note: {title} (SQLite fallback)")
+            return "Success"
+        except SQLAlchemyError as e:
+            # Check specifically for unique constraint violation (IntegrityError in SQLAlchemy)
+            # Adapt the check based on specific driver if needed, but IntegrityError is common
+            from sqlalchemy.exc import IntegrityError
+            if isinstance(e, IntegrityError) or (isinstance(e.orig, Exception) and "UNIQUE constraint failed" in str(e.orig)):
+                logger.info(f"Note '{title}' already exists (SQLite fallback), attempting update.")
+                # Perform UPDATE if INSERT failed due to unique constraint
+                update_stmt = (
+                    update(notes_table)
+                    .where(notes_table.c.title == title)
+                    .values(content=content, updated_at=now)
+                )
+                # Execute update within the same transaction context
+                result = await db_context.execute_with_retry(update_stmt)
+                if result.rowcount == 0:
+                    # This could happen if the note was deleted between the failed INSERT and this UPDATE
+                    logger.error(f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently.")
+                    # Re-raise the original error or a custom one
+                    raise RuntimeError(f"Failed to update note '{title}' after insert conflict.")
+                logger.info(f"Updated note: {title} (SQLite fallback)")
+                return "Success"
+            else:
+                # Re-raise other SQLAlchemy errors
+                logger.error(f"Database error during INSERT in add_or_update_note({title}) (SQLite fallback): {e}", exc_info=True)
+                raise e
 
 
 async def delete_note(db_context: DatabaseContext, title: str) -> bool:
