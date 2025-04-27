@@ -44,12 +44,14 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest",
     "pytest-asyncio",
     "aiosqlite",         # Add async SQLite driver for testing
     "httpx",             # Add HTTP client for future API tests
     "pytest-mock",       # Add mocking library (or use unittest.mock)
     "testcontainers[postgres]>=3.7.1", # Add testcontainers with postgres extra
-    "psycopg-binary>=3.1.0", # Add PostgreSQL driver (binary version for ease)
+    "asyncpg>=0.29.0",   # Ensure asyncpg is explicitly in dev dependencies
+    "psycopg-binary>=3.1.0", # Add PostgreSQL driver (binary version for ease) - keep for now, might be needed by testcontainers itself?
     "pylint>=3.0.0", # Moved pylint here
     # "ruff", # Consider adding ruff later if desired
     "poethepoet>=0.11.0", # Add poe the poet task runner
