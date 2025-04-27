@@ -126,18 +126,20 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
         patcher.start()
         logger.info("Patched storage.base.engine with PostgreSQL test engine.")
 
-        # Initialize the main database schema (all tables) using the patched engine
-        logger.info("Initializing main database schema on PostgreSQL...")
-        await init_db() # Call without engine argument, relies on patch
-        logger.info("Main database schema initialized on PostgreSQL.")
-
-        # Initialize vector-specific components (extension, indexes)
-        # This needs to run after tables are created by init_db
-        logger.info("Initializing vector database components...")
+        # --- Ensure Vector Extension Exists FIRST ---
+        # Initialize vector-specific components (extension, indexes) BEFORE creating tables
+        logger.info("Initializing vector database components (extension, indexes)...")
         # Use DatabaseContext to manage transaction for init_vector_db
+        # We use the test engine directly here for this initial setup step.
         async with DatabaseContext(engine=engine) as db_context:
             await init_vector_db(db_context)
         logger.info("Vector database components initialized.")
+
+        # --- Initialize the main database schema (all tables) ---
+        # Now that the vector extension exists, create all tables using the patched engine
+        logger.info("Initializing main database schema on PostgreSQL...")
+        await init_db() # Call without engine argument, relies on patch
+        logger.info("Main database schema initialized on PostgreSQL.")
 
         yield engine # Provide the initialized engine to tests
 
