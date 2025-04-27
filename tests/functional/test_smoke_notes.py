@@ -7,8 +7,8 @@ from sqlalchemy import text  # To query DB directly for assertion
 from typing import List, Dict, Any, Optional, Callable, Tuple # Added typing imports
 from unittest.mock import MagicMock  # For mocking Application
 
-# Import the function we want to test directly
-from family_assistant.main import _generate_llm_response_for_chat
+# _generate_llm_response_for_chat was moved to ProcessingService
+# from family_assistant.main import _generate_llm_response_for_chat
 
 # Import DatabaseContext and getter
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -124,12 +124,24 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     # Eagerly fetch definitions (optional in test, but good practice)
     await composite_provider.get_tool_definitions()
 
-    # Processing Service
+    # Processing Service - Add dummy config values needed by the new __init__
+    dummy_prompts = {"system_prompt": "Test system prompt."}
+    dummy_calendar_config = {}
+    dummy_timezone_str = "UTC"
+    dummy_max_history = 5
+    dummy_history_age = 24
+
     processing_service = ProcessingService(
-        llm_client=llm_client, tools_provider=composite_provider
+        llm_client=llm_client,
+        tools_provider=composite_provider,
+        prompts=dummy_prompts,
+        calendar_config=dummy_calendar_config,
+        timezone_str=dummy_timezone_str,
+        max_history_messages=dummy_max_history,
+        history_max_age_hours=dummy_history_age,
     )
     logger.info(
-        f"Instantiated ProcessingService with {type(llm_client).__name__} and {type(composite_provider).__name__}"
+        f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__} and dummy config"
     )
 
     # Mock Application instance needed for ToolExecutionContext
@@ -144,10 +156,10 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     # Create a DatabaseContext using the test engine provided by the fixture
     # Note: test_db_engine fixture comes from the root conftest.py
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        # Call the core logic function directly, passing the db_context and ProcessingService
-        add_response_content, add_tool_info = await _generate_llm_response_for_chat(
+        # Call the method on the ProcessingService instance
+        add_response_content, add_tool_info = await processing_service.generate_llm_response_for_chat(
             db_context=db_context, # Pass the context
-            processing_service=processing_service,
+            # processing_service argument removed
             application=mock_application,
             chat_id=TEST_CHAT_ID,
             trigger_content_parts=add_note_trigger,
@@ -199,11 +211,11 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
 
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        # Call the core logic again, passing the db_context and ProcessingService
+        # Call the method on the ProcessingService instance again
         retrieve_response_content, retrieve_tool_info = (
-            await _generate_llm_response_for_chat(
+            await processing_service.generate_llm_response_for_chat(
                 db_context=db_context, # Pass the context
-                processing_service=processing_service,
+                # processing_service argument removed
                 application=mock_application,
                 chat_id=TEST_CHAT_ID,
                 trigger_content_parts=retrieve_note_trigger,
