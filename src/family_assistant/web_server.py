@@ -115,20 +115,21 @@ async def save_note(
     title: str = Form(...),
     content: str = Form(...),
     original_title: Optional[str] = Form(None),
+    db_context: DatabaseContext = Depends(get_db) # Add dependency
 ):
     """Handles saving a new or updated note."""
     try:
         if original_title and original_title != title:
             # Title changed - need to delete old and add new (or implement rename)
             # Simple approach: delete old, add new
-            await delete_note(original_title)
-            await add_or_update_note(title, content)
+            await delete_note(db_context, original_title) # Pass context
+            await add_or_update_note(db_context, title, content) # Pass context
             logger.info(
                 f"Renamed note '{original_title}' to '{title}' and updated content."
             )
         else:
             # New note or updating existing without title change
-            await add_or_update_note(title, content)
+            await add_or_update_note(db_context, title, content) # Pass context
             logger.info(f"Saved note: {title}")
         return RedirectResponse(url="/", status_code=303)  # Redirect back to list
     except Exception as e:
