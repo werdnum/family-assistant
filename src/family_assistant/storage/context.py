@@ -51,59 +51,37 @@ class DatabaseContext:
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.conn: Optional[AsyncConnection] = None
-        self._in_transaction = False
+        # Remove _in_transaction flag
 
     async def __aenter__(self) -> "DatabaseContext":
-        """Enter the async context manager, establishing a database connection."""
+        """Enter the async context manager, starting a transaction."""
         if self.conn is not None:
+            # This shouldn't happen if used correctly with 'async with'
             raise RuntimeError("DatabaseContext is not reentrant")
 
-        self.conn = await self.engine.connect()
+        # engine.begin() starts a transaction and returns a connection
+        self.conn = await self.engine.begin()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Exit the async context manager, closing the database connection."""
-        if self.conn is not None:
-            if self._in_transaction:
-                # If we're still in a transaction, roll it back
-                await self.conn.rollback()
-                self._in_transaction = False
+        """Exit the async context manager, committing or rolling back the transaction."""
+        if self.conn is None:
+            # This shouldn't happen if __aenter__ succeeded
+            return
 
+        try:
+            if exc_type is None:
+                # No exception, commit the transaction
+                await self.conn.commit()
+            else:
+                # An exception occurred, roll back the transaction
+                await self.conn.rollback()
+        finally:
+            # Always close the connection associated with the transaction
             await self.conn.close()
             self.conn = None
 
-    async def begin(self):
-        """Begin a transaction."""
-        if self.conn is None:
-            raise RuntimeError("No active database connection")
-
-        if self._in_transaction:
-            raise RuntimeError("Already in a transaction")
-
-        await self.conn.begin()
-        self._in_transaction = True
-
-    async def commit(self):
-        """Commit the current transaction."""
-        if self.conn is None:
-            raise RuntimeError("No active database connection")
-
-        if not self._in_transaction:
-            raise RuntimeError("Not in a transaction")
-
-        await self.conn.commit()
-        self._in_transaction = False
-
-    async def rollback(self):
-        """Roll back the current transaction."""
-        if self.conn is None:
-            raise RuntimeError("No active database connection")
-
-        if not self._in_transaction:
-            raise RuntimeError("Not in a transaction")
-
-        await self.conn.rollback()
-        self._in_transaction = False
+    # Removed begin, commit, rollback methods
 
     async def execute_with_retry(
         self,
@@ -151,7 +129,7 @@ class DatabaseContext:
                 logger.error(f"Non-retryable error: {e}", exc_info=True)
                 raise
 
-        # This should never happen as we raise inside the loop on max retries
+        # This should ideally not be reached if retry logic works
         raise RuntimeError("Database operation failed after multiple retries")
 
     async def fetch_all(
@@ -188,50 +166,13 @@ class DatabaseContext:
         row = result.fetchone()
         return row._mapping if row else None
 
-    async def execute_and_commit(
-        self,
-        query: Union[Insert, Update, Delete, TextClause],
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Result:
-        """
-        Execute a query and commit the transaction, with retry logic.
-        This opens a new transaction if one is not already in progress.
-
-        Args:
-            query: The SQLAlchemy query to execute.
-            params: Optional parameters for the query.
-
-        Returns:
-            The SQLAlchemy Result object.
-        """
-        if self.conn is None:
-            raise RuntimeError("No active database connection")
-
-        # Check if we're in a transaction already managed by this context instance
-        was_in_transaction = self._in_transaction
-
-        if not was_in_transaction:
-            # Only begin a transaction if this context instance isn't already managing one.
-            # This allows calling execute_and_commit within an explicit transaction block.
-            await self.begin()
-
-        try:
-            result = await self.execute_with_retry(query, params)
-
-            if not was_in_transaction:
-                # Only commit if this specific call started the transaction.
-                await self.commit()
-
-            return result
-        except Exception:
-            if not was_in_transaction:
-                # Only rollback if this specific call started the transaction.
-                # If called within an outer transaction, let the outer handler manage rollback.
-                await self.rollback()
-            raise # Re-raise the exception regardless
+    # Removed execute_and_commit method
 
 
 # Convenience function to create a database context
+# This function is now less useful as DatabaseContext manages its own transaction
+# via __aenter__/__aexit__. Callers should instantiate DatabaseContext directly.
+# Keeping it for now but marking as potentially deprecated or for removal.
 async def get_db_context(
     engine: Optional[AsyncEngine] = None, max_retries: int = 3, base_delay: float = 0.5
 ) -> DatabaseContext:

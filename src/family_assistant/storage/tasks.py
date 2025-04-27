@@ -94,7 +94,8 @@ async def enqueue_task(
 
     try:
         stmt = insert(tasks_table).values(**values_to_insert)
-        await db_context.execute_and_commit(stmt)
+        # Use execute_with_retry as commit is handled by context manager
+        await db_context.execute_with_retry(stmt)
         logger.info(
             f"Enqueued task {task_id} (Type: {task_type}, Original: {values_to_insert.get('original_task_id')}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
         )
@@ -122,10 +123,9 @@ async def dequeue_task(
     now = datetime.now(timezone.utc)
 
     # This operation needs to be atomic (SELECT FOR UPDATE + UPDATE)
-    # DatabaseContext doesn't directly expose SELECT FOR UPDATE easily with retry.
-    # We'll perform this within an explicit transaction managed by the context.
+    # The transaction is now managed by the DatabaseContext context manager itself.
     try:
-        await db_context.begin() # Start transaction
+        # No need to call db_context.begin() here
 
         stmt = (
             select(tasks_table)
@@ -160,7 +160,7 @@ async def dequeue_task(
             update_result = await db_context.execute_with_retry(update_stmt)
 
             if update_result.rowcount == 1:
-                await db_context.commit() # Commit the transaction
+                # No need to call db_context.commit() here, context manager handles it
                 logger.info(
                     f"Worker {worker_id} dequeued task {task_row.task_id}"
                 )
@@ -170,22 +170,19 @@ async def dequeue_task(
                 logger.warning(
                     f"Worker {worker_id} failed to lock task {task_row.task_id} after selection (rowcount={update_result.rowcount}). Rolling back."
                 )
-                await db_context.rollback()
+                # No need to call db_context.rollback() here, context manager handles it on exit if error occurred
                 return None
         else:
-            await db_context.rollback() # Rollback if no task found
+            # No need to call db_context.rollback() here, context manager handles it on exit
             return None # No suitable task found
 
     except SQLAlchemyError as e:
         logger.error(f"Database error in dequeue_task: {e}", exc_info=True)
-        # Ensure rollback happens on error if transaction was started
-        if db_context._in_transaction: # Check internal flag (use with caution)
-             await db_context.rollback()
+        # Rollback is handled by the context manager's __aexit__ on exception
         raise
     except Exception as e:
         logger.error(f"Unexpected error in dequeue_task: {e}", exc_info=True)
-        if db_context._in_transaction:
-             await db_context.rollback()
+        # Rollback is handled by the context manager's __aexit__ on exception
         raise
 
 
@@ -206,7 +203,8 @@ async def update_task_status(
             .where(tasks_table.c.task_id == task_id)
             .values(**values_to_update)
         )
-        result = await db_context.execute_and_commit(stmt)
+        # Use execute_with_retry as commit is handled by context manager
+        result = await db_context.execute_with_retry(stmt)
         if result.rowcount > 0:
             logger.info(f"Updated task {task_id} status to {status}.")
             return True
@@ -247,7 +245,8 @@ async def reschedule_task_for_retry(
                 locked_at=None,
             )
         )
-        result = await db_context.execute_and_commit(stmt)
+        # Use execute_with_retry as commit is handled by context manager
+        result = await db_context.execute_with_retry(stmt)
         if result.rowcount > 0:
             logger.info(
                 f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
