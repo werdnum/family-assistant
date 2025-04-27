@@ -2,6 +2,7 @@
 Handles the indexing process for emails stored in the database.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 from datetime import datetime
