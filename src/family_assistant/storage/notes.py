@@ -113,7 +113,8 @@ async def delete_note(db_context: DatabaseContext, title: str) -> bool:
     """Deletes a note by title."""
     try:
         stmt = delete(notes_table).where(notes_table.c.title == title)
-        result = await db_context.execute_and_commit(stmt)
+        # Use execute_with_retry as commit is handled by context manager
+        result = await db_context.execute_with_retry(stmt)
         deleted_count = result.rowcount
         if deleted_count > 0:
             logger.info(f"Deleted note: {title}")

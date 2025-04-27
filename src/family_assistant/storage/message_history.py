@@ -61,7 +61,8 @@ async def add_message_to_history(
             content=content,
             tool_calls_info=tool_calls_info,
         )
-        await db_context.execute_and_commit(stmt)
+        # Use execute_with_retry as commit is handled by context manager
+        await db_context.execute_with_retry(stmt)
         logger.debug(
             f"Added message {message_id} from chat {chat_id} to history."
         )

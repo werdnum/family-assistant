@@ -187,13 +187,14 @@ async def init_vector_db(db_context: DatabaseContext):
     if db_context.engine.dialect.name == "postgresql":
         logger.info("PostgreSQL dialect detected. Initializing vector extension and indexes...")
         try:
-            # Use execute_and_commit for DDL statements within the context
-            await db_context.execute_and_commit(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            # Use execute_with_retry for DDL statements within the context
+            # Commit/rollback is handled by the context manager (__aexit__)
+            await db_context.execute_with_retry(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
             logger.info("Ensured 'vector' extension exists.")
 
             # Example: Create the specific partial index for gemini-exp-03-07
             # Note: Indexes might error if they already exist, add IF NOT EXISTS or handle errors
-            await db_context.execute_and_commit(
+            await db_context.execute_with_retry(
                 sa.text(
                     """
                 CREATE INDEX IF NOT EXISTS idx_doc_embeddings_gemini_1536_hnsw_cos ON document_embeddings
@@ -206,7 +207,7 @@ async def init_vector_db(db_context: DatabaseContext):
             logger.info("Ensured HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos exists.")
 
             # Also create the FTS index here
-            await db_context.execute_and_commit(
+            await db_context.execute_with_retry(
                 sa.text(
                     """
                 CREATE INDEX IF NOT EXISTS idx_doc_embeddings_content_fts_gin ON document_embeddings
@@ -391,8 +392,8 @@ async def add_embedding(
         )
 
     try:
-        # Use execute_and_commit for atomicity
-        await db_context.execute_and_commit(stmt)
+        # Use execute_with_retry as commit is handled by context manager
+        await db_context.execute_with_retry(stmt)
         logger.info(
             f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
         )
@@ -413,7 +414,8 @@ async def delete_document(db_context: DatabaseContext, document_id: int) -> bool
     """
     try:
         stmt = delete(DocumentRecord).where(DocumentRecord.id == document_id)
-        result = await db_context.execute_and_commit(stmt)
+        # Use execute_with_retry as commit is handled by context manager
+        result = await db_context.execute_with_retry(stmt)
         deleted_count = result.rowcount
         if deleted_count > 0:
             logger.info(

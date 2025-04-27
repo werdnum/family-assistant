@@ -147,7 +147,8 @@ async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[str,
     # --- Actual Database Insertion ---
     try:
         stmt = insert(received_emails_table).values(**parsed_data_filtered)
-        await db_context.execute_and_commit(stmt)
+        # Use execute_with_retry as commit is handled by context manager
+        await db_context.execute_with_retry(stmt)
         logger.info(
             f"Stored email with Message-ID: {parsed_data_filtered['message_id_header']}"
         )
