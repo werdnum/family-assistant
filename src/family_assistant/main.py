@@ -7,14 +7,16 @@ import argparse
 import asyncio
 import contextlib
 import html
+
 # import io # Moved to telegram_bot.py
 import json
 import logging
+
 # import base64 # Moved to telegram_bot.py
 import os
 import signal
 import sys
-import traceback # Keep for error handler if needed elsewhere, or remove if only used in bot's handler
+import traceback  # Keep for error handler if needed elsewhere, or remove if only used in bot's handler
 import uuid
 import yaml
 import mcp  # Import MCP
@@ -26,6 +28,7 @@ from typing import Optional, List, Dict, Any, Tuple  # Added Tuple
 
 import pytz  # Added for timezone handling
 from dotenv import load_dotenv
+
 # from telegram import Update # No longer needed here
 # from telegram.constants import ChatAction, ParseMode # Moved to telegram_bot.py
 # from telegram.ext import ( # No longer needed here
@@ -83,13 +86,16 @@ from family_assistant.storage import (
 
 # Import the whole storage module for task queue functions etc.
 from family_assistant import storage
-from family_assistant.storage.context import DatabaseContext, get_db_context # Import DatabaseContext and getter
+from family_assistant.storage.context import (
+    DatabaseContext,
+    get_db_context,
+)  # Import DatabaseContext and getter
 
 # Import calendar functions
 from family_assistant import calendar_integration
 
 # Import the Telegram service class
-from .telegram_bot import TelegramService # Updated import
+from .telegram_bot import TelegramService  # Updated import
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -447,11 +453,13 @@ load_config()
 
 
 # --- Signal Handlers ---
-async def shutdown_handler(signal_name: str, telegram_service: Optional[TelegramService]): # Accept service instance
+async def shutdown_handler(
+    signal_name: str, telegram_service: Optional[TelegramService]
+):  # Accept service instance
     """Initiates graceful shutdown."""
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
     # Ensure the event is set to signal other parts of the application
-    if not shutdown_event.is_set(): # Check before setting
+    if not shutdown_event.is_set():  # Check before setting
         shutdown_event.set()
     # Ensure the event is set to signal other parts of the application
     if not shutdown_event.is_set():
@@ -477,10 +485,9 @@ async def shutdown_handler(signal_name: str, telegram_service: Optional[Telegram
     # Option 1: Make telegram_service global (less ideal)
     # Stop Telegram polling via the passed service instance
     if telegram_service:
-         await telegram_service.stop_polling()
+        await telegram_service.stop_polling()
     else:
-         logger.warning("TelegramService instance was None during shutdown.")
-
+        logger.warning("TelegramService instance was None during shutdown.")
 
     # Uvicorn server shutdown is handled in main_async when shutdown_event is set
 
@@ -501,7 +508,9 @@ def reload_config_handler(signum, frame):
 
 
 # --- Main Application Setup & Run ---
-async def main_async(cli_args: argparse.Namespace) -> Optional[TelegramService]: # Return service instance or None
+async def main_async(
+    cli_args: argparse.Namespace,
+) -> Optional[TelegramService]:  # Return service instance or None
     """Initializes and runs the bot application."""
     # global application # Removed
     logger.info(f"Using model: {cli_args.model}")  # Use cli_args
@@ -630,7 +639,7 @@ async def main_async(cli_args: argparse.Namespace) -> Optional[TelegramService]:
     logger.info("All services stopped. Final shutdown.")
     # Telegram application shutdown is handled by telegram_service.stop_polling() called from shutdown_handler
 
-    return telegram_service # Return the created service instance
+    return telegram_service  # Return the created service instance
 
 
 def main() -> int:  # Return an exit code
@@ -667,7 +676,7 @@ def main() -> int:  # Return an exit code
     # Let's adjust main_async slightly to create the service earlier.
 
     # --- Run main_async ---
-    telegram_service_instance = None # Initialize
+    telegram_service_instance = None  # Initialize
     try:
         logger.info("Starting application...")
         # Pass parsed args to main_async
@@ -685,16 +694,21 @@ def main() -> int:  # Return an exit code
                 loop.add_signal_handler(
                     sig_num,
                     lambda name=sig_name, service=telegram_service_instance: asyncio.create_task(
-                        shutdown_handler(name, service) # Pass service instance
+                        shutdown_handler(name, service)  # Pass service instance
                     ),
                 )
         else:
-            logger.error("Failed to create TelegramService, signal handlers not fully set up.")
+            logger.error(
+                "Failed to create TelegramService, signal handlers not fully set up."
+            )
             # Fallback simple handler if service creation failed
             for sig_num, sig_name in signal_map.items():
-                 loop.add_signal_handler(
-                     sig_num, lambda name=sig_name: asyncio.create_task(shutdown_handler(name, None))
-                 )
+                loop.add_signal_handler(
+                    sig_num,
+                    lambda name=sig_name: asyncio.create_task(
+                        shutdown_handler(name, None)
+                    ),
+                )
 
         # --- Setup SIGHUP Handler (Inside the main try block, after other signals) ---
         if hasattr(signal, "SIGHUP"):
@@ -717,7 +731,9 @@ def main() -> int:  # Return an exit code
         # Ensure shutdown runs if loop was interrupted directly
         if not shutdown_event.is_set():
             # Run the async shutdown handler within the loop, passing the service instance
-            loop.run_until_complete(shutdown_handler(type(ex).__name__, telegram_service_instance))
+            loop.run_until_complete(
+                shutdown_handler(type(ex).__name__, telegram_service_instance)
+            )
     finally:
         # Task cleanup is handled within shutdown_handler
         logger.info("Closing event loop.")
