@@ -2,17 +2,20 @@ import pytest
 import uuid
 import asyncio
 import logging
-import os  # Import os to read environment variables
+import json # Added json import
 from sqlalchemy import text  # To query DB directly for assertion
-
-# Import the function we want to test directly
+from typing import List, Dict, Any, Optional, Callable, Tuple # Added typing imports
 from unittest.mock import MagicMock  # For mocking Application
 
+# Import the function we want to test directly
 from family_assistant.main import _generate_llm_response_for_chat
 
 # Import necessary classes for instantiation
 from family_assistant.processing import ProcessingService
-from family_assistant.llm import LiteLLMClient, LLMInterface
+from family_assistant.llm import LLMInterface, LLMOutput # Keep Interface and Output
+# Import the rule-based mock
+from tests.mocks.mock_llm import RuleBasedMockLLMClient, Rule, MatcherFunction, get_last_message_text
+
 from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
@@ -32,31 +35,79 @@ TEST_NOTE_TITLE_BASE = "Smoketest Note"
 TEST_NOTE_CONTENT = "This is the content for the smoke test."
 TEST_CHAT_ID = 12345  # Dummy chat ID
 TEST_USER_NAME = "TestUser"
-# Get model name from env var or use the same default as in main.py's arg parser
-TEST_MODEL_NAME = os.getenv("LLM_MODEL", "openrouter/google/gemini-flash-1.5")
+# TEST_MODEL_NAME is no longer needed for the mock
 
 
 @pytest.mark.asyncio
-async def test_add_and_retrieve_note_smoke(test_db_engine):  # Request the fixture
+async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     """
-    Smoke test:
-    1. Simulate adding a note via LLM interaction (using real LLM).
-    2. Verify the note exists in the (in-memory) database.
-    3. Simulate asking about the note.
-    4. Verify the LLM's response includes the note content.
-
-    Requires OPENROUTER_API_KEY and TELEGRAM_BOT_TOKEN (can be dummy) env vars.
+    Rule-based mock test:
+    1. Define rules for adding and retrieving a specific note.
+    2. Instantiate RuleBasedMockLLMClient with these rules.
+    3. Simulate adding a note, triggering the 'add' rule and tool call.
+    4. Verify the note exists in the database.
+    5. Simulate asking about the note, triggering the 'retrieve' rule.
+    6. Verify the mock's response includes the note content without a tool call.
     """
     # --- Setup ---
-    # Generate a unique title for this specific test run
     test_note_title = f"{TEST_NOTE_TITLE_BASE} {uuid.uuid4()}"
-    logger.info(f"\n--- Running Smoke Test: Add Note ---")
+    test_tool_call_id = f"call_{uuid.uuid4()}" # Pre-generate ID for the rule
+    logger.info(f"\n--- Running Rule-Based Mock Test: Add/Retrieve Note ---")
     logger.info(f"Using Note Title: {test_note_title}")
 
-    # Instantiate dependencies
-    llm_client: LLMInterface = LiteLLMClient(model=TEST_MODEL_NAME)
+    # --- Define Rules ---
 
-    # Tool Providers
+    # Rule 1: Match Add Note Request
+    def add_note_matcher(messages, tools, tool_choice):
+        last_text = get_last_message_text(messages).lower()
+        return (
+            "remember this note" in last_text
+            and f"title: {test_note_title}".lower() in last_text
+            and f"content: {TEST_NOTE_CONTENT}".lower() in last_text
+            and tools is not None # Check that tools were actually provided
+        )
+
+    add_note_response = LLMOutput(
+        content="OK, I will add that note via the rule-based mock.",
+        tool_calls=[{
+            "id": test_tool_call_id, # Use pre-generated ID
+            "type": "function",
+            "function": {
+                "name": "add_or_update_note",
+                "arguments": json.dumps({ # Arguments must be JSON string
+                    "title": test_note_title,
+                    "content": TEST_NOTE_CONTENT,
+                }),
+            },
+        }]
+    )
+    add_note_rule: Rule = (add_note_matcher, add_note_response)
+
+    # Rule 2: Match Retrieve Note Request
+    def retrieve_note_matcher(messages, tools, tool_choice):
+        last_text = get_last_message_text(messages).lower()
+        # NOTE: This simple rule-based mock is stateless.
+        # It doesn't know if the note was *actually* added before.
+        # We rely on the test structure to call add before retrieve.
+        return (
+            "what do you know about" in last_text
+            and f"note titled '{test_note_title}'".lower() in last_text
+        )
+
+    retrieve_note_response = LLMOutput(
+        content=f"Rule-based mock says: The note '{test_note_title}' contains: {TEST_NOTE_CONTENT}",
+        tool_calls=None # No tool call for retrieval
+    )
+    retrieve_note_rule: Rule = (retrieve_note_matcher, retrieve_note_response)
+
+    # --- Instantiate Mock LLM ---
+    llm_client: LLMInterface = RuleBasedMockLLMClient(
+        rules=[add_note_rule, retrieve_note_rule]
+        # Can optionally provide a specific default_response here
+    )
+    logger.info(f"Using RuleBasedMockLLMClient for testing.")
+
+    # --- Instantiate other dependencies (Tool Providers remain the same) ---
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition, implementations=local_tool_implementations
     )
@@ -95,11 +146,11 @@ async def test_add_and_retrieve_note_smoke(test_db_engine):  # Request the fixtu
         chat_id=TEST_CHAT_ID,
         trigger_content_parts=add_note_trigger,
         user_name=TEST_USER_NAME,
-        # model_name argument removed
+        # model_name argument removed from _generate_llm_response_for_chat call
     )
 
-    logger.info(f"Add Note - LLM Response: {add_response_content}")
-    logger.info(f"Add Note - Tool Info: {add_tool_info}")
+    logger.info(f"Add Note - Mock LLM Response Content: {add_response_content}")
+    logger.info(f"Add Note - Tool Info from Processing: {add_tool_info}")
 
     # Assertion 1: Check the database directly to confirm the note was added
     # Use the test_db_engine yielded by the fixture
@@ -114,32 +165,26 @@ async def test_add_and_retrieve_note_smoke(test_db_engine):  # Request the fixtu
 
     assert (
         note_in_db is not None
-    ), f"Note '{test_note_title}' not found in the database after add attempt."
+    ), f"Note '{test_note_title}' not found in the database after rule-based mock add attempt."
     assert note_in_db.content == TEST_NOTE_CONTENT, "Note content in DB does not match."
     logger.info(f"Verified note '{test_note_title}' exists in DB.")
 
-    # Assertion 2: Check tool info indicates success
-    assert add_tool_info is not None, "Tool info should not be None for add_note"
-    # Sometimes the LLM might respond directly without confirming the tool use if it's simple enough.
-    # Let's make this assertion more flexible or remove it for the smoke test if it proves flaky.
-    # For now, we'll just check that *if* tool info is present, it looks correct.
-    if add_tool_info:
-        assert len(add_tool_info) == 1, "Expected one tool call if tool info is present"
-        assert add_tool_info[0]["function_name"] == "add_or_update_note"
-        # Check response content *within* the tool info dict
-        assert "Error:" not in add_tool_info[0].get(
-            "response_content", ""
-        ), f"Tool response content indicates an error: {add_tool_info[0].get('response_content')}"
-        logger.info(
-            "Tool info check passed (or no tool info returned, which is acceptable)."
-        )
-    else:
-        logger.info("No tool info returned by LLM for add_note (might be acceptable).")
+    # Assertion 2: Check tool info (verifies ProcessingService handled mock output)
+    assert add_tool_info is not None, "Tool info should not be None for add_note rule"
+    assert len(add_tool_info) == 1, "Expected exactly one tool call info object"
+    assert add_tool_info[0]["function_name"] == "add_or_update_note"
+    assert add_tool_info[0]["tool_call_id"] == test_tool_call_id # Check ID matches rule
+    assert add_tool_info[0]["arguments"]["title"] == test_note_title
+    assert add_tool_info[0]["arguments"]["content"] == TEST_NOTE_CONTENT
+    assert "Error:" not in add_tool_info[0].get(
+        "response_content", ""
+    ), f"Tool execution reported an error: {add_tool_info[0].get('response_content')}"
+    logger.info("Tool info check passed.")
 
-    # --- Add a small delay before the next step (optional, mimics user pause) ---
-    await asyncio.sleep(1)
+    # --- Add a small delay ---
+    await asyncio.sleep(0.1) # Can be shorter with mock
 
-    logger.info(f"\n--- Running Smoke Test: Retrieve Note ---")
+    logger.info(f"\n--- Running Rule-Based Mock Test: Retrieve Note ---")
     # --- Part 2: Retrieve the note ---
     retrieve_note_text = f"What do you know about the note titled '{test_note_title}'?"
     retrieve_note_trigger = [{"type": "text", "text": retrieve_note_text}]
@@ -152,23 +197,28 @@ async def test_add_and_retrieve_note_smoke(test_db_engine):  # Request the fixtu
             chat_id=TEST_CHAT_ID,
             trigger_content_parts=retrieve_note_trigger,
             user_name=TEST_USER_NAME,
-            # model_name argument removed
+            # model_name argument removed from _generate_llm_response_for_chat call
         )
     )
 
-    logger.info(f"Retrieve Note - LLM Response: {retrieve_response_content}")
-    logger.info(f"Retrieve Note - Tool Info: {retrieve_tool_info}")
+    logger.info(f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}")
+    logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
 
-    # Assertion 3: Check the final LLM response contains the note content
-    assert retrieve_response_content is not None, "LLM response for retrieval was None."
+    # Assertion 3: Check the final response content from the mock rule
+    assert retrieve_response_content is not None, "Mock LLM response for retrieval was None."
     # Use lower() for case-insensitive comparison
     assert (
         TEST_NOTE_CONTENT.lower() in retrieve_response_content.lower()
-    ), f"LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {retrieve_response_content}"
-    # Assertion 4: Ensure no tool was called for retrieval (LLM should use context)
+    ), f"Mock LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {retrieve_response_content}"
+    assert (
+        test_note_title.lower() in retrieve_response_content.lower()
+    ), f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {retrieve_response_content}"
+    assert "Rule-based mock says:" in retrieve_response_content # Check it used our specific response
+
+    # Assertion 4: Ensure no tool was called for retrieval
     assert (
         retrieve_tool_info is None
-    ), f"Expected no tool call for simple retrieval, but got: {retrieve_tool_info}"
+    ), f"Expected no tool call for mock retrieval rule, but got: {retrieve_tool_info}"
 
-    logger.info("Verified LLM response contains note content and no tool was called.")
-    logger.info("--- Smoke Test Passed ---")
+    logger.info("Verified rule-based mock response contains note content and no tool was called.")
+    logger.info("--- Rule-Based Mock Test Passed ---")
