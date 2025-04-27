@@ -463,13 +463,6 @@ def register_task_handler(task_type: str, handler: Callable[[DatabaseContext, An
     logger.info(f"Registered task handler for task type: {task_type}")
 
 
-# --- Module initialization ---
-def register_task_handler(task_type: str, handler: Callable):
-    """Register a new task handler function for a specific task type."""
-    TASK_HANDLERS[task_type] = handler
-    logger.info(f"Registered task handler for task type: {task_type}")
-
-
 def set_processing_service(service: ProcessingService):
     """Set the ProcessingService instance from main.py"""
     global processing_service_instance
