@@ -6,7 +6,7 @@ import os  # Import os to read environment variables
 from sqlalchemy import text  # To query DB directly for assertion
 
 # Import the function we want to test directly
-from unittest.mock import MagicMock # For mocking Application
+from unittest.mock import MagicMock  # For mocking Application
 
 from family_assistant.main import _generate_llm_response_for_chat
 
@@ -20,6 +20,7 @@ from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
+
 # Import storage functions for assertion (will use the patched engine)
 # from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
 
@@ -57,25 +58,25 @@ async def test_add_and_retrieve_note_smoke(test_db_engine):  # Request the fixtu
 
     # Tool Providers
     local_provider = LocalToolsProvider(
-        definitions=local_tools_definition,
-        implementations=local_tool_implementations
+        definitions=local_tools_definition, implementations=local_tool_implementations
     )
     # Mock MCP provider as it's not needed for this test
     mcp_provider = MCPToolsProvider(
-        mcp_definitions=[],
-        mcp_sessions={},
-        tool_name_to_server_id={}
+        mcp_definitions=[], mcp_sessions={}, tool_name_to_server_id={}
     )
-    composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
     # Eagerly fetch definitions (optional in test, but good practice)
     await composite_provider.get_tool_definitions()
 
     # Processing Service
     processing_service = ProcessingService(
-        llm_client=llm_client,
-        tools_provider=composite_provider
+        llm_client=llm_client, tools_provider=composite_provider
     )
-    logger.info(f"Instantiated ProcessingService with {type(llm_client).__name__} and {type(composite_provider).__name__}")
+    logger.info(
+        f"Instantiated ProcessingService with {type(llm_client).__name__} and {type(composite_provider).__name__}"
+    )
 
     # Mock Application instance needed for ToolExecutionContext
     mock_application = MagicMock()
@@ -89,8 +90,8 @@ async def test_add_and_retrieve_note_smoke(test_db_engine):  # Request the fixtu
     # Call the core logic function directly, passing the ProcessingService instance
     # This will trigger the real LLM, tool detection, and storage call (using patched DB engine)
     add_response_content, add_tool_info = await _generate_llm_response_for_chat(
-        processing_service=processing_service, # Pass the service instance
-        application=mock_application, # Pass the mock application
+        processing_service=processing_service,  # Pass the service instance
+        application=mock_application,  # Pass the mock application
         chat_id=TEST_CHAT_ID,
         trigger_content_parts=add_note_trigger,
         user_name=TEST_USER_NAME,
@@ -146,12 +147,12 @@ async def test_add_and_retrieve_note_smoke(test_db_engine):  # Request the fixtu
     # Call the core logic again, passing the same ProcessingService instance
     retrieve_response_content, retrieve_tool_info = (
         await _generate_llm_response_for_chat(
-            processing_service=processing_service, # Pass the service instance
-            application=mock_application, # Pass the mock application
+            processing_service=processing_service,  # Pass the service instance
+            application=mock_application,  # Pass the mock application
             chat_id=TEST_CHAT_ID,
             trigger_content_parts=retrieve_note_trigger,
             user_name=TEST_USER_NAME,
-             # model_name argument removed
+            # model_name argument removed
         )
     )
 
