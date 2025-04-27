@@ -203,7 +203,6 @@ async def init_vector_db(db_context: DatabaseContext):
                 """
                     )
                 )
-                logger.info(
             logger.info("Ensured HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos exists.")
 
             # Also create the FTS index here
@@ -216,7 +215,6 @@ async def init_vector_db(db_context: DatabaseContext):
                     """
                     )
                 )
-                logger.info(
             logger.info("Ensured FTS index idx_doc_embeddings_content_fts_gin exists.")
 
         except SQLAlchemyError as e:
