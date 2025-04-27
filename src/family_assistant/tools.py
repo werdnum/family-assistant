@@ -462,63 +462,59 @@ class CompositeToolsProvider:
     def __init__(self, providers: List[ToolsProvider]):
         self._providers = providers
         self._tool_definitions: Optional[List[Dict[str, Any]]] = None
-        self._validate_providers()  # Check for name collisions on init
+        self._validated = False # Flag to track if validation has run
         logger.info(
-            f"CompositeToolsProvider initialized with {len(providers)} providers."
+            f"CompositeToolsProvider initialized with {len(providers)} providers. Validation will occur on first use."
         )
 
-    def _validate_providers(self):
-        """Checks for duplicate tool names across providers."""
-        all_names = set()
-        for i, provider in enumerate(self._providers):
-            # Note: This accesses definitions synchronously during init.
-            # If providers fetched definitions async, validation would need to be async too.
-            try:
-                # Temporarily get definitions synchronously for validation
-                # Since our current provider implementations just return stored lists,
-                # we can call get_tool_definitions directly here without await or asyncio.run.
-                # If a future provider *did* need async IO here, we'd need an async init pattern.
-                definitions = provider.get_tool_definitions() # Call synchronously
-                for tool_def in definitions:
-                    # Ensure the definition is a dictionary before accessing keys
-                    if not isinstance(tool_def, dict):
-                        logger.warning(f"Provider {i} ({type(provider).__name__}) returned non-dict item in definitions: {tool_def}")
-                        continue
-                    function_def = tool_def.get("function", {})
-                    if not isinstance(function_def, dict):
-                         logger.warning(f"Provider {i} ({type(provider).__name__}) returned non-dict 'function' field: {function_def}")
-                         continue
-                    name = function_def.get("name")
-                    if name:
-                        if name in all_names:
-                            raise ValueError(
-                                f"Duplicate tool name '{name}' found in provider {i} ({type(provider).__name__}). Tool names must be unique across all providers."
-                            )
-                        all_names.add(name)
-            except Exception as e:
-                logger.error(
-                    f"Error getting definitions from provider {i} ({type(provider).__name__}) during validation: {e}"
-                )
-                # Decide whether to raise or just warn
-                raise ValueError(f"Could not validate provider {i}: {e}") from e
-        logger.info(
-            f"Tool name collision check passed for {len(all_names)} unique tools."
-        )
+    # Removed synchronous _validate_providers method
 
     async def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        # Cache definitions after first async fetch
+        # Cache definitions after first async fetch and validation
         if self._tool_definitions is None:
             all_definitions = []
-            for provider in self._providers:
+            all_names = set()
+            logger.info("Fetching tool definitions from providers for the first time...")
+            for i, provider in enumerate(self._providers):
                 try:
+                    # Fetch definitions asynchronously
                     definitions = await provider.get_tool_definitions()
                     all_definitions.extend(definitions)
+
+                    # Perform validation as definitions are fetched (only on first run)
+                    if not self._validated:
+                        for tool_def in definitions:
+                             # Ensure the definition is a dictionary before accessing keys
+                            if not isinstance(tool_def, dict):
+                                logger.warning(f"Provider {i} ({type(provider).__name__}) returned non-dict item in definitions: {tool_def}")
+                                continue
+                            function_def = tool_def.get("function", {})
+                            if not isinstance(function_def, dict):
+                                logger.warning(f"Provider {i} ({type(provider).__name__}) returned non-dict 'function' field: {function_def}")
+                                continue
+                            name = function_def.get("name")
+                            if name:
+                                if name in all_names:
+                                    # Raise error immediately if duplicate found during fetch
+                                    raise ValueError(
+                                        f"Duplicate tool name '{name}' found in provider {i} ({type(provider).__name__}). Tool names must be unique across all providers."
+                                    )
+                                all_names.add(name)
+
                 except Exception as e:
                     logger.error(
-                        f"Failed to get tool definitions from provider {type(provider).__name__}: {e}",
+                        f"Failed to get or validate tool definitions from provider {type(provider).__name__}: {e}",
                         exc_info=True,
                     )
-                    # Optionally re-raise or continue with partial list
+                    # If fetching/validation fails for one provider, re-raise the error
+                    # to prevent using potentially incomplete/invalid toolset.
+                    raise # Re-raise the exception
+
+            # If loop completes without validation error
+            if not self._validated:
+                 logger.info(f"Tool name collision check passed for {len(all_names)} unique tools.")
+                 self._validated = True # Mark validation as complete
+
             self._tool_definitions = all_definitions
             logger.info(
                 f"Fetched and cached {len(self._tool_definitions)} tool definitions from providers."
