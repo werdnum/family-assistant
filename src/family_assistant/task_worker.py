@@ -231,12 +231,13 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
     task_types_handled = list(TASK_HANDLERS.keys())
 
     while not shutdown_event.is_set():
-        task = None
-        # Create a database context for this iteration
-        async with get_db_context() as db_context:
-            try:
-                # Dequeue a task of a type this worker handles
-                task = await storage.dequeue_task(
+        try: # Add try block here to encompass the whole loop iteration
+            task = None
+            # Create a database context for this iteration
+            async with get_db_context() as db_context:
+                try: # Inner try for task processing within the context
+                    # Dequeue a task of a type this worker handles
+                    task = await storage.dequeue_task(
                     db_context=db_context,  # Pass db_context
                     worker_id=worker_id,
                     task_types=task_types_handled,
