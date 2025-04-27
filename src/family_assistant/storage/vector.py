@@ -46,7 +46,9 @@ from sqlalchemy.engine import RowMapping
 from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
 # Use absolute package path
-from family_assistant.storage.base import metadata, get_engine
+from family_assistant.storage.base import metadata # Keep metadata
+# Remove get_engine import
+from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
 

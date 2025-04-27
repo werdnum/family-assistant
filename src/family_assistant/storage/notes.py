@@ -20,13 +20,14 @@ from sqlalchemy import (
     update,
     delete,
 )
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import SQLAlchemyError # Use broader exception
 
 # Use absolute package path
-from family_assistant.storage.base import metadata, get_engine
+from family_assistant.storage.base import metadata # Keep metadata
+# Remove get_engine import
+from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
-# Remove module-level engine capture: engine = get_engine()
 
 # Define the notes table
 notes_table = Table(

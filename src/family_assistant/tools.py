@@ -17,6 +17,7 @@ from telegram.ext import Application  # Required for ToolExecutionContext
 
 # Import storage functions needed by local tools
 from family_assistant import storage
+from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
 

@@ -73,13 +73,17 @@ from family_assistant.storage import (
     init_db,
     get_all_notes,
     add_message_to_history,
-    get_recent_history,
-    get_message_by_id,
-    add_or_update_note,
+    init_db,
+    # get_all_notes, # Will be called with context
+    # add_message_to_history, # Will be called with context
+    # get_recent_history, # Will be called with context
+    # get_message_by_id, # Will be called with context
+    # add_or_update_note, # Called via tools provider
 )
 
 # Import the whole storage module for task queue functions etc.
 from family_assistant import storage
+from family_assistant.storage.context import DatabaseContext, get_db_context # Import DatabaseContext and getter
 
 # Import calendar functions
 from family_assistant import calendar_integration

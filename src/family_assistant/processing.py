@@ -22,6 +22,9 @@ from .tools import ToolsProvider, ToolExecutionContext, ToolNotFoundError
 # Import Application type hint
 from telegram.ext import Application
 
+# Import DatabaseContext for type hinting
+from .storage.context import DatabaseContext
+
 logger = logging.getLogger(__name__)
 
 
