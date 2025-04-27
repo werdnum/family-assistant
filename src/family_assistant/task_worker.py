@@ -11,7 +11,8 @@ from typing import Dict, List, Any, Optional, Callable
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
-from family_assistant.processing import ProcessingService # Import the service
+from family_assistant.processing import ProcessingService  # Import the service
+
 # Import tool definitions from the new tools module
 from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
@@ -42,10 +43,13 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 # mcp_sessions: Dict[str, Any] = {}
 # mcp_tools: List[Dict[str, Any]] = []
 # tool_name_to_server_id: Dict[str, str] = {}
-processing_service_instance: Optional[ProcessingService] = None # To hold the service instance
+processing_service_instance: Optional[ProcessingService] = (
+    None  # To hold the service instance
+)
 
 
 # --- Task Handlers ---
+
 
 # Example Task Handler
 async def handle_log_message(payload: Any):
@@ -87,7 +91,7 @@ def format_llm_response_for_telegram(response_text: str) -> str:
 
 async def handle_llm_callback(payload: Any):
     """Task handler for LLM scheduled callbacks."""
-    global processing_service_instance # Use the global service instance
+    global processing_service_instance  # Use the global service instance
 
     if not processing_service_instance:
         logger.error("Cannot handle LLM callback: ProcessingService instance not set.")
@@ -113,7 +117,7 @@ async def handle_llm_callback(payload: Any):
 
     logger.info(f"Handling LLM callback for chat_id {chat_id}")
     current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
-    message_to_send = f"System Callback: The time is now {current_time_str}.\n\nYou previously scheduled a callback with the following context:\n\n---\n{callback_context}\n---" # This seems unused?
+    message_to_send = f"System Callback: The time is now {current_time_str}.\n\nYou previously scheduled a callback with the following context:\n\n---\n{callback_context}\n---"  # This seems unused?
 
     try:
         # Construct the trigger message content for the LLM
@@ -122,18 +126,23 @@ async def handle_llm_callback(payload: Any):
         # TODO: Should we retrieve actual history here? For now, just send the trigger.
         # A more robust implementation might fetch recent history for better context.
         messages_for_llm = [
-            {"role": "system", "content": "You are processing a scheduled callback."}, # Minimal system prompt
-            {"role": "user", "content": trigger_text} # Treat trigger as user input
+            {
+                "role": "system",
+                "content": "You are processing a scheduled callback.",
+            },  # Minimal system prompt
+            {"role": "user", "content": trigger_text},  # Treat trigger as user input
         ]
 
         # Tool definitions are fetched within process_message now
         # all_tools = local_tools_definition + mcp_tools # Removed
 
         # Call the ProcessingService directly, passing the application instance
-        llm_response_content, tool_call_info = await processing_service_instance.process_message(
-            messages=messages_for_llm,
-            chat_id=chat_id,
-            application=application, # Pass application for ToolExecutionContext
+        llm_response_content, tool_call_info = (
+            await processing_service_instance.process_message(
+                messages=messages_for_llm,
+                chat_id=chat_id,
+                application=application,  # Pass application for ToolExecutionContext
+            )
         )
 
         if llm_response_content:
@@ -157,16 +166,18 @@ async def handle_llm_callback(payload: Any):
                 )  # Crude pseudo-ID
                 await storage.add_message_to_history(
                     chat_id=chat_id,
-                    message_id=trigger_msg_id, # Use pseudo-ID
+                    message_id=trigger_msg_id,  # Use pseudo-ID
                     timestamp=datetime.now(timezone.utc),
-                    role="system", # Role for the trigger message in history
+                    role="system",  # Role for the trigger message in history
                     content=trigger_text,
                 )
                 # Use the actual sent message ID if available and makes sense, else pseudo-ID
-                response_msg_id = sent_message.message_id if sent_message else trigger_msg_id + 1
+                response_msg_id = (
+                    sent_message.message_id if sent_message else trigger_msg_id + 1
+                )
                 await storage.add_message_to_history(
                     chat_id=chat_id,
-                    message_id=response_msg_id, # Use actual or pseudo-ID
+                    message_id=response_msg_id,  # Use actual or pseudo-ID
                     timestamp=datetime.now(timezone.utc),
                     role="assistant",
                     content=llm_response_content,  # Store the content string
@@ -423,6 +434,7 @@ def set_processing_service(service: ProcessingService):
 
 
 # Removed set_mcp_state function
+
 
 def get_task_handlers():
     """Return the current task handlers dictionary"""

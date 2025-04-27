@@ -462,7 +462,7 @@ class CompositeToolsProvider:
     def __init__(self, providers: List[ToolsProvider]):
         self._providers = providers
         self._tool_definitions: Optional[List[Dict[str, Any]]] = None
-        self._validated = False # Flag to track if validation has run
+        self._validated = False  # Flag to track if validation has run
         logger.info(
             f"CompositeToolsProvider initialized with {len(providers)} providers. Validation will occur on first use."
         )
@@ -474,7 +474,9 @@ class CompositeToolsProvider:
         if self._tool_definitions is None:
             all_definitions = []
             all_names = set()
-            logger.info("Fetching tool definitions from providers for the first time...")
+            logger.info(
+                "Fetching tool definitions from providers for the first time..."
+            )
             for i, provider in enumerate(self._providers):
                 try:
                     # Fetch definitions asynchronously
@@ -484,13 +486,17 @@ class CompositeToolsProvider:
                     # Perform validation as definitions are fetched (only on first run)
                     if not self._validated:
                         for tool_def in definitions:
-                             # Ensure the definition is a dictionary before accessing keys
+                            # Ensure the definition is a dictionary before accessing keys
                             if not isinstance(tool_def, dict):
-                                logger.warning(f"Provider {i} ({type(provider).__name__}) returned non-dict item in definitions: {tool_def}")
+                                logger.warning(
+                                    f"Provider {i} ({type(provider).__name__}) returned non-dict item in definitions: {tool_def}"
+                                )
                                 continue
                             function_def = tool_def.get("function", {})
                             if not isinstance(function_def, dict):
-                                logger.warning(f"Provider {i} ({type(provider).__name__}) returned non-dict 'function' field: {function_def}")
+                                logger.warning(
+                                    f"Provider {i} ({type(provider).__name__}) returned non-dict 'function' field: {function_def}"
+                                )
                                 continue
                             name = function_def.get("name")
                             if name:
@@ -508,12 +514,14 @@ class CompositeToolsProvider:
                     )
                     # If fetching/validation fails for one provider, re-raise the error
                     # to prevent using potentially incomplete/invalid toolset.
-                    raise # Re-raise the exception
+                    raise  # Re-raise the exception
 
             # If loop completes without validation error
             if not self._validated:
-                 logger.info(f"Tool name collision check passed for {len(all_names)} unique tools.")
-                 self._validated = True # Mark validation as complete
+                logger.info(
+                    f"Tool name collision check passed for {len(all_names)} unique tools."
+                )
+                self._validated = True  # Mark validation as complete
 
             self._tool_definitions = all_definitions
             logger.info(

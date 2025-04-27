@@ -180,7 +180,9 @@ async def init_vector_db():
                 """
                     )
                 )
-                logger.info("Created/verified HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos.")
+                logger.info(
+                    "Created/verified HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos."
+                )
             except Exception as e:
                 # This might happen if the index exists but with different params, etc.
                 # In a real app, consider more robust migration management.
@@ -199,7 +201,9 @@ async def init_vector_db():
                     """
                     )
                 )
-                logger.info("Created/verified FTS index idx_doc_embeddings_content_fts_gin.")
+                logger.info(
+                    "Created/verified FTS index idx_doc_embeddings_content_fts_gin."
+                )
             except Exception as e:
                 logger.warning(
                     f"Could not create FTS index idx_doc_embeddings_content_fts_gin: {e}"
