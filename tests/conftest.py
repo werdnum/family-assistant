@@ -69,9 +69,11 @@ def postgres_container():
     # Ensure Docker is running and accessible
     docker_socket = "/var/run/docker.sock"
     if not os.path.exists(docker_socket):
-        pytest.skip(f"Docker socket not found at {docker_socket}. Is Docker running? Skipping PostgreSQL tests.")
+        # Fail the test session if Docker socket is missing
+        pytest.fail(f"Docker socket not found at {docker_socket}. Is Docker running? PostgreSQL tests require Docker.", pytrace=False)
     elif not os.access(docker_socket, os.R_OK | os.W_OK):
-         pytest.skip(f"Insufficient permissions for Docker socket at {docker_socket}. Check user permissions. Skipping PostgreSQL tests.")
+         # Fail the test session if Docker socket has incorrect permissions
+         pytest.fail(f"Insufficient permissions for Docker socket at {docker_socket}. Check user permissions. PostgreSQL tests require Docker access.", pytrace=False)
     # Add more robust checks here if needed (e.g., try connecting with docker client)
 
     # Use an image that includes postgresql-contrib for extensions like pgvector
