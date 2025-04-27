@@ -16,6 +16,7 @@ from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
+    ApplicationBuilder, # Add ApplicationBuilder
     CallbackContext,
     CommandHandler,
     ContextTypes,
@@ -33,8 +34,8 @@ from family_assistant.storage.context import DatabaseContext
 logger = logging.getLogger(__name__)
 
 
-class TelegramBotHandler:
-    """Handles Telegram bot interactions, message processing, and command execution."""
+class TelegramUpdateHandler: # Renamed from TelegramBotHandler
+    """Handles specific Telegram updates (messages, commands) and delegates processing."""
 
     def __init__(
         self,
@@ -45,7 +46,7 @@ class TelegramBotHandler:
         get_db_context_func: Callable[..., contextlib.AbstractAsyncContextManager["DatabaseContext"]],
     ):
         """
-        Initializes the TelegramBotHandler.
+        Initializes the TelegramUpdateHandler. # Updated docstring
 
         Args:
             application: The telegram.ext.Application instance.
@@ -399,3 +400,81 @@ class TelegramBotHandler:
         # Error handler
         self.application.add_error_handler(self.error_handler)
         logger.info("Telegram handlers registered.")
+
+
+class TelegramService:
+    """Manages the Telegram bot application lifecycle and update handling."""
+
+    def __init__(
+        self,
+        telegram_token: str,
+        allowed_chat_ids: List[int],
+        developer_chat_id: Optional[int],
+        processing_service: ProcessingService,
+        get_db_context_func: Callable[..., contextlib.AbstractAsyncContextManager[DatabaseContext]],
+    ):
+        """
+        Initializes the Telegram Service.
+
+        Args:
+            telegram_token: The Telegram Bot API token.
+            allowed_chat_ids: List of chat IDs allowed to interact with the bot.
+            developer_chat_id: Optional chat ID for sending error notifications.
+            processing_service: The ProcessingService instance.
+            get_db_context_func: Async context manager function to get a DatabaseContext.
+        """
+        logger.info("Initializing TelegramService...")
+        self.application = (
+            ApplicationBuilder().token(telegram_token).build()
+        )
+
+        # Store the ProcessingService instance in bot_data for access in handlers
+        # Note: This assumes handlers might still need direct access via context.bot_data
+        # If handlers only use self.processing_service, this line might be removable.
+        self.application.bot_data["processing_service"] = processing_service
+        logger.info("Stored ProcessingService instance in application.bot_data.")
+
+        # Instantiate the handler class
+        self.update_handler = TelegramUpdateHandler( # Use renamed class
+            application=self.application,
+            allowed_chat_ids=allowed_chat_ids,
+            developer_chat_id=developer_chat_id,
+            processing_service=processing_service,
+            get_db_context_func=get_db_context_func,
+        )
+
+        # Register handlers using the handler instance
+        self.update_handler.register_handlers()
+        logger.info("TelegramService initialized.")
+
+    async def start_polling(self):
+        """Initializes the application and starts polling for updates."""
+        logger.info("Starting Telegram polling...")
+        await self.application.initialize()
+        await self.application.start()
+        # Use Update.ALL_TYPES to ensure all relevant updates are received
+        await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("Telegram polling started successfully.")
+
+    async def stop_polling(self):
+        """Stops the polling and shuts down the application gracefully."""
+        if self.application and self.application.updater:
+            logger.info("Stopping Telegram polling...")
+            try:
+                if self.application.updater.running: # Check if polling before stopping
+                    await self.application.updater.stop()
+                    logger.info("Telegram polling stopped.")
+                else:
+                    logger.info("Telegram polling was not running.")
+            except Exception as e:
+                logger.error(f"Error stopping Telegram updater: {e}", exc_info=True)
+
+        if self.application:
+            logger.info("Shutting down Telegram application...")
+            try:
+                await self.application.shutdown()
+                logger.info("Telegram application shut down.")
+            except Exception as e:
+                logger.error(f"Error shutting down Telegram application: {e}", exc_info=True)
+        else:
+            logger.info("Telegram application instance not found for shutdown.")
