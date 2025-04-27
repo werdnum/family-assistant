@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 # Import storage functions using absolute package path
 from family_assistant import storage
+from family_assistant.storage.context import DatabaseContext, get_db_context # Import context
 from family_assistant.storage import (
     get_all_notes,
     get_note_by_title,
@@ -81,9 +82,9 @@ except NameError:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
+async def read_root(request: Request, db_context: DatabaseContext = Depends(get_db)):
     """Serves the main page listing all notes."""
-    notes = await get_all_notes()
+    notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
         "index.html", {"request": request, "notes": notes}
     )
@@ -98,9 +99,9 @@ async def add_note_form(request: Request):
 
 
 @app.get("/notes/edit/{title}", response_class=HTMLResponse)
-async def edit_note_form(request: Request, title: str):
+async def edit_note_form(request: Request, title: str, db_context: DatabaseContext = Depends(get_db)):
     """Serves the form to edit an existing note."""
-    note = await get_note_by_title(title)
+    note = await get_note_by_title(db_context, title)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
@@ -137,16 +138,16 @@ async def save_note(
 
 
 @app.post("/notes/delete/{title}")
-async def delete_note_post(request: Request, title: str):
+async def delete_note_post(request: Request, title: str, db_context: DatabaseContext = Depends(get_db)):
     """Handles deleting a note."""
-    deleted = await delete_note(title)
+    deleted = await delete_note(db_context, title)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found for deletion")
     return RedirectResponse(url="/", status_code=303)  # Redirect back to list
 
 
 @app.post("/webhook/mail")
-async def handle_mail_webhook(request: Request):
+async def handle_mail_webhook(request: Request, db_context: DatabaseContext = Depends(get_db)):
     """
     Receives incoming email via webhook (expects multipart/form-data).
     Logs the received form data for now.
@@ -182,8 +183,8 @@ async def handle_mail_webhook(request: Request):
         # Mailgun sends data as multipart/form-data
         form_data = await request.form()
         await store_incoming_email(
-            dict(form_data)
-        )  # Pass the parsed form data to storage function
+            db_context, dict(form_data)
+        )  # Pass context and parsed form data
         # TODO: Add logic here to parse/store email content or trigger LLM processing
         # -----------------------------------------
 
@@ -195,10 +196,10 @@ async def handle_mail_webhook(request: Request):
 
 
 @app.get("/history", response_class=HTMLResponse)
-async def view_message_history(request: Request):
+async def view_message_history(request: Request, db_context: DatabaseContext = Depends(get_db)):
     """Serves the page displaying message history."""
     try:
-        history_by_chat = await get_grouped_message_history()
+        history_by_chat = await get_grouped_message_history(db_context)
         # Optional: Sort chats by ID if needed (DB query already sorts)
         # history_by_chat = dict(sorted(history_by_chat.items()))
         return templates.TemplateResponse(
@@ -211,10 +212,10 @@ async def view_message_history(request: Request):
 
 
 @app.get("/tasks", response_class=HTMLResponse)
-async def view_tasks(request: Request):
+async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get_db)):
     """Serves the page displaying scheduled tasks."""
     try:
-        tasks = await get_all_tasks(limit=200)  # Fetch tasks, add limit if needed
+        tasks = await get_all_tasks(db_context, limit=200)  # Pass context, fetch tasks
         return templates.TemplateResponse(
             "tasks.html",
             {
