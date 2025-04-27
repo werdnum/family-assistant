@@ -56,6 +56,14 @@ from family_assistant.llm import (
     PlaybackLLMClient,
 )
 
+# Import Embedding interface/clients
+from family_assistant.embeddings import (
+    EmbeddingGenerator,
+    LiteLLMEmbeddingGenerator,
+    SentenceTransformerEmbeddingGenerator, # If available
+    MockEmbeddingGenerator, # For testing
+)
+
 # Import tool definitions from the new tools module
 from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
@@ -96,6 +104,9 @@ from family_assistant import calendar_integration
 
 # Import the Telegram service class
 from .telegram_bot import TelegramService  # Updated import
+
+# Import indexing task handler
+from family_assistant.indexing.email_indexer import handle_index_email, set_indexing_dependencies
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -437,6 +448,11 @@ parser.add_argument(
     default="openrouter/google/gemini-2.5-pro-preview-03-25",
     help="LLM model to use via OpenRouter (e.g., openrouter/google/gemini-2.5-pro-preview-03-25)",
 )
+parser.add_argument(
+    "--embedding-model",
+    default=os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002"), # Example default
+    help="Embedding model to use (e.g., text-embedding-ada-002, all-MiniLM-L6-v2)",
+)
 # --- Initial Configuration Load ---
 # Load config from .env and prompts.yaml first
 load_config()
@@ -538,8 +554,34 @@ async def main_async(
     # Example for playback:
     # llm_client = PlaybackLLMClient(recording_path="llm_interactions.jsonl")
 
+    # --- Embedding Generator Instantiation ---
+    # TODO: Add logic to choose generator based on config/args (e.g., local vs API)
+    # For now, assume LiteLLM based on --embedding-model arg
+    embedding_generator: EmbeddingGenerator
+    # Example check for local model (adjust condition as needed)
+    if cli_args.embedding_model.startswith("/") or cli_args.embedding_model in ["all-MiniLM-L6-v2", "other-local-model-name"]:
+         try:
+             # Ensure sentence-transformers is installed if using local
+             if "SentenceTransformerEmbeddingGenerator" not in dir(embeddings):
+                 raise ImportError("sentence-transformers library not installed, cannot use local embedding model.")
+             embedding_generator = embeddings.SentenceTransformerEmbeddingGenerator(
+                 model_name_or_path=cli_args.embedding_model
+             )
+         except (ImportError, ValueError, RuntimeError) as local_embed_err:
+             logger.critical(f"Failed to initialize local embedding model '{cli_args.embedding_model}': {local_embed_err}")
+             raise SystemExit(f"Local embedding model initialization failed: {local_embed_err}")
+    else:
+        # Assume API-based model via LiteLLM
+        embedding_generator = LiteLLMEmbeddingGenerator(model=cli_args.embedding_model)
+
+    logger.info(f"Using embedding generator: {type(embedding_generator).__name__} with model: {embedding_generator.model_name}")
+
+
     # Initialize database schema first (needed by ProcessingService potentially via tools)
     await init_db()
+    # Initialize vector DB components (extension, indexes)
+    async with await get_db_context() as db_ctx:
+        await storage.init_vector_db(db_ctx) # Initialize vector specific parts
     # Load MCP config and connect to servers
     await load_mcp_config_and_connect()  # Populates mcp_sessions, mcp_tools, tool_name_to_server_id
 
@@ -583,6 +625,9 @@ async def main_async(
         f"ProcessingService initialized with {type(llm_client).__name__}, {type(composite_provider).__name__} and configuration."
     )
 
+    # --- Set Indexing Dependencies ---
+    set_indexing_dependencies(embedding_generator=embedding_generator, llm_client=llm_client) # Pass LLM too for future enrichment
+
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
         telegram_token=cli_args.telegram_token,
@@ -609,6 +654,12 @@ async def main_async(
     task_worker.set_processing_service(processing_service)
     # No longer need to pass MCP state separately to task worker
     # task_worker.set_mcp_state(mcp_sessions, mcp_tools, tool_name_to_server_id) # Removed
+
+    # --- Register Task Handlers ---
+    # Register the new email indexing handler
+    task_worker.register_task_handler("index_email", handle_index_email)
+    logger.info(f"Registered task handlers: {list(task_worker.get_task_handlers().keys())}")
+
 
     # Start the task queue worker, passing the notification event
     worker_id = (
@@ -661,6 +712,11 @@ def main() -> int:  # Return an exit code
         # Default model updated based on previous usage and module-level definition
         default=os.getenv("LLM_MODEL", "openrouter/google/gemini-2.5-flash-preview"),
         help="LLM model to use (e.g., openrouter/google/gemini-flash-2.5-flash-preview)",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default=os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002"), # Example default
+        help="Embedding model to use (e.g., text-embedding-ada-002, all-MiniLM-L6-v2)",
     )
     args = parser.parse_args()  # Parse args here
 

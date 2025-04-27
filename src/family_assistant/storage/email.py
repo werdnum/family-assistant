@@ -23,6 +23,8 @@ from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
 # Import metadata and engine using absolute package path
 from family_assistant.storage.base import metadata  # Keep metadata
 
+# Import storage facade for enqueue_task
+from family_assistant import storage
 # Remove get_engine import
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 
@@ -154,17 +156,55 @@ async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[str,
 
     logger.debug(f"Attempting to store email data: {parsed_data_filtered}")
 
-    # --- Actual Database Insertion ---
+    # --- Actual Database Insertion and Task Enqueueing ---
+    email_db_id: Optional[int] = None
+    task_id: Optional[str] = None
     try:
-        stmt = insert(received_emails_table).values(**parsed_data_filtered)
-        # Use execute_with_retry as commit is handled by context manager
-        await db_context.execute_with_retry(stmt)
+        # 1. Insert email and get its ID
+        insert_stmt = insert(received_emails_table).values(
+            **parsed_data_filtered
+        ).returning(received_emails_table.c.id)
+        result = await db_context.execute_with_retry(insert_stmt)
+        email_db_id = result.scalar_one_or_none()
+
+        if not email_db_id:
+            # This shouldn't happen if insert succeeded without error, but check anyway
+            raise RuntimeError(f"Failed to retrieve DB ID after inserting email with Message-ID: {parsed_data_filtered['message_id_header']}")
+
         logger.info(
-            f"Stored email with Message-ID: {parsed_data_filtered['message_id_header']}"
+            f"Stored email with Message-ID: {parsed_data_filtered['message_id_header']}, DB ID: {email_db_id}"
         )
+
+        # 2. Generate a unique task ID
+        task_id = f"index_email_{email_db_id}_{uuid.uuid4()}" # Add uuid for potential re-runs
+
+        # 3. Enqueue the indexing task
+        await storage.enqueue_task(
+            db_context=db_context,
+            task_id=task_id,
+            task_type="index_email",
+            payload={"email_db_id": email_db_id},
+            # notify_event=new_task_event # Optional: trigger worker immediately if event is available
+        )
+        logger.info(f"Enqueued indexing task {task_id} for email DB ID {email_db_id}")
+
+        # 4. Update the email record with the task ID
+        update_stmt = (
+            update(received_emails_table)
+            .where(received_emails_table.c.id == email_db_id)
+            .values(indexing_task_id=task_id)
+        )
+        await db_context.execute_with_retry(update_stmt)
+        logger.info(f"Updated email {email_db_id} with indexing task ID {task_id}")
+
     except SQLAlchemyError as e:
+        # Log specific details if available
+        failed_stage = "inserting email"
+        if email_db_id and not task_id: failed_stage = "enqueueing task"
+        if email_db_id and task_id: failed_stage = "updating email with task_id"
+
         logger.error(
-            f"Database error storing email with Message-ID {parsed_data_filtered.get('message_id_header', 'N/A')}: {e}",
+            f"Database error during {failed_stage} for email Message-ID {parsed_data_filtered.get('message_id_header', 'N/A')} (DB ID: {email_db_id}, Task ID: {task_id}): {e}",
             exc_info=True,
         )
         raise
