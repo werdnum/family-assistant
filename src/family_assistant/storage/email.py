@@ -75,7 +75,11 @@ received_emails_table = sa.Table(
     # Add other potentially useful Mailgun fields if needed
     sa.Column("mailgun_timestamp", sa.Text, nullable=True),  # Mailgun 'timestamp' field
     sa.Column("mailgun_token", sa.Text, nullable=True),  # Mailgun 'token' field
-) # Add missing closing parenthesis
+    # --- Indexing Task Tracking ---
+    sa.Column(
+        "indexing_task_id", sa.String, nullable=True, index=True, unique=True
+    ),  # Stores the unique ID of the task responsible for indexing this email
+)
 
 
 # --- Database Operations ---
