@@ -26,17 +26,17 @@ from typing import Optional, List, Dict, Any, Tuple  # Added Tuple
 
 import pytz  # Added for timezone handling
 from dotenv import load_dotenv
-from telegram import Update # Keep Update if used elsewhere
+# from telegram import Update # No longer needed here
 # from telegram.constants import ChatAction, ParseMode # Moved to telegram_bot.py
-from telegram.ext import (
-    Application,
-    ApplicationBuilder,
-    # CallbackContext, # Moved to telegram_bot.py
-    # CommandHandler, # Moved to telegram_bot.py
-    # ContextTypes, # Moved to telegram_bot.py
-    # MessageHandler, # Moved to telegram_bot.py
-    # filters, # Moved to telegram_bot.py
-)
+# from telegram.ext import ( # No longer needed here
+#     Application,
+#     ApplicationBuilder,
+#     # CallbackContext, # Moved to telegram_bot.py
+#     # CommandHandler, # Moved to telegram_bot.py
+#     # ContextTypes, # Moved to telegram_bot.py
+#     # MessageHandler, # Moved to telegram_bot.py
+#     # filters, # Moved to telegram_bot.py
+# )
 # import telegramify_markdown # Moved to telegram_bot.py
 # from telegram.helpers import escape_markdown # Moved to telegram_bot.py
 import uvicorn
@@ -88,8 +88,8 @@ from family_assistant.storage.context import DatabaseContext, get_db_context # I
 # Import calendar functions
 from family_assistant import calendar_integration
 
-# Import the Telegram bot handler class
-from .telegram_bot import TelegramBotHandler
+# Import the Telegram service class
+from .telegram_bot import TelegramService # Updated import
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -114,7 +114,7 @@ shutdown_event = task_worker.shutdown_event
 new_task_event = task_worker.new_task_event
 
 # --- Global Variables ---
-application: Optional[Application] = None
+# application: Optional[Application] = None # Removed global application instance
 ALLOWED_CHAT_IDS: list[int] = []
 DEVELOPER_CHAT_ID: Optional[int] = None
 PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
@@ -447,10 +447,12 @@ load_config()
 
 
 # --- Signal Handlers ---
-async def shutdown_handler(signal_name: str):
+async def shutdown_handler(signal_name: str, telegram_service: Optional[TelegramService]): # Accept service instance
     """Initiates graceful shutdown."""
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
-    shutdown_event.set()
+    # Ensure the event is set to signal other parts of the application
+    if not shutdown_event.is_set(): # Check before setting
+        shutdown_event.set()
     # Ensure the event is set to signal other parts of the application
     if not shutdown_event.is_set():
         shutdown_event.set()
@@ -470,10 +472,15 @@ async def shutdown_handler(signal_name: str):
         logger.info("No outstanding tasks to cancel.")
 
     # --- Stop Services (Order might matter) ---
-    if application and application.updater:
-        logger.info("Stopping Telegram polling...")
-        await application.updater.stop()
-        logger.info("Telegram polling stopped.")
+    # Stop Telegram polling via the service
+    # Need access to the telegram_service instance created in main_async
+    # Option 1: Make telegram_service global (less ideal)
+    # Stop Telegram polling via the passed service instance
+    if telegram_service:
+         await telegram_service.stop_polling()
+    else:
+         logger.warning("TelegramService instance was None during shutdown.")
+
 
     # Uvicorn server shutdown is handled in main_async when shutdown_event is set
 
@@ -498,9 +505,9 @@ def reload_config_handler(signum, frame):
 
 
 # --- Main Application Setup & Run ---
-async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed args
+async def main_async(cli_args: argparse.Namespace) -> Optional[TelegramService]: # Return service instance or None
     """Initializes and runs the bot application."""
-    global application
+    # global application # Removed
     logger.info(f"Using model: {cli_args.model}")  # Use cli_args
 
     # --- Validate Essential Config from args ---
@@ -571,30 +578,17 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
         f"ProcessingService initialized with {type(llm_client).__name__}, {type(composite_provider).__name__} and configuration."
     )
 
-    # --- Telegram Application Setup ---
-    application = ApplicationBuilder().token(cli_args.telegram_token).build()
-
-    # Store the ProcessingService instance in bot_data for access in handlers
-    application.bot_data["processing_service"] = processing_service
-    logger.info("Stored ProcessingService instance in application.bot_data.")
-
-    # --- Instantiate and Register Telegram Bot Handler ---
-    telegram_bot_handler = TelegramBotHandler(
-        application=application,
+    # --- Instantiate Telegram Service ---
+    telegram_service = TelegramService(
+        telegram_token=cli_args.telegram_token,
         allowed_chat_ids=ALLOWED_CHAT_IDS,
         developer_chat_id=DEVELOPER_CHAT_ID,
-        processing_service=processing_service, # Pass the service instance
-        get_db_context_func=get_db_context, # Pass the context getter
+        processing_service=processing_service,
+        get_db_context_func=get_db_context,
     )
-    telegram_bot_handler.register_handlers() # Register handlers from the class
 
-    # Initialize application (loads persistence, etc.)
-    await application.initialize()
-
-    # Start polling
-    await application.start()
-    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-    logger.info("Bot polling started.")  # Updated log message
+    # Start polling using the service method
+    await telegram_service.start_polling()
 
     # --- Uvicorn Server Setup ---
     config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
@@ -624,9 +618,8 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
 
     logger.info("Shutdown signal received. Stopping services...")
 
-    # Stop polling first
-    await application.updater.stop()
-    logger.info("Telegram polling stopped.")
+    # Stop polling using the service method (already called by shutdown_handler if setup correctly)
+    # await telegram_service.stop_polling() # This is now handled by the signal handler
 
     # Signal Uvicorn to shut down gracefully
     server.should_exit = True
@@ -636,10 +629,12 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
 
     # Polling task cancellation is handled by application.updater.stop() and application.shutdown()
     # Task worker cancellation is handled by the main shutdown_handler.
-    # No need to manually cancel telegram_task or task_worker anymore.
+    # No need to manually cancel task_worker anymore (handled by shutdown_handler).
 
     logger.info("All services stopped. Final shutdown.")
-    # Application shutdown is handled by the signal handler which calls shutdown_handler
+    # Telegram application shutdown is handled by telegram_service.stop_polling() called from shutdown_handler
+
+    return telegram_service # Return the created service instance
 
 
 def main() -> int:  # Return an exit code
@@ -667,15 +662,43 @@ def main() -> int:  # Return an exit code
     # --- Event Loop and Signal Handlers ---
     loop = asyncio.get_event_loop()
 
-    signal_map = {
-        signal.SIGINT: "SIGINT",
-        signal.SIGTERM: "SIGTERM",
-    }
-    for sig_num, sig_name in signal_map.items():
-        # Use a default argument in the lambda that captures the current sig_name
-        loop.add_signal_handler(
-            sig_num, lambda name=sig_name: asyncio.create_task(shutdown_handler(name))
-        )
+    # --- Event Loop and Signal Handlers ---
+    loop = asyncio.get_event_loop()
+
+    # Placeholder for telegram_service instance to be passed to handler
+    # This is slightly tricky as the service is created *inside* main_async
+    # We might need to create the service earlier or use a different mechanism.
+    # Let's adjust main_async slightly to create the service earlier.
+
+    # --- Run main_async ---
+    telegram_service_instance = None # Initialize
+    try:
+        logger.info("Starting application...")
+        # Pass parsed args to main_async
+        # main_async will now return the created telegram_service instance
+        telegram_service_instance = loop.run_until_complete(main_async(args))
+
+        # --- Setup Signal Handlers *after* service creation ---
+        if telegram_service_instance:
+            signal_map = {
+                signal.SIGINT: "SIGINT",
+                signal.SIGTERM: "SIGTERM",
+            }
+            for sig_num, sig_name in signal_map.items():
+                # Pass the service instance to the shutdown handler lambda
+                loop.add_signal_handler(
+                    sig_num,
+                    lambda name=sig_name, service=telegram_service_instance: asyncio.create_task(
+                        shutdown_handler(name, service) # Pass service instance
+                    ),
+                )
+        else:
+            logger.error("Failed to create TelegramService, signal handlers not fully set up.")
+            # Fallback simple handler if service creation failed
+            for sig_num, sig_name in signal_map.items():
+                 loop.add_signal_handler(
+                     sig_num, lambda name=sig_name: asyncio.create_task(shutdown_handler(name, None))
+                 )
 
     # SIGHUP for config reload (only on Unix-like systems)
     if hasattr(signal, "SIGHUP"):
@@ -697,10 +720,10 @@ def main() -> int:  # Return an exit code
         logger.warning(f"Received {type(ex).__name__}, initiating shutdown.")
         # Ensure shutdown runs if loop was interrupted directly
         if not shutdown_event.is_set():
-            # Run the async shutdown handler within the loop
-            loop.run_until_complete(shutdown_handler(type(ex).__name__))
+            # Run the async shutdown handler within the loop, passing the service instance
+            loop.run_until_complete(shutdown_handler(type(ex).__name__, telegram_service_instance))
     finally:
-        # Task cleanup is now handled within shutdown_handler
+        # Task cleanup is handled within shutdown_handler
         logger.info("Closing event loop.")
         loop.close()
         logger.info("Application finished.")
