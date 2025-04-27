@@ -700,21 +700,21 @@ def main() -> int:  # Return an exit code
                      sig_num, lambda name=sig_name: asyncio.create_task(shutdown_handler(name, None))
                  )
 
-    # SIGHUP for config reload (only on Unix-like systems)
-    if hasattr(signal, "SIGHUP"):
-        try:
-            loop.add_signal_handler(
-                signal.SIGHUP, reload_config_handler, signal.SIGHUP, None
-            )
-        except NotImplementedError:
-            logger.warning("SIGHUP signal handler not supported on this platform.")
+        # --- Setup SIGHUP Handler (Inside the main try block, after other signals) ---
+        if hasattr(signal, "SIGHUP"):
+            try:
+                loop.add_signal_handler(
+                    signal.SIGHUP, reload_config_handler, signal.SIGHUP, None
+                )
+                logger.info("SIGHUP handler registered for config reload.")
+            except NotImplementedError:
+                logger.warning("SIGHUP signal handler not supported on this platform.")
 
-    try:
-        logger.info("Starting application...")
-        # Pass parsed args to main_async
-        loop.run_until_complete(main_async(args))
-    except ValueError as config_err:  # Catch config validation errors
-        logger.critical(f"Configuration error: {config_err}")
+        # The main loop implicitly runs after this point, waiting for signals or KeyboardInterrupt within the outer try block.
+
+    # The except and finally blocks corresponding to the *outer* try block remain below.
+    except ValueError as config_err:  # Catch config validation errors from main_async
+        logger.critical(f"Configuration error during startup: {config_err}")
         return 1  # Return non-zero exit code
     except (KeyboardInterrupt, SystemExit) as ex:
         logger.warning(f"Received {type(ex).__name__}, initiating shutdown.")
@@ -726,11 +726,12 @@ def main() -> int:  # Return an exit code
         # Task cleanup is handled within shutdown_handler
         logger.info("Closing event loop.")
         # Ensure loop is closed only if it's running
-        if loop.is_running():
-             loop.close() # This might cause issues if called while loop is running from KeyboardInterrupt
-             logger.info("Event loop closed.") # Let's remove the close() call here, it's often problematic.
-        else:
-             logger.info("Event loop was already closed.")
+        # Removing loop.close() as it can cause issues if called incorrectly.
+        # if loop.is_running():
+        #      loop.close()
+        #      logger.info("Event loop closed.")
+        # else:
+        #      logger.info("Event loop was already closed.")
 
         logger.info("Application finished.")
 
