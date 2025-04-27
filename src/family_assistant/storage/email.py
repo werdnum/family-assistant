@@ -75,6 +75,9 @@ received_emails_table = sa.Table(
     # Add other potentially useful Mailgun fields if needed
     sa.Column("mailgun_timestamp", sa.Text, nullable=True),  # Mailgun 'timestamp' field
     sa.Column("mailgun_token", sa.Text, nullable=True),  # Mailgun 'token' field
+) # Add missing closing parenthesis
+
+
 # --- Database Operations ---
 
 
