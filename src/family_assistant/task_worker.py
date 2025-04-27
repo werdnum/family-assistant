@@ -234,7 +234,8 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
         try: # Add try block here to encompass the whole loop iteration
             task = None
             # Create a database context for this iteration
-            async with get_db_context() as db_context:
+            # Await the coroutine returned by get_db_context()
+            async with await get_db_context() as db_context:
                 try: # Inner try for dequeue, task processing, and waiting logic
                     # Dequeue a task of a type this worker handles
                     task = await storage.dequeue_task(
