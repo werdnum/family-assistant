@@ -174,12 +174,17 @@ class DocumentEmbeddingRecord(Base):
 # --- API Functions ---
 
 
-async def init_vector_db():
-    """Initializes the vector database components (extension, indexes). Tables are created by storage.init_db."""
-    engine = get_engine()  # Use engine from db_base.py
+async def init_vector_db(db_context: DatabaseContext):
+    """
+    Initializes the vector database components (extension, indexes) using the provided context.
+    Tables should be created separately via storage.init_db or metadata.create_all.
 
+    Args:
+        db_context: The DatabaseContext to use for executing initialization commands.
+    """
     # Check if the dialect is PostgreSQL before running PG-specific commands
-    if engine.dialect.name == "postgresql":
+    # Access the engine from the context
+    if db_context.engine.dialect.name == "postgresql":
         logger.info("PostgreSQL dialect detected. Initializing vector extension and indexes...")
         try:
             # Use execute_and_commit for DDL statements within the context
