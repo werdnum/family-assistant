@@ -507,7 +507,7 @@ async def _generate_llm_response_for_chat(
     except Exception as hist_err:
         logger.error(f"Failed to get message history for chat {chat_id}: {hist_err}", exc_info=True)
         history_messages = [] # Continue with empty history on error
-    )
+
 
     # Process history messages, formatting assistant tool calls correctly
     for msg in history_messages:
@@ -834,7 +834,7 @@ async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
                     )
                 )
                 # Removed extra parenthesis here
-            )
+
 
         if llm_response_content:
             # Reply to the *last* message in the batch
