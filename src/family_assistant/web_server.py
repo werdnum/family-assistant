@@ -72,11 +72,11 @@ except NameError:
         "/static", StaticFiles(directory="src/family_assistant/static"), name="static"
     )
 
-# --- Helper for DB Session (if needed, but storage functions are standalone) ---
-# Example if storage functions required a session object
-# async def get_db() -> AsyncSession:
-#     async with storage.SessionLocal() as session:
-#         yield session
+# --- Dependency for Database Context ---
+async def get_db() -> DatabaseContext:
+    """FastAPI dependency to get a DatabaseContext."""
+    async with get_db_context() as db_context:
+        yield db_context
 
 # --- Routes ---
 
