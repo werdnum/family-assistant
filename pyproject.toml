@@ -39,6 +39,9 @@ dependencies = [
     "python-dateutil==2.9.0", # For robust datetime parsing
     "pytz>=2024.1", # For timezone handling
     "aiofiles>=23.2.1", # For async file operations (LLM recording/playback)
+    "sentence-transformers>=2.7.0", # For local embeddings (optional install)
+    "torch>=2.0.0", # Dependency for sentence-transformers
+    "numpy>=1.26.0", # Dependency for sentence-transformers and pgvector
 ]
 
 [project.optional-dependencies]
