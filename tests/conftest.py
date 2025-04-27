@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import logging
 import os
+import sqlalchemy as sa # Add this import
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from unittest.mock import patch
 from testcontainers.postgres import PostgresContainer
