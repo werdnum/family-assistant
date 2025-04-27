@@ -155,7 +155,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
             # model_name argument removed
         )
         # model_name argument removed from _generate_llm_response_for_chat call
-    )
+
 
     logger.info(f"Add Note - Mock LLM Response Content: {add_response_content}")
     logger.info(f"Add Note - Tool Info from Processing: {add_tool_info}")
@@ -213,7 +213,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
         )
             # model_name argument removed from _generate_llm_response_for_chat call
         )
-    )
+
 
     logger.info(f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}")
     logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
