@@ -23,9 +23,12 @@ from telegram.ext import (
     filters,
 )
 
+# Import necessary types for type hinting
+from family_assistant.processing import ProcessingService
+from family_assistant.storage.context import DatabaseContext
+# from .storage.context import get_db_context # get_db_context is passed as a function
+
 # Assuming these are passed or accessible
-# from .processing import ProcessingService
-# from .storage.context import DatabaseContext, get_db_context
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +54,7 @@ class TelegramBotHandler:
             processing_service: The ProcessingService instance.
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
-        # Import ProcessingService locally for type checking if needed, or rely on quotes
-        from family_assistant.processing import ProcessingService
+        # Imports moved to top level
 
         self.application = application
         self.allowed_chat_ids = allowed_chat_ids
