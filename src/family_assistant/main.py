@@ -5,17 +5,17 @@ import html
 import argparse
 import argparse
 import asyncio
-import base64  # Add base64
 import contextlib
 import html
-import io  # Add io
+# import io # Moved to telegram_bot.py
 import json
 import logging
+# import base64 # Moved to telegram_bot.py
 import os
 import signal
 import sys
-import traceback
-import uuid  # Add uuid
+import traceback # Keep for error handler if needed elsewhere, or remove if only used in bot's handler
+import uuid
 import yaml
 import mcp  # Import MCP
 from mcp import ClientSession, StdioServerParameters  # MCP specifics
@@ -26,19 +26,19 @@ from typing import Optional, List, Dict, Any, Tuple  # Added Tuple
 
 import pytz  # Added for timezone handling
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.constants import ChatAction, ParseMode
+from telegram import Update # Keep Update if used elsewhere
+# from telegram.constants import ChatAction, ParseMode # Moved to telegram_bot.py
 from telegram.ext import (
     Application,
     ApplicationBuilder,
-    CallbackContext,
-    CommandHandler,
-    ContextTypes,  # Re-add ContextTypes
-    MessageHandler,  # Re-add MessageHandler
-    filters,
+    # CallbackContext, # Moved to telegram_bot.py
+    # CommandHandler, # Moved to telegram_bot.py
+    # ContextTypes, # Moved to telegram_bot.py
+    # MessageHandler, # Moved to telegram_bot.py
+    # filters, # Moved to telegram_bot.py
 )
-import telegramify_markdown
-from telegram.helpers import escape_markdown
+# import telegramify_markdown # Moved to telegram_bot.py
+# from telegram.helpers import escape_markdown # Moved to telegram_bot.py
 import uvicorn
 
 # Import task worker module using absolute path
@@ -118,16 +118,15 @@ PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
 CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
 TIMEZONE_STR: str = "UTC"  # Default timezone
 # shutdown_event moved higher up
-from collections import defaultdict  # Add defaultdict
+# from collections import defaultdict # Moved to telegram_bot.py
 
 mcp_sessions: Dict[str, ClientSession] = (
     {}
 )  # Stores active MCP client sessions {server_id: session}
-# --- State for message batching ---
-chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-# Store the Update object and optional photo bytes
-message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
-processing_tasks: Dict[int, asyncio.Task] = {}
+# --- State for message batching (Moved to TelegramBotHandler) ---
+# chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+# message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
+# processing_tasks: Dict[int, asyncio.Task] = {}
 mcp_tools: List[Dict[str, Any]] = []  # Stores discovered MCP tools in OpenAI format
 tool_name_to_server_id: Dict[str, str] = {}  # Maps MCP tool names to their server_id
 mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
@@ -437,36 +436,10 @@ load_config()
 
 
 # --- Helper Functions & Context Managers ---
-@contextlib.asynccontextmanager
-async def typing_notifications(
-    context: ContextTypes.DEFAULT_TYPE, chat_id: int, action: str = ChatAction.TYPING
-):
-    """Context manager to send typing notifications periodically."""
-    stop_event = asyncio.Event()
-
-    async def typing_loop():
-        while not stop_event.is_set():
-            try:
-                await context.bot.send_chat_action(chat_id=chat_id, action=action)
-                # Wait slightly less than the 5-second timeout of the action
-                await asyncio.wait_for(stop_event.wait(), timeout=4.5)
-            except asyncio.TimeoutError:
-                pass
-            except Exception as e:
-                logger.warning(f"Error sending chat action: {e}")
-                await asyncio.sleep(5)  # Avoid busy-looping on persistent errors
-
-    typing_task = asyncio.create_task(typing_loop())
-    try:
-        yield
-    finally:
-        stop_event.set()
-        # Wait briefly for the task to finish cleanly
-        with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.wait_for(typing_task, timeout=1.0)
+# typing_notifications moved to TelegramBotHandler
 
 
-# --- Core LLM Interaction Logic (Refactored) ---
+# --- Core LLM Interaction Logic (Remains here as it uses many main.py components) ---
 
 
 async def _generate_llm_response_for_chat(
@@ -696,368 +669,8 @@ async def _generate_llm_response_for_chat(
         return None, None
 
 
-# --- Telegram Bot Handlers ---
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends a welcome message when the /start command is issued."""
-    chat_id = update.effective_chat.id
-    if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
-        logger.warning(f"Unauthorized /start command from chat_id {chat_id}")
-        return
-    await update.message.reply_text(
-        f"Hello! I'm your family assistant. Your chat ID is `{chat_id}`. How can I help?"
-    )
-
-
-# --- Message Queue Processing ---
-async def process_chat_queue(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Processes the message buffer for a given chat."""
-    # This function now contains the core logic previously in message_handler
-    global processing_tasks, message_buffers, chat_locks  # Access globals
-
-    logger.debug(f"Starting process_chat_queue for chat_id {chat_id}")
-    async with chat_locks[chat_id]:
-        # buffered_batch: List[Tuple[Update, Optional[bytes]]]
-        buffered_batch = message_buffers[chat_id][:]  # Get a copy
-        message_buffers[chat_id].clear()  # Clear the buffer
-        logger.debug(
-            f"Cleared buffer for chat {chat_id}, processing {len(buffered_batch)} items."
-        )
-
-    if not buffered_batch:
-        logger.info(
-            f"Processing queue for chat {chat_id} called with empty buffer. Exiting."
-        )
-        return  # Nothing to process
-
-    logger.info(
-        f"Processing batch of {len(buffered_batch)} message update(s) for chat {chat_id}."
-    )
-
-    # --- Extract context from the last message in the batch ---
-    last_update, _ = buffered_batch[-1]  # Get the last Update object
-    user = last_update.effective_user
-    user_name = user.first_name if user else "Unknown User"
-    reply_target_message_id = (
-        last_update.message.message_id if last_update.message else None
-    )
-    logger.debug(
-        f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update."
-    )
-
-    # --- Combine text and find first photo from the batch ---
-    all_texts = []
-    first_photo_bytes = None
-    forward_context = ""  # Reset forward context for the batch
-
-    for update_item, photo_bytes in buffered_batch:
-        if update_item.message:
-            text = update_item.message.caption or update_item.message.text or ""
-            if text:
-                all_texts.append(text)
-            if photo_bytes and first_photo_bytes is None:
-                first_photo_bytes = photo_bytes
-                logger.debug(
-                    f"Found first photo in batch from message {update_item.message.message_id}"
-                )
-            # Check for forward context (use context from the *last* message for simplicity)
-            # A more complex approach could prepend context for each forwarded message.
-            if update_item.message.forward_origin:
-                origin = update_item.message.forward_origin
-                original_sender_name = "Unknown Sender"
-                if origin.sender_user:
-                    original_sender_name = origin.sender_user.first_name or "User"
-                elif origin.sender_chat:
-                    original_sender_name = origin.sender_chat.title or "Chat/Channel"
-                forward_context = f"(forwarded from {original_sender_name}) "
-                logger.debug(
-                    f"Detected forward context from {original_sender_name} in last message."
-                )
-
-    combined_text = "\n\n".join(all_texts).strip()
-    logger.debug(f"Combined text: '{combined_text[:100]}...'")
-
-    # --- Prepare current user message content part (combined) ---
-    formatted_user_text_content = f"{forward_context}{combined_text}".strip()
-    text_content_part = {"type": "text", "text": formatted_user_text_content}
-    trigger_content_parts = [text_content_part]  # Start with text
-
-    # --- Handle Photo Attachment (from the first photo found) ---
-    if first_photo_bytes:
-        try:
-            base64_image = base64.b64encode(first_photo_bytes).decode("utf-8")
-            mime_type = "image/jpeg"  # Assuming JPEG
-            trigger_content_parts.append(
-                {  # Append photo part
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
-                }
-            )
-            logger.info("Added first photo from batch to trigger content.")
-        except Exception as img_err:
-            logger.error(f"Error encoding photo from batch: {img_err}", exc_info=True)
-            await context.bot.send_message(chat_id, "Error processing image in batch.")
-            # Continue processing with just the text part if the image failed.
-            trigger_content_parts = [text_content_part]  # Reset to just text
-
-    llm_response_content = None
-    tool_call_info = None  # Initialize tool info for this batch
-    logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
-
-    try:
-        # Retrieve the ProcessingService instance from bot_data
-        processing_service: Optional[ProcessingService] = context.bot_data.get(
-            "processing_service"
-        )
-        if not processing_service:
-            logger.error(
-                "ProcessingService not found in bot_data. Cannot generate response."
-            )
-            await context.bot.send_message(
-                chat_id, "Internal error: Processing service unavailable."
-            )
-            return  # Exit processing if service is missing
-
-        # Use the helper function, passing the db_context, service and application instances
-        # Create a db context for this processing run
-        async with get_db_context() as db_context: # Create context here
-            async with typing_notifications(context, chat_id):
-                llm_response_content, tool_call_info = (
-                    await _generate_llm_response_for_chat(
-                        db_context=db_context, # Pass context
-                        processing_service=processing_service,
-                        application=context.application,
-                        chat_id=chat_id,
-                        trigger_content_parts=trigger_content_parts,
-                        user_name=user_name, # Moved inside the call
-                    )
-                )
-                # Removed extra parenthesis here
-
-
-        if llm_response_content:
-            # Reply to the *last* message in the batch
-            # Convert the LLM's markdown response to Telegram's MarkdownV2 format
-            try:
-                converted_markdown = telegramify_markdown.markdownify(
-                    llm_response_content
-                )
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=converted_markdown,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_to_message_id=reply_target_message_id,  # Use the stored ID
-                )
-            except Exception as md_err:  # Catch potential errors during conversion
-                logger.error(
-                    f"Failed to convert markdown: {md_err}. Sending plain text.",
-                    exc_info=True,
-                )
-                # Fallback to sending plain text if conversion fails
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=llm_response_content,  # Send the actual content
-                    reply_to_message_id=reply_target_message_id,
-                )
-        else:
-            # Handle case where LLM gave no response
-            logger.warning("Received empty response from LLM.")
-            if reply_target_message_id:  # Only reply if we have a message ID
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text="Sorry, I couldn't process that request.",
-                    reply_to_message_id=reply_target_message_id,
-                )
-
-    except Exception as e:
-        logger.error(
-            f"Error processing message batch for chat {chat_id}: {e}", exc_info=True
-        )
-        # Let the error_handler deal with notifying the developer
-        if reply_target_message_id:  # Check if we have a message to reply to
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text="Sorry, something went wrong while processing your request.",
-                    reply_to_message_id=reply_target_message_id,
-                )
-            except Exception as reply_err:
-                logger.error(
-                    f"Failed to send error reply to chat {chat_id}: {reply_err}"
-                )
-                # Attempt to send without replying as a fallback
-                try:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text="Sorry, something went wrong while processing your request (reply failed).",
-                    )
-                except Exception as fallback_err:
-                    logger.error(
-                        f"Failed to send fallback error message to chat {chat_id}: {fallback_err}"
-                    )
-
-        # Log and finish the task to prevent breaking the handler loop
-        logger.debug(
-            f"Finished processing batch for chat {chat_id}, proceeding to finally block."
-        )
-    finally:
-        # --- Store messages in DB (using the same db_context) ---
-        # Need to ensure db_context is available here if created inside the try block
-        # Let's create db_context outside the main try block for the queue processing
-        db_context_for_history = None
-        try:
-            # Create context specifically for history storage if needed, or reuse if possible
-            # Reusing the context from the main processing block is better if no errors occurred
-            # If an error occurred before context creation, we need a new one.
-            # Let's assume we always create one here for simplicity in the finally block.
-             async with get_db_context() as db_context_for_history:
-                # Store combined user message first
-                if reply_target_message_id:
-                    history_user_content = combined_text  # Start with combined text
-                    if first_photo_bytes:  # Check if a photo was processed
-                        history_user_content += " [Image(s) Attached]"
-                    await storage.add_message_to_history(
-                        db_context=db_context_for_history, # Pass context
-                        chat_id=chat_id,
-                        message_id=reply_target_message_id,
-                        timestamp=datetime.now(timezone.utc),  # Use processing time
-                        role="user",
-                        content=history_user_content,
-                        tool_calls_info=None,
-                    )
-                else:
-                    logger.warning(
-                        f"Could not store batched user message for chat {chat_id} due to missing message ID."
-                    )
-
-                # Store bot response if successful, including tool call info
-                if llm_response_content and reply_target_message_id:
-                    bot_message_pseudo_id = reply_target_message_id + 1
-                    await storage.add_message_to_history(
-                        db_context=db_context_for_history, # Pass context
-                        chat_id=chat_id,
-                        message_id=bot_message_pseudo_id,
-                        timestamp=datetime.now(timezone.utc),
-                        role="assistant",
-                        content=llm_response_content,
-                        tool_calls_info=tool_call_info,
-                    )
-        except Exception as db_err:
-            logger.error(
-                f"Failed to store batched message history in DB for chat {chat_id}: {db_err}",
-                exc_info=True,
-            )
-
-        # --- Task Cleanup ---
-        async with chat_locks[chat_id]:  # Ensure lock is held for task removal
-            if processing_tasks.get(chat_id) is asyncio.current_task():
-                processing_tasks.pop(chat_id, None)
-                logger.info(f"Processing task for chat {chat_id} finished and removed.")
-            else:
-                # This case might happen if a new task was rapidly scheduled, though unlikely with the lock
-                logger.warning(
-                    f"Current task for chat {chat_id} doesn't match entry in processing_tasks during cleanup."
-                )
-
-
-# --- Original Message Handler (Now Buffers) ---
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Buffers incoming messages and triggers processing if not already running."""
-    global message_buffers, processing_tasks, chat_locks  # Access globals
-    chat_id = update.effective_chat.id
-    user_message_text = update.message.caption or update.message.text or ""
-    photo_bytes = None
-
-    # --- Access Control ---
-    if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
-        logger.warning(f"Ignoring message from unauthorized chat_id {chat_id}")
-        return
-
-    # --- Process Photo (if any) into bytes immediately ---
-    if update.message.photo:
-        logger.info(
-            f"Message {update.message.message_id} from chat {chat_id} contains photo."
-        )
-        try:
-            photo_size = update.message.photo[-1]
-            photo_file = await photo_size.get_file()
-            with io.BytesIO() as buf:
-                await photo_file.download_to_memory(out=buf)
-                buf.seek(0)
-                photo_bytes = buf.read()
-            logger.debug(
-                f"Photo from message {update.message.message_id} loaded into bytes."
-            )
-        except Exception as img_err:
-            logger.error(
-                f"Failed to process photo bytes for message {update.message.message_id}: {img_err}",
-                exc_info=True,
-            )
-            await update.message.reply_text("Sorry, error processing attached image.")
-            # Don't buffer this message if photo processing failed critically
-            return
-
-    # --- Add message Update object and photo bytes to buffer under lock ---
-    async with chat_locks[chat_id]:
-        message_buffers[chat_id].append((update, photo_bytes))
-        # Removed storing message_id in context.user_data
-        buffer_size = len(message_buffers[chat_id])
-        logger.info(
-            f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}"
-        )
-
-        # --- Check if processing task needs to be started ---
-        if chat_id not in processing_tasks or processing_tasks[chat_id].done():
-            logger.info(f"Starting new processing task for chat {chat_id}.")
-            task = asyncio.create_task(process_chat_queue(chat_id, context))
-            processing_tasks[chat_id] = task
-            # Add callback to remove task from dict upon completion/error
-            task.add_done_callback(lambda t, c=chat_id: processing_tasks.pop(c, None))
-        else:
-            logger.info(
-                f"Processing task already running for chat {chat_id}. Message added to buffer."
-            )
-        # Lock is released automatically here
-
-
-async def error_handler(update: object, context: CallbackContext) -> None:
-    """Log the error and send a telegram message to notify the developer."""
-    logger.error("Exception while handling an update:", exc_info=context.error)
-
-    # traceback.format_exception returns the usual python message about an exception,
-    # but as a list of strings rather than a single string, so we have to join them together.
-    tb_list = traceback.format_exception(
-        None, context.error, context.error.__traceback__
-    )
-    tb_string = "".join(tb_list)
-
-    # Build the message with some markup and additional information about what happened.
-    update_str = update.to_dict() if isinstance(update, Update) else str(update)
-    message = (
-        "An exception was raised while handling an update\n"
-        f"<pre>update = {html.escape(json.dumps(update_str, indent=2, ensure_ascii=False))}"
-        "</pre>\n\n"
-        f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
-        f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
-        f"<pre>{html.escape(tb_string)}</pre>"
-    )
-
-    # Send error message to developer chat if configured
-    if DEVELOPER_CHAT_ID:
-        # Split the message if it's too long for Telegram
-        max_len = 4096
-        for i in range(0, len(message), max_len):
-            try:
-                await context.bot.send_message(
-                    chat_id=DEVELOPER_CHAT_ID,
-                    text=message[i : i + max_len],
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception as e:
-                logger.error(f"Failed to send error message to developer: {e}")
-    else:
-        logger.warning("DEVELOPER_CHAT_ID not set, cannot send error notification.")
+# --- Telegram Bot Handlers (Moved to TelegramBotHandler) ---
+# start, process_chat_queue, message_handler, error_handler moved
 
 
 # --- Signal Handlers ---
@@ -1186,19 +799,15 @@ async def main_async(cli_args: argparse.Namespace) -> None:  # Accept parsed arg
     application.bot_data["processing_service"] = processing_service
     logger.info("Stored ProcessingService instance in application.bot_data.")
 
-    # Register Telegram handlers
-    application.add_handler(CommandHandler("start", start))
-    # Handle text OR photo messages (with optional caption)
-    # filters.PHOTO will match messages containing photos, potentially with captions
-    # filters.TEXT will match plain text messages
-    application.add_handler(
-        MessageHandler(
-            (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, message_handler
-        )
+    # --- Instantiate and Register Telegram Bot Handler ---
+    telegram_bot_handler = TelegramBotHandler(
+        application=application,
+        allowed_chat_ids=ALLOWED_CHAT_IDS,
+        developer_chat_id=DEVELOPER_CHAT_ID,
+        generate_llm_response_func=_generate_llm_response_for_chat, # Pass the helper function
+        get_db_context_func=get_db_context, # Pass the context getter
     )
-
-    # Register error handler
-    application.add_error_handler(error_handler)
+    telegram_bot_handler.register_handlers() # Register handlers from the class
 
     # Initialize application (loads persistence, etc.)
     await application.initialize()
