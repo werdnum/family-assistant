@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, TypeVar, Generic, Callable, Union,
 from sqlalchemy import Result, TextClause, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Select, Insert, Update, Delete
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, ProgrammingError # Import ProgrammingError
 
 # Use absolute package path
 from family_assistant.storage.base import get_engine
@@ -110,11 +110,18 @@ class DatabaseContext:
                 else:
                     return await self.conn.execute(query)
             except DBAPIError as e:
+                # Check if the error is a ProgrammingError (syntax error, undefined object, etc.)
+                # These should not be retried.
+                if isinstance(e.orig, ProgrammingError) or isinstance(e, ProgrammingError): # Check original and wrapper
+                    logger.error(f"Non-retryable ProgrammingError encountered: {e}", exc_info=True)
+                    raise # Re-raise immediately, do not retry
+
+                # Log other DBAPI errors and proceed with retry logic
                 logger.warning(
-                    f"DBAPIError (attempt {attempt + 1}/{self.max_retries}): {e}."
+                    f"Retryable DBAPIError (attempt {attempt + 1}/{self.max_retries}): {e}."
                 )
                 if attempt == self.max_retries - 1:
-                    logger.error(f"Max retries exceeded. Raising error.")
+                    logger.error(f"Max retries exceeded for retryable error. Raising error.")
                     raise
 
                 # Calculate backoff with jitter for retry
