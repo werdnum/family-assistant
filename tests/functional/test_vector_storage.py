@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 TEST_EMBEDDING_MODEL = "gemini-exp-03-07"
 TEST_EMBEDDING_DIMENSION = 1536
 
-# --- Helper Class for Test Data ---
-class TestDocument(Document):
+# --- Helper Class for Test Data (Renamed to avoid PytestCollectionWarning) ---
+class MockDocumentImpl(Document):
     """Simple implementation of the Document protocol for test data."""
     def __init__(
         self,
@@ -101,7 +101,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
     test_content = "This is the text content that was embedded."
 
     # Create a document instance using the protocol implementation
-    test_doc = TestDocument(
+    test_doc = MockDocumentImpl(
         source_type=test_source_type,
         source_id=test_source_id,
         title=test_title,
