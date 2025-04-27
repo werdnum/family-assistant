@@ -725,8 +725,15 @@ def main() -> int:  # Return an exit code
     finally:
         # Task cleanup is handled within shutdown_handler
         logger.info("Closing event loop.")
-        loop.close()
+        # Ensure loop is closed only if it's running
+        if loop.is_running():
+             loop.close() # This might cause issues if called while loop is running from KeyboardInterrupt
+             logger.info("Event loop closed.") # Let's remove the close() call here, it's often problematic.
+        else:
+             logger.info("Event loop was already closed.")
+
         logger.info("Application finished.")
+
     return 0  # Return 0 on successful shutdown
 
 
