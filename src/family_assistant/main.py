@@ -489,11 +489,7 @@ async def shutdown_handler(signal_name: str, telegram_service: Optional[Telegram
     await mcp_exit_stack.aclose()
     logger.info("MCP server connections closed.")
 
-    # Stop the application itself
-    if application:
-        logger.info("Shutting down Telegram application...")
-        await application.shutdown()
-        logger.info("Telegram application shut down.")
+    # Telegram application shutdown is now handled within telegram_service.stop_polling()
 
 
 def reload_config_handler(signum, frame):
