@@ -51,35 +51,33 @@ class DatabaseContext:
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.conn: Optional[AsyncConnection] = None
-        # Remove _in_transaction flag
+        self._transaction_cm = None # To store the context manager from engine.begin()
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
-        if self.conn is not None:
+        if self._transaction_cm is not None:
             # This shouldn't happen if used correctly with 'async with'
             raise RuntimeError("DatabaseContext is not reentrant")
 
-        # engine.begin() starts a transaction and returns a connection
-        self.conn = await self.engine.begin()
+        # Get the transaction context manager from engine.begin()
+        self._transaction_cm = self.engine.begin()
+        # Enter the transaction context manager to get the connection
+        self.conn = await self._transaction_cm.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the async context manager, committing or rolling back the transaction."""
-        if self.conn is None:
+        if self._transaction_cm is None:
             # This shouldn't happen if __aenter__ succeeded
             return
 
         try:
-            if exc_type is None:
-                # No exception, commit the transaction
-                await self.conn.commit()
-            else:
-                # An exception occurred, roll back the transaction
-                await self.conn.rollback()
+            # Exit the underlying transaction context manager, which handles commit/rollback
+            await self._transaction_cm.__aexit__(exc_type, exc_val, exc_tb)
         finally:
-            # Always close the connection associated with the transaction
-            await self.conn.close()
+            # Clean up references
             self.conn = None
+            self._transaction_cm = None
 
     # Removed begin, commit, rollback methods
 
