@@ -564,12 +564,12 @@ async def test_keyword_filtering(pg_vector_db_engine):
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
     form_data1["stripped-text"] = email1_body
     form_data1["Message-Id"] = email1_msg_id
-    form_data1["subject"] = "Keyword Test No Match"
+    form_data1["subject"] = email1_title # Use variable for title
 
     form_data2 = TEST_EMAIL_FORM_DATA.copy()
     form_data2["stripped-text"] = email2_body
     form_data2["Message-Id"] = email2_msg_id
-    form_data2["subject"] = f"Keyword Test Yes Match {keyword}"
+    form_data2["subject"] = email2_title # Use variable for title
 
     # Start worker
     worker_id = f"test-worker-keyword-{uuid.uuid4()}"
