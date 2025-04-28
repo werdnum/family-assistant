@@ -427,14 +427,22 @@ async def handle_vector_search(
             except ValueError:
                 raise ValueError("Invalid 'Created Before' date format. Use YYYY-MM-DD.")
 
-        # --- Build Metadata Filter ---
-        metadata_filter_obj: Optional[MetadataFilter] = None
-        if metadata_key and metadata_value is not None: # Allow empty string value
-            metadata_filter_obj = MetadataFilter(key=metadata_key, value=metadata_value)
-        elif metadata_key and metadata_value is None:
-            logger.warning("Metadata key provided without a value, ignoring filter.")
-        elif not metadata_key and metadata_value is not None:
-             logger.warning("Metadata value provided without a key, ignoring filter.")
+        # --- Build List of Metadata Filters ---
+        metadata_filters_list: List[MetadataFilter] = []
+        if len(metadata_keys) != len(metadata_values):
+            # This indicates a potential issue with form submission or client-side JS
+            logger.error(f"Mismatch between metadata keys ({len(metadata_keys)}) and values ({len(metadata_values)}). Ignoring metadata filters.")
+            error = "Error: Mismatch in metadata filter keys and values."
+            # Optionally clear the lists to prevent partial filtering
+            metadata_keys = []
+            metadata_values = []
+        else:
+            for key, value in zip(metadata_keys, metadata_values):
+                if key and value is not None: # Allow empty string value, but require key
+                    metadata_filters_list.append(MetadataFilter(key=key, value=value))
+                elif key and value is None:
+                     logger.warning(f"Metadata key '{key}' provided without a value. Ignoring this filter.")
+                # No warning needed if key is empty, as it's likely from an empty template row
 
 
         # --- Create Query Object ---
