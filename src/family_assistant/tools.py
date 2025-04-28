@@ -18,6 +18,9 @@ from telegram.ext import Application  # Required for ToolExecutionContext
 # Import storage functions needed by local tools
 from family_assistant import storage
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store # Import vector search
+from family_assistant.embeddings import EmbeddingGenerator # Import embedding generator type
+
 
 logger = logging.getLogger(__name__)
 
