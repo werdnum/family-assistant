@@ -1,1 +1,3 @@
-# This file makes the tests directory a Python package.
+"""
+Tests package for the Family Assistant application.
+"""
