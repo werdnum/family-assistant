@@ -8,8 +8,8 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
-import numpy as np # Using numpy for easy random vector generation
-from sqlalchemy import text # Add this import
+import numpy as np  # Using numpy for easy random vector generation
+from sqlalchemy import text  # Add this import
 
 # Import the functions and classes we want to test
 from family_assistant.storage.vector import (
@@ -18,8 +18,8 @@ from family_assistant.storage.vector import (
     query_vectors,
     get_document_by_source_id,
     delete_document,
-    Document, # Import the protocol
-    DocumentRecord, # Import the ORM model for type hints if needed
+    Document,  # Import the protocol
+    DocumentRecord,  # Import the ORM model for type hints if needed
 )
 from family_assistant.storage.context import DatabaseContext
 
@@ -31,9 +31,11 @@ logger = logging.getLogger(__name__)
 TEST_EMBEDDING_MODEL = "gemini-exp-03-07"
 TEST_EMBEDDING_DIMENSION = 1536
 
+
 # --- Helper Class for Test Data (Renamed to avoid PytestCollectionWarning) ---
 class MockDocumentImpl(Document):
     """Simple implementation of the Document protocol for test data."""
+
     def __init__(
         self,
         source_type: str,
@@ -47,7 +49,11 @@ class MockDocumentImpl(Document):
         self._source_id = source_id
         self._title = title
         # Ensure datetime is timezone-aware if provided
-        self._created_at = created_at.astimezone(timezone.utc) if created_at and created_at.tzinfo is None else created_at
+        self._created_at = (
+            created_at.astimezone(timezone.utc)
+            if created_at and created_at.tzinfo is None
+            else created_at
+        )
         self._metadata = metadata
         self._source_uri = source_uri
 
@@ -93,10 +99,12 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
     test_source_type = "test_functional"
     test_title = f"Functional Test Document {uuid.uuid4()}"
     test_metadata = {"category": "functional_test", "run_id": str(uuid.uuid4())}
-    test_created_at = datetime.now(timezone.utc) # Use timezone-aware datetime
+    test_created_at = datetime.now(timezone.utc)  # Use timezone-aware datetime
 
     # Create a sample embedding (ensure dimension matches the index)
-    test_embedding_vector = np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32).tolist()
+    test_embedding_vector = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32).tolist()
+    )
     test_embedding_type = "content_chunk"
     test_content = "This is the text content that was embedded."
 
@@ -111,9 +119,11 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
 
     logger.info(f"\n--- Running Vector Storage Basic Flow Test ---")
     logger.info(f"Using Source ID: {test_source_id}")
-    logger.info(f"Using Embedding Model: {TEST_EMBEDDING_MODEL} (Dim: {TEST_EMBEDDING_DIMENSION})")
+    logger.info(
+        f"Using Embedding Model: {TEST_EMBEDDING_MODEL} (Dim: {TEST_EMBEDDING_DIMENSION})"
+    )
 
-    doc_id = None # To store the document ID
+    doc_id = None  # To store the document ID
 
     # --- Act & Assert: Add Document and Embedding ---
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
@@ -126,7 +136,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
         await add_embedding(
             db,
             document_id=doc_id,
-            chunk_index=0, # Using 0 for simplicity
+            chunk_index=0,  # Using 0 for simplicity
             embedding_type=test_embedding_type,
             embedding=test_embedding_vector,
             embedding_model=TEST_EMBEDDING_MODEL,
@@ -140,7 +150,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
         query_results = await query_vectors(
             db,
             query_embedding=test_embedding_vector,
-            embedding_model=TEST_EMBEDDING_MODEL, # Must match the index filter
+            embedding_model=TEST_EMBEDDING_MODEL,  # Must match the index filter
             limit=5,
         )
 
@@ -155,13 +165,16 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
                 found_result = result
                 break
 
-        assert found_result is not None, f"Added document (ID: {doc_id}) not found in query results"
+        assert (
+            found_result is not None
+        ), f"Added document (ID: {doc_id}) not found in query results"
         logger.info(f"Found matching result: {found_result}")
 
         # Check distance (should be very close to 0 for exact match)
         assert "distance" in found_result, "Result missing 'distance' field"
-        assert found_result["distance"] == pytest.approx(0.0, abs=1e-6), \
-            f"Distance should be near zero for exact match, but was {found_result['distance']}"
+        assert found_result["distance"] == pytest.approx(
+            0.0, abs=1e-6
+        ), f"Distance should be near zero for exact match, but was {found_result['distance']}"
 
         # Check other fields in the result
         assert found_result.get("embedding_type") == test_embedding_type
@@ -172,9 +185,13 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         logger.info(f"Retrieving document by source ID: {test_source_id}...")
         # Note: get_document_by_source_id returns the ORM model
-        retrieved_doc: Optional[DocumentRecord] = await get_document_by_source_id(db, test_source_id)
+        retrieved_doc: Optional[DocumentRecord] = await get_document_by_source_id(
+            db, test_source_id
+        )
 
-        assert retrieved_doc is not None, f"Document not retrieved by source ID '{test_source_id}'"
+        assert (
+            retrieved_doc is not None
+        ), f"Document not retrieved by source ID '{test_source_id}'"
         logger.info(f"Retrieved document: {retrieved_doc}")
 
         # Verify retrieved document matches original data
@@ -191,21 +208,27 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         logger.info(f"Deleting document with ID: {doc_id}...")
         deleted = await delete_document(db, doc_id)
-        assert deleted is True, f"delete_document did not return True for existing ID {doc_id}"
+        assert (
+            deleted is True
+        ), f"delete_document did not return True for existing ID {doc_id}"
         logger.info("Document deleted.")
 
     # --- Assert: Verify Deletion ---
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         logger.info(f"Verifying document deletion by source ID: {test_source_id}...")
         retrieved_doc_after_delete = await get_document_by_source_id(db, test_source_id)
-        assert retrieved_doc_after_delete is None, "Document was found after it should have been deleted"
+        assert (
+            retrieved_doc_after_delete is None
+        ), "Document was found after it should have been deleted"
 
         # Optional: Verify embeddings are also gone (due to CASCADE)
         # This requires querying the document_embeddings table directly
         stmt = "SELECT COUNT(*) FROM document_embeddings WHERE document_id = :doc_id"
         result = await db.execute_with_retry(text(stmt), {"doc_id": doc_id})
         count = result.scalar_one()
-        assert count == 0, f"Embeddings for document ID {doc_id} were found after deletion"
+        assert (
+            count == 0
+        ), f"Embeddings for document ID {doc_id} were found after deletion"
         logger.info("Verified document and embeddings are deleted.")
 
     logger.info("--- Vector Storage Basic Flow Test Passed ---")
