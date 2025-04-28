@@ -16,8 +16,8 @@ from family_assistant import storage  # Import for task queue operations
 from family_assistant.processing import ProcessingService  # Import the service
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.indexing.email_indexer import handle_index_email # Import email indexer
-# Import the new document indexer handler
-from family_assistant.indexing.document_indexer import handle_process_uploaded_document
+# Import the new document indexer CLASS
+from family_assistant.indexing.document_indexer import DocumentIndexer
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
@@ -75,11 +75,16 @@ async def handle_log_message(db_context: DatabaseContext, payload: Any):
 
 # Register the example handler
 TASK_HANDLERS["log_message"] = handle_log_message
-# Register the email indexing handler (assuming it should be here)
-# TODO: Confirm if email indexing is triggered via task queue or elsewhere. If via queue, register it.
-TASK_HANDLERS["index_email"] = handle_index_email
-# Register the new document processing handler
-TASK_HANDLERS["process_uploaded_document"] = handle_process_uploaded_document
+# Register the email indexing handler
+# TODO: Confirm if email indexing is triggered via task queue or elsewhere.
+# If via queue, this registration needs the handler instance or function.
+# For now, assuming it uses a similar global/setter pattern or is handled differently.
+TASK_HANDLERS["index_email"] = handle_index_email # Keep for now, might need refactoring later
+
+# Document processing handler will be registered dynamically in main.py
+# after the DocumentIndexer instance is created and injected.
+# Remove static registration:
+# TASK_HANDLERS["process_uploaded_document"] = handle_process_uploaded_document
 
 
 # --- Helper Function ---
@@ -492,6 +497,21 @@ def set_processing_service(service: ProcessingService):
     global processing_service_instance
     processing_service_instance = service
     logger.info("Set ProcessingService instance for task worker.")
+
+
+def set_document_indexer(indexer: DocumentIndexer):
+    """Set the DocumentIndexer instance from main.py"""
+    global document_indexer_instance
+    document_indexer_instance = indexer
+    logger.info("Set DocumentIndexer instance for task worker.")
+    # Dynamically register the handler method from the instance
+    if indexer:
+        register_task_handler("process_uploaded_document", indexer.process_document)
+    else:
+        # Handle potential unsetting if needed
+        if "process_uploaded_document" in TASK_HANDLERS:
+            del TASK_HANDLERS["process_uploaded_document"]
+            logger.warning("Unset DocumentIndexer instance, removed handler.")
 
 
 # Removed set_mcp_state function

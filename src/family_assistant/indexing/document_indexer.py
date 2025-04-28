@@ -17,33 +17,44 @@ from family_assistant.storage.vector import Document
 
 logger = logging.getLogger(__name__)
 
-# --- Dependencies (Set via set_document_indexing_dependencies) ---
-embedding_generator_instance: Optional[EmbeddingGenerator] = None
-# No LLM needed for this basic version
 
-# --- Task Handler Implementation ---
+# --- Document Indexer Class ---
 
-async def handle_process_uploaded_document(db_context: DatabaseContext, payload: Dict[str, Any]):
+class DocumentIndexer:
     """
-    Task handler to process and index content parts provided for a document
-    that was uploaded via the API.
+    Handles the indexing process for documents, primarily those uploaded via API.
+    Takes dependencies via constructor.
     """
-    document_id = payload.get("document_id")
-    content_parts: Optional[Dict[str, str]] = payload.get("content_parts") # e.g., {"title": "...", "content_chunk_0": "..."}
+    def __init__(self, embedding_generator: EmbeddingGenerator):
+        """
+        Initializes the DocumentIndexer.
 
-    if not document_id:
-        raise ValueError("Missing 'document_id' in process_uploaded_document task payload.")
-    if not content_parts:
-        logger.warning(f"No 'content_parts' found in payload for document ID {document_id}. Nothing to index.")
-        return # Nothing to do, task is successful
+        Args:
+            embedding_generator: An instance conforming to the EmbeddingGenerator protocol.
+        """
+        if not embedding_generator:
+            raise ValueError("EmbeddingGenerator instance is required.")
+        self.embedding_generator = embedding_generator
+        logger.info(f"DocumentIndexer initialized with embedding generator: {type(embedding_generator).__name__}")
 
-    if not embedding_generator_instance:
-         raise RuntimeError("EmbeddingGenerator dependency not set for document indexing.")
+    async def process_document(self, db_context: DatabaseContext, payload: Dict[str, Any]):
+        """
+        Task handler method to process and index content parts provided for a document.
+        """
+        document_id = payload.get("document_id")
+        content_parts: Optional[Dict[str, str]] = payload.get("content_parts") # e.g., {"title": "...", "content_chunk_0": "..."}
 
-    logger.info(f"Starting indexing for uploaded document ID: {document_id} with {len(content_parts)} content part(s).")
+        if not document_id:
+            raise ValueError("Missing 'document_id' in process_uploaded_document task payload.")
+        if not content_parts:
+            logger.warning(f"No 'content_parts' found in payload for document ID {document_id}. Nothing to index.")
+            return # Nothing to do, task is successful
 
-    # --- 1. Prepare Texts for Embedding ---
-    # Extract texts and map keys to embedding types and chunk indices
+        # Dependency is now self.embedding_generator
+        logger.info(f"Starting indexing for uploaded document ID: {document_id} with {len(content_parts)} content part(s).")
+
+        # --- 1. Prepare Texts for Embedding ---
+        # Extract texts and map keys to embedding types and chunk indices
     texts_to_embed: List[str] = []
     embedding_metadata: List[Dict[str, Any]] = [] # Store type and chunk index for each text
 
@@ -75,15 +86,15 @@ async def handle_process_uploaded_document(db_context: DatabaseContext, payload:
 
     if not texts_to_embed:
         logger.warning(f"No valid text content found to embed for document {document_id}. Skipping embedding generation.")
-        return
+            return
 
-    # --- 2. Generate Embeddings ---
-    logger.info(f"Generating embeddings for {len(texts_to_embed)} text part(s) for document {document_id} using model {embedding_generator_instance.model_name}...")
-    try:
-        embedding_result: EmbeddingResult = await embedding_generator_instance.generate_embeddings(texts_to_embed)
-    except Exception as e:
-        logger.error(f"Embedding generation failed for document {document_id}: {e}", exc_info=True)
-        # Re-raise to mark the task as failed
+        # --- 2. Generate Embeddings ---
+        logger.info(f"Generating embeddings for {len(texts_to_embed)} text part(s) for document {document_id} using model {self.embedding_generator.model_name}...")
+        try:
+            embedding_result: EmbeddingResult = await self.embedding_generator.generate_embeddings(texts_to_embed)
+        except Exception as e:
+            logger.error(f"Embedding generation failed for document {document_id}: {e}", exc_info=True)
+            # Re-raise to mark the task as failed
         raise RuntimeError(f"Embedding generation failed for document {document_id}") from e
 
 
@@ -119,19 +130,10 @@ async def handle_process_uploaded_document(db_context: DatabaseContext, payload:
              raise RuntimeError(f"Unexpected error storing embedding for key {meta['original_key']}") from e
 
 
-    logger.info(f"Successfully stored {stored_count} embeddings for document {document_id}.")
-    # Task completion is handled by the worker loop
+        logger.info(f"Successfully stored {stored_count} embeddings for document {document_id}.")
+        # Task completion is handled by the worker loop
 
 
-# --- Dependency Injection ---
-def set_document_indexing_dependencies(
-    embedding_generator: EmbeddingGenerator,
-    # Add LLM client here if/when enrichment is needed
-):
-    """Sets the necessary dependencies for the document indexer."""
-    global embedding_generator_instance
-    embedding_generator_instance = embedding_generator
-    logger.info("Document indexing dependencies set (EmbeddingGenerator).")
+# Remove the global state and setter function
 
-
-__all__ = ["handle_process_uploaded_document", "set_document_indexing_dependencies"]
+__all__ = ["DocumentIndexer"]
