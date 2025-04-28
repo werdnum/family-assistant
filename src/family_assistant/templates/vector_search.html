@@ -48,7 +48,8 @@
             <select name="embedding_model" id="embedding_model" required>
                 <option value="">-- Select Model --</option>
                 {% for model in distinct_models %}
-                <option value="{{ model }}" {% if search_params.embedding_model == model %}selected{% endif %}>{{ model }}</option>
+                {# If only one model exists, select it by default. Otherwise, select based on search params. #}
+                <option value="{{ model }}" {% if distinct_models | length == 1 or search_params.embedding_model == model %}selected{% endif %}>{{ model }}</option>
                 {% else %}
                 <option value="" disabled>No models found in DB</option>
                 {% endfor %}
