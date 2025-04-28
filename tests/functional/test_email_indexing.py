@@ -13,7 +13,8 @@ import pytest
 from sqlalchemy import select
 
 # Import components needed for the E2E test
-from family_assistant import storage, task_worker
+from family_assistant import storage
+from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.email_indexer import (
     handle_index_email,
@@ -159,23 +160,22 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     logger.info(f"Set mock embedding generator ({TEST_EMBEDDING_MODEL}) for indexing.")
 
     # --- Arrange: Register Task Handler ---
-    # Ensure the handler is registered for the task worker loop
-    # This might be redundant if already done in main.py setup, but safe to do here for test isolation
-    task_worker.register_task_handler("index_email", handle_index_email)
-    logger.info("Ensured 'index_email' task handler is registered.")
+    # Create a TaskWorker instance for this test and register the handler
+    worker = TaskWorker(processing_service=None)
+    worker.register_task_handler("index_email", handle_index_email)
+    logger.info("TaskWorker created and 'index_email' task handler registered.")
 
     # --- Act: Start Background Worker ---
-    # Start the worker loop in the background *before* ingesting
+    # Start the worker in the background *before* ingesting
     worker_id = f"test-worker-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event() # Worker will wait on this
-    original_shutdown_event = task_worker.shutdown_event
-    original_new_task_event = task_worker.new_task_event
-    task_worker.shutdown_event = test_shutdown_event
-    task_worker.new_task_event = test_new_task_event
-
+    original_shutdown_event = shutdown_event
+    original_new_task_event = new_task_event
+    # No need to reassign module-level events since we'll use our own worker instance
+    
     worker_task = asyncio.create_task(
-        task_worker.task_worker_loop(worker_id, test_new_task_event)
+        worker.run(test_new_task_event)
     )
     logger.info(f"Started background task worker {worker_id}...")
     await asyncio.sleep(0.1) # Give worker time to start
@@ -238,7 +238,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
         logger.info("--- Email Indexing E2E Test Passed ---")
 
     finally:
-        # Stop the worker and restore original events
+        # Stop the worker
         logger.info(f"Stopping background task worker {worker_id}...")
         test_shutdown_event.set()
         try:
@@ -249,10 +249,6 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
             worker_task.cancel()
         except Exception as e:
              logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
-
-        # Restore original events
-        task_worker.shutdown_event = original_shutdown_event
-        task_worker.new_task_event = original_new_task_event
 
 
     # --- Act: Query Vectors ---
@@ -374,16 +370,16 @@ async def test_vector_ranking(pg_vector_db_engine):
     form_data3["Message-Id"] = email3_msg_id
     form_data3["subject"] = email3_title # Use variable
 
-    # Start worker
+    # Create TaskWorker instance and start it
+    worker = TaskWorker(processing_service=None)
+    worker.register_task_handler("index_email", handle_index_email)
+    
     worker_id = f"test-worker-rank-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
-    original_shutdown_event = task_worker.shutdown_event
-    original_new_task_event = task_worker.new_task_event
-    task_worker.shutdown_event = test_shutdown_event
-    task_worker.new_task_event = test_new_task_event
+    
     worker_task = asyncio.create_task(
-        task_worker.task_worker_loop(worker_id, test_new_task_event)
+        worker.run(test_new_task_event)
     )
     await asyncio.sleep(0.1)
 
@@ -435,8 +431,6 @@ async def test_vector_ranking(pg_vector_db_engine):
         test_shutdown_event.set()
         try: await asyncio.wait_for(worker_task, timeout=5.0)
         except asyncio.TimeoutError: worker_task.cancel()
-        task_worker.shutdown_event = original_shutdown_event
-        task_worker.new_task_event = original_new_task_event
 
 
 @pytest.mark.asyncio
@@ -500,16 +494,16 @@ async def test_metadata_filtering(pg_vector_db_engine):
     form_data2["subject"] = email2_title # Use variable for title
     form_data2["X-Custom-Type"] = "invoice" # Simulate metadata
 
-    # Start worker
+    # Create TaskWorker instance and start it
+    worker = TaskWorker(processing_service=None)
+    worker.register_task_handler("index_email", handle_index_email)
+    
     worker_id = f"test-worker-meta-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
-    original_shutdown_event = task_worker.shutdown_event
-    original_new_task_event = task_worker.new_task_event
-    task_worker.shutdown_event = test_shutdown_event
-    task_worker.new_task_event = test_new_task_event
+    
     worker_task = asyncio.create_task(
-        task_worker.task_worker_loop(worker_id, test_new_task_event)
+        worker.run(test_new_task_event)
     )
     await asyncio.sleep(0.1)
 
@@ -564,8 +558,6 @@ async def test_metadata_filtering(pg_vector_db_engine):
         test_shutdown_event.set()
         try: await asyncio.wait_for(worker_task, timeout=5.0)
         except asyncio.TimeoutError: worker_task.cancel()
-        task_worker.shutdown_event = original_shutdown_event
-        task_worker.new_task_event = original_new_task_event
 
 
 @pytest.mark.asyncio
@@ -625,16 +617,16 @@ async def test_keyword_filtering(pg_vector_db_engine):
     form_data2["Message-Id"] = email2_msg_id
     form_data2["subject"] = email2_title # Use variable for title
 
-    # Start worker
+    # Create TaskWorker instance and start it
+    worker = TaskWorker(processing_service=None)
+    worker.register_task_handler("index_email", handle_index_email)
+    
     worker_id = f"test-worker-keyword-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
-    original_shutdown_event = task_worker.shutdown_event
-    original_new_task_event = task_worker.new_task_event
-    task_worker.shutdown_event = test_shutdown_event
-    task_worker.new_task_event = test_new_task_event
+    
     worker_task = asyncio.create_task(
-        task_worker.task_worker_loop(worker_id, test_new_task_event)
+        worker.run(test_new_task_event)
     )
     await asyncio.sleep(0.1)
 
@@ -689,8 +681,6 @@ async def test_keyword_filtering(pg_vector_db_engine):
         test_shutdown_event.set()
         try: await asyncio.wait_for(worker_task, timeout=5.0)
         except asyncio.TimeoutError: worker_task.cancel()
-        task_worker.shutdown_event = original_shutdown_event
-        task_worker.new_task_event = original_new_task_event
 
 
 # Add more tests here for hybrid search nuances, different filter combinations, etc.
