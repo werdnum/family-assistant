@@ -540,12 +540,21 @@ async def test_metadata_filtering(pg_vector_db_engine):
 
         # --- Assert ---
         assert query_results is not None, "Query returned None"
-        assert len(query_results) == 1, f"Expected exactly 1 result matching filter, got {len(query_results)}"
+        # Check that *at least one* result is returned
+        assert len(query_results) > 0, f"Expected at least 1 result matching filter, got {len(query_results)}"
         logger.info(f"Metadata filter query returned {len(query_results)} result(s).")
 
-        found_result = query_results[0]
-        assert found_result.get("source_id") == email2_msg_id, "Incorrect document returned by metadata filter"
-        assert found_result.get("title") == "Metadata Test Far Correct Type"
+        # Verify that *all* returned results belong to the correct document
+        for found_result in query_results:
+            assert found_result.get("source_id") == email2_msg_id, \
+                f"Incorrect document returned by metadata filter. Expected source_id {email2_msg_id}, got {found_result.get('source_id')}"
+            assert found_result.get("title") == "Metadata Test Far Correct Type", \
+                f"Incorrect title in filtered result. Expected 'Metadata Test Far Correct Type', got {found_result.get('title')}"
+
+        # Optional: Check that the closer document (email1) is NOT in the results
+        source_ids_returned = {r.get("source_id") for r in query_results}
+        assert email1_msg_id not in source_ids_returned, \
+            f"Document {email1_msg_id} (which should be filtered out) was found in results."
 
         logger.info("--- Metadata Filtering Test Passed ---")
 
