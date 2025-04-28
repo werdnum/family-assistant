@@ -455,13 +455,6 @@ parser.add_argument(
     help="Embedding model to use (e.g., gemini-embedding-exp-03-07, all-MiniLM-L6-v2)",
 )
 
-parser.add_argument(
-    '--embedding_dimensionality',
-    default=None,
-    type=int,
-    help="Embedding model dimensionality, leave blank for default"
-)
-
 # --- Initial Configuration Load ---
 # Load config from .env and prompts.yaml first
 load_config()
@@ -563,7 +556,7 @@ async def main_async(
              raise SystemExit(f"Local embedding model initialization failed: {local_embed_err}")
     else:
         # Assume API-based model via LiteLLM
-        embedding_generator = LiteLLMEmbeddingGenerator(model=cli_args.embedding_model, dimensions=cli_args.embedding_dimensionality)
+        embedding_generator = LiteLLMEmbeddingGenerator(model=cli_args.embedding_model, dimensions=cli_args.embedding_dimensions)
 
     logger.info(f"Using embedding generator: {type(embedding_generator).__name__} with model: {embedding_generator.model_name}")
 
@@ -711,6 +704,12 @@ def main() -> int:  # Return an exit code
         "--embedding-model",
         default=os.getenv("EMBEDDING_MODEL", "gemini/gemini-embedding-exp-03-07"), # Updated default
         help="Embedding model to use (e.g., gemini/gemini-embedding-exp-03-07, text-embedding-ada-002, all-MiniLM-L6-v2)",
+    )
+    parser.add_argument(
+        '--embedding_dimensions',
+        default=os.getenv("EMBEDDING_DIMENSIONS", 1536),
+        type=int,
+        help="Embedding model dimensionality, leave blank for default"
     )
     args = parser.parse_args()  # Parse args here
 
