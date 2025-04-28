@@ -30,6 +30,7 @@ async def wait_for_tasks_to_complete(
     """
     Waits until all specified tasks (or all tasks if none specified)
     in the database reach a terminal state ('done' or 'failed').
+    Fails immediately if any tasks enter the 'failed' state.
 
     Args:
         engine: The SQLAlchemy AsyncEngine to use for database connections.
@@ -42,6 +43,7 @@ async def wait_for_tasks_to_complete(
     Raises:
         asyncio.TimeoutError: If the timeout is reached before all relevant
                               tasks reach a terminal state.
+        RuntimeError: If any task enters the 'failed' state.
         Exception: If a database error occurs during polling.
     """
     start_time = datetime.now(timezone.utc)
@@ -56,6 +58,30 @@ async def wait_for_tasks_to_complete(
         try:
             # Use the provided engine to get a context
             async with await get_db_context(engine=engine) as db:
+                # First check for failed tasks
+                failed_query = select(func.count(tasks_table.c.id)).where(
+                    tasks_table.c.status == "failed"
+                )
+                # Filter by specific task IDs if provided
+                if task_ids:
+                    failed_query = failed_query.where(tasks_table.c.task_id.in_(task_ids))
+                
+                failed_result = await db.execute_with_retry(failed_query)
+                failed_count = failed_result.scalar_one_or_none()
+                
+                if failed_count and failed_count > 0:
+                    # Get the failed task IDs for better error reporting
+                    task_id_query = select(tasks_table.c.task_id).where(
+                        tasks_table.c.status == "failed"
+                    )
+                    if task_ids:
+                        task_id_query = task_id_query.where(tasks_table.c.task_id.in_(task_ids))
+                    
+                    task_id_result = await db.execute_with_retry(task_id_query)
+                    failed_ids = [row[0] for row in task_id_result]
+                    
+                    raise RuntimeError(f"Task(s) failed: {', '.join(failed_ids)}")
+                
                 # Build the query to count non-terminal tasks
                 query = select(func.count(tasks_table.c.id)).where(
                     tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
