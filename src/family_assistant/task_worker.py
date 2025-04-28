@@ -271,11 +271,11 @@ class TaskWorker:
                         task_types=task_types_handled,
                     )
 
-                    # --- Task Processing Logic (inside inner try) ---
-                    if task:
-                        logger.info(
-                            f"Worker {self.worker_id} processing task {task['task_id']} (type: {task['task_type']})"
-                        )
+                        # --- Task Processing Logic (inside inner try) --- Indent this block ---
+                        if task:
+                            logger.info(
+                                f"Worker {self.worker_id} processing task {task['task_id']} (type: {task['task_type']})"
+                            )
                         # Get handler from instance's registry
                         handler = self.task_handlers.get(task["task_type"])
 
@@ -448,13 +448,13 @@ class TaskWorker:
                                 db_context=db_context,
                                 task_id=task["task_id"],
                                 status="failed",
-                                error=f"No handler registered for type {task['task_type']}",
-                            )
-                    # --- Waiting Logic (inside inner try, if no task was found) ---
-                    else:  # Changed from 'if not task:'
-                        # No task found, wait for the polling interval OR the wake-up event
-                        try:
-                            logger.debug(
+                                    error=f"No handler registered for type {task['task_type']}",
+                                )
+                        # --- Waiting Logic (inside inner try, if no task was found) --- Indent this block ---
+                        else:  # Changed from 'if not task:'
+                            # No task found, wait for the polling interval OR the wake-up event
+                            try:
+                                logger.debug(
                                 f"Worker {self.worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
                             )
                             # Wait for the event to be set, with a timeout
