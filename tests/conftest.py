@@ -9,10 +9,7 @@ from testcontainers.postgres import PostgresContainer
 
 # Configure pytest-asyncio default fixture loop scope to avoid the deprecation warning
 def pytest_configure(config):
-    config.addinivalue_line(
-        "asyncio_default_fixture_loop_scope", 
-        "function"
-    )
+    config.option.asyncio_default_fixture_loop_scope = "function"
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage.base import metadata, engine as original_engine
