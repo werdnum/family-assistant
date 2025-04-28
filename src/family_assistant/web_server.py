@@ -92,7 +92,7 @@ except NameError:
 # --- Dependency for Database Context ---
 async def get_db() -> DatabaseContext:
     """FastAPI dependency to get a DatabaseContext."""
-    async with get_db_context() as db_context:
+    async with await get_db_context() as db_context:
         yield db_context
 
 # --- Placeholder for Embedding Generator Dependency ---
