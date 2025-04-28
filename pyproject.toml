@@ -39,7 +39,6 @@ dependencies = [
     "python-dateutil==2.9.0", # For robust datetime parsing
     "pytz>=2024.1", # For timezone handling
     "aiofiles>=23.2.1", # For async file operations (LLM recording/playback)
-    "sentence-transformers>=2.7.0", # For local embeddings (optional install)
     "torch>=2.0.0", # Dependency for sentence-transformers
     "numpy>=1.26.0", # Dependency for sentence-transformers and pgvector
 ]
@@ -54,9 +53,10 @@ dev = [
     "testcontainers[postgres]>=3.7.1", # Add testcontainers with postgres extra
     "asyncpg>=0.29.0",   # Ensure asyncpg is explicitly in dev dependencies
     "psycopg-binary>=3.1.0", # Add PostgreSQL driver (binary version for ease) - keep for now, might be needed by testcontainers itself?
-    "pylint>=3.0.0", # Moved pylint here
+    "pylint>=3.0.0",
     # "ruff", # Consider adding ruff later if desired
     "poethepoet>=0.11.0", # Add poe the poet task runner
+    "sentence-transformers>=2.7.0", # For local embeddings (optional install)
     "symbex>=2.0",         # Add symbex
 ]
 
