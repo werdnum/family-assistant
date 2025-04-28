@@ -259,7 +259,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 *   [ ] Implement `query_vectors` logic (hybrid search with RRF).
 *   [ ] Implement document ingestion pipeline (acquisition, content extraction, OCR integration).
 *   [ ] Implement LLM-based metadata extraction (calling LLM with JSON mode).
-*   [ ] Implement embedding generation using an LLM (calling embedding model API).
-*   [ ] Integrate querying into the main application flow (e.g., as an LLM tool or background process).
+*   [x] Implement embedding generation using an LLM (calling embedding model API).
+*   [x] Integrate querying into the main application flow (e.g., as an LLM tool or background process). (Added `search_documents` tool)
 *   [ ] Implement document chunking strategy (optional, if needed beyond title/summary/single-content).
 *   [ ] Add more partial indexes for other embedding models as they are introduced.

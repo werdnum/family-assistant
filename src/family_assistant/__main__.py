@@ -574,7 +574,9 @@ async def main_async(
 
     # --- Instantiate Tool Providers ---
     local_provider = LocalToolsProvider(
-        definitions=local_tools_definition, implementations=local_tool_implementations
+        definitions=local_tools_definition,
+        implementations=local_tool_implementations,
+        embedding_generator=embedding_generator, # Pass the generator instance
     )
     mcp_provider = MCPToolsProvider(
         mcp_definitions=mcp_tools,  # Use discovered MCP tool definitions
