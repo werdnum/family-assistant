@@ -374,8 +374,16 @@ async def handle_vector_search(
     results = None
     error = None
     query_embedding = None
+
+    # --- Default keywords to semantic query if keywords are empty ---
+    effective_keywords = keywords
+    if not keywords and semantic_query:
+        effective_keywords = semantic_query
+        logger.info(f"Keywords field was empty, defaulting to semantic query: '{semantic_query}'")
+
     search_params = { # Store params to repopulate form
-        "semantic_query": semantic_query, "keywords": keywords, "search_type": search_type,
+        "semantic_query": semantic_query, "keywords": keywords, # Store original keywords for form
+        "search_type": search_type,
         "embedding_model": embedding_model, "embedding_types": embedding_types,
         "source_types": source_types, "created_after": created_after,
         "created_before": created_before, "title_like": title_like,
@@ -421,7 +429,7 @@ async def handle_vector_search(
         query_obj = VectorSearchQuery(
             search_type=search_type,
             semantic_query=semantic_query,
-            keywords=keywords,
+            keywords=effective_keywords, # Use the potentially defaulted keywords
             embedding_model=embedding_model,
             embedding_types=embedding_types,
             source_types=source_types,
