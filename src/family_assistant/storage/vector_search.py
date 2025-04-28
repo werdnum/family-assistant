@@ -217,6 +217,10 @@ async def query_vector_store(
          # For now, return empty as the logic relies on CTEs
          return []
 
+    # Convert embedding list to string format expected by pgvector for parameter binding
+    if "query_embedding" in params:
+        params["query_embedding"] = str(params["query_embedding"])
+
     # Need to select FROM the base tables and join CTEs
     sql_query = f"""
     WITH {vector_cte if vector_cte else ''} {' , ' if vector_cte and fts_cte else ''} {fts_cte if fts_cte else ''}
