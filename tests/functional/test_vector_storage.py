@@ -168,14 +168,15 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
         )
 
         assert query_results is not None, "query_vector_store returned None"
-        assert len(query_results) > 0, "No results returned from vector query"
+        assert len(query_results) > 0, "No results returned from vector store query" # Updated assertion message
         logger.info(f"Query returned {len(query_results)} result(s).")
 
         # Find the result corresponding to our document
+        # query_vector_store returns list of dicts
         found_result = None
-        for result in query_results:
-            if result.get("document_id") == doc_id:
-                found_result = result
+        for result_dict in query_results: # Renamed loop variable
+            if result_dict.get("document_id") == doc_id:
+                found_result = result_dict # Assign the dict directly
                 break
 
         assert (
