@@ -57,6 +57,7 @@ from family_assistant.llm import (
 )
 
 # Import Embedding interface/clients
+import family_assistant.embeddings as embeddings
 from family_assistant.embeddings import (
     EmbeddingGenerator,
     LiteLLMEmbeddingGenerator,
