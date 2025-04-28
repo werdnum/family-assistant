@@ -719,8 +719,8 @@ def main() -> int:  # Return an exit code
     )
     parser.add_argument(
         "--embedding-model",
-        default=os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002"), # Example default
-        help="Embedding model to use (e.g., text-embedding-ada-002, all-MiniLM-L6-v2)",
+        default=os.getenv("EMBEDDING_MODEL", "gemini/gemini-embedding-exp-03-07"), # Updated default
+        help="Embedding model to use (e.g., gemini/gemini-embedding-exp-03-07, text-embedding-ada-002, all-MiniLM-L6-v2)",
     )
     args = parser.parse_args()  # Parse args here
 
