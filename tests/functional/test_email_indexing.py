@@ -550,13 +550,27 @@ async def test_keyword_filtering(pg_vector_db_engine):
     email2_body = f"This document is all about the yellow {keyword} fruit."
     email1_msg_id = f"<keyword_no_{uuid.uuid4()}@example.com>"
     email2_msg_id = f"<keyword_yes_{uuid.uuid4()}@example.com>"
+    # Define titles used in form_data below
+    email1_title = "Keyword Test No Match"
+    email2_title = f"Keyword Test Yes Match {keyword}"
+
+    # Add mock embeddings for titles as well
+    title1_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.05).tolist()
+    title2_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.06).tolist()
 
     embedding_map = {
         email1_body: vec1,
         email2_body: vec2,
+        email1_title: title1_vec, # Add title embedding
+        email2_title: title2_vec, # Add title embedding
         "query": query_vec,
     }
-    mock_embedder = MockEmbeddingGenerator(embedding_map, TEST_EMBEDDING_MODEL)
+    # Provide a default embedding to prevent errors if other texts are encountered unexpectedly
+    mock_embedder = MockEmbeddingGenerator(
+        embedding_map,
+        TEST_EMBEDDING_MODEL,
+        default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist()
+    )
     set_indexing_dependencies(embedding_generator=mock_embedder)
     task_worker.register_task_handler("index_email", handle_index_email)
 
