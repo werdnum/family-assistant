@@ -53,9 +53,8 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 # mcp_sessions: Dict[str, Any] = {}
 # mcp_tools: List[Dict[str, Any]] = []
 # tool_name_to_server_id: Dict[str, str] = {}
-processing_service_instance: Optional[ProcessingService] = (
-    None  # To hold the service instance
-)
+processing_service_instance: Optional[ProcessingService] = None  # To hold the service instance
+document_indexer_instance: Optional[DocumentIndexer] = None # To hold the indexer instance
 
 
 # --- Task Handlers ---
