@@ -461,13 +461,13 @@ class TaskWorker:
                             await asyncio.wait_for(
                                 wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL
                             )
-                            # If wait_for completes without timeout, the event was set
-                            logger.debug(f"Worker {self.worker_id}: Woken up by event.")
-                            wake_up_event.clear()  # Reset the event for the next notification
-                        except asyncio.TimeoutError:
-                            # Event didn't fire, timeout reached, proceed to next polling cycle
-                            logger.debug(
-                                f"Worker {self.worker_id}: Wait timed out, continuing poll cycle."
+                                # If wait_for completes without timeout, the event was set
+                                logger.debug(f"Worker {self.worker_id}: Woken up by event.")
+                                wake_up_event.clear()  # Reset the event for the next notification
+                            except asyncio.TimeoutError: # Indent this except block
+                                # Event didn't fire, timeout reached, proceed to next polling cycle
+                                logger.debug(
+                                    f"Worker {self.worker_id}: Wait timed out, continuing poll cycle."
                             )
                             pass  # Continue the loop normally after timeout
 
