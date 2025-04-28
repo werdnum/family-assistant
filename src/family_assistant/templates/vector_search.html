@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vector Search</title>
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <link rel="stylesheet" href="/static/css/custom.css">
+    <style>
+        .form-grid { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center; margin-bottom: 1.5rem;}
+        .form-grid label { font-weight: bold; }
+        .form-grid .full-width { grid-column: 1 / -1; }
+        .checkbox-group label, .radio-group label { display: inline-block; margin-right: 1rem; font-weight: normal;}
+        .checkbox-group input, .radio-group input { margin-right: 0.3rem; }
+        .results-table th, .results-table td { text-align: left; padding: 0.5rem; vertical-align: top; }
+        .results-table pre { white-space: pre-wrap; word-break: break-all; margin: 0; font-size: 0.9em; }
+        .error-message { color: red; font-weight: bold; margin-bottom: 1rem; border: 1px solid red; padding: 0.5rem; }
+        .metadata-cell { max-width: 300px; } /* Limit width of metadata cell */
+    </style>
+</head>
+<body>
+<header>
+    <h1>Vector Search Debugger</h1>
+    <nav>
+        <a href="/">View Notes</a>
+        <span>|</span>
+        <a href="/history">View Message History</a>
+        <span>|</span>
+        <a href="/tasks">View Tasks</a>
+    </nav>
+</header>
+
+<main>
+    {% if error %}
+    <p class="error-message">Error: {{ error }}</p>
+    {% endif %}
+
+    <form action="/vector-search" method="post">
+        <div class="form-grid">
+            <label for="search_type" class="full-width">Search Type:</label>
+            <div class="radio-group full-width">
+                <label><input type="radio" name="search_type" value="hybrid" {% if search_params.search_type == 'hybrid' or not search_params.search_type %}checked{% endif %}> Hybrid (RRF)</label>
+                <label><input type="radio" name="search_type" value="semantic" {% if search_params.search_type == 'semantic' %}checked{% endif %}> Semantic Only</label>
+                <label><input type="radio" name="search_type" value="keyword" {% if search_params.search_type == 'keyword' %}checked{% endif %}> Keyword Only</label>
+            </div>
+
+            <label for="semantic_query">Semantic Query:</label>
+            <textarea name="semantic_query" id="semantic_query" rows="3" placeholder="Text for vector similarity search...">{{ search_params.semantic_query or '' }}</textarea>
+
+            <label for="embedding_model">Embedding Model (Required for Semantic/Hybrid):</label>
+            <select name="embedding_model" id="embedding_model" required>
+                <option value="">-- Select Model --</option>
+                {% for model in distinct_models %}
+                <option value="{{ model }}" {% if search_params.embedding_model == model %}selected{% endif %}>{{ model }}</option>
+                {% else %}
+                <option value="" disabled>No models found in DB</option>
+                {% endfor %}
+            </select>
+
+            <label for="keywords">Keywords (for FTS):</label>
+            <input type="text" name="keywords" id="keywords" value="{{ search_params.keywords or '' }}" placeholder="Space-separated words for keyword search...">
+
+            <label for="embedding_types" class="full-width">Filter by Embedding Type(s):</label>
+            <div class="checkbox-group full-width">
+                 {% for etype in distinct_types %}
+                 <label>
+                     <input type="checkbox" name="embedding_types" value="{{ etype }}" {% if etype in search_params.embedding_types %}checked{% endif %}>
+                     {{ etype }}
+                 </label>
+                 {% else %}
+                 <span>(No embedding types found in DB)</span>
+                 {% endfor %}
+            </div>
+
+             <label for="source_types" class="full-width">Filter by Document Source Type(s):</label>
+            <div class="checkbox-group full-width">
+                 {% for stype in distinct_source_types %}
+                 <label>
+                     <input type="checkbox" name="source_types" value="{{ stype }}" {% if stype in search_params.source_types %}checked{% endif %}>
+                     {{ stype }}
+                 </label>
+                 {% else %}
+                 <span>(No source types found in DB)</span>
+                 {% endfor %}
+            </div>
+
+            <label for="title_like">Title Contains (Case-Insensitive):</label>
+            <input type="text" name="title_like" id="title_like" value="{{ search_params.title_like or '' }}">
+
+            <label for="created_after">Created After:</label>
+            <input type="date" name="created_after" id="created_after" value="{{ search_params.created_after or '' }}">
+
+            <label for="created_before">Created Before:</label>
+            <input type="date" name="created_before" id="created_before" value="{{ search_params.created_before or '' }}">
+
+            <label for="metadata_key">Metadata Key:</label>
+            <input type="text" name="metadata_key" id="metadata_key" value="{{ search_params.metadata_key or '' }}" placeholder="e.g., sender">
+
+            <label for="metadata_value">Metadata Value:</label>
+            <input type="text" name="metadata_value" id="metadata_value" value="{{ search_params.metadata_value or '' }}" placeholder="e.g., IRS">
+
+            <label for="limit">Result Limit:</label>
+            <input type="number" name="limit" id="limit" value="{{ search_params.limit or 10 }}" min="1" max="100">
+
+            <label for="rrf_k">RRF k (for Hybrid):</label>
+            <input type="number" name="rrf_k" id="rrf_k" value="{{ search_params.rrf_k or 60 }}" min="1">
+
+            <button type="submit" class="full-width">Search</button>
+        </div>
+    </form>
+
+    <hr>
+
+    <h2>Results</h2>
+    {% if results is not none %}
+        {% if results %}
+        <p>Found {{ results|length }} result(s).</p>
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>Doc ID</th>
+                    <th>Emb ID</th>
+                    <th>Title</th>
+                    <th>Source</th>
+                    <th>Created</th>
+                    <th>Emb Type</th>
+                    <th>Chunk</th>
+                    <th>Distance</th>
+                    <th>FTS Score</th>
+                    <th>RRF Score</th>
+                    <th>Content Snippet</th>
+                    <th>Metadata</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in results %}
+                <tr>
+                    <td>{{ item.document_id }}</td>
+                    <td>{{ item.embedding_id }}</td>
+                    <td>{{ item.title or 'N/A' }}</td>
+                    <td>{{ item.source_type }}<br><small>(ID: {{ item.source_id or 'N/A' }})</small></td>
+                    <td>{{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else 'N/A' }}</td>
+                    <td>{{ item.embedding_type }}</td>
+                    <td>{{ item.chunk_index }}</td>
+                    <td>{{ "%.4f"|format(item.distance) if item.distance is not none else 'N/A' }}</td>
+                    <td>{{ "%.4f"|format(item.fts_score) if item.fts_score is not none else 'N/A' }}</td>
+                    <td>{{ "%.4f"|format(item.rrf_score) if item.rrf_score is not none else 'N/A' }}</td>
+                    <td><pre>{{ item.embedding_source_content or 'N/A' }}</pre></td>
+                    <td class="metadata-cell"><pre>{{ item.doc_metadata | tojson(indent=2) if item.doc_metadata else 'None' }}</pre></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p>No results found for the given criteria.</p>
+        {% endif %}
+    {% else %}
+        <p>Perform a search to see results.</p>
+    {% endif %}
+
+</main>
+</body>
+</html>
