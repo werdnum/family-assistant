@@ -45,12 +45,14 @@ from dotenv import load_dotenv
 import uvicorn
 import functools # Import functools
 
-# Import task worker CLASS and handlers
+# Import task worker CLASS, handlers, and events
 from family_assistant.task_worker import (
     TaskWorker,
     handle_log_message,
     handle_llm_callback,
     handle_index_email, # Keep email handler import for now
+    shutdown_event, # Import event directly
+    new_task_event, # Import event directly
 )
 
 # Import the ProcessingService and LLM interface/clients
@@ -134,9 +136,9 @@ logger = logging.getLogger(__name__)
 MAX_HISTORY_MESSAGES = 5  # Number of recent messages to include (excluding current)
 HISTORY_MAX_AGE_HOURS = 24  # Only include messages from the last X hours
 
-# Use task_worker's events for coordination
-shutdown_event = task_worker.shutdown_event
-new_task_event = task_worker.new_task_event
+# Events are now imported directly
+# shutdown_event = task_worker.shutdown_event # Removed
+# new_task_event = task_worker.new_task_event # Removed
 
 # --- Global Variables ---
 # application: Optional[Application] = None # Removed global application instance
