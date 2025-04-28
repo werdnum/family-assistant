@@ -18,6 +18,8 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.indexing.email_indexer import handle_index_email # Import email indexer
 # Import the new document indexer CLASS
 from family_assistant.indexing.document_indexer import DocumentIndexer
+# Import functools for partial application
+import functools
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
@@ -38,29 +40,14 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 
-# --- Task Queue Handler Registry ---
-# Maps task_type strings to async handler functions
-# Handler functions accept db_context and task payload
-# Example: async def handle_my_task(db_context: DatabaseContext, payload: Any): ...
-TASK_HANDLERS: Dict[str, Callable[[DatabaseContext, Any], Awaitable[None]]] = {}
-
-# --- Events for coordination ---
+# --- Events for coordination (can remain module-level) ---
 shutdown_event = asyncio.Event()
 new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
-# --- Global state (references from main) ---
-# MCP state is no longer needed here, it's encapsulated in ToolsProvider used by ProcessingService
-# mcp_sessions: Dict[str, Any] = {}
-# mcp_tools: List[Dict[str, Any]] = []
-# tool_name_to_server_id: Dict[str, str] = {}
-processing_service_instance: Optional[ProcessingService] = None  # To hold the service instance
-document_indexer_instance: Optional[DocumentIndexer] = None # To hold the indexer instance
+# --- Task Handler Functions (remain module-level for now) ---
+# These functions will be registered with the TaskWorker instance.
 
-
-# --- Task Handlers ---
-
-
-# Example Task Handler
+# Example Task Handler (no external dependencies)
 async def handle_log_message(db_context: DatabaseContext, payload: Any):
     """Simple task handler that logs the received payload."""
     logger.info(
@@ -72,21 +59,10 @@ async def handle_log_message(db_context: DatabaseContext, payload: Any):
     # If this function raises an exception, the task will be marked 'failed'.
 
 
-# Register the example handler
-TASK_HANDLERS["log_message"] = handle_log_message
-# Register the email indexing handler
-# TODO: Confirm if email indexing is triggered via task queue or elsewhere.
-# If via queue, this registration needs the handler instance or function.
-# For now, assuming it uses a similar global/setter pattern or is handled differently.
-TASK_HANDLERS["index_email"] = handle_index_email # Keep for now, might need refactoring later
-
-# Document processing handler will be registered dynamically in main.py
-# after the DocumentIndexer instance is created and injected.
-# Remove static registration:
-# TASK_HANDLERS["process_uploaded_document"] = handle_process_uploaded_document
+# Note: Registration now happens in __main__.py using worker instance
 
 
-# --- Helper Function ---
+# --- Helper Function (remains module-level) ---
 def format_llm_response_for_telegram(response_text: str) -> str:
     """Converts LLM Markdown to Telegram MarkdownV2, with fallback."""
     try:
@@ -110,16 +86,19 @@ def format_llm_response_for_telegram(response_text: str) -> str:
         return escape_markdown(response_text, version=2)
 
 
-async def handle_llm_callback(db_context: DatabaseContext, payload: Any):
+async def handle_llm_callback(
+    processing_service: ProcessingService, # Dependency passed in
+    db_context: DatabaseContext,
+    payload: Any
+):
     """Task handler for LLM scheduled callbacks."""
-    global processing_service_instance  # Use the global service instance
-
-    if not processing_service_instance:
-        logger.error("Cannot handle LLM callback: ProcessingService instance not set.")
-        raise RuntimeError("ProcessingService instance not available in task worker.")
+    # Dependency is passed directly
+    if not processing_service:
+        logger.error("ProcessingService instance was not provided to handle_llm_callback.")
+        raise ValueError("Missing ProcessingService dependency for LLM callback.")
 
     # Still need application reference to send messages back
-    application = payload.get("_application_ref")
+    application = payload.get("_application_ref") # Keep this for sending messages
 
     if not application:
         logger.error(
@@ -159,8 +138,8 @@ async def handle_llm_callback(db_context: DatabaseContext, payload: Any):
 
         # Call the ProcessingService directly, passing the application instance
         llm_response_content, tool_call_info = (
-            await processing_service_instance.process_message(
-                db_context=db_context,  # Pass db_context
+            await processing_service.process_message( # Use the passed-in instance
+                db_context=db_context,
                 messages=messages_for_llm,
                 chat_id=chat_id,
                 application=application,  # Pass application for ToolExecutionContext
@@ -234,44 +213,85 @@ async def handle_llm_callback(db_context: DatabaseContext, payload: Any):
         raise
 
 
-# Register the callback handler
-TASK_HANDLERS["llm_callback"] = handle_llm_callback
+# Note: Registration now happens in __main__.py using worker instance
 
 
-# --- Task Queue Worker ---
-async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
-    """Continuously polls for and processes tasks."""
-    logger.info(f"Task worker {worker_id} started.")
-    task_types_handled = list(TASK_HANDLERS.keys())
+# --- Task Worker Class ---
 
-    while not shutdown_event.is_set():
-        try:  # Add try block here to encompass the whole loop iteration
-            task = None
+class TaskWorker:
+    """Manages the task processing loop and handler registry."""
+
+    def __init__(
+        self,
+        processing_service: ProcessingService,
+        # Add other dependencies like indexers if their handlers need direct access
+        # For now, DocumentIndexer handler is registered directly from its instance
+        # EmailIndexer handler is still assumed global/separate for now
+    ):
+        """Initializes the TaskWorker with its dependencies."""
+        self.processing_service = processing_service
+        # Initialize handlers - specific handlers are registered externally
+        self.task_handlers: Dict[str, Callable[[DatabaseContext, Any], Awaitable[None]]] = {}
+        self.worker_id = f"worker-{uuid.uuid4()}" # Generate worker ID on instantiation
+        logger.info(f"TaskWorker instance {self.worker_id} created.")
+
+    def register_task_handler(
+        self,
+        task_type: str,
+        handler: Callable[[DatabaseContext, Any], Awaitable[None]]
+    ):
+        """Register a task handler function for a specific task type."""
+        self.task_handlers[task_type] = handler
+        logger.info(f"Worker {self.worker_id}: Registered handler for task type: {task_type}")
+
+    def get_task_handlers(self) -> Dict[str, Callable[[DatabaseContext, Any], Awaitable[None]]]:
+         """Return the current task handlers dictionary for this worker."""
+         return self.task_handlers
+
+    async def run(self, wake_up_event: asyncio.Event):
+        """Continuously polls for and processes tasks. Replaces task_worker_loop."""
+        logger.info(f"Task worker {self.worker_id} run loop started.")
+        # Get task types handled by *this specific instance*
+        task_types_handled = list(self.task_handlers.keys())
+        if not task_types_handled:
+            logger.warning(f"Task worker {self.worker_id} has no registered handlers. Exiting loop.")
+            return
+
+        while not shutdown_event.is_set():
+            try:  # Add try block here to encompass the whole loop iteration
+                task = None
             # Create a database context for this iteration
             # Await the coroutine returned by get_db_context()
             async with await get_db_context() as db_context:
                 try:  # Inner try for dequeue, task processing, and waiting logic
                     # Dequeue a task of a type this worker handles
                     task = await storage.dequeue_task(
-                        db_context=db_context,  # Pass db_context
-                        worker_id=worker_id,
+                        db_context=db_context,
+                        worker_id=self.worker_id, # Use instance worker ID
                         task_types=task_types_handled,
                     )
 
                     # --- Task Processing Logic (inside inner try) ---
                     if task:
                         logger.info(
-                            f"Worker {worker_id} processing task {task['task_id']} (type: {task['task_type']})"
+                            f"Worker {self.worker_id} processing task {task['task_id']} (type: {task['task_type']})"
                         )
-                        handler = TASK_HANDLERS.get(task["task_type"])
+                        # Get handler from instance's registry
+                        handler = self.task_handlers.get(task["task_type"])
 
                         if handler:
                             try:
                                 # Execute the handler with db_context and payload
+                                # Dependencies required by the handler (like processing_service)
+                                # should have been pre-bound using functools.partial during registration,
+                                # or the handler itself is a method of a class instance that holds the dependency.
+                                # The handler signature should now just be: handler(db_context, payload)
                                 await handler(db_context, task["payload"])
+
+                                # Task details for logging and recurrence
                                 task_id = task["task_id"]
                                 task_type = task["task_type"]
-                                payload = task["payload"]
+                                payload = task["payload"] # Keep payload for recurrence
                                 recurrence_rule_str = task.get("recurrence_rule")
                                 original_task_id = task.get(
                                     "original_task_id", task_id
@@ -285,7 +305,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                     status="done",
                                 )
                                 logger.info(
-                                    f"Worker {worker_id} completed task {task_id} (Original: {original_task_id})"
+                                    f"Worker {self.worker_id} completed task {task_id} (Original: {original_task_id})"
                                 )
 
                                 # --- Handle Recurrence ---
@@ -422,10 +442,10 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         else:
                             # This shouldn't happen if dequeue_task respects task_types properly
                             logger.error(
-                                f"Worker {worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
+                                f"Worker {self.worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
                             )
                             await storage.update_task_status(
-                                db_context=db_context,  # Pass db_context
+                                db_context=db_context,
                                 task_id=task["task_id"],
                                 status="failed",
                                 error=f"No handler registered for type {task['task_type']}",
@@ -435,26 +455,26 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                         # No task found, wait for the polling interval OR the wake-up event
                         try:
                             logger.debug(
-                                f"Worker {worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
+                                f"Worker {self.worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
                             )
                             # Wait for the event to be set, with a timeout
                             await asyncio.wait_for(
                                 wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL
                             )
                             # If wait_for completes without timeout, the event was set
-                            logger.debug(f"Worker {worker_id}: Woken up by event.")
+                            logger.debug(f"Worker {self.worker_id}: Woken up by event.")
                             wake_up_event.clear()  # Reset the event for the next notification
                         except asyncio.TimeoutError:
                             # Event didn't fire, timeout reached, proceed to next polling cycle
                             logger.debug(
-                                f"Worker {worker_id}: Wait timed out, continuing poll cycle."
+                                f"Worker {self.worker_id}: Wait timed out, continuing poll cycle."
                             )
                             pass  # Continue the loop normally after timeout
 
                 # --- Exception handling for the inner try block (catches dequeue, task processing, or waiting errors) ---
                 except Exception as e:
                     logger.error(
-                        f"Error during task processing or DB operation within context for worker {worker_id}: {e}",
+                        f"Error during task processing or DB operation within context for worker {self.worker_id}: {e}",
                         exc_info=True,
                     )
                     # If an error occurs *within* the db_context block (e.g., during dequeue, handler execution, or waiting),
@@ -466,61 +486,23 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 
         # --- Exception handling for the outer try block (whole loop iteration) ---
         except asyncio.CancelledError:
-            logger.info(f"Task worker {worker_id} received cancellation signal.")
+            logger.info(f"Task worker {self.worker_id} received cancellation signal.")
             # If a task was being processed when cancelled, it might remain locked.
             # Rely on lock expiry/manual intervention for now.
             # For simplicity, we just exit.
             break  # Exit the loop cleanly on cancellation
         except Exception as e:
             logger.error(
-                f"Task worker {worker_id} encountered an unexpected error outside DB context: {e}",
+                f"Task worker {self.worker_id} encountered an unexpected error outside DB context: {e}",
                 exc_info=True,
             )
             # If an error occurs outside the db_context (e.g., getting context itself), wait before retrying
             await asyncio.sleep(TASK_POLLING_INTERVAL * 2)  # Longer sleep after error
 
-    logger.info(f"Task worker {worker_id} stopped.")
+        logger.info(f"Task worker {self.worker_id} stopped.")
 
 
-# --- Module initialization ---
-def register_task_handler(
-    task_type: str, handler: Callable[[DatabaseContext, Any], Awaitable[None]]
-):
-    """Register a new task handler function for a specific task type."""
-    TASK_HANDLERS[task_type] = handler
-    logger.info(f"Registered task handler for task type: {task_type}")
+# --- Remove Module Initialization and Global Setters ---
+# Registration and dependency injection are handled in __main__.py
 
-
-def set_processing_service(service: ProcessingService):
-    """Set the ProcessingService instance from main.py"""
-    global processing_service_instance
-    processing_service_instance = service
-    logger.info("Set ProcessingService instance for task worker.")
-
-
-def set_document_indexer(indexer: DocumentIndexer):
-    """Set the DocumentIndexer instance from main.py"""
-    global document_indexer_instance
-    document_indexer_instance = indexer
-    logger.info("Set DocumentIndexer instance for task worker.")
-    # Dynamically register the handler method from the instance
-    if indexer:
-        register_task_handler("process_uploaded_document", indexer.process_document)
-    else:
-        # Handle potential unsetting if needed
-        if "process_uploaded_document" in TASK_HANDLERS:
-            del TASK_HANDLERS["process_uploaded_document"]
-            logger.warning("Unset DocumentIndexer instance, removed handler.")
-
-
-# Removed set_mcp_state function
-
-
-def get_task_handlers():
-    """Return the current task handlers dictionary"""
-    return TASK_HANDLERS
-
-
-logger.info(
-    f"Task worker module initialized with {len(TASK_HANDLERS)} handlers: {list(TASK_HANDLERS.keys())}"
-)
+__all__ = ["TaskWorker", "handle_log_message", "handle_llm_callback", "handle_index_email"] # Export class and handlers

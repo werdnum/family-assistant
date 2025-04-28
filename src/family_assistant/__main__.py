@@ -43,9 +43,15 @@ from dotenv import load_dotenv
 # import telegramify_markdown # Moved to telegram_bot.py
 # from telegram.helpers import escape_markdown # Moved to telegram_bot.py
 import uvicorn
+import functools # Import functools
 
-# Import task worker module using absolute path
-from family_assistant import task_worker
+# Import task worker CLASS and handlers
+from family_assistant.task_worker import (
+    TaskWorker,
+    handle_log_message,
+    handle_llm_callback,
+    handle_index_email, # Keep email handler import for now
+)
 
 # Import the ProcessingService and LLM interface/clients
 from family_assistant.processing import ProcessingService
@@ -154,18 +160,15 @@ tool_name_to_server_id: Dict[str, str] = {}  # Maps MCP tool names to their serv
 mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
 
 
-# Use task worker's handler registry
-TASK_HANDLERS = task_worker.get_task_handlers()
+# Task handler registry is now part of the TaskWorker instance
 
 
-logger.info(f"Available task handlers: {list(TASK_HANDLERS.keys())}")
+# Use task_worker's helper function (remains module-level)
+# format_llm_response_for_telegram = task_worker.format_llm_response_for_telegram
+# ^^^ This is actually defined in task_worker.py but not used here, remove if not needed
 
 
-# Use task_worker's helper function
-format_llm_response_for_telegram = task_worker.format_llm_response_for_telegram
-
-
-# Task worker loop is now in task_worker.py
+# Task worker loop is now the run() method of the TaskWorker class
 
 
 # --- Configuration Loading ---
@@ -642,20 +645,32 @@ async def main_async(
     web_server_task = asyncio.create_task(server.serve())
     logger.info("Web server running on http://0.0.0.0:8000")
 
-    # Pass service instances to the task worker module
-    task_worker.set_processing_service(processing_service)
-    task_worker.set_document_indexer(document_indexer) # Inject the document indexer instance
-    # Note: The document indexer handler is now registered *inside* set_document_indexer
-
-    # Log handlers *after* potential dynamic registration
-    logger.info(f"Registered task handlers: {list(task_worker.get_task_handlers().keys())}")
-
-    # Start the task queue worker, passing the notification event
-    worker_id = (
-        f"worker-{uuid.uuid4()}"  # Generate a unique ID for this worker instance
+    # --- Instantiate Task Worker ---
+    task_worker_instance = TaskWorker(
+        processing_service=processing_service,
+        # Pass other dependencies if needed by its methods or handlers registered here
     )
+
+    # --- Register Task Handlers with the Worker Instance ---
+    task_worker_instance.register_task_handler("log_message", handle_log_message)
+    # Register document processing handler from the indexer instance
+    task_worker_instance.register_task_handler(
+        "process_uploaded_document", document_indexer.process_document
+    )
+    # Register email indexing handler (still using module-level function for now)
+    # TODO: Refactor email_indexer and register its method here
+    task_worker_instance.register_task_handler("index_email", handle_index_email)
+    # Register LLM callback handler, pre-binding the processing_service dependency
+    task_worker_instance.register_task_handler(
+        "llm_callback",
+        functools.partial(handle_llm_callback, processing_service)
+    )
+
+    logger.info(f"Registered task handlers for worker {task_worker_instance.worker_id}: {list(task_worker_instance.get_task_handlers().keys())}")
+
+    # Start the task queue worker using the instance's run method
     task_worker_task = asyncio.create_task(
-        task_worker.task_worker_loop(worker_id, new_task_event)
+        task_worker_instance.run(new_task_event) # Pass the event to the run method
     )
 
     # Wait until shutdown signal is received
