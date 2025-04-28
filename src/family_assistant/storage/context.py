@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, TypeVar, Generic, Callable, Union,
 from sqlalchemy import Result, TextClause, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Select, Insert, Update, Delete
-from sqlalchemy.exc import DBAPIError, ProgrammingError # Import ProgrammingError
+from sqlalchemy.exc import DBAPIError, ProgrammingError  # Import ProgrammingError
 
 # Use absolute package path
 from family_assistant.storage.base import get_engine
@@ -51,7 +51,7 @@ class DatabaseContext:
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.conn: Optional[AsyncConnection] = None
-        self._transaction_cm = None # To store the context manager from engine.begin()
+        self._transaction_cm = None  # To store the context manager from engine.begin()
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -112,16 +112,23 @@ class DatabaseContext:
             except DBAPIError as e:
                 # Check if the error is a ProgrammingError (syntax error, undefined object, etc.)
                 # These should not be retried.
-                if isinstance(e.orig, ProgrammingError) or isinstance(e, ProgrammingError): # Check original and wrapper
-                    logger.error(f"Non-retryable ProgrammingError encountered: {e}", exc_info=True)
-                    raise # Re-raise immediately, do not retry
+                if isinstance(e.orig, ProgrammingError) or isinstance(
+                    e, ProgrammingError
+                ):  # Check original and wrapper
+                    logger.error(
+                        f"Non-retryable ProgrammingError encountered: {e}",
+                        exc_info=True,
+                    )
+                    raise  # Re-raise immediately, do not retry
 
                 # Log other DBAPI errors and proceed with retry logic
                 logger.warning(
                     f"Retryable DBAPIError (attempt {attempt + 1}/{self.max_retries}): {e}."
                 )
                 if attempt == self.max_retries - 1:
-                    logger.error(f"Max retries exceeded for retryable error. Raising error.")
+                    logger.error(
+                        f"Max retries exceeded for retryable error. Raising error."
+                    )
                     raise
 
                 # Calculate backoff with jitter for retry

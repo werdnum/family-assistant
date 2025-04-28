@@ -20,12 +20,13 @@ from sqlalchemy import (
     insert,
     desc,
 )
-from sqlalchemy.exc import SQLAlchemyError # Use broader exception
+from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
 
 # Use absolute package path
-from family_assistant.storage.base import metadata # Keep metadata
+from family_assistant.storage.base import metadata  # Keep metadata
+
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
+from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ message_history_table = Table(
 
 
 async def add_message_to_history(
-    db_context: DatabaseContext, # Added context
+    db_context: DatabaseContext,  # Added context
     chat_id: int,
     message_id: int,
     timestamp: datetime,
@@ -63,9 +64,7 @@ async def add_message_to_history(
         )
         # Use execute_with_retry as commit is handled by context manager
         await db_context.execute_with_retry(stmt)
-        logger.debug(
-            f"Added message {message_id} from chat {chat_id} to history."
-        )
+        logger.debug(f"Added message {message_id} from chat {chat_id} to history.")
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in add_message_to_history({chat_id}, {message_id}): {e}",
@@ -75,10 +74,10 @@ async def add_message_to_history(
 
 
 async def get_recent_history(
-    db_context: DatabaseContext, # Added context
+    db_context: DatabaseContext,  # Added context
     chat_id: int,
     limit: int,
-    max_age: timedelta
+    max_age: timedelta,
 ) -> List[Dict[str, Any]]:
     """Retrieves recent messages for a chat, including tool call info."""
     try:
@@ -96,7 +95,7 @@ async def get_recent_history(
         )
         rows = await db_context.fetch_all(stmt)
         formatted_rows = []
-        for row in reversed(rows): # Reverse here to get chronological order
+        for row in reversed(rows):  # Reverse here to get chronological order
             msg = {"role": row["role"], "content": row["content"]}
             if row["role"] == "assistant" and row["tool_calls_info"]:
                 msg["tool_calls_info_raw"] = row["tool_calls_info"]
@@ -111,9 +110,7 @@ async def get_recent_history(
 
 
 async def get_message_by_id(
-    db_context: DatabaseContext, # Added context
-    chat_id: int,
-    message_id: int
+    db_context: DatabaseContext, chat_id: int, message_id: int  # Added context
 ) -> Optional[Dict[str, Any]]:
     """Retrieves a specific message by its chat and message ID."""
     try:
@@ -133,7 +130,7 @@ async def get_message_by_id(
 
 
 async def get_grouped_message_history(
-    db_context: DatabaseContext # Added context
+    db_context: DatabaseContext,  # Added context
 ) -> Dict[int, List[Dict[str, Any]]]:
     """Retrieves all message history, grouped by chat_id and ordered by timestamp."""
     try:

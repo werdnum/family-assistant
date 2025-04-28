@@ -11,10 +11,10 @@ import logging
 import json
 import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone # Added
+from datetime import datetime, timedelta, timezone  # Added
 from typing import List, Dict, Any, Optional, Tuple
 
-import pytz # Added
+import pytz  # Added
 
 # Import the LLM interface and output structure
 from .llm import LLMInterface, LLMOutput
@@ -80,7 +80,7 @@ class ProcessingService:
 
     async def process_message(
         self,
-        db_context: DatabaseContext, # Added db_context
+        db_context: DatabaseContext,  # Added db_context
         messages: List[Dict[str, Any]],
         chat_id: int,
         application: Application,
@@ -143,8 +143,8 @@ class ProcessingService:
                 # Create execution context including the db_context
                 tool_execution_context = ToolExecutionContext(
                     chat_id=chat_id,
-                    db_context=db_context, # Pass db_context here
-                    application=application
+                    db_context=db_context,  # Pass db_context here
+                    application=application,
                 )
 
                 for tool_call_dict in tool_calls:
@@ -205,7 +205,7 @@ class ProcessingService:
                     # Store details for history, including the original tool_call_id
                     executed_tool_info.append(
                         {
-                            "tool_call_id": call_id, # Add the original ID here
+                            "tool_call_id": call_id,  # Add the original ID here
                             "function_name": function_name,
                             "arguments": arguments,  # Store parsed args (or error dict)
                             "response_content": tool_response_content,
@@ -278,7 +278,7 @@ class ProcessingService:
 
     async def generate_llm_response_for_chat(
         self,
-        db_context: DatabaseContext, # Added db_context
+        db_context: DatabaseContext,  # Added db_context
         application: Application,
         chat_id: int,
         trigger_content_parts: List[Dict[str, Any]],
@@ -305,16 +305,22 @@ class ProcessingService:
         # --- History and Context Preparation ---
         messages: List[Dict[str, Any]] = []
         try:
-            history_messages = await storage.get_recent_history( # Use storage directly with context
-                db_context=db_context, # Pass context
-                chat_id=chat_id,
-                limit=self.max_history_messages, # Use self attribute
-                max_age=timedelta(hours=self.history_max_age_hours), # Use self attribute
+            history_messages = (
+                await storage.get_recent_history(  # Use storage directly with context
+                    db_context=db_context,  # Pass context
+                    chat_id=chat_id,
+                    limit=self.max_history_messages,  # Use self attribute
+                    max_age=timedelta(
+                        hours=self.history_max_age_hours
+                    ),  # Use self attribute
+                )
             )
         except Exception as hist_err:
-            logger.error(f"Failed to get message history for chat {chat_id}: {hist_err}", exc_info=True)
-            history_messages = [] # Continue with empty history on error
-
+            logger.error(
+                f"Failed to get message history for chat {chat_id}: {hist_err}",
+                exc_info=True,
+            )
+            history_messages = []  # Continue with empty history on error
 
         # Process history messages, formatting assistant tool calls correctly
         for msg in history_messages:
@@ -341,7 +347,9 @@ class ProcessingService:
                                         # Arguments should already be a JSON string or dict from storage
                                         "arguments": (
                                             json.dumps(raw_call.get("arguments", {}))
-                                            if isinstance(raw_call.get("arguments"), dict)
+                                            if isinstance(
+                                                raw_call.get("arguments"), dict
+                                            )
                                             else raw_call.get("arguments", "{}")
                                         ),
                                     },
@@ -396,29 +404,34 @@ class ProcessingService:
         )
 
         # --- Prepare System Prompt Context ---
-        system_prompt_template = self.prompts.get( # Use self.prompts
-            "system_prompt", "You are a helpful assistant. Current time is {current_time}."
+        system_prompt_template = self.prompts.get(  # Use self.prompts
+            "system_prompt",
+            "You are a helpful assistant. Current time is {current_time}.",
         )
         try:
-            local_tz = pytz.timezone(self.timezone_str) # Use self.timezone_str
+            local_tz = pytz.timezone(self.timezone_str)  # Use self.timezone_str
             current_local_time = datetime.now(local_tz)
             current_time_str = current_local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
         except Exception as tz_err:
             logger.error(
                 f"Error applying timezone {self.timezone_str}: {tz_err}. Defaulting time format."
             )
-            current_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            current_time_str = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%d %H:%M:%S UTC"
+            )
 
         calendar_context_str = ""
-        if self.calendar_config: # Use self.calendar_config
+        if self.calendar_config:  # Use self.calendar_config
             try:
                 upcoming_events = await calendar_integration.fetch_upcoming_events(
-                    self.calendar_config # Use self.calendar_config
+                    self.calendar_config  # Use self.calendar_config
                 )
                 today_events_str, future_events_str = (
-                    calendar_integration.format_events_for_prompt(upcoming_events, self.prompts) # Use self.prompts
+                    calendar_integration.format_events_for_prompt(
+                        upcoming_events, self.prompts
+                    )  # Use self.prompts
                 )
-                calendar_header_template = self.prompts.get( # Use self.prompts
+                calendar_header_template = self.prompts.get(  # Use self.prompts
                     "calendar_context_header",
                     "{today_tomorrow_events}\n{next_two_weeks_events}",
                 )
@@ -428,18 +441,25 @@ class ProcessingService:
                 ).strip()
             except Exception as cal_err:
                 logger.error(
-                    f"Failed to fetch or format calendar events: {cal_err}", exc_info=True
+                    f"Failed to fetch or format calendar events: {cal_err}",
+                    exc_info=True,
                 )
-                calendar_context_str = f"Error retrieving calendar events: {str(cal_err)}"
+                calendar_context_str = (
+                    f"Error retrieving calendar events: {str(cal_err)}"
+                )
         else:
             calendar_context_str = "Calendar integration not configured."
 
         notes_context_str = ""
         try:
-            all_notes = await storage.get_all_notes(db_context=db_context) # Use storage directly with context
+            all_notes = await storage.get_all_notes(
+                db_context=db_context
+            )  # Use storage directly with context
             if all_notes:
                 notes_list_str = ""
-                note_item_format = self.prompts.get("note_item_format", "- {title}: {content}") # Use self.prompts
+                note_item_format = self.prompts.get(
+                    "note_item_format", "- {title}: {content}"
+                )  # Use self.prompts
                 for note in all_notes:
                     notes_list_str += (
                         note_item_format.format(
@@ -447,14 +467,16 @@ class ProcessingService:
                         )
                         + "\n"
                     )
-                notes_context_header_template = self.prompts.get( # Use self.prompts
+                notes_context_header_template = self.prompts.get(  # Use self.prompts
                     "notes_context_header", "Relevant notes:\n{notes_list}"
                 )
                 notes_context_str = notes_context_header_template.format(
                     notes_list=notes_list_str.strip()
                 )
             else:
-                notes_context_str = self.prompts.get("no_notes", "No notes available.") # Use self.prompts
+                notes_context_str = self.prompts.get(
+                    "no_notes", "No notes available."
+                )  # Use self.prompts
         except Exception as note_err:
             logger.error(f"Failed to get notes for context: {note_err}", exc_info=True)
             notes_context_str = "Error retrieving notes."
@@ -488,7 +510,7 @@ class ProcessingService:
         try:
             # Call the process_message method of the *same* instance (self)
             llm_response_content, tool_info = await self.process_message(
-                db_context=db_context, # Pass context
+                db_context=db_context,  # Pass context
                 messages=messages,
                 chat_id=chat_id,
                 application=application,

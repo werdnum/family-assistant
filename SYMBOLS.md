@@ -24,8 +24,8 @@ def format_events_for_prompt(events: List[Dict[(str, Any)]], prompts: Dict[(str,
 
 # from .processing import ProcessingService
 class ProcessingService:
-    """Encapsulates the logic for processing messages, interacting with the LLM,
-    and handling tool calls."""
+    """Encapsulates the logic for preparing context, processing messages,
+    interacting with the LLM, and handling tool calls."""
 
 # from .llm import LLMOutput
 class LLMOutput:
@@ -57,40 +57,8 @@ def load_config():
 async def load_mcp_config_and_connect():
     "Loads MCP server config, connects to servers, and discovers tools."
 
-# from .main import typing_notifications
-async def typing_notifications(context: ?, chat_id: int, action: str=...):
-    "Context manager to send typing notifications periodically."
-
-# from .main import _generate_llm_response_for_chat
-async def _generate_llm_response_for_chat(processing_service: ProcessingService, application: Application, chat_id: int, trigger_content_parts: List[Dict[(str, Any)]], user_name: str) -> Tuple[(Optional[str], Optional[List[Dict[(str, Any)]]])]:
-    """Prepares context, message history, calls the ProcessingService, and returns the response.
-
-    Args:
-        chat_id: The target chat ID.
-        trigger_content_parts: List of content parts (text, image_url) for the triggering message.
-        user_name: The user name to format into the system prompt.
-
-    Returns:
-        A tuple: (LLM response string or None, List of tool call info dicts or None)."""
-
-# from .main import start
-async def start(update: Update, context: ?) -> ?:
-    "Sends a welcome message when the /start command is issued."
-
-# from .main import process_chat_queue
-async def process_chat_queue(chat_id: int, context: ?) -> ?:
-    "Processes the message buffer for a given chat."
-
-# from .main import message_handler
-async def message_handler(update: Update, context: ?) -> ?:
-    "Buffers incoming messages and triggers processing if not already running."
-
-# from .main import error_handler
-async def error_handler(update: object, context: CallbackContext) -> ?:
-    "Log the error and send a telegram message to notify the developer."
-
 # from .main import shutdown_handler
-async def shutdown_handler(signal_name: str):
+async def shutdown_handler(signal_name: str, telegram_service: Optional[TelegramService]):
     "Initiates graceful shutdown."
 
 # from .main import reload_config_handler
@@ -98,12 +66,37 @@ def reload_config_handler(signum, frame):
     "Handles SIGHUP for config reloading (placeholder)."
 
 # from .main import main_async
-async def main_async(cli_args: ?) -> ?:
+async def main_async(cli_args: ?) -> Optional[TelegramService]:
     "Initializes and runs the bot application."
 
 # from .main import main
 def main() -> int:
     "Sets up argument parsing, event loop, and signal handlers."
+
+# from .embeddings import EmbeddingResult
+class EmbeddingResult:
+    "Represents the result of generating embeddings for a list of texts."
+
+# from .embeddings import EmbeddingGenerator
+class EmbeddingGenerator(Protocol):
+    "Protocol defining the interface for generating text embeddings."
+
+# from .embeddings import LiteLLMEmbeddingGenerator
+class LiteLLMEmbeddingGenerator:
+    "Embedding generator implementation using the LiteLLM library."
+
+# from .embeddings import MockEmbeddingGenerator
+class MockEmbeddingGenerator:
+    """A mock embedding generator that returns predefined embeddings based on input text.
+    Useful for testing without making actual API calls."""
+
+# from .telegram_bot import TelegramUpdateHandler
+class TelegramUpdateHandler:
+    "Handles specific Telegram updates (messages, commands) and delegates processing."
+
+# from .telegram_bot import TelegramService
+class TelegramService:
+    "Manages the Telegram bot application lifecycle and update handling."
 
 # from .tools import ToolExecutionContext
 class ToolExecutionContext:
@@ -118,7 +111,7 @@ class ToolsProvider(Protocol):
     "Protocol defining the interface for a tool provider."
 
 # from .tools import schedule_recurring_task_tool
-async def schedule_recurring_task_tool(context: ToolExecutionContext, task_type: str, initial_schedule_time: str, recurrence_rule: str, payload: Dict[(str, Any)], max_retries: Optional[int]=3, description: Optional[str]):
+async def schedule_recurring_task_tool(exec_context: ToolExecutionContext, task_type: str, initial_schedule_time: str, recurrence_rule: str, payload: Dict[(str, Any)], max_retries: Optional[int]=3, description: Optional[str]):
     """Schedules a new recurring task.
 
     Args:
@@ -130,11 +123,11 @@ async def schedule_recurring_task_tool(context: ToolExecutionContext, task_type:
         description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief')."""
 
 # from .tools import schedule_future_callback_tool
-async def schedule_future_callback_tool(context_obj: ToolExecutionContext, callback_time: str, context: str):
+async def schedule_future_callback_tool(exec_context: ToolExecutionContext, callback_time: str, context: str):
     """Schedules a task to trigger an LLM callback in a specific chat at a future time.
 
     Args:
-        context_obj: The ToolExecutionContext containing chat_id and application instance.
+        exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback."""
 
@@ -150,8 +143,12 @@ class MCPToolsProvider:
 class CompositeToolsProvider:
     "Combines multiple tool providers into a single interface."
 
+# from .web_server import get_db
+async def get_db() -> DatabaseContext:
+    "FastAPI dependency to get a DatabaseContext."
+
 # from .web_server import read_root
-async def read_root(request: Request):
+async def read_root(request: Request, db_context: DatabaseContext=...):
     "Serves the main page listing all notes."
 
 # from .web_server import add_note_form
@@ -159,28 +156,28 @@ async def add_note_form(request: Request):
     "Serves the form to add a new note."
 
 # from .web_server import edit_note_form
-async def edit_note_form(request: Request, title: str):
+async def edit_note_form(request: Request, title: str, db_context: DatabaseContext=...):
     "Serves the form to edit an existing note."
 
 # from .web_server import save_note
-async def save_note(request: Request, title: str=..., content: str=..., original_title: Optional[str]=...):
+async def save_note(request: Request, title: str=..., content: str=..., original_title: Optional[str]=..., db_context: DatabaseContext=...):
     "Handles saving a new or updated note."
 
 # from .web_server import delete_note_post
-async def delete_note_post(request: Request, title: str):
+async def delete_note_post(request: Request, title: str, db_context: DatabaseContext=...):
     "Handles deleting a note."
 
 # from .web_server import handle_mail_webhook
-async def handle_mail_webhook(request: Request):
+async def handle_mail_webhook(request: Request, db_context: DatabaseContext=...):
     """Receives incoming email via webhook (expects multipart/form-data).
     Logs the received form data for now."""
 
 # from .web_server import view_message_history
-async def view_message_history(request: Request):
+async def view_message_history(request: Request, db_context: DatabaseContext=...):
     "Serves the page displaying message history."
 
 # from .web_server import view_tasks
-async def view_tasks(request: Request):
+async def view_tasks(request: Request, db_context: DatabaseContext=...):
     "Serves the page displaying scheduled tasks."
 
 # from .web_server import health_check
@@ -188,7 +185,7 @@ async def health_check():
     "Basic health check endpoint."
 
 # from .task_worker import handle_log_message
-async def handle_log_message(payload: Any):
+async def handle_log_message(db_context: DatabaseContext, payload: Any):
     "Simple task handler that logs the received payload."
 
 # from .task_worker import format_llm_response_for_telegram
@@ -196,7 +193,7 @@ def format_llm_response_for_telegram(response_text: str) -> str:
     "Converts LLM Markdown to Telegram MarkdownV2, with fallback."
 
 # from .task_worker import handle_llm_callback
-async def handle_llm_callback(payload: Any):
+async def handle_llm_callback(db_context: DatabaseContext, payload: Any):
     "Task handler for LLM scheduled callbacks."
 
 # from .task_worker import task_worker_loop
@@ -204,7 +201,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: ?):
     "Continuously polls for and processes tasks."
 
 # from .task_worker import register_task_handler
-def register_task_handler(task_type: str, handler: Callable):
+def register_task_handler(task_type: str, handler: Callable[(?, Awaitable[?])]):
     "Register a new task handler function for a specific task type."
 
 # from .task_worker import set_processing_service
@@ -215,70 +212,44 @@ def set_processing_service(service: ProcessingService):
 def get_task_handlers():
     "Return the current task handlers dictionary"
 
+# from .email_indexer import EmailDocument
+class EmailDocument(Document):
+    """Represents an email document conforming to the Document protocol
+    for vector storage ingestion. Includes methods to convert from
+    a received_emails table row."""
+
+# from .email_indexer import handle_index_email
+async def handle_index_email(db_context: DatabaseContext, payload: Dict[(str, Any)]):
+    "Task handler to index a specific email from the received_emails table."
+
+# from .email_indexer import set_indexing_dependencies
+def set_indexing_dependencies(embedding_generator: EmbeddingGenerator, llm_client: Optional[LLMInterface]):
+    "Sets the necessary dependencies for the email indexer."
+
 # from .notes import get_all_notes
-async def get_all_notes() -> List[Dict[(str, str)]]:
-    "Retrieves all notes, with retries."
+async def get_all_notes(db_context: DatabaseContext) -> List[Dict[(str, str)]]:
+    "Retrieves all notes."
 
 # from .notes import get_note_by_title
-async def get_note_by_title(title: str) -> Optional[Dict[(str, Any)]]:
-    "Retrieves a specific note by its title, with retries."
+async def get_note_by_title(db_context: DatabaseContext, title: str) -> Optional[Dict[(str, Any)]]:
+    "Retrieves a specific note by its title."
 
 # from .notes import add_or_update_note
-async def add_or_update_note(title: str, content: str):
-    "Adds/updates a note, with retries."
+async def add_or_update_note(db_context: DatabaseContext, title: str, content: str) -> str:
+    "Adds a new note or updates an existing note with the given title (upsert)."
 
 # from .notes import delete_note
-async def delete_note(title: str) -> bool:
-    "Deletes a note by title, with retries."
+async def delete_note(db_context: DatabaseContext, title: str) -> bool:
+    "Deletes a note by title."
 
 # from .email import store_incoming_email
-async def store_incoming_email(form_data: Dict[(str, Any)]):
+async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[(str, Any)]):
     """Parses incoming email data (from Mailgun webhook form) and prepares it for storage.
-    Stores the parsed data in the `received_emails` table.
+    Stores the parsed data in the `received_emails` table using the provided context.
 
     Args:
+        db_context: The DatabaseContext to use for the operation.
         form_data: A dictionary representing the form data received from the webhook."""
-
-# from .testing import test_engine
-async def test_engine() -> AsyncGenerator[(AsyncEngine, ?)]:
-    """Create an in-memory SQLite database engine for testing.
-
-    This fixture creates an isolated in-memory SQLite database for testing.
-    It yields an AsyncEngine that can be used to create connections and
-    execute queries. When the test is complete, the engine is disposed of.
-
-    Yields:
-        An AsyncEngine connected to an in-memory SQLite database."""
-
-# from .testing import test_db_context
-async def test_db_context(test_engine: AsyncEngine) -> AsyncGenerator[(DatabaseContext, ?)]:
-    """Create a DatabaseContext with a test engine.
-
-    This fixture creates a DatabaseContext using the test_engine fixture.
-    It yields the context for use in tests.
-
-    Args:
-        test_engine: The test engine fixture.
-
-    Yields:
-        A DatabaseContext connected to the test engine."""
-
-# from .testing import run_with_test_db
-async def run_with_test_db(test_func: Callable[(?, T)], *args, **kwargs) -> T:
-    """Run a test function with a test database.
-
-    This function creates an in-memory SQLite database, initializes it with
-    the application's schema, and then runs the provided test function with
-    a DatabaseContext connected to the test database.
-
-    Args:
-        test_func: An async function that takes a DatabaseContext as its first
-                 argument, followed by any additional arguments.
-        *args: Positional arguments to pass to the test function.
-        **kwargs: Keyword arguments to pass to the test function.
-
-    Returns:
-        The return value of the test function."""
 
 # from .vector import Document
 class Document(Protocol):
@@ -296,53 +267,56 @@ class DocumentEmbeddingRecord(Base):
     "SQLAlchemy model for the 'document_embeddings' table, representing stored embeddings."
 
 # from .vector import init_vector_db
-async def init_vector_db():
-    "Initializes the vector database components (extension, indexes). Tables are created by storage.init_db."
-
-# from .vector import add_document
-async def add_document(doc: Document, enriched_doc_metadata: Optional[Dict[(str, Any)]]) -> int:
-    """Adds a document record to the database or retrieves the existing one based on source_id.
-
-    Uses the provided Document object (conforming to the protocol) to populate initial fields.
-    Allows overriding or augmenting metadata with an optional enriched_metadata dictionary.
+async def init_vector_db(db_context: DatabaseContext):
+    """Initializes the vector database components (extension, indexes) using the provided context.
+    Tables should be created separately via storage.init_db or metadata.create_all.
 
     Args:
-        doc: An object conforming to the Document protocol (which has a .metadata property).
-        enriched_doc_metadata: Optional dictionary containing metadata potentially enriched by an LLM,
-                           which will be merged with or override the data from doc.metadata.
+        db_context: The DatabaseContext to use for executing initialization commands."""
+
+# from .vector import add_document
+async def add_document(db_context: DatabaseContext, doc: Document, enriched_doc_metadata: Optional[Dict[(str, Any)]]) -> int:
+    """Adds a document record to the database or updates it based on source_id.
+
+    Args:
+        db_context: The DatabaseContext to use for the operation.
+        doc: An object conforming to the Document protocol.
+        enriched_doc_metadata: Optional dictionary containing enriched metadata.
 
     Returns:
         The database ID of the added or existing document."""
 
 # from .vector import get_document_by_source_id
-async def get_document_by_source_id(source_id: str) -> Optional[Dict[(str, Any)]]:
-    "Retrieves a document by its source ID."
+async def get_document_by_source_id(db_context: DatabaseContext, source_id: str) -> Optional[DocumentRecord]:
+    "Retrieves a document ORM object by its source ID."
 
 # from .vector import add_embedding
-async def add_embedding(document_id: int, chunk_index: int, embedding_type: str, embedding: List[float], embedding_model: str, content: Optional[str], content_hash: Optional[str]):
-    "Adds an embedding record linked to a document."
+async def add_embedding(db_context: DatabaseContext, document_id: int, chunk_index: int, embedding_type: str, embedding: List[float], embedding_model: str, content: Optional[str], content_hash: Optional[str]) -> ?:
+    "Adds an embedding record linked to a document, updating if it already exists."
 
 # from .vector import delete_document
-async def delete_document(document_id: int):
-    "Deletes a document and its associated embeddings."
-
-# from .vector import query_vectors
-async def query_vectors(query_embedding: List[float], embedding_model: str, keywords: Optional[str], filters: Optional[Dict[(str, Any)]], embedding_type_filter: Optional[List[str]], limit: int=10) -> List[Dict[(str, Any)]]:
-    """Performs a hybrid search combining vector similarity and keyword search
-    with metadata filtering.
-
-    Args:
-        query_embedding: The vector representation of the search query.
-        embedding_model: Identifier of the model used for the query vector (must match indexed models).
-        keywords: Keywords for full-text search.
-        filters: Dictionary of filters to apply to the 'documents' table
-                 (e.g., {"source_type": "email", "created_at_gte": datetime(...)})
-        embedding_type_filter: List of allowed embedding types to search within.
-        limit: The maximum number of results to return.
+async def delete_document(db_context: DatabaseContext, document_id: int) -> bool:
+    """Deletes a document and its associated embeddings (via CASCADE constraint).
 
     Returns:
-        A list of dictionaries, each representing a relevant document chunk/embedding
-        with its metadata and scores. Returns an empty list if skeleton."""
+        True if a document was deleted, False otherwise."""
+
+# from .vector import query_vectors
+async def query_vectors(db_context: DatabaseContext, query_embedding: List[float], embedding_model: str, keywords: Optional[str], filters: Optional[Dict[(str, Any)]], embedding_type_filter: Optional[List[str]], limit: int=10) -> List[Dict[(str, Any)]]:
+    """Performs a hybrid search combining vector similarity and keyword search
+    with metadata filtering using the provided DatabaseContext.
+
+    Args:
+        db_context: The DatabaseContext to use for the query.
+        query_embedding: The vector representation of the search query.
+        embedding_model: Identifier of the model used for the query vector.
+        keywords: Keywords for full-text search.
+        filters: Dictionary of filters for the 'documents' table.
+        embedding_type_filter: List of allowed embedding types.
+        limit: The maximum number of results.
+
+    Returns:
+        A list of dictionaries representing relevant document embeddings."""
 
 # from .context import DatabaseContext
 class DatabaseContext:
@@ -374,24 +348,24 @@ async def get_db_context(engine: Optional[AsyncEngine], max_retries: int=3, base
         ```"""
 
 # from .tasks import enqueue_task
-async def enqueue_task(task_id: str, task_type: str, payload: Optional[Dict[(str, Any)]], scheduled_at: Optional[datetime], max_retries_override: Optional[int], recurrence_rule: Optional[str], original_task_id: Optional[str], notify_event: Optional[?]):
-    "Adds a task, handles retry logic, optional notification."
+async def enqueue_task(db_context: DatabaseContext, task_id: str, task_type: str, payload: Optional[Dict[(str, Any)]], scheduled_at: Optional[datetime], max_retries_override: Optional[int], recurrence_rule: Optional[str], original_task_id: Optional[str], notify_event: Optional[?]):
+    "Adds a task to the queue, optional notification."
 
 # from .tasks import dequeue_task
-async def dequeue_task(worker_id: str, task_types: List[str]) -> Optional[Dict[(str, Any)]]:
-    "Atomically dequeues the next available task, handles retries."
+async def dequeue_task(db_context: DatabaseContext, worker_id: str, task_types: List[str]) -> Optional[Dict[(str, Any)]]:
+    "Atomically dequeues the next available task."
 
 # from .tasks import update_task_status
-async def update_task_status(task_id: str, status: str, error: Optional[str]) -> bool:
-    "Updates task status, handles retries."
+async def update_task_status(db_context: DatabaseContext, task_id: str, status: str, error: Optional[str]) -> bool:
+    "Updates task status."
 
 # from .tasks import reschedule_task_for_retry
-async def reschedule_task_for_retry(task_id: str, next_scheduled_at: datetime, new_retry_count: int, error: str) -> bool:
-    "Reschedules a task for retry, handles retries."
+async def reschedule_task_for_retry(db_context: DatabaseContext, task_id: str, next_scheduled_at: datetime, new_retry_count: int, error: str) -> bool:
+    "Reschedules a task for retry."
 
 # from .tasks import get_all_tasks
-async def get_all_tasks(limit: int=100) -> List[Dict[(str, Any)]]:
-    "Retrieves tasks, ordered by creation descending, handles retries."
+async def get_all_tasks(db_context: DatabaseContext, limit: int=100) -> List[Dict[(str, Any)]]:
+    "Retrieves tasks, ordered by creation descending."
 
 # from .__init__ import init_db
 async def init_db():
@@ -402,18 +376,18 @@ def get_engine():
     "Returns the initialized SQLAlchemy async engine."
 
 # from .message_history import add_message_to_history
-async def add_message_to_history(chat_id: int, message_id: int, timestamp: datetime, role: str, content: str, tool_calls_info: Optional[List[Dict[(str, Any)]]]):
-    "Adds a message to the history table, including optional tool call info, with retries."
+async def add_message_to_history(db_context: DatabaseContext, chat_id: int, message_id: int, timestamp: datetime, role: str, content: str, tool_calls_info: Optional[List[Dict[(str, Any)]]]):
+    "Adds a message to the history table, including optional tool call info."
 
 # from .message_history import get_recent_history
-async def get_recent_history(chat_id: int, limit: int, max_age: timedelta) -> List[Dict[(str, Any)]]:
-    "Retrieves recent messages for a chat, including tool call info, with retries."
+async def get_recent_history(db_context: DatabaseContext, chat_id: int, limit: int, max_age: timedelta) -> List[Dict[(str, Any)]]:
+    "Retrieves recent messages for a chat, including tool call info."
 
 # from .message_history import get_message_by_id
-async def get_message_by_id(chat_id: int, message_id: int) -> Optional[Dict[(str, Any)]]:
-    "Retrieves a specific message by its chat and message ID, with retries."
+async def get_message_by_id(db_context: DatabaseContext, chat_id: int, message_id: int) -> Optional[Dict[(str, Any)]]:
+    "Retrieves a specific message by its chat and message ID."
 
 # from .message_history import get_grouped_message_history
-async def get_grouped_message_history() -> Dict[(int, List[Dict[(str, Any)]])]:
+async def get_grouped_message_history(db_context: DatabaseContext) -> Dict[(int, List[Dict[(str, Any)]])]:
     "Retrieves all message history, grouped by chat_id and ordered by timestamp."
 

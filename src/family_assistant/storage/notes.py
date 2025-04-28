@@ -20,12 +20,13 @@ from sqlalchemy import (
     update,
     delete,
 )
-from sqlalchemy.exc import SQLAlchemyError # Use broader exception
+from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
 
 # Use absolute package path
-from family_assistant.storage.base import metadata # Keep metadata
+from family_assistant.storage.base import metadata  # Keep metadata
+
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
+from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +61,12 @@ async def get_all_notes(db_context: DatabaseContext) -> List[Dict[str, str]]:
         return [{"title": row["title"], "content": row["content"]} for row in rows]
     except SQLAlchemyError as e:
         logger.error(f"Database error in get_all_notes: {e}", exc_info=True)
-        raise # Re-raise after logging
+        raise  # Re-raise after logging
 
 
-async def get_note_by_title(db_context: DatabaseContext, title: str) -> Optional[Dict[str, Any]]:
+async def get_note_by_title(
+    db_context: DatabaseContext, title: str
+) -> Optional[Dict[str, Any]]:
     """Retrieves a specific note by its title."""
     try:
         stmt = select(notes_table.c.title, notes_table.c.content).where(
@@ -72,11 +75,15 @@ async def get_note_by_title(db_context: DatabaseContext, title: str) -> Optional
         row = await db_context.fetch_one(stmt)
         return row if row else None
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_note_by_title({title}): {e}", exc_info=True)
+        logger.error(
+            f"Database error in get_note_by_title({title}): {e}", exc_info=True
+        )
         raise
 
 
-async def add_or_update_note(db_context: DatabaseContext, title: str, content: str) -> str:
+async def add_or_update_note(
+    db_context: DatabaseContext, title: str, content: str
+) -> str:
     """Adds a new note or updates an existing note with the given title (upsert)."""
     now = datetime.now(timezone.utc)
 
@@ -102,7 +109,9 @@ async def add_or_update_note(db_context: DatabaseContext, title: str, content: s
             logger.info(f"Successfully added/updated note: {title} (using ON CONFLICT)")
             return "Success"
         except SQLAlchemyError as e:
-            logger.error(f"PostgreSQL error in add_or_update_note({title}): {e}", exc_info=True)
+            logger.error(
+                f"PostgreSQL error in add_or_update_note({title}): {e}", exc_info=True
+            )
             raise
 
     else:
@@ -119,8 +128,11 @@ async def add_or_update_note(db_context: DatabaseContext, title: str, content: s
         except SQLAlchemyError as e:
             # Check specifically for unique constraint violation (IntegrityError in SQLAlchemy)
             from sqlalchemy.exc import IntegrityError
-            if isinstance(e, IntegrityError): # Check only for IntegrityError
-                logger.info(f"Note '{title}' already exists (SQLite fallback), attempting update.")
+
+            if isinstance(e, IntegrityError):  # Check only for IntegrityError
+                logger.info(
+                    f"Note '{title}' already exists (SQLite fallback), attempting update."
+                )
                 # Perform UPDATE if INSERT failed due to unique constraint
                 update_stmt = (
                     update(notes_table)
@@ -131,14 +143,21 @@ async def add_or_update_note(db_context: DatabaseContext, title: str, content: s
                 result = await db_context.execute_with_retry(update_stmt)
                 if result.rowcount == 0:
                     # This could happen if the note was deleted between the failed INSERT and this UPDATE
-                    logger.error(f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently.")
+                    logger.error(
+                        f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently."
+                    )
                     # Re-raise the original error or a custom one
-                    raise RuntimeError(f"Failed to update note '{title}' after insert conflict.")
+                    raise RuntimeError(
+                        f"Failed to update note '{title}' after insert conflict."
+                    )
                 logger.info(f"Updated note: {title} (SQLite fallback)")
                 return "Success"
             else:
                 # Re-raise other SQLAlchemy errors
-                logger.error(f"Database error during INSERT in add_or_update_note({title}) (SQLite fallback): {e}", exc_info=True)
+                logger.error(
+                    f"Database error during INSERT in add_or_update_note({title}) (SQLite fallback): {e}",
+                    exc_info=True,
+                )
                 raise e
 
 

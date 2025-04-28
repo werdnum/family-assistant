@@ -2,7 +2,7 @@ import pytest
 import asyncio
 import logging
 import os
-import sqlalchemy as sa # Add this import
+import sqlalchemy as sa  # Add this import
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from unittest.mock import patch
 from testcontainers.postgres import PostgresContainer
@@ -10,6 +10,7 @@ from testcontainers.postgres import PostgresContainer
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage.base import metadata, engine as original_engine
 from family_assistant.storage import init_db  # Import init_db
+
 # Import vector storage init and context
 from family_assistant.storage.vector import init_vector_db
 from family_assistant.storage.context import DatabaseContext
@@ -64,7 +65,8 @@ async def test_db_engine(request):  # Add request fixture
 
 # --- PostgreSQL Test Fixtures (using testcontainers) ---
 
-import docker # Import the docker library to catch its exceptions
+import docker  # Import the docker library to catch its exceptions
+
 
 @pytest.fixture(scope="session")
 def postgres_container():
@@ -82,15 +84,19 @@ def postgres_container():
     # `CREATE EXTENSION IF NOT EXISTS vector;` after connection.
     # Using a dedicated pgvector image simplifies this.
     # image = "postgres:16-alpine" # Standard image, might need manual extension creation
-    image = "pgvector/pgvector:0.8.0-pg17" # Image with pgvector pre-installed
+    image = "pgvector/pgvector:0.8.0-pg17"  # Image with pgvector pre-installed
     logger.info(f"Attempting to start PostgreSQL container with image: {image}")
-    logger.info(f"Using Docker configuration from environment (DOCKER_HOST={os.getenv('DOCKER_HOST', 'Not Set')})")
+    logger.info(
+        f"Using Docker configuration from environment (DOCKER_HOST={os.getenv('DOCKER_HOST', 'Not Set')})"
+    )
     try:
         # Specify the asyncpg driver directly
         with PostgresContainer(image=image, driver="asyncpg") as container:
             # Attempt to connect to check readiness early
             container.get_container_host_ip()
-            logger.info("PostgreSQL container started successfully with asyncpg driver configuration.")
+            logger.info(
+                "PostgreSQL container started successfully with asyncpg driver configuration."
+            )
             yield container
         logger.info("PostgreSQL container stopped.")
     except docker.errors.DockerException as e:
@@ -98,17 +104,19 @@ def postgres_container():
         pytest.fail(
             f"Failed to start PostgreSQL container. Docker error: {e}. "
             f"Check Docker daemon status and DOCKER_HOST ({os.getenv('DOCKER_HOST', 'default')}).",
-            pytrace=False
+            pytrace=False,
         )
     except Exception as e:
         # Catch other potential errors during setup
         pytest.fail(
             f"An unexpected error occurred during PostgreSQL container setup: {e}",
-            pytrace=False
+            pytrace=False,
         )
 
 
-@pytest_asyncio.fixture(scope="function") # Use function scope for engine to ensure isolation
+@pytest_asyncio.fixture(
+    scope="function"
+)  # Use function scope for engine to ensure isolation
 async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEngine:
     """
     Creates an AsyncEngine connected to the test PostgreSQL container,
@@ -116,8 +124,12 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
     """
     # Get the connection URL directly from the container (should include +asyncpg)
     async_url = postgres_container.get_connection_url()
-    logger.info(f"Creating async engine for test PostgreSQL using URL from container: {async_url.split('@')[-1]}")
-    engine = create_async_engine(async_url, echo=False) # Set echo=True for debugging SQL
+    logger.info(
+        f"Creating async engine for test PostgreSQL using URL from container: {async_url.split('@')[-1]}"
+    )
+    engine = create_async_engine(
+        async_url, echo=False
+    )  # Set echo=True for debugging SQL
     patcher = None
     try:
         # Patch the global engine used by storage modules to use the PG engine
@@ -139,7 +151,7 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
         # --- Initialize the main database schema (all tables) ---
         # Now that the vector extension exists, create all tables using the patched engine
         logger.info("Initializing main database schema on PostgreSQL...")
-        await init_db() # Call without engine argument, relies on patch
+        await init_db()  # Call without engine argument, relies on patch
         logger.info("Main database schema initialized on PostgreSQL.")
 
         # --- Create PostgreSQL-specific Indexes AFTER tables exist ---
@@ -155,7 +167,9 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
                     """
                 )
             )
-            logger.info("Ensured HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos exists.")
+            logger.info(
+                "Ensured HNSW index idx_doc_embeddings_gemini_1536_hnsw_cos exists."
+            )
 
             # FTS Index (copy logic from original init_vector_db)
             await db_context_for_indexes.execute_with_retry(
@@ -170,7 +184,7 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
             logger.info("Ensured FTS index idx_doc_embeddings_content_fts_gin exists.")
         logger.info("PostgreSQL-specific indexes created.")
 
-        yield engine # Provide the initialized engine to tests
+        yield engine  # Provide the initialized engine to tests
 
     finally:
         # Cleanup: Stop the patch and dispose the engine

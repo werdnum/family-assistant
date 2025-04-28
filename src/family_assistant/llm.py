@@ -165,7 +165,7 @@ class LiteLLMClient:
                 message=f"Unexpected error: {e}",
                 llm_provider="litellm",
                 model=self.model,
-                status_code=500
+                status_code=500,
             ) from e
 
 

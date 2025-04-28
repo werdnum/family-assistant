@@ -10,13 +10,15 @@ from typing import List, Dict, Any, Optional, Protocol
 # Import sentence-transformers if available, otherwise skip the class definition
 try:
     from sentence_transformers import SentenceTransformer
+
     # sentence-transformers returns numpy arrays or torch tensors, need numpy for conversion
     import numpy as np
+
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
-    SentenceTransformer = None # Define as None to satisfy type checkers if needed
-    np = None # Define as None
+    SentenceTransformer = None  # Define as None to satisfy type checkers if needed
+    np = None  # Define as None
 
 from litellm import aembedding
 from litellm.exceptions import (
@@ -146,13 +148,16 @@ class LiteLLMEmbeddingGenerator:
 # --- Sentence Transformer Implementation (Conditional) ---
 
 if SENTENCE_TRANSFORMERS_AVAILABLE:
+
     class SentenceTransformerEmbeddingGenerator:
         """
         Embedding generator implementation using the sentence-transformers library
         for local embedding generation.
         """
 
-        def __init__(self, model_name_or_path: str, device: Optional[str] = None, **kwargs: Any):
+        def __init__(
+            self, model_name_or_path: str, device: Optional[str] = None, **kwargs: Any
+        ):
             """
             Initializes the SentenceTransformer embedding generator.
 
@@ -164,20 +169,35 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
                 **kwargs: Additional keyword arguments passed to the SentenceTransformer constructor.
             """
             if not model_name_or_path:
-                raise ValueError("SentenceTransformer model name or path cannot be empty.")
+                raise ValueError(
+                    "SentenceTransformer model name or path cannot be empty."
+                )
 
-            self._model_name = model_name_or_path # Store the identifier used
+            self._model_name = model_name_or_path  # Store the identifier used
             self.model_kwargs = kwargs
             try:
-                logger.info(f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}")
+                logger.info(
+                    f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}"
+                )
                 # Ensure SentenceTransformer is not None before calling
                 if SentenceTransformer is None:
-                     raise RuntimeError("SentenceTransformer class is None, library likely not installed.")
-                self.model = SentenceTransformer(model_name_or_path, device=device, **self.model_kwargs)
-                logger.info(f"SentenceTransformer model {model_name_or_path} loaded successfully.")
+                    raise RuntimeError(
+                        "SentenceTransformer class is None, library likely not installed."
+                    )
+                self.model = SentenceTransformer(
+                    model_name_or_path, device=device, **self.model_kwargs
+                )
+                logger.info(
+                    f"SentenceTransformer model {model_name_or_path} loaded successfully."
+                )
             except Exception as e:
-                logger.error(f"Failed to load SentenceTransformer model '{model_name_or_path}': {e}", exc_info=True)
-                raise ValueError(f"Could not load SentenceTransformer model '{model_name_or_path}'") from e
+                logger.error(
+                    f"Failed to load SentenceTransformer model '{model_name_or_path}': {e}",
+                    exc_info=True,
+                )
+                raise ValueError(
+                    f"Could not load SentenceTransformer model '{model_name_or_path}'"
+                ) from e
 
         @property
         def model_name(self) -> str:
@@ -199,7 +219,7 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
                 loop = asyncio.get_running_loop()
                 # The encode method might return numpy arrays or torch tensors depending on config
                 embeddings_np = await loop.run_in_executor(
-                    None, # Use default executor
+                    None,  # Use default executor
                     self.model.encode,
                     texts,
                     # convert_to_numpy=True # Ensure numpy output for consistent handling
@@ -225,16 +245,22 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
                     exc_info=True,
                 )
                 # Wrap errors appropriately
-                raise RuntimeError(f"Failed to generate embeddings with SentenceTransformer: {e}") from e
+                raise RuntimeError(
+                    f"Failed to generate embeddings with SentenceTransformer: {e}"
+                ) from e
+
 else:
     logger.warning(
         "sentence-transformers library not found. SentenceTransformerEmbeddingGenerator will not be available."
     )
+
     # Define a placeholder if the library is missing, so imports don't break elsewhere
     # if code explicitly tries to import SentenceTransformerEmbeddingGenerator
     class SentenceTransformerEmbeddingGenerator:
         def __init__(self, *args, **kwargs):
-            raise ImportError("sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator.")
+            raise ImportError(
+                "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
+            )
 
 
 class MockEmbeddingGenerator:
@@ -298,7 +324,7 @@ __all__ = [
     "EmbeddingResult",
     "EmbeddingGenerator",
     "LiteLLMEmbeddingGenerator",
-    "SentenceTransformerEmbeddingGenerator", # Add the new class
+    "SentenceTransformerEmbeddingGenerator",  # Add the new class
     "MockEmbeddingGenerator",
 ]
 

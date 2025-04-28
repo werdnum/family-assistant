@@ -21,12 +21,13 @@ from sqlalchemy import (
     update,
     desc,
 )
-from sqlalchemy.exc import SQLAlchemyError # Use broader exception
+from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
 
 # Use absolute package path
-from family_assistant.storage.base import metadata # Keep metadata
+from family_assistant.storage.base import metadata  # Keep metadata
+
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
+from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
 # Remove engine = get_engine()
@@ -58,7 +59,7 @@ tasks_table = Table(
 
 
 async def enqueue_task(
-    db_context: DatabaseContext, # Added context
+    db_context: DatabaseContext,  # Added context
     task_id: str,
     task_type: str,
     payload: Optional[Dict[str, Any]] = None,
@@ -105,19 +106,15 @@ async def enqueue_task(
         if is_immediate and notify_event:
             notify_event.set()
             logger.debug(f"Notified worker about immediate task {task_id}.")
-    except ValueError: # Re-raise specific errors
+    except ValueError:  # Re-raise specific errors
         raise
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in enqueue_task {task_id}: {e}", exc_info=True
-        )
+        logger.error(f"Database error in enqueue_task {task_id}: {e}", exc_info=True)
         raise
 
 
 async def dequeue_task(
-    db_context: DatabaseContext, # Added context
-    worker_id: str,
-    task_types: List[str]
+    db_context: DatabaseContext, worker_id: str, task_types: List[str]  # Added context
 ) -> Optional[Dict[str, Any]]:
     """Atomically dequeues the next available task."""
     now = datetime.now(timezone.utc)
@@ -141,30 +138,28 @@ async def dequeue_task(
                 tasks_table.c.created_at.asc(),
             )
             .limit(1)
-            .with_for_update(skip_locked=True) # Lock the selected row
+            .with_for_update(skip_locked=True)  # Lock the selected row
         )
         # Execute within the transaction, using the context's retry logic
         result = await db_context.execute_with_retry(stmt)
-        task_row = result.fetchone() # Use fetchone directly on the result proxy
+        task_row = result.fetchone()  # Use fetchone directly on the result proxy
 
         if task_row:
             update_stmt = (
                 update(tasks_table)
                 .where(tasks_table.c.id == task_row.id)
-                .where(tasks_table.c.status == "pending") # Ensure status hasn't changed
-                .values(
-                    status="processing", locked_by=worker_id, locked_at=now
-                )
+                .where(
+                    tasks_table.c.status == "pending"
+                )  # Ensure status hasn't changed
+                .values(status="processing", locked_by=worker_id, locked_at=now)
             )
             # Execute update within the same transaction
             update_result = await db_context.execute_with_retry(update_stmt)
 
             if update_result.rowcount == 1:
                 # No need to call db_context.commit() here, context manager handles it
-                logger.info(
-                    f"Worker {worker_id} dequeued task {task_row.task_id}"
-                )
-                return task_row._mapping # Return the original row data
+                logger.info(f"Worker {worker_id} dequeued task {task_row.task_id}")
+                return task_row._mapping  # Return the original row data
             else:
                 # This means the row was locked or status changed between select and update
                 logger.warning(
@@ -174,7 +169,7 @@ async def dequeue_task(
                 return None
         else:
             # No need to call db_context.rollback() here, context manager handles it on exit
-            return None # No suitable task found
+            return None  # No suitable task found
 
     except SQLAlchemyError as e:
         logger.error(f"Database error in dequeue_task: {e}", exc_info=True)
@@ -187,10 +182,10 @@ async def dequeue_task(
 
 
 async def update_task_status(
-    db_context: DatabaseContext, # Added context
+    db_context: DatabaseContext,  # Added context
     task_id: str,
     status: str,
-    error: Optional[str] = None
+    error: Optional[str] = None,
 ) -> bool:
     """Updates task status."""
     values_to_update = {"status": status, "locked_by": None, "locked_at": None}
@@ -222,11 +217,11 @@ async def update_task_status(
 
 
 async def reschedule_task_for_retry(
-    db_context: DatabaseContext, # Added context
+    db_context: DatabaseContext,  # Added context
     task_id: str,
     next_scheduled_at: datetime,
     new_retry_count: int,
-    error: str
+    error: str,
 ) -> bool:
     """Reschedules a task for retry."""
     if next_scheduled_at.tzinfo is None:
@@ -255,7 +250,7 @@ async def reschedule_task_for_retry(
         else:
             logger.warning(f"Task {task_id} not found when rescheduling for retry.")
             return False
-    except ValueError: # Re-raise specific errors
+    except ValueError:  # Re-raise specific errors
         raise
     except SQLAlchemyError as e:
         logger.error(
@@ -265,12 +260,16 @@ async def reschedule_task_for_retry(
         raise
 
 
-async def get_all_tasks(db_context: DatabaseContext, limit: int = 100) -> List[Dict[str, Any]]:
+async def get_all_tasks(
+    db_context: DatabaseContext, limit: int = 100
+) -> List[Dict[str, Any]]:
     """Retrieves tasks, ordered by creation descending."""
     try:
-        stmt = select(tasks_table).order_by(tasks_table.c.created_at.desc()).limit(limit)
+        stmt = (
+            select(tasks_table).order_by(tasks_table.c.created_at.desc()).limit(limit)
+        )
         rows = await db_context.fetch_all(stmt)
-        return rows # fetch_all already returns list of dict-like mappings
+        return rows  # fetch_all already returns list of dict-like mappings
     except SQLAlchemyError as e:
         logger.error(f"Database error in get_all_tasks: {e}", exc_info=True)
         raise

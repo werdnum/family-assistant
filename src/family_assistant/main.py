@@ -451,23 +451,20 @@ parser.add_argument(
 )
 parser.add_argument(
     "--embedding-model",
-    default=os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002"), # Example default
-    help="Embedding model to use (e.g., text-embedding-ada-002, all-MiniLM-L6-v2)",
+    default=os.getenv("EMBEDDING_MODEL", "gemini/gemini-embedding-exp-03-07"), # Example default
+    help="Embedding model to use (e.g., gemini-embedding-exp-03-07, all-MiniLM-L6-v2)",
 )
+
+parser.add_argument(
+    '--embedding_dimensionality',
+    default=None,
+    type=int,
+    help="Embedding model dimensionality, leave blank for default"
+)
+
 # --- Initial Configuration Load ---
 # Load config from .env and prompts.yaml first
 load_config()
-
-# Argument parsing will happen inside main()
-
-
-# --- Core LLM Interaction Logic (Moved to ProcessingService) ---
-# _generate_llm_response_for_chat moved
-
-
-# --- Telegram Bot Handlers (Moved to TelegramBotHandler) ---
-# start, process_chat_queue, message_handler, error_handler moved
-
 
 # --- Signal Handlers ---
 async def shutdown_handler(
@@ -546,17 +543,10 @@ async def main_async(
     os.environ["OPENROUTER_API_KEY"] = cli_args.openrouter_api_key
 
     # --- LLM Client and Processing Service Instantiation ---
-    # TODO: Add logic to choose LLM client based on config (e.g., args, env vars)
     # For now, default to LiteLLMClient
     llm_client: LLMInterface = LiteLLMClient(model=cli_args.model)
-    # Example for recording:
-    # live_client = LiteLLMClient(model=cli_args.model)
-    # llm_client = RecordingLLMClient(wrapped_client=live_client, recording_path="llm_interactions.jsonl")
-    # Example for playback:
-    # llm_client = PlaybackLLMClient(recording_path="llm_interactions.jsonl")
 
     # --- Embedding Generator Instantiation ---
-    # TODO: Add logic to choose generator based on config/args (e.g., local vs API)
     # For now, assume LiteLLM based on --embedding-model arg
     embedding_generator: EmbeddingGenerator
     # Example check for local model (adjust condition as needed)
@@ -573,7 +563,7 @@ async def main_async(
              raise SystemExit(f"Local embedding model initialization failed: {local_embed_err}")
     else:
         # Assume API-based model via LiteLLM
-        embedding_generator = LiteLLMEmbeddingGenerator(model=cli_args.embedding_model)
+        embedding_generator = LiteLLMEmbeddingGenerator(model=cli_args.embedding_model, dimensions=cli_args.embedding_dimensionality)
 
     logger.info(f"Using embedding generator: {type(embedding_generator).__name__} with model: {embedding_generator.model_name}")
 
