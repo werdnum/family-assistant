@@ -114,20 +114,52 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 
 ## 3. Ingestion and Embedding Process
 
-1.  **Item Acquisition:** Obtain the document/item (e.g., read email via IMAP, download file, receive webhook via `web_server.py`, which calls `email_storage.store_incoming_email`).
-2.  **Initial Metadata & Content Extraction:** Perform basic parsing to get essential identifiers (`source_id`), the raw content (text, image data), and any easily obtainable metadata (e.g., email headers, file modification time). Extract the main text content for further processing.
-3.  **LLM-Powered Metadata Enrichment:**
+The system supports multiple ways to ingest documents:
+
+1.  **Source-Specific Integration (e.g., Email):**
+    *   **Acquisition:** Receive email via webhook (`web_server.py` -> `email_storage.store_incoming_email`).
+    *   **Processing:** A background task (`handle_index_email`) fetches the stored email, extracts content/metadata, potentially uses LLM enrichment, generates embeddings, and stores them. (See steps below for details).
+
+2.  **Direct API Upload (Recommended for external sources/manual additions):**
+    *   **Acquisition:** An HTTP `POST` endpoint (e.g., `/documents/upload`) accepts `multipart/form-data`. The request includes:
+        *   Metadata fields (`source_type`, `source_id`, `title`, `created_at`, custom `metadata` JSON, etc.).
+        *   The document content itself as a file upload part. The `Content-Type` of the uploaded file (e.g., `text/plain`, `text/markdown`, `application/pdf`) is crucial for determining processing steps.
+    *   **Initial Handling (API Endpoint):**
+        *   Validate metadata and content presence.
+        *   Store the base metadata by calling `storage.add_document` to create the `documents` record and get the `document_id`.
+        *   **Temporarily store the uploaded content:**
+            *   *Initial Implementation (Text):* For simple text formats (plain, markdown), the content might be stored directly in the task payload if size permits, or in a temporary database field/cache.
+            *   *Future Implementation (Files):* For binary files (PDF, images) or larger text files, save the content to a designated temporary file storage location (using existing file infra if available).
+        *   Enqueue a background task (e.g., `process_uploaded_document`) using `storage.enqueue_task`. The task payload must contain:
+            *   The `document_id`.
+            *   Either the `content` directly (for initial text implementation) OR a `temp_file_reference` (path or ID) pointing to the temporarily stored content (for future file handling). These payload fields should have "oneof" semantics.
+        *   Return a success response (e.g., 202 Accepted) to the caller.
+    *   **Asynchronous Processing (Task Worker):**
+        *   A dedicated task handler (`handle_process_uploaded_document`) picks up the task.
+        *   Retrieves the content (either directly from payload or from temporary storage using the reference).
+        *   Processes the content based on its type (initially, just use text directly; later, add OCR for images/PDFs, parsing for specific formats).
+        *   Performs embedding generation and storage (Steps 6-9 below).
+        *   Cleans up the temporary content storage if applicable.
+
+3.  **Initial Metadata & Content Extraction (Common Step):** Regardless of acquisition method, perform basic parsing to get essential identifiers (`source_id`), the raw content (text, image data), and any easily obtainable metadata (e.g., email headers, file modification time). Extract the main text content for further processing.
+
+4.  **LLM-Powered Metadata Enrichment (Optional/Common Step):**
     *   Feed the extracted text content (and potentially initial metadata like filename or subject) to an LLM.
     *   Prompt the LLM to analyze the content and extract relevant metadata according to the predefined **Metadata Schema Definition** (see above). Explicitly request the output in a structured JSON format.
     *   Validate the LLM's JSON output against the expected schema. Handle potential errors or missing fields.
-4.  **Document Record Creation:** Store the initial and LLM-extracted metadata (combined into the `metadata` JSONB field), `source_type`, `source_id`, `title`, `created_at`, etc., in the `documents` table. Retrieve the generated `document.id`.
+5.  **Document Record Creation:** Store the initial and LLM-extracted metadata (combined into the `metadata` JSONB field), `source_type`, `source_id`, `title`, `created_at`, etc., in the `documents` table using `storage.add_document`. Retrieve the generated `document.id`.
     *   The `add_document` storage function accepts a `Document` object conforming to a defined protocol, providing access to `source_type`, `source_id`, `title`, `created_at`, and base `metadata`. It also accepts an optional `enriched_metadata` dictionary.
-5.  **Content Extraction/Preparation (Post-Document Record):**
-    *   **Emails:** Parse the body (e.g., from `received_emails` table), strip HTML/signatures. Extract subject separately for potential 'title' embedding.
-    *   **Emails:** Parse the body, strip HTML/signatures. Extract subject separately for potential 'title' embedding.
-    *   **PDFs/Images:** Use OCR (e.g., Tesseract, cloud services) to extract text.
+    *   *Note:* For the API upload flow, this step happens *before* content processing, within the initial API request handler.
+
+6.  **Content Processing & Text Extraction (Performed by Task Worker for async flows):**
+    *   Retrieve the full content (e.g., email body from DB, file content from temporary storage).
+    *   **Emails:** Parse the body (e.g., from `received_emails` table), strip HTML/signatures. Extract subject separately for potential 'title' embedding. Consider processing attachments (requires file handling logic similar to API uploads).
+    *   **Uploaded Content (API):**
+        *   *Initial:* Directly use the provided text content (plain, markdown).
+        *   *Future:* If PDF/Image, use OCR (e.g., Tesseract, cloud services) to extract text. Handle other formats as needed.
     *   **Notes:** Use the note content directly.
-6.  **Text Preparation / Description (Optional but Recommended):**
+
+7.  **Text Preparation / Description (Optional but Recommended):**
     *   Clean the extracted text.
     *   For non-text or very large documents, consider using an LLM to generate a concise, descriptive **summary** of the item. Store this summary.
     *   Extract or use the document's **title** (e.g., email subject, filename).
@@ -138,11 +170,10 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
     *   Embed the `title` text.
     *   Embed the generated `summary` text.
     *   Embed the content of each text `chunk` (from step 5).
-    *   Embed OCR text if applicable.
-    *   Generate and store other embedding types (e.g., image CLIP vectors) if needed, potentially using different models.
-9.  **Embedding Storage:** For *each* generated embedding, insert a row into `document_embeddings` using the `add_embedding` function, providing:
-    *   `document_id` (obtained from step 4)
-    *   `document_id`
+    *   Embed OCR text if applicable (future enhancement).
+    *   Generate and store other embedding types (e.g., image CLIP vectors) if needed, potentially using different models (future enhancement).
+10. **Embedding Storage:** For *each* generated embedding, insert a row into `document_embeddings` using the `add_embedding` function, providing:
+    *   `document_id` (obtained previously)
     *   `chunk_index` (0 for title/summary, 1+ for content chunks)
     *   `embedding_type` ('title', 'summary', 'content_chunk', 'ocr_text', etc.)
     *   `content` (the source text, if applicable)
@@ -252,15 +283,31 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
 *   [x] Create skeleton API (`vector_storage.py`) with function signatures. (Committed: 19c5154)
 *   [x] Integrate API skeleton into `storage.py` (imports, `init_db` call, `__all__`). (Committed: 19c5154, dadf507)
 *   [x] Implement `init_vector_db` to create extension and necessary partial indexes (example for gemini). (Committed: 19c5154)
-*   [ ] Implement `add_document` logic (accepts `IngestibleDocument`, handles insert/conflict).
+*   [ ] Implement `add_document` logic (accepts `Document` protocol, handles insert/conflict).
 *   [ ] Implement `get_document_by_source_id` logic.
-*   [ ] Implement `add_embedding` logic (handle insert, potentially with conflict resolution on UNIQUE constraint).
+*   [ ] Implement `add_embedding` logic (handle insert/conflict on UNIQUE constraint).
 *   [ ] Implement `delete_document` logic.
 *   [ ] Implement `query_vectors` logic (hybrid search with RRF).
-*   [ ] Implement document ingestion pipeline (acquisition, content extraction, OCR integration).
-*   [ ] Implement LLM-based metadata extraction (calling LLM with JSON mode).
-*   [x] Implement embedding generation using an LLM (calling embedding model API).
+*   [ ] **API Ingestion Endpoint:**
+    *   [ ] Define FastAPI endpoint (`POST /documents/upload`) accepting `multipart/form-data`.
+    *   [ ] Implement request validation (metadata, content presence).
+    *   [ ] Implement temporary content storage mechanism (initially in task payload or temp DB field, later file-based).
+    *   [ ] Implement task enqueuing (`storage.enqueue_task` for `process_uploaded_document`).
+*   [ ] **Background Task Processing:**
+    *   [ ] Define new task type `process_uploaded_document`.
+    *   [ ] Implement task handler (`handle_process_uploaded_document`) in `task_worker.py` or a new indexing module.
+    *   [ ] Implement logic to retrieve content (from payload or temp storage).
+    *   [ ] Implement initial text processing (use directly).
+    *   [ ] Integrate embedding generation (`EmbeddingGenerator`).
+    *   [ ] Integrate embedding storage (`storage.add_embedding`).
+    *   [ ] Implement temporary storage cleanup.
+*   [ ] **Future Enhancements:**
+    *   [ ] Implement robust temporary file storage.
+    *   [ ] Implement OCR integration for PDFs/images within the task handler.
+    *   [ ] Implement email attachment indexing (likely reusing file processing logic).
+    *   [ ] Implement document chunking strategy (if needed beyond title/summary/single-content).
+*   [ ] Implement LLM-based metadata extraction (calling LLM with JSON mode, potentially within task worker).
+*   [x] Implement embedding generation using an LLM/EmbeddingGenerator. (Dependency exists)
 *   [x] Integrate querying into the main application flow (e.g., as an LLM tool or background process). (Added `search_documents` tool)
 *   [x] Add tool to retrieve full document content by ID (`get_full_document_content`).
-*   [ ] Implement document chunking strategy (optional, if needed beyond title/summary/single-content).
 *   [ ] Add more partial indexes for other embedding models as they are introduced.
