@@ -19,6 +19,17 @@
         .filter-row { display: contents; } /* Allow grid layout for children */
         .filter-row > * { margin-bottom: 0.5rem; } /* Spacing within a row */
         .remove-filter-btn { background-color: #ffcccc; border: 1px solid red; color: red; padding: 0.2rem 0.5rem; cursor: pointer; }
+
+        /* New styles for result cards */
+        .results-list { list-style: none; padding: 0; }
+        .result-card { border: 1px solid #ccc; border-radius: 5px; margin-bottom: 1.5rem; padding: 1rem; background-color: var(--bg-secondary); }
+        .result-card h4 { margin-top: 0; margin-bottom: 0.5rem; }
+        .result-card .content-snippet { background-color: var(--bg); padding: 0.8rem; border-radius: 3px; margin: 0.8rem 0; font-size: 0.95em; white-space: pre-wrap; word-break: break-word; }
+        .result-card .metadata-display { background-color: var(--bg); padding: 0.8rem; border-radius: 3px; margin: 0.8rem 0; font-size: 0.85em; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
+        .result-card .source-info { font-size: 0.9em; color: var(--text-light); margin-bottom: 0.8rem; }
+        .result-card .debug-details summary { font-size: 0.9em; color: var(--text-light); cursor: pointer; margin-top: 1rem; }
+        .result-card .debug-details div { font-size: 0.85em; color: var(--text-muted); background-color: var(--bg); padding: 0.5rem; border-radius: 3px; margin-top: 0.5rem; }
+        .result-card .debug-details span { display: inline-block; min-width: 100px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -146,42 +157,50 @@
     {% if results is not none %}
         {% if results %}
         <p>Found {{ results|length }} result(s).</p>
-        <table class="results-table">
-            <thead>
-                <tr>
-                    <th>Doc ID</th>
-                    <th>Emb ID</th>
-                    <th>Title</th>
-                    <th>Source</th>
-                    <th>Created</th>
-                    <th>Emb Type</th>
-                    <th>Chunk</th>
-                    <th>Distance</th>
-                    <th>FTS Score</th>
-                    <th>RRF Score</th>
-                    <th>Content Snippet</th>
-                    <th>Metadata</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in results %}
-                <tr>
-                    <td>{{ item.document_id }}</td>
-                    <td>{{ item.embedding_id }}</td>
-                    <td>{{ item.title or 'N/A' }}</td>
-                    <td>{{ item.source_type }}<br><small>(ID: {{ item.source_id or 'N/A' }})</small></td>
-                    <td>{{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else 'N/A' }}</td>
-                    <td>{{ item.embedding_type }}</td>
-                    <td>{{ item.chunk_index }}</td>
-                    <td>{{ "%.4f"|format(item.distance) if item.distance is not none else 'N/A' }}</td>
-                    <td>{{ "%.4f"|format(item.fts_score) if item.fts_score is not none else 'N/A' }}</td>
-                    <td>{{ "%.4f"|format(item.rrf_score) if item.rrf_score is not none else 'N/A' }}</td>
-                    <td><pre>{{ item.embedding_source_content or 'N/A' }}</pre></td>
-                    <td class="metadata-cell"><pre>{{ item.doc_metadata | tojson(indent=2) if item.doc_metadata else 'None' }}</pre></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="results-list">
+            {% for item in results %}
+            <article class="result-card">
+                <h4>
+                    {% if item.source_uri %}
+                    <a href="{{ item.source_uri }}" target="_blank" rel="noopener noreferrer">{{ item.title or 'Untitled Document' }}</a>
+                    {% else %}
+                    {{ item.title or 'Untitled Document' }}
+                    {% endif %}
+                </h4>
+                <div class="source-info">
+                    Source: {{ item.source_type }} | Created: {{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else 'N/A' }}
+                </div>
+
+                {% if item.embedding_source_content %}
+                <details open> {# Keep content snippet open by default #}
+                    <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Content Snippet</summary>
+                    <pre class="content-snippet">{{ item.embedding_source_content }}</pre>
+                </details>
+                {% endif %}
+
+                {% if item.doc_metadata %}
+                 <details> {# Keep metadata closed by default #}
+                    <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Metadata</summary>
+                    <pre class="metadata-display">{{ item.doc_metadata | tojson(indent=2) }}</pre>
+                 </details>
+                {% endif %}
+
+                <details class="debug-details">
+                    <summary>Show Details & Scores</summary>
+                    <div>
+                        <span>Doc ID:</span> {{ item.document_id }}<br>
+                        <span>Embedding ID:</span> {{ item.embedding_id }}<br>
+                        <span>Source ID:</span> {{ item.source_id or 'N/A' }}<br>
+                        <span>Embedding Type:</span> {{ item.embedding_type }}<br>
+                        <span>Chunk Index:</span> {{ item.chunk_index }}<br>
+                        <span>Distance:</span> {{ "%.4f"|format(item.distance) if item.distance is not none else 'N/A' }}<br>
+                        <span>FTS Score:</span> {{ "%.4f"|format(item.fts_score) if item.fts_score is not none else 'N/A' }}<br>
+                        <span>RRF Score:</span> {{ "%.4f"|format(item.rrf_score) if item.rrf_score is not none else 'N/A' }}
+                    </div>
+                </details>
+            </article>
+            {% endfor %}
+        </div>
         {% else %}
         <p>No results found for the given criteria.</p>
         {% endif %}
