@@ -292,7 +292,7 @@ async def search_documents_tool(
             # Truncate snippet for brevity
             snippet = res.get('embedding_source_content', '')
             if snippet:
-                snippet = (snippet[:200] + '...') if len(snippet) > 200 else snippet
+                snippet = (snippet[:10000] + '...') if len(snippet) > 10000 else snippet
                 snippet_text = f"\n  Snippet: {snippet}"
             else:
                 snippet_text = ""
