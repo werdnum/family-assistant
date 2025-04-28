@@ -72,8 +72,8 @@ class DocumentIndexer:
                 embedding_type = "content_chunk"
                 try:
                     # Extract index from key like "content_chunk_0" -> 0
-                chunk_index = int(key.split('_')[-1])
-            except (IndexError, ValueError):
+                    chunk_index = int(key.split('_')[-1]) # Indent this line
+                except (IndexError, ValueError):
                          logger.warning(f"Could not parse chunk index from key '{key}', defaulting to 0.")
                          chunk_index = 0 # Fallback
 
@@ -119,13 +119,13 @@ class DocumentIndexer:
                     embedding_type=meta['embedding_type'], # Correct indentation
                     embedding=embedding_vector, # Correct indentation
                     embedding_model=embedding_model_name, # Correct indentation
-                content=meta['content'],
-                # content_hash=None # Optional: calculate hash if needed
-            )
-            stored_count += 1
-        except SQLAlchemyError as e:
-            logger.error(f"Database error storing embedding for doc {document_id}, key {meta['original_key']}: {e}", exc_info=True)
-            # Decide whether to continue or fail the whole task.
+                    content=meta['content'], # Correct indentation
+                    # content_hash=None # Optional: calculate hash if needed
+                )
+                stored_count += 1 # Indent this line
+            except SQLAlchemyError as e:
+                logger.error(f"Database error storing embedding for doc {document_id}, key {meta['original_key']}: {e}", exc_info=True)
+                # Decide whether to continue or fail the whole task.
             # Let's fail the task if any embedding storage fails.
             raise RuntimeError(f"Failed to store embedding for key {meta['original_key']}") from e
         except Exception as e:
