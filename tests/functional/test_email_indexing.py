@@ -444,13 +444,27 @@ async def test_metadata_filtering(pg_vector_db_engine):
     email2_body = "Content for the far document (correct type)."
     email1_msg_id = f"<meta_close_{uuid.uuid4()}@example.com>"
     email2_msg_id = f"<meta_far_{uuid.uuid4()}@example.com>"
+    # Define titles used in form_data below
+    email1_title = "Metadata Test Close Wrong Type"
+    email2_title = "Metadata Test Far Correct Type"
+
+    # Add mock embeddings for titles
+    title1_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.05).tolist()
+    title2_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.06).tolist()
 
     embedding_map = {
         email1_body: vec_close_wrong_type,
         email2_body: vec_far_correct_type,
+        email1_title: title1_vec, # Add title embedding
+        email2_title: title2_vec, # Add title embedding
         "query": query_vec,
     }
-    mock_embedder = MockEmbeddingGenerator(embedding_map, TEST_EMBEDDING_MODEL)
+    # Provide a default embedding
+    mock_embedder = MockEmbeddingGenerator(
+        embedding_map,
+        TEST_EMBEDDING_MODEL,
+        default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist()
+    )
     set_indexing_dependencies(embedding_generator=mock_embedder)
     task_worker.register_task_handler("index_email", handle_index_email)
 
