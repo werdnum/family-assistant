@@ -330,14 +330,31 @@ async def test_vector_ranking(pg_vector_db_engine):
     email1_msg_id = f"<rank_close_{uuid.uuid4()}@example.com>"
     email2_msg_id = f"<rank_medium_{uuid.uuid4()}@example.com>"
     email3_msg_id = f"<rank_far_{uuid.uuid4()}@example.com>"
+    # Define titles used in form_data below
+    email1_title = "Rank Test Close"
+    email2_title = "Rank Test Medium"
+    email3_title = "Rank Test Far"
+
+    # Add mock embeddings for titles
+    title1_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.05).tolist()
+    title2_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.06).tolist()
+    title3_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.07).tolist()
 
     embedding_map = {
         email1_body: vec_close,
         email2_body: vec_medium,
         email3_body: vec_far,
+        email1_title: title1_vec, # Add title embedding
+        email2_title: title2_vec, # Add title embedding
+        email3_title: title3_vec, # Add title embedding
         "query": query_vec, # Query text doesn't matter here, just the vector
     }
-    mock_embedder = MockEmbeddingGenerator(embedding_map, TEST_EMBEDDING_MODEL)
+    # Provide a default embedding
+    mock_embedder = MockEmbeddingGenerator(
+        embedding_map,
+        TEST_EMBEDDING_MODEL,
+        default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist()
+    )
     set_indexing_dependencies(embedding_generator=mock_embedder)
     task_worker.register_task_handler("index_email", handle_index_email)
 
