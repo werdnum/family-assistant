@@ -88,6 +88,10 @@ help = "Generate SYMBOLS.md map using symbex"
 # and saves the output to SYMBOLS.md using shell redirection.
 shell = "symbex -m family_assistant --docs -ni > SYMBOLS.md"
 
+[tool.poe.tasks.test]
+help = "Run pylint in errors-only mode and full pytest suite with verbose output"
+shell = "pylint src --errors-only && pytest -s -v tests"
+
 
 # --- Tool Configuration (Example: Ruff) ---
 # [tool.ruff]
