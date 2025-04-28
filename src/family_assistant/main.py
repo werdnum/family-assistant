@@ -577,6 +577,9 @@ async def main_async(
 
     logger.info(f"Using embedding generator: {type(embedding_generator).__name__} with model: {embedding_generator.model_name}")
 
+    # --- Store generator in app state for web server access ---
+    fastapi_app.state.embedding_generator = embedding_generator
+    logger.info("Stored embedding generator in FastAPI app state.")
 
     # Initialize database schema first (needed by ProcessingService potentially via tools)
     await init_db()

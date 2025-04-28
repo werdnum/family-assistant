@@ -104,18 +104,18 @@ async def get_db() -> DatabaseContext:
 #     if not generator:
 #         raise HTTPException(status_code=500, detail="Embedding generator not configured")
 #     return generator
-# For now, using a placeholder that needs implementation:
-async def get_embedding_generator_dependency() -> EmbeddingGenerator:
-    """Placeholder dependency for the embedding generator."""
-    # --- Replace this with actual logic ---
-    # Example: return app.state.embedding_generator
-    # Example: return LiteLLMEmbeddingGenerator(model="your-configured-model") # If simple init is ok
-    logger.warning("Using placeholder embedding generator dependency. Needs implementation.")
-    # This will likely fail until implemented correctly based on your app setup.
-    # Consider initializing it based on environment variables or config if not using app state.
-    model_name = os.getenv("DEFAULT_EMBEDDING_MODEL", "text-embedding-3-small") # Example fallback
-    return LiteLLMEmbeddingGenerator(model=model_name)
-    # raise NotImplementedError("Embedding generator dependency not configured in web_server.py")
+# Dependency function to retrieve the embedding generator from app state
+async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
+    """Retrieves the configured EmbeddingGenerator instance from app state."""
+    generator = getattr(request.app.state, "embedding_generator", None)
+    if not generator:
+        logger.error("Embedding generator not found in app state.")
+        # Raise HTTPException so FastAPI returns a proper error response
+        raise HTTPException(status_code=500, detail="Embedding generator not configured or available.")
+    if not isinstance(generator, EmbeddingGenerator):
+         logger.error(f"Object in app state is not an EmbeddingGenerator: {type(generator)}")
+         raise HTTPException(status_code=500, detail="Invalid embedding generator configuration.")
+    return generator
 
 
 # --- Pydantic model for search results (optional but good practice) ---
