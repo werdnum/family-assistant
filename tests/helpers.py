@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Set
 
+import sqlalchemy as sa # Import sqlalchemy
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -130,14 +131,16 @@ async def wait_for_tasks_to_complete(
     pending_tasks_details = "Could not fetch pending task details."
     try:
         async with await get_db_context(engine=engine) as db:
-            pending_query = select(
-                tasks_table.c.task_id,
-                tasks_table.c.task_type,
-                tasks_table.c.status,
-                tasks_table.c.scheduled_at,
-                tasks_table.c.retry_count,
-                tasks_table.columns['last_error'], # Use dictionary access
-            ).where(
+            # Define columns explicitly to avoid issues with imported table object state
+            cols_to_select = [
+                sa.column("task_id"),
+                sa.column("task_type"),
+                sa.column("status"),
+                sa.column("scheduled_at"),
+                sa.column("retry_count"),
+                sa.column("last_error"),
+            ]
+            pending_query = select(*cols_to_select).select_from(tasks_table).where(
                 tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
             )
             if task_ids:
