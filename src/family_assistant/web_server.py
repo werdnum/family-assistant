@@ -14,7 +14,10 @@ from fastapi.templating import Jinja2Templates
 
 # Import storage functions using absolute package path
 from family_assistant import storage
-from family_assistant.storage.context import DatabaseContext, get_db_context # Import context
+from family_assistant.storage.context import (
+    DatabaseContext,
+    get_db_context,
+)  # Import context
 from family_assistant.storage import (
     get_all_notes,
     get_note_by_title,
@@ -72,11 +75,13 @@ except NameError:
         "/static", StaticFiles(directory="src/family_assistant/static"), name="static"
     )
 
+
 # --- Dependency for Database Context ---
 async def get_db() -> DatabaseContext:
     """FastAPI dependency to get a DatabaseContext."""
     async with get_db_context() as db_context:
         yield db_context
+
 
 # --- Routes ---
 
@@ -99,7 +104,9 @@ async def add_note_form(request: Request):
 
 
 @app.get("/notes/edit/{title}", response_class=HTMLResponse)
-async def edit_note_form(request: Request, title: str, db_context: DatabaseContext = Depends(get_db)):
+async def edit_note_form(
+    request: Request, title: str, db_context: DatabaseContext = Depends(get_db)
+):
     """Serves the form to edit an existing note."""
     note = await get_note_by_title(db_context, title)
     if not note:
@@ -115,21 +122,21 @@ async def save_note(
     title: str = Form(...),
     content: str = Form(...),
     original_title: Optional[str] = Form(None),
-    db_context: DatabaseContext = Depends(get_db) # Add dependency
+    db_context: DatabaseContext = Depends(get_db),  # Add dependency
 ):
     """Handles saving a new or updated note."""
     try:
         if original_title and original_title != title:
             # Title changed - need to delete old and add new (or implement rename)
             # Simple approach: delete old, add new
-            await delete_note(db_context, original_title) # Pass context
-            await add_or_update_note(db_context, title, content) # Pass context
+            await delete_note(db_context, original_title)  # Pass context
+            await add_or_update_note(db_context, title, content)  # Pass context
             logger.info(
                 f"Renamed note '{original_title}' to '{title}' and updated content."
             )
         else:
             # New note or updating existing without title change
-            await add_or_update_note(db_context, title, content) # Pass context
+            await add_or_update_note(db_context, title, content)  # Pass context
             logger.info(f"Saved note: {title}")
         return RedirectResponse(url="/", status_code=303)  # Redirect back to list
     except Exception as e:
@@ -139,7 +146,9 @@ async def save_note(
 
 
 @app.post("/notes/delete/{title}")
-async def delete_note_post(request: Request, title: str, db_context: DatabaseContext = Depends(get_db)):
+async def delete_note_post(
+    request: Request, title: str, db_context: DatabaseContext = Depends(get_db)
+):
     """Handles deleting a note."""
     deleted = await delete_note(db_context, title)
     if not deleted:
@@ -148,7 +157,9 @@ async def delete_note_post(request: Request, title: str, db_context: DatabaseCon
 
 
 @app.post("/webhook/mail")
-async def handle_mail_webhook(request: Request, db_context: DatabaseContext = Depends(get_db)):
+async def handle_mail_webhook(
+    request: Request, db_context: DatabaseContext = Depends(get_db)
+):
     """
     Receives incoming email via webhook (expects multipart/form-data).
     Logs the received form data for now.
@@ -197,7 +208,9 @@ async def handle_mail_webhook(request: Request, db_context: DatabaseContext = De
 
 
 @app.get("/history", response_class=HTMLResponse)
-async def view_message_history(request: Request, db_context: DatabaseContext = Depends(get_db)):
+async def view_message_history(
+    request: Request, db_context: DatabaseContext = Depends(get_db)
+):
     """Serves the page displaying message history."""
     try:
         history_by_chat = await get_grouped_message_history(db_context)
