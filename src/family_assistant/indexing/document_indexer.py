@@ -126,9 +126,9 @@ class DocumentIndexer:
             except SQLAlchemyError as e:
                 logger.error(f"Database error storing embedding for doc {document_id}, key {meta['original_key']}: {e}", exc_info=True)
                 # Decide whether to continue or fail the whole task.
-            # Let's fail the task if any embedding storage fails.
-            raise RuntimeError(f"Failed to store embedding for key {meta['original_key']}") from e
-        except Exception as e:
+                # Let's fail the task if any embedding storage fails.
+                raise RuntimeError(f"Failed to store embedding for key {meta['original_key']}") from e # Indent this raise
+            except Exception as e: # This except should align with the previous one
                  logger.error(f"Unexpected error storing embedding for doc {document_id}, key {meta['original_key']}: {e}", exc_info=True)
                  raise RuntimeError(f"Unexpected error storing embedding for key {meta['original_key']}") from e
         # End of for loop for storing embeddings
