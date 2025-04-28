@@ -345,17 +345,17 @@ async def test_vector_ranking(pg_vector_db_engine):
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
     form_data1["stripped-text"] = email1_body
     form_data1["Message-Id"] = email1_msg_id
-    form_data1["subject"] = "Rank Test Close"
+    form_data1["subject"] = email1_title # Use variable
 
     form_data2 = TEST_EMAIL_FORM_DATA.copy()
     form_data2["stripped-text"] = email2_body
     form_data2["Message-Id"] = email2_msg_id
-    form_data2["subject"] = "Rank Test Medium"
+    form_data2["subject"] = email2_title # Use variable
 
     form_data3 = TEST_EMAIL_FORM_DATA.copy()
     form_data3["stripped-text"] = email3_body
     form_data3["Message-Id"] = email3_msg_id
-    form_data3["subject"] = "Rank Test Far"
+    form_data3["subject"] = email3_title # Use variable
 
     # Start worker
     worker_id = f"test-worker-rank-{uuid.uuid4()}"
