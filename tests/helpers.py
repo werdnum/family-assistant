@@ -136,7 +136,7 @@ async def wait_for_tasks_to_complete(
                 tasks_table.c.status,
                 tasks_table.c.scheduled_at,
                 tasks_table.c.retry_count,
-                tasks_table.c.last_error,
+                tasks_table.columns['last_error'], # Use dictionary access
             ).where(
                 tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
             )
