@@ -19,6 +19,7 @@ from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 # import json # Removed duplicate
 from dateutil.parser import parse as parse_datetime
+import asyncio # Import asyncio for Event type hint
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
 
 # Import metadata and engine using absolute package path
@@ -88,10 +89,15 @@ received_emails_table = sa.Table(
 # --- Database Operations ---
 
 
-async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[str, Any]):
+async def store_incoming_email(
+    db_context: DatabaseContext,
+    form_data: Dict[str, Any],
+    notify_event: Optional[asyncio.Event] = None # Add notify_event parameter
+):
     """
     Parses incoming email data (from Mailgun webhook form) and prepares it for storage.
-    Stores the parsed data in the `received_emails` table using the provided context.
+    Stores the parsed data in the `received_emails` table using the provided context,
+    optionally notifying a worker event.
 
     Args:
         db_context: The DatabaseContext to use for the operation.
@@ -185,7 +191,7 @@ async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[str,
             task_id=task_id,
             task_type="index_email",
             payload={"email_db_id": email_db_id},
-            # notify_event=new_task_event # Optional: trigger worker immediately if event is available
+            notify_event=notify_event # Pass the received event
         )
         logger.info(f"Enqueued indexing task {task_id} for email DB ID {email_db_id}")
 

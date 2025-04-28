@@ -67,10 +67,13 @@ TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/
 # --- Helper Function for Test Setup ---
 
 async def _ingest_and_index_email(
-    engine, form_data: Dict[str, Any], task_timeout: float = 15.0
+    engine,
+    form_data: Dict[str, Any],
+    task_timeout: float = 15.0,
+    notify_event: Optional[asyncio.Event] = None # Add notify_event parameter
 ) -> Tuple[int, str]:
     """
-    Helper to ingest an email, wait for its indexing task, and return IDs.
+    Helper to ingest an email, notify worker, wait for its indexing task, and return IDs.
 
     Args:
         engine: The database engine fixture.
@@ -86,7 +89,11 @@ async def _ingest_and_index_email(
 
     async with DatabaseContext(engine=engine) as db:
         logger.info(f"Helper: Ingesting test email with Message-ID: {message_id}")
-        await store_incoming_email(db, form_data=form_data)
+        await store_incoming_email(
+            db,
+            form_data=form_data,
+            notify_event=notify_event # Pass the event to store_incoming_email
+        )
 
         # Fetch the email ID and task ID
         select_email_stmt = select(
@@ -182,11 +189,14 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
 
     try:
         # --- Act: Ingest Email and Wait for Indexing ---
+        # Pass the event directly during ingestion
         email_db_id, indexing_task_id = await _ingest_and_index_email(
-            pg_vector_db_engine, TEST_EMAIL_FORM_DATA
+            pg_vector_db_engine,
+            TEST_EMAIL_FORM_DATA,
+            notify_event=test_new_task_event # Pass the worker's event
         )
-        # Signal worker just in case it missed the notification via enqueue_task
-        test_new_task_event.set()
+        # No longer need to manually set the event here
+        # test_new_task_event.set()
         # Wait again to be sure (wait_for_tasks_to_complete handles completion check)
         await wait_for_tasks_to_complete(
              pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=10.0
@@ -386,11 +396,12 @@ async def test_vector_ranking(pg_vector_db_engine):
 
     all_task_ids = set()
     try:
-        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1)
-        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2)
-        _, task_id3 = await _ingest_and_index_email(pg_vector_db_engine, form_data3)
+        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1, notify_event=test_new_task_event)
+        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2, notify_event=test_new_task_event)
+        _, task_id3 = await _ingest_and_index_email(pg_vector_db_engine, form_data3, notify_event=test_new_task_event)
         all_task_ids = {task_id1, task_id2, task_id3}
-        test_new_task_event.set() # Signal worker
+        # No longer need to manually set the event here
+        # test_new_task_event.set() # Signal worker
         await wait_for_tasks_to_complete(pg_vector_db_engine, task_ids=all_task_ids, timeout_seconds=20.0)
 
         # --- Act: Query Vectors ---
@@ -511,10 +522,11 @@ async def test_metadata_filtering(pg_vector_db_engine):
 
     all_task_ids = set()
     try:
-        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1)
-        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2)
+        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1, notify_event=test_new_task_event)
+        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2, notify_event=test_new_task_event)
         all_task_ids = {task_id1, task_id2}
-        test_new_task_event.set()
+        # No longer need to manually set the event here
+        # test_new_task_event.set()
         await wait_for_tasks_to_complete(pg_vector_db_engine, task_ids=all_task_ids, timeout_seconds=20.0)
 
         # --- Act: Query Vectors with Metadata Filter ---
@@ -635,10 +647,11 @@ async def test_keyword_filtering(pg_vector_db_engine):
 
     all_task_ids = set()
     try:
-        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1)
-        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2)
+        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1, notify_event=test_new_task_event)
+        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2, notify_event=test_new_task_event)
         all_task_ids = {task_id1, task_id2}
-        test_new_task_event.set()
+        # No longer need to manually set the event here
+        # test_new_task_event.set()
         await wait_for_tasks_to_complete(pg_vector_db_engine, task_ids=all_task_ids, timeout_seconds=20.0)
 
         # --- Act: Query Vectors with Keywords ---
