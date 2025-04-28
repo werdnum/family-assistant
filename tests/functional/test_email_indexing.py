@@ -458,7 +458,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
     form_data1["stripped-text"] = email1_body
     form_data1["Message-Id"] = email1_msg_id
-    form_data1["subject"] = "Metadata Test Close Wrong Type"
+    form_data1["subject"] = email1_title # Use variable for title
     # We need to modify how source_type is set, currently hardcoded in EmailDocument
     # For this test, let's simulate by adding metadata that we can filter on
     form_data1["X-Custom-Type"] = "receipt" # Simulate metadata
@@ -466,7 +466,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
     form_data2 = TEST_EMAIL_FORM_DATA.copy()
     form_data2["stripped-text"] = email2_body
     form_data2["Message-Id"] = email2_msg_id
-    form_data2["subject"] = "Metadata Test Far Correct Type"
+    form_data2["subject"] = email2_title # Use variable for title
     form_data2["X-Custom-Type"] = "invoice" # Simulate metadata
 
     # Start worker
