@@ -40,17 +40,11 @@
 
     <form action="/vector-search" method="post">
         <div class="form-grid">
-            <label for="search_type" class="full-width">Search Type:</label>
-            <div class="radio-group full-width">
-                <label><input type="radio" name="search_type" value="hybrid" {% if search_params.search_type == 'hybrid' or not search_params.search_type %}checked{% endif %}> Hybrid (RRF)</label>
-                <label><input type="radio" name="search_type" value="semantic" {% if search_params.search_type == 'semantic' %}checked{% endif %}> Semantic Only</label>
-                <label><input type="radio" name="search_type" value="keyword" {% if search_params.search_type == 'keyword' %}checked{% endif %}> Keyword Only</label>
-            </div>
+            <!-- Visible Fields -->
+            <label for="semantic_query">Search Query:</label> <!-- Simplified label -->
+            <textarea name="semantic_query" id="semantic_query" rows="3" placeholder="Describe what you're looking for...">{{ search_params.semantic_query or '' }}</textarea>
 
-            <label for="semantic_query">Semantic Query:</label>
-            <textarea name="semantic_query" id="semantic_query" rows="3" placeholder="Text for vector similarity search...">{{ search_params.semantic_query or '' }}</textarea>
-
-            <label for="embedding_model">Embedding Model (Required for Semantic/Hybrid):</label>
+            <label for="embedding_model">Embedding Model:</label> <!-- Simplified label -->
             <select name="embedding_model" id="embedding_model" required>
                 <option value="">-- Select Model --</option>
                 {% for model in distinct_models %}
@@ -59,21 +53,6 @@
                 <option value="" disabled>No models found in DB</option>
                 {% endfor %}
             </select>
-
-            <label for="keywords">Keywords (for FTS):</label>
-            <input type="text" name="keywords" id="keywords" value="{{ search_params.keywords or '' }}" placeholder="Space-separated words for keyword search...">
-
-            <label for="embedding_types" class="full-width">Filter by Embedding Type(s):</label>
-            <div class="checkbox-group full-width">
-                 {% for etype in distinct_types %}
-                 <label>
-                     <input type="checkbox" name="embedding_types" value="{{ etype }}" {% if etype in search_params.embedding_types %}checked{% endif %}>
-                     {{ etype }}
-                 </label>
-                 {% else %}
-                 <span>(No embedding types found in DB)</span>
-                 {% endfor %}
-            </div>
 
              <label for="source_types" class="full-width">Filter by Document Source Type(s):</label>
             <div class="checkbox-group full-width">
@@ -121,10 +100,42 @@
             <label for="limit">Result Limit:</label>
             <input type="number" name="limit" id="limit" value="{{ search_params.limit or 10 }}" min="1" max="100">
 
-            <label for="rrf_k">RRF k (for Hybrid):</label>
-            <input type="number" name="rrf_k" id="rrf_k" value="{{ search_params.rrf_k or 60 }}" min="1">
+            <!-- Advanced Options Section -->
+            <details class="full-width" style="margin-top: 1rem; border: 1px solid #ccc; padding: 0.5rem;">
+                <summary style="cursor: pointer; font-weight: bold;">Advanced Options</summary>
+                <div class="form-grid" style="margin-top: 1rem;"> <!-- Nested grid for alignment -->
 
-            <button type="submit" class="full-width">Search</button>
+                    <label for="search_type" class="full-width">Search Type:</label>
+                    <div class="radio-group full-width">
+                        <label><input type="radio" name="search_type" value="hybrid" {% if search_params.search_type == 'hybrid' or not search_params.search_type %}checked{% endif %}> Hybrid (RRF)</label>
+                        <label><input type="radio" name="search_type" value="semantic" {% if search_params.search_type == 'semantic' %}checked{% endif %}> Semantic Only</label>
+                        <label><input type="radio" name="search_type" value="keyword" {% if search_params.search_type == 'keyword' %}checked{% endif %}> Keyword Only</label>
+                    </div>
+
+                    <label for="keywords">Keywords (for FTS):</label>
+                    <input type="text" name="keywords" id="keywords" value="{{ search_params.keywords or '' }}" placeholder="Explicit keywords for text matching...">
+
+                    <label for="embedding_types" class="full-width">Filter by Embedding Type(s):</label>
+                    <div class="checkbox-group full-width">
+                         {% for etype in distinct_types %}
+                         <label>
+                             <input type="checkbox" name="embedding_types" value="{{ etype }}" {% if etype in search_params.embedding_types %}checked{% endif %}>
+                             {{ etype }}
+                         </label>
+                         {% else %}
+                         <span>(No embedding types found in DB)</span>
+                         {% endfor %}
+                    </div>
+
+                    <label for="rrf_k">RRF k (for Hybrid):</label>
+                    <input type="number" name="rrf_k" id="rrf_k" value="{{ search_params.rrf_k or 60 }}" min="1">
+
+                </div> <!-- End nested grid -->
+            </details>
+            <!-- End Advanced Options Section -->
+
+
+            <button type="submit" class="full-width" style="margin-top: 1rem;">Search</button>
         </div>
     </form>
 
