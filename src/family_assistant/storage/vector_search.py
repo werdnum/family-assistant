@@ -244,8 +244,8 @@ async def query_vector_store(
 
     try:
         results = await db_context.fetch_all(text(sql_query), params)
-        # Convert RowProxy objects to dictionaries for consistent return type
-        return [dict(row._mapping) for row in results]
+        # Convert RowMapping objects (which behave like dicts) to actual dicts
+        return [dict(row) for row in results]
     except Exception as e:
         logger.error(f"Error executing vector search query: {e}", exc_info=True)
         # Depending on desired behavior, either return empty list or re-raise
