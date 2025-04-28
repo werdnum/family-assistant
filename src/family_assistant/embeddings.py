@@ -5,7 +5,7 @@ Module defining the interface and implementations for generating text embeddings
 import logging
 import asyncio
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Protocol
+from typing import List, Dict, Any, Optional, Protocol, runtime_checkable
 
 # Import sentence-transformers if available, otherwise skip the class definition
 try:
@@ -40,6 +40,7 @@ class EmbeddingResult:
     model_name: str
 
 
+@runtime_checkable
 class EmbeddingGenerator(Protocol):
     """Protocol defining the interface for generating text embeddings."""
 
