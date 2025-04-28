@@ -487,17 +487,17 @@ class TaskWorker:
                         TASK_POLLING_INTERVAL
                     )  # Short delay after error within context
 
-        # --- Exception handling for the outer try block (whole loop iteration) ---
-        except asyncio.CancelledError:
-            logger.info(f"Task worker {self.worker_id} received cancellation signal.")
-            # If a task was being processed when cancelled, it might remain locked.
+            # --- Exception handling for the outer try block (whole loop iteration) --- # Indent this block
+            except asyncio.CancelledError:
+                logger.info(f"Task worker {self.worker_id} received cancellation signal.")
+                # If a task was being processed when cancelled, it might remain locked.
             # Rely on lock expiry/manual intervention for now.
-            # For simplicity, we just exit.
-            break  # Exit the loop cleanly on cancellation
-        except Exception as e:
-            logger.error(
-                f"Task worker {self.worker_id} encountered an unexpected error outside DB context: {e}",
-                exc_info=True,
+                # For simplicity, we just exit.
+                break  # Exit the loop cleanly on cancellation
+            except Exception as e: # Indent this block
+                logger.error(
+                    f"Task worker {self.worker_id} encountered an unexpected error outside DB context: {e}",
+                    exc_info=True,
             )
             # If an error occurs outside the db_context (e.g., getting context itself), wait before retrying
             await asyncio.sleep(TASK_POLLING_INTERVAL * 2)  # Longer sleep after error
