@@ -107,3 +107,14 @@ shell = "pylint src --errors-only && pytest -s -v tests"
 # testpaths = [
 #     "tests", # Assuming tests will be in a top-level tests/ directory
 # ]
+[tool.pydantic]
+# Enable Pydantic v2 behaviors
+validate_default = false
+validate_assignment = false
+frozen = false
+use_enum_values = false
+arbitrary_types_allowed = false
+from_attributes = true
+
+# Set type validation strictness
+strict = false
