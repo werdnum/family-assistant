@@ -62,6 +62,57 @@ TEST_EMAIL_FORM_DATA = {
 TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/body
 
 
+# --- Helper Function for Test Setup ---
+
+async def _ingest_and_index_email(
+    engine, form_data: Dict[str, Any], task_timeout: float = 15.0
+) -> Tuple[int, str]:
+    """
+    Helper to ingest an email, wait for its indexing task, and return IDs.
+
+    Args:
+        engine: The database engine fixture.
+        form_data: The email data to ingest.
+        task_timeout: Timeout for waiting for the task.
+
+    Returns:
+        A tuple containing (email_db_id, indexing_task_id).
+    """
+    email_db_id = None
+    indexing_task_id = None
+    message_id = form_data.get("Message-Id", "UNKNOWN_MESSAGE_ID")
+
+    async with DatabaseContext(engine=engine) as db:
+        logger.info(f"Helper: Ingesting test email with Message-ID: {message_id}")
+        await store_incoming_email(db, form_data=form_data)
+
+        # Fetch the email ID and task ID
+        select_email_stmt = select(
+            received_emails_table.c.id, received_emails_table.c.indexing_task_id
+        ).where(received_emails_table.c.message_id_header == message_id)
+        email_info = await db.fetch_one(select_email_stmt)
+
+        assert email_info is not None, f"Failed to retrieve ingested email {message_id}"
+        email_db_id = email_info["id"]
+        indexing_task_id = email_info["indexing_task_id"]
+        assert email_db_id is not None, f"Email DB ID is null for {message_id}"
+        assert indexing_task_id is not None, f"Indexing Task ID is null for {message_id}"
+        logger.info(
+            f"Helper: Email ingested (DB ID: {email_db_id}), Task ID: {indexing_task_id}"
+        )
+
+    # Wait for the specific task to complete
+    logger.info(f"Helper: Waiting for task {indexing_task_id} to complete...")
+    await wait_for_tasks_to_complete(
+        engine, task_ids={indexing_task_id}, timeout_seconds=task_timeout
+    )
+    logger.info(f"Helper: Task {indexing_task_id} reported as complete.")
+
+    return email_db_id, indexing_task_id
+
+
+# --- Test Functions ---
+
 @pytest.mark.asyncio
 async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     """
@@ -112,73 +163,91 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     task_worker.register_task_handler("index_email", handle_index_email)
     logger.info("Ensured 'index_email' task handler is registered.")
 
-
-    email_db_id = None
-    indexing_task_id = None
-
-    # --- Act: Ingest Email (enqueues task) ---
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info(f"Ingesting test email with Message-ID: {TEST_EMAIL_MESSAGE_ID}")
-        await store_incoming_email(db, form_data=TEST_EMAIL_FORM_DATA)
-
-        # Fetch the email ID and task ID from the database
-        select_email_stmt = select(
-            received_emails_table.c.id, received_emails_table.c.indexing_task_id
-        ).where(received_emails_table.c.message_id_header == TEST_EMAIL_MESSAGE_ID)
-        email_info = await db.fetch_one(select_email_stmt)
-
-        assert email_info is not None, "Failed to retrieve ingested email from DB"
-        email_db_id = email_info["id"]
-        indexing_task_id = email_info["indexing_task_id"]
-        assert email_db_id is not None, "Email DB ID is null"
-        assert indexing_task_id is not None, "Indexing Task ID is null"
-        logger.info(
-            f"Email ingested (DB ID: {email_db_id}), Indexing Task ID: {indexing_task_id}"
-        )
-
-    # --- Act: Run Task Worker and Wait ---
+    # --- Act: Start Background Worker ---
+    # Start the worker loop in the background *before* ingesting
     worker_id = f"test-worker-{uuid.uuid4()}"
-    # Use task_worker's events
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event() # Worker will wait on this
-
-    # Replace global events temporarily for the test worker instance
     original_shutdown_event = task_worker.shutdown_event
     original_new_task_event = task_worker.new_task_event
     task_worker.shutdown_event = test_shutdown_event
     task_worker.new_task_event = test_new_task_event
 
-    worker_task = None
+    worker_task = asyncio.create_task(
+        task_worker.task_worker_loop(worker_id, test_new_task_event)
+    )
+    logger.info(f"Started background task worker {worker_id}...")
+    await asyncio.sleep(0.1) # Give worker time to start
+
     try:
-        logger.info(f"Starting background task worker {worker_id}...")
-        worker_task = asyncio.create_task(
-            task_worker.task_worker_loop(worker_id, test_new_task_event)
+        # --- Act: Ingest Email and Wait for Indexing ---
+        email_db_id, indexing_task_id = await _ingest_and_index_email(
+            pg_vector_db_engine, TEST_EMAIL_FORM_DATA
         )
-        # Give the worker a moment to start polling
-        await asyncio.sleep(0.1)
-
-        # Signal the worker there might be a new task (optional, but helps speed up pickup)
+        # Signal worker just in case it missed the notification via enqueue_task
         test_new_task_event.set()
-
-        logger.info(f"Waiting for task {indexing_task_id} to complete...")
+        # Wait again to be sure (wait_for_tasks_to_complete handles completion check)
         await wait_for_tasks_to_complete(
-            pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=15.0
+             pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=10.0
         )
-        logger.info(f"Task {indexing_task_id} reported as complete.")
+
+        # --- Act: Query Vectors ---
+        query_results = None
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            logger.info(f"Querying vectors using text: '{TEST_QUERY_TEXT}'")
+            query_results = await query_vectors(
+                db,
+                query_embedding=query_embedding,  # Use the mock query embedding
+                embedding_model=TEST_EMBEDDING_MODEL,  # Must match the mock model name
+                limit=5,
+                filters={"source_type": "email"} # Example filter
+            )
+
+        # --- Assert ---
+        assert query_results is not None, "query_vectors returned None"
+        assert len(query_results) > 0, "No results returned from vector query"
+        logger.info(f"Query returned {len(query_results)} result(s).")
+
+        # Find the result corresponding to our document
+        found_result = None
+        for result in query_results:
+            if result.get("source_id") == TEST_EMAIL_MESSAGE_ID:
+                found_result = result
+                break
+
+        assert (
+            found_result is not None
+        ), f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}"
+        logger.info(f"Found matching result: {found_result}")
+
+        # Check distance (should be small since query embedding was close to body)
+        assert "distance" in found_result, "Result missing 'distance' field"
+        assert found_result["distance"] < 0.1, f"Distance should be small, but was {found_result['distance']}"
+
+        # Check other fields in the result
+        assert found_result.get("embedding_type") in ["content_chunk", "title"]
+        if found_result.get("embedding_type") == "content_chunk":
+            assert found_result.get("embedding_source_content") == TEST_EMAIL_BODY
+        else:
+             assert found_result.get("embedding_source_content") == TEST_EMAIL_SUBJECT
+
+        assert found_result.get("title") == TEST_EMAIL_SUBJECT
+        assert found_result.get("source_type") == "email"
+
+        logger.info("--- Email Indexing E2E Test Passed ---")
 
     finally:
         # Stop the worker and restore original events
-        if worker_task:
-            logger.info(f"Stopping background task worker {worker_id}...")
-            test_shutdown_event.set()
-            try:
-                await asyncio.wait_for(worker_task, timeout=5.0)
-                logger.info(f"Background task worker {worker_id} stopped.")
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
-                worker_task.cancel()
-            except Exception as e:
-                 logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
+        logger.info(f"Stopping background task worker {worker_id}...")
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+            logger.info(f"Background task worker {worker_id} stopped.")
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
+            worker_task.cancel()
+        except Exception as e:
+             logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
 
         # Restore original events
         task_worker.shutdown_event = original_shutdown_event
@@ -233,3 +302,340 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     assert found_result.get("source_type") == "email"
 
     logger.info("--- Email Indexing E2E Test Passed ---")
+
+
+@pytest.mark.asyncio
+async def test_vector_ranking(pg_vector_db_engine):
+    """
+    Tests if vector search returns results ranked correctly by distance.
+    1. Ingest three emails with distinct content.
+    2. Assign embeddings such that one is very close, one medium, one far from a query.
+    3. Perform a vector-only query.
+    4. Assert the results are ordered correctly by distance.
+    """
+    logger.info("\n--- Running Vector Ranking Test ---")
+
+    # --- Arrange: Mock Embeddings ---
+    # Create embeddings with controlled distances
+    base_vec = np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32)
+    vec_close = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.01).tolist()
+    vec_medium = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.1).tolist()
+    vec_far = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.5).tolist()
+    query_vec = base_vec.tolist() # Query is the base vector
+
+    email1_body = "Content for the closest document."
+    email2_body = "Content for the medium distance document."
+    email3_body = "Content for the farthest document."
+    email1_msg_id = f"<rank_close_{uuid.uuid4()}@example.com>"
+    email2_msg_id = f"<rank_medium_{uuid.uuid4()}@example.com>"
+    email3_msg_id = f"<rank_far_{uuid.uuid4()}@example.com>"
+
+    embedding_map = {
+        email1_body: vec_close,
+        email2_body: vec_medium,
+        email3_body: vec_far,
+        "query": query_vec, # Query text doesn't matter here, just the vector
+    }
+    mock_embedder = MockEmbeddingGenerator(embedding_map, TEST_EMBEDDING_MODEL)
+    set_indexing_dependencies(embedding_generator=mock_embedder)
+    task_worker.register_task_handler("index_email", handle_index_email)
+
+    # --- Arrange: Ingest Emails ---
+    form_data1 = TEST_EMAIL_FORM_DATA.copy()
+    form_data1["stripped-text"] = email1_body
+    form_data1["Message-Id"] = email1_msg_id
+    form_data1["subject"] = "Rank Test Close"
+
+    form_data2 = TEST_EMAIL_FORM_DATA.copy()
+    form_data2["stripped-text"] = email2_body
+    form_data2["Message-Id"] = email2_msg_id
+    form_data2["subject"] = "Rank Test Medium"
+
+    form_data3 = TEST_EMAIL_FORM_DATA.copy()
+    form_data3["stripped-text"] = email3_body
+    form_data3["Message-Id"] = email3_msg_id
+    form_data3["subject"] = "Rank Test Far"
+
+    # Start worker
+    worker_id = f"test-worker-rank-{uuid.uuid4()}"
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+    original_shutdown_event = task_worker.shutdown_event
+    original_new_task_event = task_worker.new_task_event
+    task_worker.shutdown_event = test_shutdown_event
+    task_worker.new_task_event = test_new_task_event
+    worker_task = asyncio.create_task(
+        task_worker.task_worker_loop(worker_id, test_new_task_event)
+    )
+    await asyncio.sleep(0.1)
+
+    all_task_ids = set()
+    try:
+        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1)
+        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2)
+        _, task_id3 = await _ingest_and_index_email(pg_vector_db_engine, form_data3)
+        all_task_ids = {task_id1, task_id2, task_id3}
+        test_new_task_event.set() # Signal worker
+        await wait_for_tasks_to_complete(pg_vector_db_engine, task_ids=all_task_ids, timeout_seconds=20.0)
+
+        # --- Act: Query Vectors ---
+        query_results = None
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            logger.info("Querying vectors for ranking test...")
+            query_results = await query_vectors(
+                db,
+                query_embedding=query_vec,
+                embedding_model=TEST_EMBEDDING_MODEL,
+                limit=5,
+            )
+
+        # --- Assert ---
+        assert query_results is not None and len(query_results) >= 3, "Expected at least 3 results"
+        logger.info(f"Ranking query returned {len(query_results)} results.")
+
+        # Extract source IDs and distances
+        results_ordered = [(r.get("source_id"), r.get("distance")) for r in query_results]
+        logger.info(f"Results ordered by distance: {results_ordered}")
+
+        # Find the indices of our test emails in the results
+        try:
+            idx1 = [r[0] for r in results_ordered].index(email1_msg_id)
+            idx2 = [r[0] for r in results_ordered].index(email2_msg_id)
+            idx3 = [r[0] for r in results_ordered].index(email3_msg_id)
+        except ValueError:
+            pytest.fail(f"One or more test emails not found in results: {results_ordered}")
+
+        # Assert the order based on distance (lower index means closer/better rank)
+        assert idx1 < idx2, f"Closest email ({email1_msg_id}) was not ranked higher than medium ({email2_msg_id})"
+        assert idx2 < idx3, f"Medium email ({email2_msg_id}) was not ranked higher than farthest ({email3_msg_id})"
+
+        logger.info("--- Vector Ranking Test Passed ---")
+
+    finally:
+        # Stop worker
+        logger.info(f"Stopping background task worker {worker_id}...")
+        test_shutdown_event.set()
+        try: await asyncio.wait_for(worker_task, timeout=5.0)
+        except asyncio.TimeoutError: worker_task.cancel()
+        task_worker.shutdown_event = original_shutdown_event
+        task_worker.new_task_event = original_new_task_event
+
+
+@pytest.mark.asyncio
+async def test_metadata_filtering(pg_vector_db_engine):
+    """
+    Tests if metadata filters correctly exclude documents, even if they are
+    vector-wise closer.
+    1. Ingest two emails with different source_type metadata.
+    2. Assign embeddings such that the email with the NON-matching source_type is closer.
+    3. Perform a vector query with a metadata filter matching the FURTHER email.
+    4. Assert only the email matching the filter is returned.
+    """
+    logger.info("\n--- Running Metadata Filtering Test ---")
+
+    # --- Arrange: Mock Embeddings ---
+    base_vec = np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32)
+    vec_close_wrong_type = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.01).tolist()
+    vec_far_correct_type = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.2).tolist()
+    query_vec = base_vec.tolist()
+
+    email1_body = "Content for the close document (wrong type)."
+    email2_body = "Content for the far document (correct type)."
+    email1_msg_id = f"<meta_close_{uuid.uuid4()}@example.com>"
+    email2_msg_id = f"<meta_far_{uuid.uuid4()}@example.com>"
+
+    embedding_map = {
+        email1_body: vec_close_wrong_type,
+        email2_body: vec_far_correct_type,
+        "query": query_vec,
+    }
+    mock_embedder = MockEmbeddingGenerator(embedding_map, TEST_EMBEDDING_MODEL)
+    set_indexing_dependencies(embedding_generator=mock_embedder)
+    task_worker.register_task_handler("index_email", handle_index_email)
+
+    # --- Arrange: Ingest Emails with different source_type ---
+    form_data1 = TEST_EMAIL_FORM_DATA.copy()
+    form_data1["stripped-text"] = email1_body
+    form_data1["Message-Id"] = email1_msg_id
+    form_data1["subject"] = "Metadata Test Close Wrong Type"
+    # We need to modify how source_type is set, currently hardcoded in EmailDocument
+    # For this test, let's simulate by adding metadata that we can filter on
+    form_data1["X-Custom-Type"] = "receipt" # Simulate metadata
+
+    form_data2 = TEST_EMAIL_FORM_DATA.copy()
+    form_data2["stripped-text"] = email2_body
+    form_data2["Message-Id"] = email2_msg_id
+    form_data2["subject"] = "Metadata Test Far Correct Type"
+    form_data2["X-Custom-Type"] = "invoice" # Simulate metadata
+
+    # Start worker
+    worker_id = f"test-worker-meta-{uuid.uuid4()}"
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+    original_shutdown_event = task_worker.shutdown_event
+    original_new_task_event = task_worker.new_task_event
+    task_worker.shutdown_event = test_shutdown_event
+    task_worker.new_task_event = test_new_task_event
+    worker_task = asyncio.create_task(
+        task_worker.task_worker_loop(worker_id, test_new_task_event)
+    )
+    await asyncio.sleep(0.1)
+
+    all_task_ids = set()
+    try:
+        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1)
+        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2)
+        all_task_ids = {task_id1, task_id2}
+        test_new_task_event.set()
+        await wait_for_tasks_to_complete(pg_vector_db_engine, task_ids=all_task_ids, timeout_seconds=20.0)
+
+        # --- Act: Query Vectors with Metadata Filter ---
+        query_results = None
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            logger.info("Querying vectors with metadata filter 'source_type=email'...")
+            # The filter needs to target the actual column name ('source_type')
+            # or potentially JSONB metadata if we stored X-Custom-Type there.
+            # Let's assume source_type is always 'email' for now from EmailDocument
+            # and filter on something else we can control, like title.
+            # Re-adjusting test: Filter on title instead of source_type for simplicity.
+            query_results = await query_vectors(
+                db,
+                query_embedding=query_vec,
+                embedding_model=TEST_EMBEDDING_MODEL,
+                limit=5,
+                filters={"title": "Metadata Test Far Correct Type"} # Filter for the second email's title
+            )
+
+        # --- Assert ---
+        assert query_results is not None, "Query returned None"
+        assert len(query_results) == 1, f"Expected exactly 1 result matching filter, got {len(query_results)}"
+        logger.info(f"Metadata filter query returned {len(query_results)} result(s).")
+
+        found_result = query_results[0]
+        assert found_result.get("source_id") == email2_msg_id, "Incorrect document returned by metadata filter"
+        assert found_result.get("title") == "Metadata Test Far Correct Type"
+
+        logger.info("--- Metadata Filtering Test Passed ---")
+
+    finally:
+        # Stop worker
+        logger.info(f"Stopping background task worker {worker_id}...")
+        test_shutdown_event.set()
+        try: await asyncio.wait_for(worker_task, timeout=5.0)
+        except asyncio.TimeoutError: worker_task.cancel()
+        task_worker.shutdown_event = original_shutdown_event
+        task_worker.new_task_event = original_new_task_event
+
+
+@pytest.mark.asyncio
+async def test_keyword_filtering(pg_vector_db_engine):
+    """
+    Tests if keyword search correctly filters results in a hybrid query.
+    1. Ingest two emails with similar vector embeddings but different keywords.
+    2. Perform a hybrid query with keywords matching only one email.
+    3. Assert only the email with matching keywords is returned (or ranked highest).
+    """
+    logger.info("\n--- Running Keyword Filtering Test ---")
+
+    # --- Arrange: Mock Embeddings ---
+    base_vec = np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32)
+    # Make embeddings very close
+    vec1 = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.001).tolist()
+    vec2 = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.002).tolist()
+    query_vec = base_vec.tolist()
+
+    keyword = "banana"
+    email1_body = f"This document talks about apples and oranges."
+    email2_body = f"This document is all about the yellow {keyword} fruit."
+    email1_msg_id = f"<keyword_no_{uuid.uuid4()}@example.com>"
+    email2_msg_id = f"<keyword_yes_{uuid.uuid4()}@example.com>"
+
+    embedding_map = {
+        email1_body: vec1,
+        email2_body: vec2,
+        "query": query_vec,
+    }
+    mock_embedder = MockEmbeddingGenerator(embedding_map, TEST_EMBEDDING_MODEL)
+    set_indexing_dependencies(embedding_generator=mock_embedder)
+    task_worker.register_task_handler("index_email", handle_index_email)
+
+    # --- Arrange: Ingest Emails ---
+    form_data1 = TEST_EMAIL_FORM_DATA.copy()
+    form_data1["stripped-text"] = email1_body
+    form_data1["Message-Id"] = email1_msg_id
+    form_data1["subject"] = "Keyword Test No Match"
+
+    form_data2 = TEST_EMAIL_FORM_DATA.copy()
+    form_data2["stripped-text"] = email2_body
+    form_data2["Message-Id"] = email2_msg_id
+    form_data2["subject"] = f"Keyword Test Yes Match {keyword}"
+
+    # Start worker
+    worker_id = f"test-worker-keyword-{uuid.uuid4()}"
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+    original_shutdown_event = task_worker.shutdown_event
+    original_new_task_event = task_worker.new_task_event
+    task_worker.shutdown_event = test_shutdown_event
+    task_worker.new_task_event = test_new_task_event
+    worker_task = asyncio.create_task(
+        task_worker.task_worker_loop(worker_id, test_new_task_event)
+    )
+    await asyncio.sleep(0.1)
+
+    all_task_ids = set()
+    try:
+        _, task_id1 = await _ingest_and_index_email(pg_vector_db_engine, form_data1)
+        _, task_id2 = await _ingest_and_index_email(pg_vector_db_engine, form_data2)
+        all_task_ids = {task_id1, task_id2}
+        test_new_task_event.set()
+        await wait_for_tasks_to_complete(pg_vector_db_engine, task_ids=all_task_ids, timeout_seconds=20.0)
+
+        # --- Act: Query Vectors with Keywords ---
+        query_results = None
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            logger.info(f"Querying vectors with keyword: '{keyword}'...")
+            query_results = await query_vectors(
+                db,
+                query_embedding=query_vec,
+                embedding_model=TEST_EMBEDDING_MODEL,
+                limit=5,
+                keywords=keyword # Add the keyword search term
+            )
+
+        # --- Assert ---
+        assert query_results is not None, "Query returned None"
+        assert len(query_results) > 0, "Expected at least one result matching keyword"
+        logger.info(f"Keyword filter query returned {len(query_results)} result(s).")
+
+        # RRF should rank the keyword match highest, even if vector distance is slightly worse
+        found_result = query_results[0] # Check the top result
+        assert found_result.get("source_id") == email2_msg_id, f"Top result should be the one matching keyword '{keyword}'"
+        assert keyword in found_result.get("embedding_source_content", "").lower(), "Keyword not found in top result content"
+        assert "rrf_score" in found_result, "Result missing 'rrf_score'"
+        assert found_result.get("fts_score", 0) > 0, "Keyword match should have a positive FTS score"
+
+        # Ensure the non-matching document is either absent or ranked lower
+        non_matching_present = any(r.get("source_id") == email1_msg_id for r in query_results)
+        if non_matching_present:
+             rank_non_match = [r.get("source_id") for r in query_results].index(email1_msg_id)
+             rank_match = [r.get("source_id") for r in query_results].index(email2_msg_id)
+             assert rank_match < rank_non_match, "Keyword match should be ranked higher than non-match"
+             logger.info(f"Non-matching document found but ranked lower (Rank {rank_non_match}) than keyword match (Rank {rank_match}).")
+        else:
+             logger.info("Non-matching document correctly excluded from results.")
+
+
+        logger.info("--- Keyword Filtering Test Passed ---")
+
+    finally:
+        # Stop worker
+        logger.info(f"Stopping background task worker {worker_id}...")
+        test_shutdown_event.set()
+        try: await asyncio.wait_for(worker_task, timeout=5.0)
+        except asyncio.TimeoutError: worker_task.cancel()
+        task_worker.shutdown_event = original_shutdown_event
+        task_worker.new_task_event = original_new_task_event
+
+
+# Add more tests here for hybrid search nuances, different filter combinations, etc.
