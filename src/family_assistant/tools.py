@@ -14,6 +14,7 @@ from dateutil import rrule
 from dateutil.parser import isoparse
 from mcp import ClientSession  # Required for MCPToolsProvider type hint
 from telegram.ext import Application  # Required for ToolExecutionContext
+from sqlalchemy.sql import text # For executing raw SQL
 
 # Import storage functions needed by local tools
 from family_assistant import storage
