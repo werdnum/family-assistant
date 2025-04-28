@@ -125,8 +125,40 @@ async def wait_for_tasks_to_complete(
 
     # If the loop finishes without returning, timeout occurred
     elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+
+    # --- Fetch details of pending tasks before raising timeout ---
+    pending_tasks_details = "Could not fetch pending task details."
+    try:
+        async with await get_db_context(engine=engine) as db:
+            pending_query = select(
+                tasks_table.c.task_id,
+                tasks_table.c.task_type,
+                tasks_table.c.status,
+                tasks_table.c.scheduled_at,
+                tasks_table.c.retry_count,
+                tasks_table.c.last_error,
+            ).where(
+                tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
+            )
+            if task_ids:
+                pending_query = pending_query.where(tasks_table.c.task_id.in_(task_ids))
+
+            pending_results = await db.fetch_all(pending_query)
+            if pending_results:
+                details_list = [
+                    f"  - ID: {row['task_id']}, Type: {row['task_type']}, Status: {row['status']}, Scheduled: {row['scheduled_at']}, Retries: {row['retry_count']}, Error: {row['last_error']}"
+                    for row in pending_results
+                ]
+                pending_tasks_details = "Pending tasks:\n" + "\n".join(details_list)
+            else:
+                pending_tasks_details = "No pending tasks found matching criteria."
+    except Exception as fetch_err:
+        logger.error(f"Failed to fetch pending task details on timeout: {fetch_err}", exc_info=True)
+        pending_tasks_details = f"Error fetching pending task details: {fetch_err}"
+    # --- End fetching details ---
+
     raise asyncio.TimeoutError(
-        f"Timeout ({timeout_seconds}s) waiting for tasks to complete. Elapsed: {elapsed:.2f}s"
+        f"Timeout ({timeout_seconds}s) waiting for tasks to complete. Elapsed: {elapsed:.2f}s\n{pending_tasks_details}"
     )
 
 
