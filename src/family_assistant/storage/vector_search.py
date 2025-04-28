@@ -42,7 +42,7 @@ class VectorSearchQuery:
     created_after: Optional[datetime] = None # Expect timezone-aware datetime
     created_before: Optional[datetime] = None # Expect timezone-aware datetime
     title_like: Optional[str] = None
-    metadata_filter: Optional[MetadataFilter] = None
+    metadata_filters: List[MetadataFilter] = field(default_factory=list) # Changed to list
 
     # Control Parameters
     limit: int = 10
@@ -103,17 +103,27 @@ async def query_vector_store(
     if query.title_like:
         params["doc_title_ilike"] = f"%{query.title_like}%" # Add wildcards here
         doc_where_clauses.append("d.title ILIKE :doc_title_ilike")
-    if query.metadata_filter:
-        meta_key = query.metadata_filter.key
+    # Handle multiple metadata filters
+    for i, meta_filter in enumerate(query.metadata_filters):
+        meta_key = meta_filter.key
+        param_name = f"doc_meta_value_{i}"
         # Basic JSONB key/value filter ->>'key' = 'value'
         # WARNING: Directly embedding key might be risky if key comes from user input.
         # Parameterizing the key itself with standard libraries is tricky.
         # Ensure the key is validated/sanitized before embedding in the query string.
         # For now, assuming the key is safe or comes from a controlled source.
-        if not meta_key.isalnum() and '_' not in meta_key: # Basic sanity check
-             raise ValueError(f"Invalid metadata key format: {meta_key}")
-        params["doc_meta_value"] = query.metadata_filter.value
-        doc_where_clauses.append(f"d.doc_metadata->>'{meta_key}' = :doc_meta_value")
+        # Basic sanity check: Allow alphanumeric, underscore, hyphen, period
+        if not all(c.isalnum() or c in ['_', '-', '.'] for c in meta_key):
+             logger.warning(f"Potentially unsafe metadata key used: {meta_key}")
+             # Depending on security requirements, you might raise ValueError here
+             # raise ValueError(f"Invalid metadata key format: {meta_key}")
+
+        # Use parameterized value, embed validated key
+        params[param_name] = meta_filter.value
+        # Use @> for containment check if value is JSON, ->> for text comparison
+        # Assuming simple string comparison for now:
+        doc_where_clauses.append(f"d.doc_metadata->>'{meta_key}' = :{param_name}")
+
 
     doc_where_sql = " AND ".join(doc_where_clauses)
 

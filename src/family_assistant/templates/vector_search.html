@@ -16,6 +16,9 @@
         .results-table pre { white-space: pre-wrap; word-break: break-all; margin: 0; font-size: 0.9em; }
         .error-message { color: red; font-weight: bold; margin-bottom: 1rem; border: 1px solid red; padding: 0.5rem; }
         .metadata-cell { max-width: 300px; } /* Limit width of metadata cell */
+        .filter-row { display: contents; } /* Allow grid layout for children */
+        .filter-row > * { margin-bottom: 0.5rem; } /* Spacing within a row */
+        .remove-filter-btn { background-color: #ffcccc; border: 1px solid red; color: red; padding: 0.2rem 0.5rem; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -91,13 +94,29 @@
             <input type="date" name="created_after" id="created_after" value="{{ search_params.created_after or '' }}">
 
             <label for="created_before">Created Before:</label>
-            <input type="date" name="created_before" id="created_before" value="{{ search_params.created_before or '' }}">
+            <input type="date" name="created_before" id="created_before" value="{{ search_params.created_after or '' }}">
 
-            <label for="metadata_key">Metadata Key:</label>
-            <input type="text" name="metadata_key" id="metadata_key" value="{{ search_params.metadata_key or '' }}" placeholder="e.g., sender">
 
-            <label for="metadata_value">Metadata Value:</label>
-            <input type="text" name="metadata_value" id="metadata_value" value="{{ search_params.metadata_value or '' }}" placeholder="e.g., IRS">
+            <!-- Metadata Filters Section -->
+            <label class="full-width">Metadata Filters (AND):</label>
+            <div id="metadata-filters-container" class="full-width">
+                <!-- Filter rows will be added here by JS -->
+                {% for i in range(search_params.metadata_keys | length) %}
+                <div class="filter-row">
+                    <select name="metadata_keys" required>
+                        <option value="">-- Select Key --</option>
+                        {% for key in distinct_metadata_keys %}
+                        <option value="{{ key }}" {% if search_params.metadata_keys[i] == key %}selected{% endif %}>{{ key }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="text" name="metadata_values" value="{{ search_params.metadata_values[i] or '' }}" placeholder="Value" required>
+                    <button type="button" class="remove-filter-btn" onclick="removeFilter(this)">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" id="add-filter-btn" class="full-width" style="grid-column: 1 / -1; margin-top: 0.5rem;">Add Metadata Filter</button>
+            <!-- End Metadata Filters Section -->
+
 
             <label for="limit">Result Limit:</label>
             <input type="number" name="limit" id="limit" value="{{ search_params.limit or 10 }}" min="1" max="100">
@@ -159,5 +178,66 @@
     {% endif %}
 
 </main>
+
+<script>
+    const filtersContainer = document.getElementById('metadata-filters-container');
+    const addFilterBtn = document.getElementById('add-filter-btn');
+    // Get distinct keys from template (passed by server) - ensure proper escaping if keys contain special chars
+    const distinctKeys = {{ distinct_metadata_keys | tojson | safe }};
+
+    function createFilterRow() {
+        const div = document.createElement('div');
+        div.className = 'filter-row';
+
+        const keySelect = document.createElement('select');
+        keySelect.name = 'metadata_keys';
+        keySelect.required = true;
+        // Add default option
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = '-- Select Key --';
+        keySelect.appendChild(defaultOption);
+        // Add distinct keys
+        distinctKeys.forEach(key => {
+            const option = document.createElement('option');
+            option.value = key;
+            option.textContent = key;
+            keySelect.appendChild(option);
+        });
+
+        const valueInput = document.createElement('input');
+        valueInput.type = 'text';
+        valueInput.name = 'metadata_values';
+        valueInput.placeholder = 'Value';
+        valueInput.required = true;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.textContent = 'Remove';
+        removeBtn.className = 'remove-filter-btn';
+        removeBtn.onclick = function() { removeFilter(this); };
+
+        div.appendChild(keySelect);
+        div.appendChild(valueInput);
+        div.appendChild(removeBtn);
+
+        return div;
+    }
+
+    function removeFilter(button) {
+        button.closest('.filter-row').remove();
+    }
+
+    addFilterBtn.addEventListener('click', () => {
+        filtersContainer.appendChild(createFilterRow());
+    });
+
+    // Optional: Add initial empty row if no filters are present from backend
+    // if (filtersContainer.children.length === 0) {
+    //     filtersContainer.appendChild(createFilterRow());
+    // }
+
+</script>
+
 </body>
 </html>
