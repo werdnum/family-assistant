@@ -223,6 +223,88 @@ async def schedule_future_callback_tool(
         return "Error: Failed to schedule the callback."
 
 
+async def search_documents_tool(
+    exec_context: ToolExecutionContext,
+    embedding_generator: EmbeddingGenerator, # Injected by LocalToolsProvider
+    query_text: str,
+    source_types: Optional[List[str]] = None,
+    embedding_types: Optional[List[str]] = None,
+    limit: int = 5, # Default limit for LLM tool
+) -> str:
+    """
+    Searches stored documents using hybrid vector and keyword search.
+
+    Args:
+        exec_context: The execution context containing the database context.
+        embedding_generator: The embedding generator instance.
+        query_text: The natural language query to search for.
+        source_types: Optional list of source types to filter by (e.g., ['email', 'note']).
+        embedding_types: Optional list of embedding types to filter by (e.g., ['content_chunk', 'summary']).
+        limit: Maximum number of results to return.
+
+    Returns:
+        A formatted string containing the search results or an error message.
+    """
+    logger.info(f"Executing search_documents_tool with query: '{query_text}'")
+    db_context = exec_context.db_context
+    # Use the provided generator's model name
+    embedding_model = embedding_generator.model_name
+
+    try:
+        # 1. Generate query embedding
+        if not query_text:
+            return "Error: Query text cannot be empty."
+        embedding_result = await embedding_generator.generate_embeddings([query_text])
+        if not embedding_result.embeddings or len(embedding_result.embeddings) == 0:
+            return "Error: Failed to generate embedding for the query."
+        query_embedding = embedding_result.embeddings[0]
+
+        # 2. Construct the search query object
+        search_query = VectorSearchQuery(
+            search_type='hybrid',
+            semantic_query=query_text,
+            keywords=query_text, # Use same text for keywords in this simplified tool
+            embedding_model=embedding_model,
+            source_types=source_types or [], # Use empty list if None
+            embedding_types=embedding_types or [], # Use empty list if None
+            limit=limit,
+            # Use default rrf_k, metadata_filters, etc.
+        )
+
+        # 3. Execute the search
+        results = await query_vector_store(
+            db_context=db_context,
+            query=search_query,
+            query_embedding=query_embedding,
+        )
+
+        # 4. Format results for LLM
+        if not results:
+            return "No relevant documents found matching the query and filters."
+
+        formatted_results = ["Found relevant documents:"]
+        for i, res in enumerate(results):
+            title = res.get('title') or 'Untitled Document'
+            source = res.get('source_type', 'Unknown Source')
+            # Truncate snippet for brevity
+            snippet = res.get('embedding_source_content', '')
+            if snippet:
+                snippet = (snippet[:200] + '...') if len(snippet) > 200 else snippet
+                snippet_text = f"\n  Snippet: {snippet}"
+            else:
+                snippet_text = ""
+
+            formatted_results.append(
+                f"{i+1}. Title: {title} (Source: {source}){snippet_text}"
+            )
+
+        return "\n".join(formatted_results)
+
+    except Exception as e:
+        logger.error(f"Error executing search_documents_tool: {e}", exc_info=True)
+        return f"Error: Failed to execute document search. {e}"
+
+
 # --- Local Tool Definitions and Mappings (Moved from processing.py) ---
 
 # Map tool names to their actual implementation functions
@@ -231,9 +313,12 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
     "add_or_update_note": storage.add_or_update_note,
     "schedule_future_callback": schedule_future_callback_tool,
     "schedule_recurring_task": schedule_recurring_task_tool,
+    "search_documents": search_documents_tool, # Add the new tool function
 }
 
 # Define local tools in the format LiteLLM expects (OpenAI format)
+# TODO: Dynamically fetch valid source_types and embedding_types for descriptions?
+# Hardcoding common examples for now.
 TOOLS_DEFINITION: List[Dict[str, Any]] = [
     {
         "type": "function",
@@ -322,23 +407,63 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_documents",
+            "description": "Search previously stored documents (emails, notes, files) using semantic and keyword matching. Returns titles and snippets of the most relevant documents.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query_text": {
+                        "type": "string",
+                        "description": "The natural language query describing the information to search for.",
+                    },
+                    "source_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional. Filter results to only include documents from specific sources. Common sources: 'email', 'note', 'google_drive', 'pdf', 'image'. Use ONLY if you are certain about the source type, otherwise omit this filter.",
+                    },
+                    "embedding_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional. Filter results based on the type of content that was embedded. Common types: 'content_chunk', 'summary', 'title', 'ocr_text'. Use ONLY if necessary (e.g., searching only titles), otherwise omit this filter.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Optional. Maximum number of results to return (default: 5).",
+                        "default": 5,
+                    },
+                },
+                "required": ["query_text"],
+            },
+        },
+    },
 ]
 
 
 # --- Tool Provider Implementations ---
 
 
+import inspect # Needed for signature inspection
+
 class LocalToolsProvider:
     """Provides and executes locally defined Python functions as tools."""
 
     def __init__(
-        self, definitions: List[Dict[str, Any]], implementations: Dict[str, Callable]
+        self,
+        definitions: List[Dict[str, Any]],
+        implementations: Dict[str, Callable],
+        embedding_generator: Optional[EmbeddingGenerator] = None, # Accept generator
     ):
         self._definitions = definitions
         self._implementations = implementations
+        self._embedding_generator = embedding_generator # Store generator
         logger.info(
             f"LocalToolsProvider initialized with {len(self._definitions)} tools: {list(self._implementations.keys())}"
         )
+        if self._embedding_generator:
+             logger.info(f"LocalToolsProvider configured with embedding generator: {type(self._embedding_generator).__name__}")
 
     async def get_tool_definitions(self) -> List[Dict[str, Any]]:
         return self._definitions
@@ -352,22 +477,48 @@ class LocalToolsProvider:
         callable_func = self._implementations[name]
         logger.info(f"Executing local tool '{name}' with args: {arguments}")
         try:
-            # Extract db_context from the ToolExecutionContext
-            db_context = context.db_context
+            # Prepare arguments, potentially injecting context or generator
+            call_args = arguments.copy()
+            sig = inspect.signature(callable_func)
+            needs_exec_context = False
+            needs_db_context = False
+            needs_embedding_generator = False
 
-            # Pass the ToolExecutionContext or db_context as needed
-            if name in ["schedule_future_callback", "schedule_recurring_task"]:
-                # These tools expect the full ToolExecutionContext
-                result = await callable_func(context, **arguments)
-            elif name == "add_or_update_note":
-                # Storage function now needs db_context
-                result = await callable_func(db_context=db_context, **arguments)
-            else:
-                # Fallback for other potential local tools - assume they don't need context
-                logger.warning(
-                    f"Executing local tool '{name}' without db_context (assuming it's not needed)."
-                )
-                result = await callable_func(**arguments)  # Call without context
+            for param_name, param in sig.parameters.items():
+                if param.annotation is ToolExecutionContext:
+                    needs_exec_context = True
+                elif param.annotation is DatabaseContext and param_name == "db_context":
+                    needs_db_context = True
+                elif param.annotation is EmbeddingGenerator and param_name == "embedding_generator":
+                    needs_embedding_generator = True
+
+            if needs_exec_context:
+                call_args['exec_context'] = context
+            elif needs_db_context:
+                 # Inject db_context if the function expects it directly
+                 call_args['db_context'] = context.db_context
+
+            if needs_embedding_generator:
+                if self._embedding_generator:
+                    call_args['embedding_generator'] = self._embedding_generator
+                else:
+                    # This should ideally not happen if initialization is correct
+                    logger.error(f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider.")
+                    return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
+
+            # Remove context/generator args from call_args if they were not in the original arguments dict
+            # This prevents passing them if the function doesn't expect them explicitly
+            # (e.g. if 'db_context' was passed in arguments but function expects 'exec_context')
+            if 'exec_context' in call_args and 'exec_context' not in arguments:
+                 if not needs_exec_context: del call_args['exec_context']
+            if 'db_context' in call_args and 'db_context' not in arguments:
+                 if not needs_db_context and not needs_exec_context: del call_args['db_context'] # Don't delete if exec_context needed it
+            if 'embedding_generator' in call_args and 'embedding_generator' not in arguments:
+                 if not needs_embedding_generator: del call_args['embedding_generator']
+
+
+            # Execute the function with prepared arguments
+            result = await callable_func(**call_args)
 
             # Ensure result is a string
             if result is None:  # Handle None case explicitly
