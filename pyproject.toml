@@ -61,7 +61,7 @@ dev = [
 ]
 
 [project.scripts]
-family-assistant = "family_assistant.main:main"
+family-assistant = "family_assistant.__main__:main"
 
 [project.urls]
 "Homepage" = "https://github.com/yourusername/family-assistant" # TODO: Update URL
