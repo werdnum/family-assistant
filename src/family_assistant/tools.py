@@ -308,6 +308,69 @@ async def search_documents_tool(
         return f"Error: Failed to execute document search. {e}"
 
 
+async def get_full_document_content_tool(
+    exec_context: ToolExecutionContext,
+    document_id: int,
+) -> str:
+    """
+    Retrieves the full text content associated with a specific document ID.
+    This is typically used after finding a relevant document via search_documents.
+
+    Args:
+        exec_context: The execution context containing the database context.
+        document_id: The unique ID of the document (obtained from search results).
+
+    Returns:
+        A string containing the full concatenated text content of the document,
+        or an error message if not found or content is unavailable.
+    """
+    logger.info(f"Executing get_full_document_content_tool for document ID: {document_id}")
+    db_context = exec_context.db_context
+
+    try:
+        # Query for content embeddings associated with the document ID, ordered by chunk index
+        # Prioritize 'content_chunk' type, but could potentially fetch others if needed.
+        # Using raw SQL for potential performance and direct access to embedding content.
+        # Ensure table/column names match your schema.
+        stmt = text("""
+            SELECT content
+            FROM document_embeddings
+            WHERE document_id = :doc_id
+              AND embedding_type = 'content_chunk' -- Assuming this type holds the main content
+              AND content IS NOT NULL
+            ORDER BY chunk_index ASC;
+        """)
+        results = await db_context.fetch_all(stmt, {"doc_id": document_id})
+
+        if not results:
+            # Check if the document exists at all, maybe it has no content embeddings?
+            doc_check_stmt = text("SELECT id FROM documents WHERE id = :doc_id")
+            doc_exists = await db_context.fetch_one(doc_check_stmt, {"doc_id": document_id})
+            if doc_exists:
+                logger.warning(f"Document ID {document_id} exists, but no 'content_chunk' embeddings with text content found.")
+                # TODO: Future enhancement: Check document source_type and potentially fetch content
+                # from original source (e.g., received_emails table) if no embedding content exists.
+                return f"Error: Document {document_id} found, but no text content is available for retrieval via this tool."
+            else:
+                logger.warning(f"Document ID {document_id} not found.")
+                return f"Error: Document with ID {document_id} not found."
+
+        # Concatenate content from all chunks
+        full_content = "".join([row['content'] for row in results])
+
+        if not full_content.strip():
+             logger.warning(f"Document ID {document_id} content chunks were empty or whitespace.")
+             return f"Error: Document {document_id} found, but its text content appears to be empty."
+
+        logger.info(f"Retrieved full content for document ID {document_id} (Length: {len(full_content)}).")
+        # Return only the content for now. Future versions could return a dict with content_type.
+        return full_content
+
+    except Exception as e:
+        logger.error(f"Error executing get_full_document_content_tool for ID {document_id}: {e}", exc_info=True)
+        return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
+
+
 # --- Local Tool Definitions and Mappings (Moved from processing.py) ---
 
 # Map tool names to their actual implementation functions
@@ -316,7 +379,8 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
     "add_or_update_note": storage.add_or_update_note,
     "schedule_future_callback": schedule_future_callback_tool,
     "schedule_recurring_task": schedule_recurring_task_tool,
-    "search_documents": search_documents_tool, # Add the new tool function
+    "search_documents": search_documents_tool,
+    "get_full_document_content": get_full_document_content_tool, # Add the new tool function
 }
 
 # Define local tools in the format LiteLLM expects (OpenAI format)
@@ -439,6 +503,23 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["query_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_full_document_content",
+            "description": "Retrieves the full text content of a specific document using its unique document ID (obtained from a previous search). Use this when you need the complete text after identifying a relevant document.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "document_id": {
+                        "type": "integer",
+                        "description": "The unique identifier of the document whose full content is needed.",
+                    },
+                },
+                "required": ["document_id"],
             },
         },
     },
