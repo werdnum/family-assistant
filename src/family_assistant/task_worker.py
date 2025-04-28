@@ -259,13 +259,13 @@ class TaskWorker:
 
         while not shutdown_event.is_set():
             try:  # Add try block here to encompass the whole loop iteration
-                task = None
-            # Create a database context for this iteration
-            # Await the coroutine returned by get_db_context()
-            async with await get_db_context() as db_context:
-                try:  # Inner try for dequeue, task processing, and waiting logic
-                    # Dequeue a task of a type this worker handles
-                    task = await storage.dequeue_task(
+                task = None # Initialize task variable for the outer scope
+                # Create a database context for this iteration
+                # Await the coroutine returned by get_db_context()
+                async with await get_db_context() as db_context:
+                    try:  # Inner try for dequeue, task processing, and waiting logic
+                        # Dequeue a task of a type this worker handles
+                        task = await storage.dequeue_task(
                         db_context=db_context,
                         worker_id=self.worker_id, # Use instance worker ID
                         task_types=task_types_handled,
