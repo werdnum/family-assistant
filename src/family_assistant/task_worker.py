@@ -450,7 +450,7 @@ class TaskWorker:
                                 status="failed",
                                 error=f"No handler registered for type {task['task_type']}", # Correct indentation
                                 )
-                        # --- Waiting Logic (inside inner try, if no task was found) --- Indent this block ---
+                        # --- Waiting Logic (inside inner try, if no task was found) --- # Align comment with the 'else' below
                         else:  # Changed from 'if not task:'
                             # No task found, wait for the polling interval OR the wake-up event
                             try:
