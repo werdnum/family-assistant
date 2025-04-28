@@ -1,12 +1,11 @@
 import logging
 import os
 import re
-from fastapi import FastAPI, Request, Form, HTTPException, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Request, Form, HTTPException, Depends, Response, status # Added status
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse # Added JSONResponse
 from fastapi.templating import Jinja2Templates
 from typing import List, Dict, Optional, Any # Added Any
-from fastapi import Response  # Added Response
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date # Added date
 import json
 import pathlib  # Import pathlib for finding template/static dirs
 from fastapi.staticfiles import StaticFiles
@@ -37,7 +36,9 @@ from family_assistant.storage.vector_search import (
 # Import embedding generator (adjust path based on actual location)
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import EmbeddingGenerator, LiteLLMEmbeddingGenerator # Example
-from pydantic import BaseModel # For structuring results if needed
+from pydantic import BaseModel, Field # For structuring results if needed, added Field
+# Import Document protocol for type hinting when creating the dict for add_document
+from family_assistant.storage.vector import Document
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,12 @@ class SearchResultItem(BaseModel):
 
     class Config:
         orm_mode = True # Allows creating from ORM-like objects (dict-like rows)
+
+# --- Pydantic model for API response ---
+class DocumentUploadResponse(BaseModel):
+    message: str
+    document_id: int
+    task_enqueued: bool
 
 
 # --- Routes ---
@@ -539,9 +546,186 @@ async def handle_vector_search(
 import asyncio
 
 
+# --- API Routes ---
+
+@app.post(
+    "/api/documents/upload",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Upload and index a document",
+    description="Accepts document metadata and content parts via multipart/form-data, "
+                "stores the document record, and enqueues a background task for embedding generation.",
+)
+async def upload_document(
+    # Required fields
+    source_type: str = Form(..., description="Type of the source (e.g., 'manual_upload', 'scanned_receipt')."),
+    source_id: str = Form(..., description="Unique identifier for the document within its source type."),
+    content_parts_json: str = Form(
+        ...,
+        alias="content_parts", # Allow form field name 'content_parts'
+        description='JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}).'
+    ),
+    # Optional fields
+    source_uri: Optional[str] = Form(None, description="Canonical URI/URL of the original document."),
+    title: Optional[str] = Form(None, description="Primary title for the document (can also be in content_parts)."),
+    created_at_str: Optional[str] = Form(
+        None,
+        alias="created_at", # Allow form field name 'created_at'
+        description="Original creation timestamp (ISO 8601 format string, e.g., 'YYYY-MM-DDTHH:MM:SSZ' or 'YYYY-MM-DD'). Timezone assumed UTC if missing."
+    ),
+    metadata_json: Optional[str] = Form(
+        None,
+        alias="metadata", # Allow form field name 'metadata'
+        description="JSON string representing a dictionary of additional metadata."
+    ),
+    # Dependencies
+    db_context: DatabaseContext = Depends(get_db),
+):
+    """
+    API endpoint to upload document metadata and content parts for indexing.
+    """
+    logger.info(f"Received document upload request for source_id: {source_id} (type: {source_type})")
+
+    # --- 1. Parse and Validate Inputs ---
+    try:
+        # Parse JSON strings
+        content_parts: Dict[str, str] = json.loads(content_parts_json)
+        if not isinstance(content_parts, dict) or not content_parts:
+            raise ValueError("'content_parts' must be a non-empty JSON object string.")
+        # Validate content parts values are strings
+        for key, value in content_parts.items():
+            if not isinstance(value, str):
+                 raise ValueError(f"Value for content part '{key}' must be a string.")
+
+        doc_metadata: Dict[str, Any] = {}
+        if metadata_json:
+            doc_metadata = json.loads(metadata_json)
+            if not isinstance(doc_metadata, dict):
+                raise ValueError("'metadata' must be a valid JSON object string if provided.")
+
+        # Parse date string (handle date vs datetime)
+        created_at_dt: Optional[datetime] = None
+        if created_at_str:
+            try:
+                # Try parsing as full ISO 8601 datetime first
+                created_at_dt = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                # Ensure timezone-aware (assume UTC if naive)
+                if created_at_dt.tzinfo is None:
+                    created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                # Try parsing as YYYY-MM-DD date
+                try:
+                    created_date = date.fromisoformat(created_at_str)
+                    # Convert date to datetime (start of day, UTC)
+                    created_at_dt = datetime.combine(created_date, datetime.min.time(), tzinfo=timezone.utc)
+                except ValueError:
+                     raise ValueError("Invalid 'created_at' format. Use ISO 8601 datetime (YYYY-MM-DDTHH:MM:SSZ) or date (YYYY-MM-DD).")
+
+    except json.JSONDecodeError as json_err:
+        logger.error(f"JSON parsing error for document upload {source_id}: {json_err}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid JSON format: {json_err}")
+    except ValueError as val_err:
+        logger.error(f"Validation error for document upload {source_id}: {val_err}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
+    except Exception as e:
+        logger.error(f"Unexpected parsing error for document upload {source_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing request data.")
+
+    # --- 2. Create Document Record in DB ---
+    # Create a dictionary conforming to the Document protocol structure
+    # Use provided title if available, otherwise None
+    document_data = {
+        "_source_type": source_type,
+        "_source_id": source_id,
+        "_source_uri": source_uri,
+        "_title": title, # Use the dedicated title field if provided
+        "_created_at": created_at_dt,
+        "_base_metadata": doc_metadata,
+        # These properties are part of the protocol definition
+        "source_type": property(lambda self: self["_source_type"]),
+        "source_id": property(lambda self: self["_source_id"]),
+        "source_uri": property(lambda self: self["_source_uri"]),
+        "title": property(lambda self: self["_title"]),
+        "created_at": property(lambda self: self["_created_at"]),
+        "metadata": property(lambda self: self["_base_metadata"]),
+    }
+
+    # Define a simple class on the fly that behaves like the Document protocol
+    # This avoids needing a direct import of a specific Document implementation
+    class UploadedDocument:
+        def __init__(self, data):
+            self._data = data
+        @property
+        def source_type(self) -> str: return self._data["_source_type"]
+        @property
+        def source_id(self) -> str: return self._data["_source_id"]
+        @property
+        def source_uri(self) -> Optional[str]: return self._data["_source_uri"]
+        @property
+        def title(self) -> Optional[str]: return self._data["_title"]
+        @property
+        def created_at(self) -> Optional[datetime]: return self._data["_created_at"]
+        @property
+        def metadata(self) -> Optional[Dict[str, Any]]: return self._data["_base_metadata"]
+
+    doc_for_storage = UploadedDocument(document_data)
+
+    try:
+        document_id = await storage.add_document(
+            db_context=db_context,
+            doc=doc_for_storage,
+            # No separate enriched metadata here, it's already merged
+        )
+        logger.info(f"Stored document record for {source_id}, got DB ID: {document_id}")
+    except Exception as db_err:
+        logger.error(f"Database error storing document record for {source_id}: {db_err}", exc_info=True)
+        # Check for unique constraint violation (source_id already exists)
+        # This check might be dialect-specific or require inspecting the exception details
+        if "UNIQUE constraint failed" in str(db_err) or "duplicate key value violates unique constraint" in str(db_err):
+             raise HTTPException(
+                 status_code=status.HTTP_409_CONFLICT,
+                 detail=f"Document with source_type '{source_type}' and source_id '{source_id}' already exists."
+             )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error storing document.")
+
+    # --- 3. Enqueue Background Task for Embedding ---
+    task_payload = {
+        "document_id": document_id,
+        "content_parts": content_parts, # Pass the parsed dictionary
+    }
+    task_id = f"index-doc-{document_id}-{datetime.now(timezone.utc).isoformat()}" # Unique task ID
+    task_enqueued = False
+    try:
+        await storage.enqueue_task(
+            db_context=db_context,
+            task_id=task_id,
+            task_type="process_uploaded_document", # Matches the handler registration
+            payload=task_payload,
+            # notify_event=new_task_event # Optional: trigger worker immediately if event is accessible
+        )
+        task_enqueued = True
+        logger.info(f"Enqueued task '{task_id}' to process document ID {document_id}")
+    except Exception as task_err:
+        logger.error(f"Failed to enqueue indexing task for document ID {document_id}: {task_err}", exc_info=True)
+        # Document record exists, but indexing won't happen automatically.
+        # Return success but indicate task failure? Or return an error?
+        # Let's return success for the upload but log the task error clearly.
+        # The response model will indicate task_enqueued=False.
+
+    # --- 4. Return Response ---
+    return DocumentUploadResponse(
+        message="Document received and accepted for processing.",
+        document_id=document_id,
+        task_enqueued=task_enqueued,
+    )
+
+
 # --- Uvicorn Runner (for standalone testing) ---
 if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting Uvicorn server for testing...")
+    # Make sure embedding generator is available in app state if running standalone
+    # Example placeholder:
+    # app.state.embedding_generator = MockEmbeddingGenerator({}, default_embedding=[0.0]*10)
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
