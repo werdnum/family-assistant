@@ -1,3 +1,27 @@
+# from .__main__ import load_config
+def load_config():
+    "Loads configuration from environment variables and prompts.yaml."
+
+# from .__main__ import load_mcp_config_and_connect
+async def load_mcp_config_and_connect():
+    "Loads MCP server config, connects to servers, and discovers tools."
+
+# from .__main__ import shutdown_handler
+async def shutdown_handler(signal_name: str, telegram_service: Optional[TelegramService]):
+    "Initiates graceful shutdown."
+
+# from .__main__ import reload_config_handler
+def reload_config_handler(signum, frame):
+    "Handles SIGHUP for config reloading (placeholder)."
+
+# from .__main__ import main_async
+async def main_async(cli_args: ?) -> Optional[TelegramService]:
+    "Initializes and runs the bot application."
+
+# from .__main__ import main
+def main() -> int:
+    "Sets up argument parsing, event loop, and signal handlers."
+
 # from .calendar_integration import format_datetime_or_date
 def format_datetime_or_date(dt_obj: ?, is_end: bool) -> str:
     "Formats datetime or date object into a user-friendly string."
@@ -48,30 +72,6 @@ class RecordingLLMClient:
 class PlaybackLLMClient:
     """An LLM client that plays back previously recorded interactions from a file.
     Plays back recorded interactions by matching the input arguments."""
-
-# from .main import load_config
-def load_config():
-    "Loads configuration from environment variables and prompts.yaml."
-
-# from .main import load_mcp_config_and_connect
-async def load_mcp_config_and_connect():
-    "Loads MCP server config, connects to servers, and discovers tools."
-
-# from .main import shutdown_handler
-async def shutdown_handler(signal_name: str, telegram_service: Optional[TelegramService]):
-    "Initiates graceful shutdown."
-
-# from .main import reload_config_handler
-def reload_config_handler(signum, frame):
-    "Handles SIGHUP for config reloading (placeholder)."
-
-# from .main import main_async
-async def main_async(cli_args: ?) -> Optional[TelegramService]:
-    "Initializes and runs the bot application."
-
-# from .main import main
-def main() -> int:
-    "Sets up argument parsing, event loop, and signal handlers."
 
 # from .embeddings import EmbeddingResult
 class EmbeddingResult:
@@ -147,6 +147,13 @@ class CompositeToolsProvider:
 async def get_db() -> DatabaseContext:
     "FastAPI dependency to get a DatabaseContext."
 
+# from .web_server import get_embedding_generator_dependency
+async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
+    "Retrieves the configured EmbeddingGenerator instance from app state."
+
+# from .web_server import SearchResultItem
+class SearchResultItem(BaseModel):
+
 # from .web_server import read_root
 async def read_root(request: Request, db_context: DatabaseContext=...):
     "Serves the main page listing all notes."
@@ -183,6 +190,14 @@ async def view_tasks(request: Request, db_context: DatabaseContext=...):
 # from .web_server import health_check
 async def health_check():
     "Basic health check endpoint."
+
+# from .web_server import vector_search_form
+async def vector_search_form(request: Request, db_context: DatabaseContext=...):
+    "Serves the vector search form."
+
+# from .web_server import handle_vector_search
+async def handle_vector_search(request: Request, semantic_query: Optional[str]=..., keywords: Optional[str]=..., search_type: str=..., embedding_model: Optional[str]=..., embedding_types: List[str]=..., source_types: List[str]=..., created_after: Optional[str]=..., created_before: Optional[str]=..., title_like: Optional[str]=..., metadata_keys: List[str]=..., metadata_values: List[str]=..., limit: int=..., rrf_k: int=..., db_context: DatabaseContext=..., embedding_generator: EmbeddingGenerator=...):
+    "Handles the vector search form submission."
 
 # from .task_worker import handle_log_message
 async def handle_log_message(db_context: DatabaseContext, payload: Any):
@@ -250,6 +265,27 @@ async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[(str
     Args:
         db_context: The DatabaseContext to use for the operation.
         form_data: A dictionary representing the form data received from the webhook."""
+
+# from .vector_search import MetadataFilter
+class MetadataFilter:
+    "Represents a simple key-value filter for JSONB metadata."
+
+# from .vector_search import VectorSearchQuery
+class VectorSearchQuery:
+    "Input schema for performing vector/keyword/hybrid searches."
+
+# from .vector_search import query_vector_store
+async def query_vector_store(db_context: DatabaseContext, query: VectorSearchQuery, query_embedding: Optional[List[float]]) -> List[Dict[(str, Any)]]:
+    """Performs vector, keyword, or hybrid search based on the VectorSearchQuery input.
+
+    Args:
+        db_context: The database context manager.
+        query: The VectorSearchQuery object containing all parameters and filters.
+        query_embedding: The vector embedding for semantic search (required if query.search_type
+                         involves 'semantic').
+
+    Returns:
+        A list of dictionaries representing the search results."""
 
 # from .vector import Document
 class Document(Protocol):
@@ -370,6 +406,73 @@ async def get_all_tasks(db_context: DatabaseContext, limit: int=100) -> List[Dic
 # from .__init__ import init_db
 async def init_db():
     "Initializes the database by creating all tables defined in the metadata."
+
+# from .vector. import Document
+class Document(Protocol):
+    "Defines the interface for documents that can be ingested into vector storage.Defines the interface for document objects that can be ingested into vector storage."
+
+# from .vector. import Base
+class Base(DeclarativeBase):
+
+# from .vector. import DocumentRecord
+class DocumentRecord(Base):
+    "SQLAlchemy model for the 'documents' table, representing stored document metadata."
+
+# from .vector. import DocumentEmbeddingRecord
+class DocumentEmbeddingRecord(Base):
+    "SQLAlchemy model for the 'document_embeddings' table, representing stored embeddings."
+
+# from .vector. import init_vector_db
+async def init_vector_db(db_context: DatabaseContext):
+    """Initializes the vector database components (extension, indexes) using the provided context.
+    Tables should be created separately via storage.init_db or metadata.create_all.
+
+    Args:
+        db_context: The DatabaseContext to use for executing initialization commands."""
+
+# from .vector. import add_document
+async def add_document(db_context: DatabaseContext, doc: Document, enriched_doc_metadata: Optional[Dict[(str, Any)]]) -> int:
+    """Adds a document record to the database or updates it based on source_id.
+
+    Args:
+        db_context: The DatabaseContext to use for the operation.
+        doc: An object conforming to the Document protocol.
+        enriched_doc_metadata: Optional dictionary containing enriched metadata.
+
+    Returns:
+        The database ID of the added or existing document."""
+
+# from .vector. import get_document_by_source_id
+async def get_document_by_source_id(db_context: DatabaseContext, source_id: str) -> Optional[DocumentRecord]:
+    "Retrieves a document ORM object by its source ID."
+
+# from .vector. import add_embedding
+async def add_embedding(db_context: DatabaseContext, document_id: int, chunk_index: int, embedding_type: str, embedding: List[float], embedding_model: str, content: Optional[str], content_hash: Optional[str]) -> ?:
+    "Adds an embedding record linked to a document, updating if it already exists."
+
+# from .vector. import delete_document
+async def delete_document(db_context: DatabaseContext, document_id: int) -> bool:
+    """Deletes a document and its associated embeddings (via CASCADE constraint).
+
+    Returns:
+        True if a document was deleted, False otherwise."""
+
+# from .vector. import query_vectors
+async def query_vectors(db_context: DatabaseContext, query_embedding: List[float], embedding_model: str, keywords: Optional[str], filters: Optional[Dict[(str, Any)]], embedding_type_filter: Optional[List[str]], limit: int=10) -> List[Dict[(str, Any)]]:
+    """Performs a hybrid search combining vector similarity and keyword search
+    with metadata filtering using the provided DatabaseContext.
+
+    Args:
+        db_context: The DatabaseContext to use for the query.
+        query_embedding: The vector representation of the search query.
+        embedding_model: Identifier of the model used for the query vector.
+        keywords: Keywords for full-text search.
+        filters: Dictionary of filters for the 'documents' table.
+        embedding_type_filter: List of allowed embedding types.
+        limit: The maximum number of results.
+
+    Returns:
+        A list of dictionaries representing relevant document embeddings."""
 
 # from .base import get_engine
 def get_engine():
