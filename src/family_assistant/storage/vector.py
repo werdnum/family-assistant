@@ -46,9 +46,10 @@ from sqlalchemy.engine import RowMapping
 from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
 # Use absolute package path
-from family_assistant.storage.base import metadata # Keep metadata
+from family_assistant.storage.base import metadata  # Keep metadata
+
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
+from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
 
@@ -185,18 +186,24 @@ async def init_vector_db(db_context: DatabaseContext):
     # Check if the dialect is PostgreSQL before running PG-specific commands
     # Access the engine from the context
     if db_context.engine.dialect.name == "postgresql":
-        logger.info("PostgreSQL dialect detected. Initializing vector extension and indexes...")
+        logger.info(
+            "PostgreSQL dialect detected. Initializing vector extension and indexes..."
+        )
         try:
             # Use execute_with_retry for DDL statements within the context
             # Commit/rollback is handled by the context manager (__aexit__)
             # Only create the extension here. Indexes will be created separately after tables exist.
-            await db_context.execute_with_retry(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            await db_context.execute_with_retry(
+                sa.text("CREATE EXTENSION IF NOT EXISTS vector;")
+            )
             logger.info("Ensured 'vector' extension exists.")
 
         except SQLAlchemyError as e:
             # Catch potential errors during extension creation
-            logger.error(f"Database error during vector DB initialization: {e}", exc_info=True)
-            raise # Re-raise to indicate failure
+            logger.error(
+                f"Database error during vector DB initialization: {e}", exc_info=True
+            )
+            raise  # Re-raise to indicate failure
 
         logger.info("PostgreSQL vector database extension initialized.")
     else:
@@ -206,7 +213,7 @@ async def init_vector_db(db_context: DatabaseContext):
 
 
 async def add_document(
-    db_context: DatabaseContext, # Added context
+    db_context: DatabaseContext,  # Added context
     doc: Document,
     enriched_doc_metadata: Optional[Dict[str, Any]] = None,
 ) -> int:
@@ -243,7 +250,9 @@ async def add_document(
         stmt = insert(DocumentRecord).values(**values_to_insert)
         # Need to fetch ID separately if ON CONFLICT is not used
         # This part is tricky without ON CONFLICT returning the ID
-        raise NotImplementedError("add_document without ON CONFLICT returning ID is not fully implemented.")
+        raise NotImplementedError(
+            "add_document without ON CONFLICT returning ID is not fully implemented."
+        )
     else:
         stmt = insert(DocumentRecord).values(**values_to_insert)
         # Define columns to update on conflict
@@ -260,7 +269,7 @@ async def add_document(
     try:
         # Use execute_with_retry as commit is handled by context manager
         result = await db_context.execute_with_retry(stmt)
-        doc_id = result.scalar_one() # Get the inserted or existing ID
+        doc_id = result.scalar_one()  # Get the inserted or existing ID
         logger.info(
             f"Successfully added/updated document with source_id {doc.source_id}, got ID: {doc_id}"
         )
@@ -279,8 +288,7 @@ async def add_document(
 
 
 async def get_document_by_source_id(
-    db_context: DatabaseContext, # Added context
-    source_id: str
+    db_context: DatabaseContext, source_id: str  # Added context
 ) -> Optional[DocumentRecord]:
     """Retrieves a document ORM object by its source ID."""
     try:
@@ -298,19 +306,23 @@ async def get_document_by_source_id(
             # For now, let's assume the ORM object is needed and this needs refinement
             # or the context needs session support.
             # Returning the raw mapping for now.
-            logger.warning("get_document_by_source_id returning raw mapping, not ORM object due to context limitations.")
+            logger.warning(
+                "get_document_by_source_id returning raw mapping, not ORM object due to context limitations."
+            )
             # To return ORM object, context needs session support or use Session directly.
             # Let's fetch using sessionmaker for ORM compatibility
-            async_session = async_sessionmaker(db_context.engine, expire_on_commit=False)
+            async_session = async_sessionmaker(
+                db_context.engine, expire_on_commit=False
+            )
             async with async_session() as session:
-                 result = await session.execute(stmt)
-                 record = result.scalar_one_or_none()
-                 if record:
-                     logger.debug(f"Found document with source_id {source_id}")
-                     return record
-                 else:
-                     logger.debug(f"No document found with source_id {source_id}")
-                     return None
+                result = await session.execute(stmt)
+                record = result.scalar_one_or_none()
+                if record:
+                    logger.debug(f"Found document with source_id {source_id}")
+                    return record
+                else:
+                    logger.debug(f"No document found with source_id {source_id}")
+                    return None
 
         else:
             logger.debug(f"No document found with source_id {source_id}")
@@ -324,7 +336,7 @@ async def get_document_by_source_id(
 
 
 async def add_embedding(
-    db_context: DatabaseContext, # Added context
+    db_context: DatabaseContext,  # Added context
     document_id: int,
     chunk_index: int,
     embedding_type: str,
@@ -351,7 +363,9 @@ async def add_embedding(
         # Fallback or raise error
         stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
         # This won't handle updates on conflict
-        raise NotImplementedError("add_embedding without ON CONFLICT is not fully implemented.")
+        raise NotImplementedError(
+            "add_embedding without ON CONFLICT is not fully implemented."
+        )
 
     else:
         stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
@@ -408,7 +422,7 @@ async def delete_document(db_context: DatabaseContext, document_id: int) -> bool
 
 
 async def query_vectors(
-    db_context: DatabaseContext, # Added context
+    db_context: DatabaseContext,  # Added context
     query_embedding: List[float],
     embedding_model: str,
     keywords: Optional[str] = None,
@@ -448,11 +462,15 @@ async def query_vectors(
                 elif key.endswith("_gte") and isinstance(value, datetime):
                     actual_key = key[:-4]
                     if hasattr(DocumentRecord, actual_key):
-                        doc_filter_conditions.append(getattr(DocumentRecord, actual_key) >= value)
+                        doc_filter_conditions.append(
+                            getattr(DocumentRecord, actual_key) >= value
+                        )
                 elif key.endswith("_lte") and isinstance(value, datetime):
                     actual_key = key[:-4]
                     if hasattr(DocumentRecord, actual_key):
-                         doc_filter_conditions.append(getattr(DocumentRecord, actual_key) <= value)
+                        doc_filter_conditions.append(
+                            getattr(DocumentRecord, actual_key) <= value
+                        )
                 # Add more filter handling here
             else:
                 logger.warning(f"Ignoring unknown filter key: {key}")
@@ -487,21 +505,25 @@ async def query_vectors(
         vector_subquery.c.embedding_id,
         vector_subquery.c.document_id,
         vector_subquery.c.distance,
-        func.row_number().over(order_by=vector_subquery.c.distance.asc()).label("vec_rank")
+        func.row_number()
+        .over(order_by=vector_subquery.c.distance.asc())
+        .label("vec_rank"),
     ).cte("vector_results")
 
     # --- 4. FTS Search CTE (Conditional) ---
     fts_results_cte = None
     if keywords:
-        tsvector_col = func.to_tsvector('english', DocumentEmbeddingRecord.content)
-        tsquery = func.plainto_tsquery('english', keywords)
+        tsvector_col = func.to_tsvector("english", DocumentEmbeddingRecord.content)
+        tsquery = func.plainto_tsquery("english", keywords)
         fts_subquery = (
             select(
                 DocumentEmbeddingRecord.id.label("embedding_id"),
                 DocumentEmbeddingRecord.document_id,
                 func.ts_rank(tsvector_col, tsquery).label("score"),
             )
-            .join(DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id)
+            .join(
+                DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id
+            )
             .where(doc_filter)
             .where(DocumentEmbeddingRecord.content != None)
             .where(tsvector_col.op("@@")(tsquery))
@@ -513,35 +535,57 @@ async def query_vectors(
             fts_subquery.c.embedding_id,
             fts_subquery.c.document_id,
             fts_subquery.c.score,
-            func.row_number().over(order_by=fts_subquery.c.score.desc()).label("fts_rank")
+            func.row_number()
+            .over(order_by=fts_subquery.c.score.desc())
+            .label("fts_rank"),
         ).cte("fts_results")
 
     # --- 5. Final Query Construction (remains the same logic) ---
     final_select_cols = [
-        DocumentEmbeddingRecord.id.label("embedding_id"), DocumentEmbeddingRecord.document_id,
-        DocumentRecord.title, DocumentRecord.source_type, DocumentRecord.source_id,
-        DocumentRecord.source_uri, DocumentRecord.created_at, DocumentRecord.doc_metadata,
-        DocumentEmbeddingRecord.embedding_type, DocumentEmbeddingRecord.content.label("embedding_source_content"),
-        DocumentEmbeddingRecord.chunk_index, vector_results_cte.c.distance, vector_results_cte.c.vec_rank,
+        DocumentEmbeddingRecord.id.label("embedding_id"),
+        DocumentEmbeddingRecord.document_id,
+        DocumentRecord.title,
+        DocumentRecord.source_type,
+        DocumentRecord.source_id,
+        DocumentRecord.source_uri,
+        DocumentRecord.created_at,
+        DocumentRecord.doc_metadata,
+        DocumentEmbeddingRecord.embedding_type,
+        DocumentEmbeddingRecord.content.label("embedding_source_content"),
+        DocumentEmbeddingRecord.chunk_index,
+        vector_results_cte.c.distance,
+        vector_results_cte.c.vec_rank,
     ]
-    final_query = select(*final_select_cols).select_from(
-        DocumentEmbeddingRecord
-    ).join(
-        DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id
-    ).join(
-        vector_results_cte, DocumentEmbeddingRecord.id == vector_results_cte.c.embedding_id, isouter=True,
+    final_query = (
+        select(*final_select_cols)
+        .select_from(DocumentEmbeddingRecord)
+        .join(DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id)
+        .join(
+            vector_results_cte,
+            DocumentEmbeddingRecord.id == vector_results_cte.c.embedding_id,
+            isouter=True,
+        )
     )
     if fts_results_cte is not None:
-        final_select_cols.extend([fts_results_cte.c.score.label("fts_score"), fts_results_cte.c.fts_rank])
+        final_select_cols.extend(
+            [fts_results_cte.c.score.label("fts_score"), fts_results_cte.c.fts_rank]
+        )
         final_query = final_query.join(
-            fts_results_cte, DocumentEmbeddingRecord.id == fts_results_cte.c.embedding_id, isouter=True,
+            fts_results_cte,
+            DocumentEmbeddingRecord.id == fts_results_cte.c.embedding_id,
+            isouter=True,
         )
         rrf_score = (
-            func.coalesce(1.0 / (60 + vector_results_cte.c.vec_rank), 0.0) +
-            func.coalesce(1.0 / (60 + fts_results_cte.c.fts_rank), 0.0)
+            func.coalesce(1.0 / (60 + vector_results_cte.c.vec_rank), 0.0)
+            + func.coalesce(1.0 / (60 + fts_results_cte.c.fts_rank), 0.0)
         ).label("rrf_score")
         final_select_cols.append(rrf_score)
-        final_query = final_query.where(or_(vector_results_cte.c.embedding_id != None, fts_results_cte.c.embedding_id != None))
+        final_query = final_query.where(
+            or_(
+                vector_results_cte.c.embedding_id != None,
+                fts_results_cte.c.embedding_id != None,
+            )
+        )
         final_query = final_query.order_by(rrf_score.desc())
     else:
         final_query = final_query.where(vector_results_cte.c.embedding_id != None)
