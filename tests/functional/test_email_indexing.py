@@ -6,7 +6,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, Tuple # Add missing typing imports
+from typing import Dict, Any, Tuple, Optional # Add missing typing imports
 
 import numpy as np
 import pytest
