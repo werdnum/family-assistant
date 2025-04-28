@@ -4,7 +4,7 @@ import re
 from fastapi import FastAPI, Request, Form, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any # Added Any
 from fastapi import Response  # Added Response
 from datetime import datetime, timezone
 import json
@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 # Import storage functions using absolute package path
 from family_assistant import storage
+from sqlalchemy import text # Added text import
 from family_assistant.storage.context import (
     DatabaseContext,
     get_db_context,
