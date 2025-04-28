@@ -69,6 +69,8 @@ try:
 
     # Configure templates using the calculated path
     templates = Jinja2Templates(directory=templates_dir)
+    # Add the 'tojson' filter to the Jinja environment
+    templates.env.filters['tojson'] = json.dumps
 
     # Mount static files using the calculated path
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
