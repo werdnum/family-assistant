@@ -224,7 +224,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 return
 
-            async with self.get_db_context() as db_context:
+            db_context_getter = self.get_db_context()  # Get the coroutine first
+            async with await db_context_getter as db_context:  # await to get the context manager
                 async with self._typing_notifications(context, chat_id):
                     # Call the method on the ProcessingService instance
                     llm_response_content, tool_call_info = (
@@ -298,7 +299,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         finally:
             try:
-                async with self.get_db_context() as db_context_for_history:
+                db_context_getter = self.get_db_context()  # Get the coroutine first
+                async with await db_context_getter as db_context_for_history:  # await to get the context manager
                     if reply_target_message_id:
                         history_user_content = combined_text
                         if first_photo_bytes:
