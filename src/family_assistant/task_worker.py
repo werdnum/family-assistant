@@ -448,7 +448,7 @@ class TaskWorker:
                                 db_context=db_context,
                                 task_id=task["task_id"],
                                 status="failed",
-                                    error=f"No handler registered for type {task['task_type']}",
+                                error=f"No handler registered for type {task['task_type']}", # Correct indentation
                                 )
                         # --- Waiting Logic (inside inner try, if no task was found) --- Indent this block ---
                         else:  # Changed from 'if not task:'
