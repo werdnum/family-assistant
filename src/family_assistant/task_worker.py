@@ -15,6 +15,9 @@ from typing import Dict, List, Any, Optional, Callable, Awaitable
 from family_assistant import storage  # Import for task queue operations
 from family_assistant.processing import ProcessingService  # Import the service
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.indexing.email_indexer import handle_index_email # Import email indexer
+# Import the new document indexer handler
+from family_assistant.indexing.document_indexer import handle_process_uploaded_document
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
@@ -72,6 +75,11 @@ async def handle_log_message(db_context: DatabaseContext, payload: Any):
 
 # Register the example handler
 TASK_HANDLERS["log_message"] = handle_log_message
+# Register the email indexing handler (assuming it should be here)
+# TODO: Confirm if email indexing is triggered via task queue or elsewhere. If via queue, register it.
+TASK_HANDLERS["index_email"] = handle_index_email
+# Register the new document processing handler
+TASK_HANDLERS["process_uploaded_document"] = handle_process_uploaded_document
 
 
 # --- Helper Function ---

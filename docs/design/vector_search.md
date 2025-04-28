@@ -294,10 +294,11 @@ The system supports multiple ways to ingest documents:
     *   [ ] Implement temporary content storage mechanism (initially in task payload or temp DB field, later file-based).
     *   [ ] Implement task enqueuing (`storage.enqueue_task` for `process_uploaded_document`).
 *   [ ] **Background Task Processing:**
-    *   [ ] Define new task type `process_uploaded_document`.
-    *   [ ] Implement task handler (`handle_process_uploaded_document`) in `task_worker.py` or a new indexing module.
-    *   [ ] Implement logic to retrieve content (from payload or temp storage).
-    *   [ ] Implement initial text processing (use directly).
+    *   [x] Define new task type `process_uploaded_document`. (Implicitly done by handler key)
+    *   [x] Implement task handler (`handle_process_uploaded_document`) in `indexing/document_indexer.py`. (Committed: 20b4519)
+    *   [x] Register task handler in `task_worker.py`. (Current change)
+    *   [x] Implement logic to retrieve content (from payload). (Committed: 20b4519)
+    *   [x] Implement initial text processing (use directly). (Committed: 20b4519)
     *   [ ] Integrate embedding generation (`EmbeddingGenerator`).
     *   [ ] Integrate embedding storage (`storage.add_embedding`).
     *   [ ] Implement temporary storage cleanup.
