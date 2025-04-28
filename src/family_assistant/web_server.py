@@ -315,21 +315,29 @@ async def vector_search_form(request: Request, db_context: DatabaseContext = Dep
     distinct_models = []
     distinct_types = []
     distinct_source_types = []
+    distinct_metadata_keys = [] # Added for metadata keys
     error = None
     try:
-        # Fetch distinct values for dropdowns
+        # Fetch distinct values for dropdowns/filters
         # Ensure table/column names match your actual schema
         q_models = text("SELECT DISTINCT embedding_model FROM document_embeddings ORDER BY embedding_model;")
         q_types = text("SELECT DISTINCT embedding_type FROM document_embeddings ORDER BY embedding_type;")
         q_source_types = text("SELECT DISTINCT source_type FROM documents ORDER BY source_type;")
+        # Query to get distinct top-level keys from the JSONB metadata column
+        q_meta_keys = text("SELECT DISTINCT key FROM documents, jsonb_object_keys(doc_metadata) AS keys(key) ORDER BY key;")
 
-        models_result = await db_context.fetch_all(q_models)
-        types_result = await db_context.fetch_all(q_types)
-        source_types_result = await db_context.fetch_all(q_source_types)
+
+        models_result, types_result, source_types_result, meta_keys_result = await asyncio.gather(
+            db_context.fetch_all(q_models),
+            db_context.fetch_all(q_types),
+            db_context.fetch_all(q_source_types),
+            db_context.fetch_all(q_meta_keys) # Fetch metadata keys
+        )
 
         distinct_models = [row["embedding_model"] for row in models_result]
         distinct_types = [row["embedding_type"] for row in types_result]
         distinct_source_types = [row["source_type"] for row in source_types_result]
+        distinct_metadata_keys = [row["key"] for row in meta_keys_result] # Populate metadata keys
 
     except Exception as e:
         logger.error(f"Failed to fetch distinct values for search form: {e}", exc_info=True)
@@ -346,6 +354,7 @@ async def vector_search_form(request: Request, db_context: DatabaseContext = Dep
             "distinct_models": distinct_models,
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
+            "distinct_metadata_keys": distinct_metadata_keys, # Pass keys to template
         },
     )
 
@@ -362,8 +371,10 @@ async def handle_vector_search(
     created_after: Optional[str] = Form(None), # Expect YYYY-MM-DD
     created_before: Optional[str] = Form(None), # Expect YYYY-MM-DD
     title_like: Optional[str] = Form(None),
-    metadata_key: Optional[str] = Form(None), # Basic JSONB filter key
-    metadata_value: Optional[str] = Form(None), # Basic JSONB filter value
+    # --- Metadata Filters (expect lists) ---
+    metadata_keys: List[str] = Form([]),
+    metadata_values: List[str] = Form([]),
+    # --- Control Params ---
     limit: int = Form(10),
     rrf_k: int = Form(60),
     # --- Dependencies ---
@@ -387,12 +398,14 @@ async def handle_vector_search(
         "embedding_model": embedding_model, "embedding_types": embedding_types,
         "source_types": source_types, "created_after": created_after,
         "created_before": created_before, "title_like": title_like,
-        "metadata_key": metadata_key, "metadata_value": metadata_value,
+        # Store lists for metadata filters
+        "metadata_keys": metadata_keys, "metadata_values": metadata_values,
         "limit": limit, "rrf_k": rrf_k,
     }
     distinct_models = [] # Fetch again or pass from GET state if possible
     distinct_types = []
     distinct_source_types = []
+    distinct_metadata_keys = [] # Fetch again
 
     try:
         # --- Parse Dates (handle potential errors) ---
@@ -436,7 +449,7 @@ async def handle_vector_search(
             created_after=created_after_dt,
             created_before=created_before_dt,
             title_like=title_like,
-            metadata_filter=metadata_filter_obj,
+            metadata_filters=metadata_filters_list, # Pass the list
             limit=limit,
             rrf_k=rrf_k,
         )
@@ -478,12 +491,21 @@ async def handle_vector_search(
         q_models = text("SELECT DISTINCT embedding_model FROM document_embeddings ORDER BY embedding_model;")
         q_types = text("SELECT DISTINCT embedding_type FROM document_embeddings ORDER BY embedding_type;")
         q_source_types = text("SELECT DISTINCT source_type FROM documents ORDER BY source_type;")
-        models_result = await db_context.fetch_all(q_models)
-        types_result = await db_context.fetch_all(q_types)
-        source_types_result = await db_context.fetch_all(q_source_types)
+        q_meta_keys = text("SELECT DISTINCT key FROM documents, jsonb_object_keys(doc_metadata) AS keys(key) ORDER BY key;")
+
+        # Use asyncio.gather for concurrent fetching
+        models_result, types_result, source_types_result, meta_keys_result = await asyncio.gather(
+            db_context.fetch_all(q_models),
+            db_context.fetch_all(q_types),
+            db_context.fetch_all(q_source_types),
+            db_context.fetch_all(q_meta_keys)
+        )
+
         distinct_models = [row["embedding_model"] for row in models_result]
         distinct_types = [row["embedding_type"] for row in types_result]
         distinct_source_types = [row["source_type"] for row in source_types_result]
+        distinct_metadata_keys = [row["key"] for row in meta_keys_result] # Get keys
+
     except Exception as e:
         logger.error(f"Failed to fetch distinct values for search form render: {e}", exc_info=True)
         # Don't overwrite previous error, but log this one
@@ -501,8 +523,12 @@ async def handle_vector_search(
             "distinct_models": distinct_models,
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
+            "distinct_metadata_keys": distinct_metadata_keys, # Pass keys
         },
     )
+
+# Need asyncio for gather
+import asyncio
 
 
 # --- Uvicorn Runner (for standalone testing) ---
