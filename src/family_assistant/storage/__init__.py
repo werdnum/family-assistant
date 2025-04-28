@@ -98,7 +98,9 @@ async def init_db():
                     try:
                         # Create a context specifically for vector init using the current engine
                         # Instantiate DatabaseContext directly for the async with statement
-                        async with DatabaseContext(engine=engine) as vector_init_context:
+                        async with DatabaseContext(
+                            engine=engine
+                        ) as vector_init_context:
                             await init_vector_db(db_context=vector_init_context)
                     except Exception as vec_e:
                         logger.error(

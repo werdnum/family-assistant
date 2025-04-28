@@ -115,9 +115,9 @@ RUN --mount=type=cache,target=${UV_CACHE_DIR} \
 # --- Linting Step (Optional but recommended) ---
 # Run linter (e.g., pylint) on the source code *after* copying it
 # Ensure pylint is installed (add to [project.optional-dependencies]dev in pyproject.toml)
-# RUN echo "Running pylint..." && \
-#     pylint --errors-only src/family_assistant || \
-#     (echo "Pylint found errors. Please fix them." && exit 1)
+#RUN echo "Running pylint..." && \
+#    pylint --errors-only src/family_assistant || \
+#    (echo "Pylint found errors. Please fix them." && exit 1)
 
 
 # --- Runtime Configuration ---

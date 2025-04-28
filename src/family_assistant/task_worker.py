@@ -146,11 +146,13 @@ async def handle_llm_callback(db_context: DatabaseContext, payload: Any):
         # all_tools = local_tools_definition + mcp_tools # Removed
 
         # Call the ProcessingService directly, passing the application instance
-        llm_response_content, tool_call_info = await processing_service_instance.process_message(
-            db_context=db_context,  # Pass db_context
-            messages=messages_for_llm,
-            chat_id=chat_id,
-            application=application,  # Pass application for ToolExecutionContext
+        llm_response_content, tool_call_info = (
+            await processing_service_instance.process_message(
+                db_context=db_context,  # Pass db_context
+                messages=messages_for_llm,
+                chat_id=chat_id,
+                application=application,  # Pass application for ToolExecutionContext
+            )
         )
 
         if llm_response_content:
@@ -231,12 +233,12 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
     task_types_handled = list(TASK_HANDLERS.keys())
 
     while not shutdown_event.is_set():
-        try: # Add try block here to encompass the whole loop iteration
+        try:  # Add try block here to encompass the whole loop iteration
             task = None
             # Create a database context for this iteration
             # Await the coroutine returned by get_db_context()
             async with await get_db_context() as db_context:
-                try: # Inner try for dequeue, task processing, and waiting logic
+                try:  # Inner try for dequeue, task processing, and waiting logic
                     # Dequeue a task of a type this worker handles
                     task = await storage.dequeue_task(
                         db_context=db_context,  # Pass db_context
@@ -266,7 +268,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 
                                 # Mark task as done
                                 await storage.update_task_status(
-                                    db_context=db_context, task_id=task_id, status="done"
+                                    db_context=db_context,
+                                    task_id=task_id,
+                                    status="done",
                                 )
                                 logger.info(
                                     f"Worker {worker_id} completed task {task_id} (Original: {original_task_id})"
@@ -290,8 +294,10 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                             )
                                         # Ensure the base time is timezone-aware for rrule
                                         if last_scheduled_at.tzinfo is None:
-                                            last_scheduled_at = last_scheduled_at.replace(
-                                                tzinfo=timezone.utc
+                                            last_scheduled_at = (
+                                                last_scheduled_at.replace(
+                                                    tzinfo=timezone.utc
+                                                )
                                             )
                                             logger.warning(
                                                 f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
@@ -302,9 +308,12 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
 
                                         # Calculate the next occurrence *after* the last scheduled time
                                         rule = rrule.rrulestr(
-                                            recurrence_rule_str, dtstart=last_scheduled_at
+                                            recurrence_rule_str,
+                                            dtstart=last_scheduled_at,
                                         )
-                                        next_scheduled_dt = rule.after(last_scheduled_at)
+                                        next_scheduled_dt = rule.after(
+                                            last_scheduled_at
+                                        )
 
                                         if next_scheduled_dt:
                                             # Generate a new unique task ID for the next instance
@@ -346,7 +355,8 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                             except Exception as handler_exc:
                                 current_retry = task.get("retry_count", 0)
                                 max_retries = task.get(
-                                    "max_retries", 3  # Use DB default if missing somehow
+                                    "max_retries",
+                                    3,  # Use DB default if missing somehow
                                 )  # Use DB default if missing somehow
                                 error_str = str(handler_exc)
                                 logger.error(
@@ -357,12 +367,12 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                 if current_retry < max_retries:
                                     # Calculate exponential backoff with jitter
                                     # Base delay: 5 seconds, increases with retries
-                                    backoff_delay = (5 * (2**current_retry)) + random.uniform(
-                                        0, 2
-                                    )
-                                    next_attempt_time = datetime.now(timezone.utc) + timedelta(
-                                        seconds=backoff_delay
-                                    )
+                                    backoff_delay = (
+                                        5 * (2**current_retry)
+                                    ) + random.uniform(0, 2)
+                                    next_attempt_time = datetime.now(
+                                        timezone.utc
+                                    ) + timedelta(seconds=backoff_delay)
                                     logger.info(
                                         f"Scheduling retry {current_retry + 1} for task {task['task_id']} at {next_attempt_time} (delay: {backoff_delay:.2f}s)"
                                     )
@@ -409,7 +419,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                                 error=f"No handler registered for type {task['task_type']}",
                             )
                     # --- Waiting Logic (inside inner try, if no task was found) ---
-                    else: # Changed from 'if not task:'
+                    else:  # Changed from 'if not task:'
                         # No task found, wait for the polling interval OR the wake-up event
                         try:
                             logger.debug(
@@ -427,7 +437,7 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                             logger.debug(
                                 f"Worker {worker_id}: Wait timed out, continuing poll cycle."
                             )
-                            pass # Continue the loop normally after timeout
+                            pass  # Continue the loop normally after timeout
 
                 # --- Exception handling for the inner try block (catches dequeue, task processing, or waiting errors) ---
                 except Exception as e:
@@ -438,7 +448,9 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
                     # If an error occurs *within* the db_context block (e.g., during dequeue, handler execution, or waiting),
                     # the context manager will handle rollback/commit based on the exception.
                     # We might still want a delay before the next iteration's context attempt.
-                    await asyncio.sleep(TASK_POLLING_INTERVAL) # Short delay after error within context
+                    await asyncio.sleep(
+                        TASK_POLLING_INTERVAL
+                    )  # Short delay after error within context
 
         # --- Exception handling for the outer try block (whole loop iteration) ---
         except asyncio.CancelledError:
@@ -446,19 +458,22 @@ async def task_worker_loop(worker_id: str, wake_up_event: asyncio.Event):
             # If a task was being processed when cancelled, it might remain locked.
             # Rely on lock expiry/manual intervention for now.
             # For simplicity, we just exit.
-            break # Exit the loop cleanly on cancellation
+            break  # Exit the loop cleanly on cancellation
         except Exception as e:
             logger.error(
-                f"Task worker {worker_id} encountered an unexpected error outside DB context: {e}", exc_info=True
+                f"Task worker {worker_id} encountered an unexpected error outside DB context: {e}",
+                exc_info=True,
             )
             # If an error occurs outside the db_context (e.g., getting context itself), wait before retrying
-            await asyncio.sleep(TASK_POLLING_INTERVAL * 2) # Longer sleep after error
+            await asyncio.sleep(TASK_POLLING_INTERVAL * 2)  # Longer sleep after error
 
     logger.info(f"Task worker {worker_id} stopped.")
 
 
 # --- Module initialization ---
-def register_task_handler(task_type: str, handler: Callable[[DatabaseContext, Any], Awaitable[None]]):
+def register_task_handler(
+    task_type: str, handler: Callable[[DatabaseContext, Any], Awaitable[None]]
+):
     """Register a new task handler function for a specific task type."""
     TASK_HANDLERS[task_type] = handler
     logger.info(f"Registered task handler for task type: {task_type}")

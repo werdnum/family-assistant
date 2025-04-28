@@ -17,7 +17,7 @@ from telegram.ext import Application  # Required for ToolExecutionContext
 
 # Import storage functions needed by local tools
 from family_assistant import storage
-from family_assistant.storage.context import DatabaseContext # Import DatabaseContext
+from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class ToolExecutionContext:
     """Context passed to tool execution functions."""
 
     chat_id: int
-    db_context: DatabaseContext # Add database context
+    db_context: DatabaseContext  # Add database context
     application: Optional[Application] = (
         None  # Still needed for schedule_future_callback
     )
@@ -132,7 +132,7 @@ async def schedule_recurring_task_tool(
 
         # Enqueue the first instance using the db_context from exec_context
         await storage.enqueue_task(
-            db_context=exec_context.db_context, # Pass db_context
+            db_context=exec_context.db_context,  # Pass db_context
             task_id=initial_task_id,
             task_type=task_type,
             payload=payload,
@@ -170,7 +170,7 @@ async def schedule_future_callback_tool(
     # Get application instance, chat_id, and db_context from the execution context object
     application = exec_context.application
     chat_id = exec_context.chat_id
-    db_context = exec_context.db_context # Get db_context
+    db_context = exec_context.db_context  # Get db_context
 
     if not application:
         logger.error(
@@ -204,7 +204,7 @@ async def schedule_future_callback_tool(
         # TODO: Need access to the new_task_event from main.py to notify worker.
         # This refactor doesn't address passing the event down yet.
         await storage.enqueue_task(
-            db_context=db_context, # Pass db_context
+            db_context=db_context,  # Pass db_context
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
@@ -367,12 +367,12 @@ class LocalToolsProvider:
                 logger.warning(
                     f"Executing local tool '{name}' without db_context (assuming it's not needed)."
                 )
-                result = await callable_func(**arguments) # Call without context
+                result = await callable_func(**arguments)  # Call without context
 
             # Ensure result is a string
-            if result is None: # Handle None case explicitly
-                 result_str = "Tool executed successfully (returned None)."
-                 logger.info(f"Local tool '{name}' returned None.")
+            if result is None:  # Handle None case explicitly
+                result_str = "Tool executed successfully (returned None)."
+                logger.info(f"Local tool '{name}' returned None.")
             elif not isinstance(result, str):
                 result_str = str(result)
                 logger.warning(

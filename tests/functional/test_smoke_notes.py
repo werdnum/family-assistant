@@ -2,9 +2,9 @@ import pytest
 import uuid
 import asyncio
 import logging
-import json # Added json import
+import json  # Added json import
 from sqlalchemy import text  # To query DB directly for assertion
-from typing import List, Dict, Any, Optional, Callable, Tuple # Added typing imports
+from typing import List, Dict, Any, Optional, Callable, Tuple  # Added typing imports
 from unittest.mock import MagicMock  # For mocking Application
 
 # _generate_llm_response_for_chat was moved to ProcessingService
@@ -15,9 +15,15 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 
 # Import necessary classes for instantiation
 from family_assistant.processing import ProcessingService
-from family_assistant.llm import LLMInterface, LLMOutput # Keep Interface and Output
+from family_assistant.llm import LLMInterface, LLMOutput  # Keep Interface and Output
+
 # Import the rule-based mock
-from tests.mocks.mock_llm import RuleBasedMockLLMClient, Rule, MatcherFunction, get_last_message_text
+from tests.mocks.mock_llm import (
+    RuleBasedMockLLMClient,
+    Rule,
+    MatcherFunction,
+    get_last_message_text,
+)
 
 from family_assistant.tools import (
     LocalToolsProvider,
@@ -42,7 +48,7 @@ TEST_USER_NAME = "TestUser"
 
 
 @pytest.mark.asyncio
-async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
+async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     """
     Rule-based mock test:
     1. Define rules for adding and retrieving a specific note.
@@ -54,7 +60,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     """
     # --- Setup ---
     test_note_title = f"{TEST_NOTE_TITLE_BASE} {uuid.uuid4()}"
-    test_tool_call_id = f"call_{uuid.uuid4()}" # Pre-generate ID for the rule
+    test_tool_call_id = f"call_{uuid.uuid4()}"  # Pre-generate ID for the rule
     logger.info(f"\n--- Running Rule-Based Mock Test: Add/Retrieve Note ---")
     logger.info(f"Using Note Title: {test_note_title}")
 
@@ -67,22 +73,26 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
             "remember this note" in last_text
             and f"title: {test_note_title}".lower() in last_text
             and f"content: {TEST_NOTE_CONTENT}".lower() in last_text
-            and tools is not None # Check that tools were actually provided
+            and tools is not None  # Check that tools were actually provided
         )
 
     add_note_response = LLMOutput(
         content="OK, I will add that note via the rule-based mock.",
-        tool_calls=[{
-            "id": test_tool_call_id, # Use pre-generated ID
-            "type": "function",
-            "function": {
-                "name": "add_or_update_note",
-                "arguments": json.dumps({ # Arguments must be JSON string
-                    "title": test_note_title,
-                    "content": TEST_NOTE_CONTENT,
-                }),
-            },
-        }]
+        tool_calls=[
+            {
+                "id": test_tool_call_id,  # Use pre-generated ID
+                "type": "function",
+                "function": {
+                    "name": "add_or_update_note",
+                    "arguments": json.dumps(
+                        {  # Arguments must be JSON string
+                            "title": test_note_title,
+                            "content": TEST_NOTE_CONTENT,
+                        }
+                    ),
+                },
+            }
+        ],
     )
     add_note_rule: Rule = (add_note_matcher, add_note_response)
 
@@ -99,7 +109,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
 
     retrieve_note_response = LLMOutput(
         content=f"Rule-based mock says: The note '{test_note_title}' contains: {TEST_NOTE_CONTENT}",
-        tool_calls=None # No tool call for retrieval
+        tool_calls=None,  # No tool call for retrieval
     )
     retrieve_note_rule: Rule = (retrieve_note_matcher, retrieve_note_response)
 
@@ -157,17 +167,18 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     # Note: test_db_engine fixture comes from the root conftest.py
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance
-        add_response_content, add_tool_info = await processing_service.generate_llm_response_for_chat(
-            db_context=db_context, # Pass the context
-            # processing_service argument removed
-            application=mock_application,
-            chat_id=TEST_CHAT_ID,
-            trigger_content_parts=add_note_trigger,
-            user_name=TEST_USER_NAME,
-            # model_name argument removed
+        add_response_content, add_tool_info = (
+            await processing_service.generate_llm_response_for_chat(
+                db_context=db_context,  # Pass the context
+                # processing_service argument removed
+                application=mock_application,
+                chat_id=TEST_CHAT_ID,
+                trigger_content_parts=add_note_trigger,
+                user_name=TEST_USER_NAME,
+                # model_name argument removed
+            )
         )
         # model_name argument removed from _generate_llm_response_for_chat call
-
 
     logger.info(f"Add Note - Mock LLM Response Content: {add_response_content}")
     logger.info(f"Add Note - Tool Info from Processing: {add_tool_info}")
@@ -193,7 +204,9 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     assert add_tool_info is not None, "Tool info should not be None for add_note rule"
     assert len(add_tool_info) == 1, "Expected exactly one tool call info object"
     assert add_tool_info[0]["function_name"] == "add_or_update_note"
-    assert add_tool_info[0]["tool_call_id"] == test_tool_call_id # Check ID matches rule
+    assert (
+        add_tool_info[0]["tool_call_id"] == test_tool_call_id
+    )  # Check ID matches rule
     assert add_tool_info[0]["arguments"]["title"] == test_note_title
     assert add_tool_info[0]["arguments"]["content"] == TEST_NOTE_CONTENT
     assert "Error:" not in add_tool_info[0].get(
@@ -202,7 +215,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     logger.info("Tool info check passed.")
 
     # --- Add a small delay ---
-    await asyncio.sleep(0.1) # Can be shorter with mock
+    await asyncio.sleep(0.1)  # Can be shorter with mock
 
     logger.info(f"\n--- Running Rule-Based Mock Test: Retrieve Note ---")
     # --- Part 2: Retrieve the note ---
@@ -214,7 +227,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
         # Call the method on the ProcessingService instance again
         retrieve_response_content, retrieve_tool_info = (
             await processing_service.generate_llm_response_for_chat(
-                db_context=db_context, # Pass the context
+                db_context=db_context,  # Pass the context
                 # processing_service argument removed
                 application=mock_application,
                 chat_id=TEST_CHAT_ID,
@@ -223,14 +236,17 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
                 # model_name argument removed
             )
         )
-            # model_name argument removed from _generate_llm_response_for_chat call
+        # model_name argument removed from _generate_llm_response_for_chat call
 
-
-    logger.info(f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}")
+    logger.info(
+        f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}"
+    )
     logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
 
     # Assertion 3: Check the final response content from the mock rule
-    assert retrieve_response_content is not None, "Mock LLM response for retrieval was None."
+    assert (
+        retrieve_response_content is not None
+    ), "Mock LLM response for retrieval was None."
     # Use lower() for case-insensitive comparison
     assert (
         TEST_NOTE_CONTENT.lower() in retrieve_response_content.lower()
@@ -238,12 +254,16 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine): # Renamed test
     assert (
         test_note_title.lower() in retrieve_response_content.lower()
     ), f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {retrieve_response_content}"
-    assert "Rule-based mock says:" in retrieve_response_content # Check it used our specific response
+    assert (
+        "Rule-based mock says:" in retrieve_response_content
+    )  # Check it used our specific response
 
     # Assertion 4: Ensure no tool was called for retrieval
     assert (
         retrieve_tool_info is None
     ), f"Expected no tool call for mock retrieval rule, but got: {retrieve_tool_info}"
 
-    logger.info("Verified rule-based mock response contains note content and no tool was called.")
+    logger.info(
+        "Verified rule-based mock response contains note content and no tool was called."
+    )
     logger.info("--- Rule-Based Mock Test Passed ---")
