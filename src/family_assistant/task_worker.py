@@ -392,7 +392,7 @@ class TaskWorker:
                                 )  # Use DB default if missing somehow
                                 error_str = str(handler_exc)
                                 logger.error(
-                                    f"Worker {worker_id} failed task {task['task_id']} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
+                                    f"Worker {self.worker_id} failed task {task['task_id']} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
                                     exc_info=True,
                                 )
 
