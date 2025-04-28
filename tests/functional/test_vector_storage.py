@@ -15,11 +15,15 @@ from sqlalchemy import text  # Add this import
 from family_assistant.storage.vector import (
     add_document,
     add_embedding,
-    query_vectors,
     get_document_by_source_id,
     delete_document,
     Document,  # Import the protocol
     DocumentRecord,  # Import the ORM model for type hints if needed
+)
+# Import the new query function and schema
+from family_assistant.storage.vector_search import (
+    query_vector_store,
+    VectorSearchQuery,
 )
 from family_assistant.storage.context import DatabaseContext
 
@@ -144,17 +148,26 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
         )
         logger.info("Embedding added.")
 
-    # --- Act & Assert: Query Vectors ---
+    # --- Act & Assert: Query Vectors using new function ---
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info("Querying vectors with exact match...")
-        query_results = await query_vectors(
-            db,
-            query_embedding=test_embedding_vector,
-            embedding_model=TEST_EMBEDDING_MODEL,  # Must match the index filter
+        logger.info("Querying vectors with exact match using query_vector_store...")
+
+        # Create the query object
+        search_query = VectorSearchQuery(
+            search_type='semantic', # We are only testing semantic match here
+            semantic_query="dummy query text", # Text isn't used directly, embedding is
+            embedding_model=TEST_EMBEDDING_MODEL,
             limit=5,
+            # No filters needed for this basic test
         )
 
-        assert query_results is not None, "query_vectors returned None"
+        query_results = await query_vector_store(
+            db_context=db,
+            query=search_query,
+            query_embedding=test_embedding_vector, # Pass the embedding separately
+        )
+
+        assert query_results is not None, "query_vector_store returned None"
         assert len(query_results) > 0, "No results returned from vector query"
         logger.info(f"Query returned {len(query_results)} result(s).")
 
@@ -172,14 +185,20 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
 
         # Check distance (should be very close to 0 for exact match)
         assert "distance" in found_result, "Result missing 'distance' field"
-        assert found_result["distance"] == pytest.approx(
+        # Handle potential None distance if query somehow failed internally but returned row
+        distance = found_result.get("distance")
+        assert distance is not None, "Distance is None in the result"
+        assert distance == pytest.approx(
             0.0, abs=1e-6
-        ), f"Distance should be near zero for exact match, but was {found_result['distance']}"
+        ), f"Distance should be near zero for exact match, but was {distance}"
 
-        # Check other fields in the result
+        # Check other fields in the result (which is now a dict)
         assert found_result.get("embedding_type") == test_embedding_type
         assert found_result.get("embedding_source_content") == test_content
         assert found_result.get("title") == test_title
+        # Verify other fields returned by the new query function if needed
+        assert found_result.get("source_id") == test_source_id
+        assert found_result.get("chunk_index") == 0 # Based on test setup
 
     # --- Act & Assert: Retrieve Document by Source ID ---
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
