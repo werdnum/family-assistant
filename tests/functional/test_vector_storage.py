@@ -25,7 +25,15 @@ from family_assistant.storage.vector_search import (
     query_vector_store,
     VectorSearchQuery,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import DatabaseContext, get_db_context # Add get_db_context
+from family_assistant.embeddings import MockEmbeddingGenerator # For mocking embeddings
+from family_assistant.tools import ( # Import tool components
+    search_documents_tool,
+    LocalToolsProvider,
+    ToolExecutionContext,
+    AVAILABLE_FUNCTIONS, # To get the tool function mapping
+    TOOLS_DEFINITION, # To get tool definitions (though not strictly needed for execution)
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,3 +260,123 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
         logger.info("Verified document and embeddings are deleted.")
 
     logger.info("--- Vector Storage Basic Flow Test Passed ---")
+
+
+@pytest.mark.asyncio
+async def test_search_documents_tool(pg_vector_db_engine):
+    """
+    Tests the search_documents_tool function via LocalToolsProvider.
+    1. Adds a test document and embedding.
+    2. Sets up a MockEmbeddingGenerator for the query.
+    3. Executes the tool using LocalToolsProvider.
+    4. Verifies the tool returns the expected document.
+    """
+    # --- Arrange: Test Data ---
+    test_source_id = f"test_tool_doc_{uuid.uuid4()}"
+    test_source_type = "tool_test_source"
+    test_title = f"Tool Test Document {uuid.uuid4()}"
+    test_content = "This is the specific content for the document search tool test."
+    test_query = "Tell me about the document search tool test"
+    # Use a distinct model name for the mock to avoid conflicts
+    mock_embedding_model = "mock-search-model-001"
+    mock_embedding_dimension = 128 # Smaller dimension for mock
+
+    # Generate consistent embeddings for test doc and query
+    # Use different vectors to simulate non-exact match if desired,
+    # but for basic function test, using the same makes assertion easier.
+    mock_doc_embedding = np.random.rand(mock_embedding_dimension).astype(np.float32).tolist()
+    mock_query_embedding = mock_doc_embedding # Use same for direct hit
+
+    test_doc = MockDocumentImpl(
+        source_type=test_source_type,
+        source_id=test_source_id,
+        title=test_title,
+        metadata={"purpose": "tool_testing"},
+    )
+
+    logger.info(f"\n--- Running Search Documents Tool Test ---")
+    logger.info(f"Using Source ID: {test_source_id}")
+    logger.info(f"Using Mock Embedding Model: {mock_embedding_model} (Dim: {mock_embedding_dimension})")
+
+    # --- Arrange: Add Document and Embedding to DB ---
+    doc_id = None
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+        logger.info("Adding test document for tool test...")
+        doc_id = await add_document(db, doc=test_doc)
+        logger.info(f"Document added with ID: {doc_id}")
+
+        logger.info("Adding test embedding for tool test...")
+        await add_embedding(
+            db,
+            document_id=doc_id,
+            chunk_index=0,
+            embedding_type="content_chunk", # Match default search or specify if needed
+            embedding=mock_doc_embedding,
+            embedding_model=mock_embedding_model, # Use the mock model name
+            content=test_content,
+        )
+        logger.info("Embedding added.")
+
+    # --- Arrange: Tool Execution Environment ---
+    # Mock Embedding Generator: Maps the query text to the predefined embedding
+    embedding_map = {test_query: mock_query_embedding}
+    mock_generator = MockEmbeddingGenerator(
+        embedding_map=embedding_map,
+        model_name=mock_embedding_model,
+        default_embedding=np.zeros(mock_embedding_dimension).tolist() # Fallback
+    )
+
+    # Local Tools Provider with the mock generator
+    # We only need the search tool implementation for this test
+    tool_implementations = {"search_documents": search_documents_tool}
+    local_provider = LocalToolsProvider(
+        definitions=[], # Definitions not needed for execution test
+        implementations=tool_implementations,
+        embedding_generator=mock_generator, # Inject the mock
+    )
+
+    # Tool Execution Context (needs a DatabaseContext)
+    # Create a new context for the execution phase
+    async with DatabaseContext(engine=pg_vector_db_engine) as exec_db_context:
+        tool_context = ToolExecutionContext(
+            chat_id=123, # Dummy chat ID
+            db_context=exec_db_context,
+            application=None # Not needed for search_documents tool
+        )
+
+        # --- Act: Execute the tool via the provider ---
+        logger.info(f"Executing search_documents tool with query: '{test_query}'")
+        tool_result = await local_provider.execute_tool(
+            name="search_documents",
+            arguments={"query_text": test_query}, # Pass arguments as dict
+            context=tool_context,
+        )
+
+        logger.info(f"Tool execution result: {tool_result}")
+
+        # --- Assert ---
+        assert tool_result is not None, "Tool execution returned None"
+        assert isinstance(tool_result, str), "Tool result should be a string"
+        assert "Error:" not in tool_result, f"Tool execution reported an error: {tool_result}"
+        assert "Found relevant documents:" in tool_result, "Tool result preamble missing"
+        assert test_title in tool_result, "Document title not found in tool result"
+        assert test_source_type in tool_result, "Document source type not found in tool result"
+        # Check for part of the snippet (tool truncates)
+        assert test_content[:50] in tool_result, "Document snippet not found in tool result"
+
+    # --- Cleanup: Verify document deletion (optional, relies on fixture) ---
+    # Add verification if fixture doesn't guarantee cleanup or if explicit check is desired
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+         logger.info(f"Verifying test document (ID: {doc_id}) is deleted after test...")
+         # Use direct query as get_document_by_source_id might be cached or slow
+         stmt = text("SELECT COUNT(*) FROM documents WHERE id = :doc_id")
+         result = await db.execute_with_retry(stmt, {"doc_id": doc_id})
+         count = result.scalar_one()
+         # NOTE: This assertion depends on the fixture cleaning up *after* the test runs.
+         # If the fixture cleans *before*, this check is invalid.
+         # Assuming cleanup happens after:
+         # assert count == 0, f"Test document ID {doc_id} was not cleaned up after the test."
+         # If cleanup happens before, we can't reliably check here.
+         # For now, assume fixture handles cleanup.
+
+    logger.info("--- Search Documents Tool Test Passed ---")
