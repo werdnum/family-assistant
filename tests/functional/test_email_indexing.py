@@ -352,7 +352,8 @@ async def test_vector_ranking(pg_vector_db_engine):
         default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist()
     )
     set_indexing_dependencies(embedding_generator=mock_embedder)
-    task_worker.register_task_handler("index_email", handle_index_email)
+    # TaskWorker instance is created and registered earlier in this test
+    # worker is already defined and will handle index_email tasks
 
     # --- Arrange: Ingest Emails ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
@@ -477,7 +478,8 @@ async def test_metadata_filtering(pg_vector_db_engine):
         default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist()
     )
     set_indexing_dependencies(embedding_generator=mock_embedder)
-    task_worker.register_task_handler("index_email", handle_index_email)
+    # TaskWorker instance is created and registered earlier in this test
+    # worker is already defined and will handle index_email tasks
 
     # --- Arrange: Ingest Emails with different source_type ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
@@ -604,7 +606,8 @@ async def test_keyword_filtering(pg_vector_db_engine):
         default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist()
     )
     set_indexing_dependencies(embedding_generator=mock_embedder)
-    task_worker.register_task_handler("index_email", handle_index_email)
+    # TaskWorker instance is created and registered earlier in this test
+    # worker is already defined and will handle index_email tasks
 
     # --- Arrange: Ingest Emails ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
