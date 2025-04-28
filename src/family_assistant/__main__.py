@@ -106,8 +106,9 @@ from family_assistant import calendar_integration
 # Import the Telegram service class
 from .telegram_bot import TelegramService  # Updated import
 
-# Import indexing task handler
+# Import indexing components
 from family_assistant.indexing.email_indexer import handle_index_email, set_indexing_dependencies
+from family_assistant.indexing.document_indexer import DocumentIndexer # Import the class
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -614,8 +615,11 @@ async def main_async(
         f"ProcessingService initialized with {type(llm_client).__name__}, {type(composite_provider).__name__} and configuration."
     )
 
-    # --- Set Indexing Dependencies ---
-    set_indexing_dependencies(embedding_generator=embedding_generator, llm_client=llm_client) # Pass LLM too for future enrichment
+    # --- Instantiate Indexers ---
+    document_indexer = DocumentIndexer(embedding_generator=embedding_generator)
+    # Set email indexing dependencies (still uses setter pattern for now)
+    # TODO: Refactor email_indexer to class-based DI as well
+    set_indexing_dependencies(embedding_generator=embedding_generator, llm_client=llm_client)
 
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
@@ -638,17 +642,13 @@ async def main_async(
     web_server_task = asyncio.create_task(server.serve())
     logger.info("Web server running on http://0.0.0.0:8000")
 
-    # Pass the ProcessingService instance to the task worker module
-    # The task worker will use this service, which internally uses the tools provider
+    # Pass service instances to the task worker module
     task_worker.set_processing_service(processing_service)
-    # No longer need to pass MCP state separately to task worker
-    # task_worker.set_mcp_state(mcp_sessions, mcp_tools, tool_name_to_server_id) # Removed
+    task_worker.set_document_indexer(document_indexer) # Inject the document indexer instance
+    # Note: The document indexer handler is now registered *inside* set_document_indexer
 
-    # --- Register Task Handlers ---
-    # Register the new email indexing handler
-    task_worker.register_task_handler("index_email", handle_index_email)
+    # Log handlers *after* potential dynamic registration
     logger.info(f"Registered task handlers: {list(task_worker.get_task_handlers().keys())}")
-
 
     # Start the task queue worker, passing the notification event
     worker_id = (
