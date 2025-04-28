@@ -16,6 +16,7 @@ except ImportError:
     from typing import Protocol
 
     class LLMOutput:
+        """Mock version of LLMOutput for when the real one can't be imported"""
         def __init__(
             self,
             content: Optional[str] = None,
@@ -25,6 +26,7 @@ except ImportError:
             self.tool_calls = tool_calls or []
 
     class LLMInterface(Protocol):
+        """Mock version of LLMInterface for when the real one can't be imported"""
         async def generate_response(
             self,
             messages: List[Dict[str, Any]],
