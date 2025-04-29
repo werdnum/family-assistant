@@ -117,7 +117,9 @@ async def http_client(
     # The pg_vector_db_engine fixture already patches storage.base.engine
     # so the app will use the correct test database.
 
-    async with httpx.AsyncClient(app=fastapi_app, base_url="http://test") as client:
+    # Use ASGITransport for testing FastAPI apps with httpx >= 0.20.0
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
     logger.info("Test HTTP client closed.")
     # Clean up app state if necessary, though function scope might handle it
