@@ -637,14 +637,61 @@ class MCPToolsProvider:
         mcp_sessions: Dict[str, ClientSession],
         tool_name_to_server_id: Dict[str, str],
     ):
-        self._definitions = mcp_definitions
+        # Sanitize definitions before storing them
+        sanitized_definitions = self._sanitize_mcp_definitions(mcp_definitions)
+        self._definitions = sanitized_definitions
         self._sessions = mcp_sessions
         self._tool_map = tool_name_to_server_id
         logger.info(
-            f"MCPToolsProvider initialized with {len(self._definitions)} tools from {len(self._sessions)} sessions."
+            f"MCPToolsProvider initialized with {len(self._definitions)} sanitized tools from {len(self._sessions)} sessions."
         )
 
+    def _sanitize_mcp_definitions(self, definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Removes unsupported 'format' fields from string parameters in tool definitions.
+        Google's API only supports 'enum' and 'date-time' for string formats.
+        """
+        sanitized = []
+        for tool_def in definitions:
+            try:
+                # Deep copy to avoid modifying original dicts if they are reused elsewhere
+                # Though in this context, it might not be strictly necessary
+                # sanitized_tool_def = copy.deepcopy(tool_def) # Consider adding import copy
+                sanitized_tool_def = json.loads(json.dumps(tool_def)) # Simple deep copy via JSON
+
+                func_def = sanitized_tool_def.get("function", {})
+                params = func_def.get("parameters", {})
+                properties = params.get("properties", {})
+
+                props_to_delete_format = []
+
+                for param_name, param_details in properties.items():
+                    if isinstance(param_details, dict):
+                        param_type = param_details.get("type")
+                        param_format = param_details.get("format")
+
+                        if param_type == "string" and param_format and param_format not in ["enum", "date-time"]:
+                            logger.warning(
+                                f"Sanitizing tool '{func_def.get('name', 'UNKNOWN')}': Removing unsupported format '{param_format}' from string parameter '{param_name}'."
+                            )
+                            # Don't modify while iterating, mark for deletion
+                            props_to_delete_format.append(param_name)
+
+                # Perform deletion after iteration
+                for param_name in props_to_delete_format:
+                    if param_name in properties and isinstance(properties[param_name], dict):
+                         del properties[param_name]['format']
+
+                sanitized.append(sanitized_tool_def)
+            except Exception as e:
+                logger.error(f"Error sanitizing tool definition: {tool_def}. Error: {e}", exc_info=True)
+                # Decide whether to skip the tool or add the original unsanitized one
+                sanitized.append(tool_def) # Add original if sanitization fails
+
+        return sanitized
+
     async def get_tool_definitions(self) -> List[Dict[str, Any]]:
+        # Definitions are already sanitized during init
         return self._definitions
 
     async def execute_tool(
