@@ -138,7 +138,7 @@ async def wait_for_tasks_to_complete(
                 sa.column("status"),
                 sa.column("scheduled_at"),
                 sa.column("retry_count"),
-                sa.column("last_error"),
+                #sa.column("last_error"),
             ]
             pending_query = select(*cols_to_select).select_from(tasks_table).where(
                 tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
@@ -149,7 +149,7 @@ async def wait_for_tasks_to_complete(
             pending_results = await db.fetch_all(pending_query)
             if pending_results:
                 details_list = [
-                    f"  - ID: {row['task_id']}, Type: {row['task_type']}, Status: {row['status']}, Scheduled: {row['scheduled_at']}, Retries: {row['retry_count']}, Error: {row['last_error']}"
+                    f"  - ID: {row['task_id']}, Type: {row['task_type']}, Status: {row['status']}, Scheduled: {row['scheduled_at']}, Retries: {row['retry_count']}"
                     for row in pending_results
                 ]
                 pending_tasks_details = "Pending tasks:\n" + "\n".join(details_list)

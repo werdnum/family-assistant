@@ -195,8 +195,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
             TEST_EMAIL_FORM_DATA,
             notify_event=test_new_task_event # Pass the worker's event
         )
-        # No longer need to manually set the event here
-        # test_new_task_event.set()
+
         # Wait again to be sure (wait_for_tasks_to_complete handles completion check)
         await wait_for_tasks_to_complete(
              pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=10.0
