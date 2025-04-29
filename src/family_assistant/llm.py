@@ -26,11 +26,17 @@ from litellm.types.completion import ChatCompletionMessageParam
 logger = logging.getLogger(__name__)
 
 
-# --- Enable LiteLLM Debug Logging ---
-# litellm.set_verbose = True # Deprecated or less common?
-litellm._turn_on_debug() # Use the suggested internal function
-logger.info("Enabled LiteLLM internal debug logging via _turn_on_debug().")
-# --- End Debug Logging Enable ---
+# --- Conditionally Enable LiteLLM Debug Logging ---
+LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in ("true", "1", "yes")
+if LITELLM_DEBUG_ENABLED:
+    try:
+        litellm._turn_on_debug() # Use the suggested internal function
+        logger.info("Enabled LiteLLM internal debug logging via _turn_on_debug() because LITELLM_DEBUG is set.")
+    except Exception as e:
+        logger.error(f"Failed to enable LiteLLM debug logging: {e}", exc_info=True)
+else:
+    logger.info("LiteLLM internal debug logging is disabled (LITELLM_DEBUG not set or false).")
+# --- End Debug Logging Control ---
 
 
 @dataclass
