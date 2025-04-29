@@ -2,6 +2,7 @@
 Module defining the interface and implementations for interacting with Large Language Models (LLMs).
 """
 
+import litellm # Import litellm
 import json
 import logging
 import os
