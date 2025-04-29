@@ -63,6 +63,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             processing_service: The ProcessingService instance.
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
+        self.telegram_service = telegram_service # Store the service instance
         # Imports moved to top level
 
         self.application = application

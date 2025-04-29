@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Any # Added Any
 from datetime import datetime, timezone, date # Added date
 import json
 import pathlib  # Import pathlib for finding template/static dirs
+import telegram.error # Import telegram errors for specific checking in health check
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
