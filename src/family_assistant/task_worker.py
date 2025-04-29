@@ -444,7 +444,7 @@ class TaskWorker:
             logger.debug("Done sleeping, going to try polling now")
         except asyncio.TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
-            logger.info(
+            logger.debug(
                 f"Worker {self.worker_id}: Wait timed out, continuing poll cycle."
             )
             pass  # Continue the loop normally after timeout
