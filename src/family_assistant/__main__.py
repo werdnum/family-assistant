@@ -638,6 +638,10 @@ async def main_async(
     # Start polling using the service method
     await telegram_service.start_polling()
 
+    # --- Store service in app state for web server access ---
+    fastapi_app.state.telegram_service = telegram_service
+    logger.info("Stored TelegramService instance in FastAPI app state.")
+
     # --- Uvicorn Server Setup ---
     config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
     server = uvicorn.Server(config)
