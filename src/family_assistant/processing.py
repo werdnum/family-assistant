@@ -364,9 +364,7 @@ class ProcessingService:
                             messages.append(
                                 {
                                     "role": "assistant",
-                                    "content": msg.get(
-                                        "content"
-                                    ),  # Include original content if any
+                                    "content": msg.get("content") or '',
                                     "tool_calls": reformatted_tool_calls,
                                 }
                             )
@@ -395,8 +393,7 @@ class ProcessingService:
                     )
                 # Skip adding the original combined message dictionary 'msg' as we added parts separately
             else:
-                # Add regular user or assistant messages (without tool calls)
-                messages.append({"role": msg["role"], "content": msg["content"]})
+                messages.append({"role": msg["role"], "content": msg["content"] or ''})
 
         # messages.extend(history_messages) # Removed this line, processing is now done above
         logger.debug(

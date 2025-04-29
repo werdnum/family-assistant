@@ -8,6 +8,7 @@ import asyncio
 import logging
 import random
 import uuid
+from dateutil import rrule
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Callable, Awaitable
 
@@ -150,10 +151,10 @@ async def handle_llm_callback(
             # Send the LLM's response back to the chat
             formatted_response = format_llm_response_for_telegram(
                 llm_response_content
-            )  # Use content string
-            sent_message = await application.bot.send_message(  # Store sent message result
+            )
+            sent_message = await application.bot.send_message(
                 chat_id=chat_id,
-                text=formatted_response,  # Use formatted content string
+                text=formatted_response,
                 parse_mode="MARKDOWN_V2",
                 # Note: We don't have an original message ID to reply to here.
             )
@@ -164,13 +165,13 @@ async def handle_llm_callback(
                 # Pseudo-ID for the trigger message (timestamp based?)
                 trigger_msg_id = int(
                     datetime.now(timezone.utc).timestamp() * 1000
-                )  # Crude pseudo-ID
+                )
                 await storage.add_message_to_history(
-                    db_context=db_context,  # Pass db_context
+                    db_context=db_context,
                     chat_id=chat_id,
-                    message_id=trigger_msg_id,  # Use pseudo-ID
+                    message_id=trigger_msg_id,
                     timestamp=datetime.now(timezone.utc),
-                    role="system",  # Role for the trigger message in history
+                    role="system",
                     content=trigger_text,
                 )
                 # Use the actual sent message ID if available and makes sense, else pseudo-ID
@@ -178,13 +179,13 @@ async def handle_llm_callback(
                     sent_message.message_id if sent_message else trigger_msg_id + 1
                 )
                 await storage.add_message_to_history(
-                    db_context=db_context,  # Pass db_context
+                    db_context=db_context,
                     chat_id=chat_id,
-                    message_id=response_msg_id,  # Use actual or pseudo-ID
+                    message_id=response_msg_id,
                     timestamp=datetime.now(timezone.utc),
                     role="assistant",
-                    content=llm_response_content,  # Store the content string
-                    tool_calls_info=tool_call_info,  # Store tool info too
+                    content=llm_response_content,
+                    tool_calls_info=tool_call_info,
                 )
             except Exception as db_err:
                 logger.error(
@@ -224,15 +225,12 @@ class TaskWorker:
     def __init__(
         self,
         processing_service: ProcessingService,
-        # Add other dependencies like indexers if their handlers need direct access
-        # For now, DocumentIndexer handler is registered directly from its instance
-        # EmailIndexer handler is still assumed global/separate for now
     ):
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
         # Initialize handlers - specific handlers are registered externally
         self.task_handlers: Dict[str, Callable[[DatabaseContext, Any], Awaitable[None]]] = {}
-        self.worker_id = f"worker-{uuid.uuid4()}" # Generate worker ID on instantiation
+        self.worker_id = f"worker-{uuid.uuid4()}"
         logger.info(f"TaskWorker instance {self.worker_id} created.")
 
     def register_task_handler(
@@ -269,7 +267,6 @@ class TaskWorker:
             return # Stop processing this task
 
         try:
-            # Execute the handler
             logger.debug(
                 f"Worker {self.worker_id} executing handler for task {task['task_id']}"
             )
@@ -322,9 +319,6 @@ class TaskWorker:
                             f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
                         )
 
-                    # Import here to avoid potential circular imports if task_worker is imported elsewhere early
-                    from dateutil import rrule
-
                     # Calculate the next occurrence *after* the last scheduled time
                     rule = rrule.rrulestr(
                         recurrence_rule_str,
@@ -347,13 +341,13 @@ class TaskWorker:
                         await storage.enqueue_task(
                             db_context=db_context,
                             task_id=next_task_id,
-                            task_type=task_type,  # Same type
-                            payload=payload,  # Same payload
+                            task_type=task_type,
+                            payload=payload,
                             scheduled_at=next_scheduled_dt,
-                            max_retries_override=task_max_retries,  # Same retry policy
-                            recurrence_rule=recurrence_rule_str,  # Keep the rule
-                            original_task_id=original_task_id,  # Link back to original
-                            notify_event=wake_up_event, # Use the passed event
+                            max_retries_override=task_max_retries,
+                            recurrence_rule=recurrence_rule_str,
+                            original_task_id=original_task_id,
+                            notify_event=wake_up_event,
                         )
                         logger.info(
                             f"Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
@@ -371,7 +365,6 @@ class TaskWorker:
                     # Don't mark the original task as failed, just log the recurrence error.
 
         except Exception as handler_exc:
-            # If the handler itself fails, call the failure handler helper
             await self._handle_task_failure(db_context, task, handler_exc)
 
 
@@ -419,7 +412,6 @@ class TaskWorker:
             logger.warning(
                 f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
             )
-            # Mark task as permanently failed
             await storage.update_task_status(
                 db_context=db_context,
                 task_id=task["task_id"],
@@ -433,7 +425,7 @@ class TaskWorker:
             logger.debug(
                 f"Worker {self.worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
             )
-            # Wait for the event to be set, with a timeout
+
             await asyncio.wait_for(
                 wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL
             )
@@ -441,7 +433,6 @@ class TaskWorker:
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
             wake_up_event.clear()  # Reset the event for the next notification
             await asyncio.sleep(0.1) # Sometimes there is a slight delay before the task is actually visible.
-            logger.debug("Done sleeping, going to try polling now")
         except asyncio.TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
             logger.debug(
@@ -459,25 +450,22 @@ class TaskWorker:
             return
 
         while not shutdown_event.is_set():
-            try:  # Add try block here to encompass the whole loop iteration
+            try:
                 task = None # Initialize task variable for the outer scope
-                # Create a database context for this iteration
+                # Database context per iteration (starts a transaction)
                 async with await get_db_context() as db_context:
                     logger.debug("Polling for tasks on DB context: %s", db_context.engine.url)
                     try:  # Inner try for dequeue, task processing, and waiting logic
-                        # Dequeue a task of a type this worker handles
                         task = await storage.dequeue_task(
                         db_context=db_context,
-                        worker_id=self.worker_id, # Use instance worker ID
+                        worker_id=self.worker_id,
                         task_types=task_types_handled,
                     )
 
                         if task:
-                            # Call helper to process the dequeued task
                             logger.debug("Dequeued task: %s", task["task_id"])
                             await self._process_task(db_context, task, wake_up_event)
                         else:
-                            # No task found, call helper to wait
                             logger.debug("No tasks found, waiting for next poll")
                             await self._wait_for_next_poll(wake_up_event)
 
@@ -494,25 +482,22 @@ class TaskWorker:
                             TASK_POLLING_INTERVAL
                         )
 
-            # --- Exception handling for the outer try block (whole loop iteration) --- # Indent this block
+            # --- Exception handling for the outer try block (whole loop iteration) ---
             except asyncio.CancelledError:
                 logger.info(f"Task worker {self.worker_id} received cancellation signal.")
                 # If a task was being processed when cancelled, it might remain locked.
-            # Rely on lock expiry/manual intervention for now.
+                # Rely on lock expiry/manual intervention for now.
                 # For simplicity, we just exit.
                 break  # Exit the loop cleanly on cancellation
-            except Exception as e: # Indent this block
+            except Exception as e:
                 logger.error(
                     f"Task worker {self.worker_id} encountered an unexpected error outside DB context: {e}",
                     exc_info=True,
-            )
-            # If an error occurs outside the db_context (e.g., getting context itself), wait before retrying
-            await asyncio.sleep(TASK_POLLING_INTERVAL * 2)  # Longer sleep after error
+                )
+                # If an error occurs outside the db_context (e.g., getting context itself), wait before retrying
+                await asyncio.sleep(TASK_POLLING_INTERVAL * 2)  # Longer sleep after error
 
         logger.info(f"Task worker {self.worker_id} stopped.")
 
-
-# --- Remove Module Initialization and Global Setters ---
-# Registration and dependency injection are handled in __main__.py
 
 __all__ = ["TaskWorker", "handle_log_message", "handle_llm_callback", "handle_index_email"] # Export class and handlers
