@@ -26,6 +26,13 @@ from litellm.types.completion import ChatCompletionMessageParam
 logger = logging.getLogger(__name__)
 
 
+# --- Enable LiteLLM Debug Logging ---
+# litellm.set_verbose = True # Deprecated or less common?
+litellm._turn_on_debug() # Use the suggested internal function
+logger.info("Enabled LiteLLM internal debug logging via _turn_on_debug().")
+# --- End Debug Logging Enable ---
+
+
 @dataclass
 class LLMOutput:
     """Standardized output structure from an LLM call."""
