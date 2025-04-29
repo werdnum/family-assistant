@@ -270,6 +270,9 @@ class TaskWorker:
 
         try:
             # Execute the handler
+            logger.debug(
+                f"Worker {self.worker_id} executing handler for task {task['task_id']}"
+            )
             await handler(db_context, task["payload"])
 
             # Task details for logging and recurrence
@@ -437,9 +440,11 @@ class TaskWorker:
             # If wait_for completes without timeout, the event was set
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
             wake_up_event.clear()  # Reset the event for the next notification
+            await asyncio.sleep(0.1) # Sometimes there is a slight delay before the task is actually visible.
+            logger.debug("Done sleeping, going to try polling now")
         except asyncio.TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
-            logger.debug(
+            logger.info(
                 f"Worker {self.worker_id}: Wait timed out, continuing poll cycle."
             )
             pass  # Continue the loop normally after timeout
@@ -457,8 +462,8 @@ class TaskWorker:
             try:  # Add try block here to encompass the whole loop iteration
                 task = None # Initialize task variable for the outer scope
                 # Create a database context for this iteration
-                # Await the coroutine returned by get_db_context()
                 async with await get_db_context() as db_context:
+                    logger.debug("Polling for tasks on DB context: %s", db_context.engine.url)
                     try:  # Inner try for dequeue, task processing, and waiting logic
                         # Dequeue a task of a type this worker handles
                         task = await storage.dequeue_task(
@@ -469,23 +474,25 @@ class TaskWorker:
 
                         if task:
                             # Call helper to process the dequeued task
+                            logger.debug("Dequeued task: %s", task["task_id"])
                             await self._process_task(db_context, task, wake_up_event)
                         else:
                             # No task found, call helper to wait
+                            logger.debug("No tasks found, waiting for next poll")
                             await self._wait_for_next_poll(wake_up_event)
 
                     # --- Exception handling for the inner try block (catches dequeue or helper errors) ---
                     except Exception as e:
                         logger.error(
-                        f"Error during task processing or DB operation within context for worker {self.worker_id}: {e}",
-                        exc_info=True,
-                    )
-                    # If an error occurs *within* the db_context block (e.g., during dequeue, handler execution, or waiting),
-                    # the context manager will handle rollback/commit based on the exception.
-                    # We might still want a delay before the next iteration's context attempt.
-                    await asyncio.sleep(
-                        TASK_POLLING_INTERVAL
-                    )  # Short delay after error within context
+                            f"Error during task processing or DB operation within context for worker {self.worker_id}: {e}",
+                            exc_info=True,
+                        )
+                        # If an error occurs *within* the db_context block (e.g., during dequeue, handler execution, or waiting),
+                        # the context manager will handle rollback/commit based on the exception.
+                        # We might still want a delay before the next iteration's context attempt.
+                        await asyncio.sleep(
+                            TASK_POLLING_INTERVAL
+                        )
 
             # --- Exception handling for the outer try block (whole loop iteration) --- # Indent this block
             except asyncio.CancelledError:

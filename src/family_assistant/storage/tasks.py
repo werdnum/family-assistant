@@ -21,7 +21,7 @@ from sqlalchemy import (
     update,
     desc,
 )
-from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
+from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute package path
 from family_assistant.storage.base import metadata  # Keep metadata
@@ -104,8 +104,12 @@ async def enqueue_task(
             timezone.utc
         )
         if is_immediate and notify_event:
-            notify_event.set()
-            logger.debug(f"Notified worker about immediate task {task_id}.")
+            def notify(*args):
+                notify_event.set()
+                logger.info(f"Notified worker about immediate task {task_id}.")
+            # Trigger eager task execution after the transaction commits.
+            logger.info("Scheduling worker task notification for transaction commit.")
+            db_context.on_commit(notify)
     except ValueError:  # Re-raise specific errors
         raise
     except SQLAlchemyError as e:

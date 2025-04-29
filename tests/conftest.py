@@ -77,10 +77,6 @@ def postgres_container():
     Starts and manages a PostgreSQL container for the test session.
     Respects DOCKER_HOST environment variable.
     """
-    # Removed explicit checks for local /var/run/docker.sock.
-    # Rely on the docker library (used by testcontainers) to connect
-    # using DOCKER_HOST or defaults, and handle errors during startup.
-
     # Use an image that includes postgresql-contrib for extensions like pgvector
     # Note: pgvector might need explicit installation depending on the base image.
     # If using a standard postgres image, you might need to execute

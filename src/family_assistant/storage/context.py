@@ -10,10 +10,10 @@ import logging
 import random
 from typing import Any, Dict, List, Optional, TypeVar, Generic, Callable, Union, cast
 
-from sqlalchemy import Result, TextClause, text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy import Result, TextClause, event, text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncTransaction
 from sqlalchemy.sql import Select, Insert, Update, Delete
-from sqlalchemy.exc import DBAPIError, ProgrammingError  # Import ProgrammingError
+from sqlalchemy.exc import DBAPIError, ProgrammingError
 
 # Use absolute package path
 from family_assistant.storage.base import get_engine
@@ -51,7 +51,7 @@ class DatabaseContext:
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.conn: Optional[AsyncConnection] = None
-        self._transaction_cm = None  # To store the context manager from engine.begin()
+        self._transaction_cm: Optional[AsyncTransaction] = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -178,7 +178,24 @@ class DatabaseContext:
         row = result.fetchone()
         return row._mapping if row else None
 
-    # Removed execute_and_commit method
+    def on_commit(
+        self, callback: Callable[[], Any]
+    ) -> Callable[[], Any]:
+        """
+        Register a callback to be called on transaction commit.
+
+        Args:
+            callback: A callable to be executed on commit.
+
+        Returns:
+            The original callback for chaining.
+        """
+        if self._transaction_cm is None:
+            raise RuntimeError("No active transaction context manager")
+
+        # Register the callback with the transaction context manager
+        event.listen(self.conn.sync_connection, "commit", callback)
+        return callback
 
 
 # Convenience function to create a database context
