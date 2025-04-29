@@ -123,14 +123,6 @@ class LiteLLMClient:
             response = await acompletion(**call_kwargs)
 
             # Extract response message
-                "model": self.model,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": effective_tool_choice,
-            }
-            response = await acompletion(**call_kwargs)
-
-            # Extract response message
             response_message: Optional[ChatCompletionMessageParam] = (
                 response.choices[0].message if response.choices else None
             )
