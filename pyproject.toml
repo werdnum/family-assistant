@@ -53,6 +53,7 @@ dev = [
     "testcontainers[postgres]>=3.7.1", # Add testcontainers with postgres extra
     "asyncpg>=0.29.0",   # Ensure asyncpg is explicitly in dev dependencies
     "psycopg-binary>=3.1.0", # Add PostgreSQL driver (binary version for ease) - keep for now, might be needed by testcontainers itself?
+    "httpx>=0.27.0",     # Add HTTP client for API tests
     "pylint>=3.0.0",
     # "ruff", # Consider adding ruff later if desired
     "poethepoet>=0.11.0", # Add poe the poet task runner

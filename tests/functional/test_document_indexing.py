@@ -10,8 +10,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, Tuple, Optional, List # Add missing typing imports
 
+import httpx # Import httpx
 import numpy as np
 import pytest
+import pytest_asyncio # Import pytest_asyncio for async fixtures
+import sqlalchemy # Import sqlalchemy for cast
 from sqlalchemy import select
 
 # Import components needed for the E2E test
@@ -22,6 +25,7 @@ from family_assistant.indexing.document_indexer import DocumentIndexer # Import 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import query_vectors, DocumentRecord, Document # Import Document protocol
 from family_assistant.storage.tasks import tasks_table, enqueue_task
+from family_assistant.web_server import app as fastapi_app # Import the FastAPI app
 
 # Import test helpers
 from tests.helpers import wait_for_tasks_to_complete
@@ -41,6 +45,7 @@ TEST_DOC_CHUNK_0 = "This document outlines the proposal for Project Phoenix, foc
 TEST_DOC_CHUNK_1 = "Key areas include solar panel efficiency and battery storage improvements."
 TEST_DOC_METADATA = {"author": "test_user", "version": 1.1}
 TEST_DOC_CREATED_AT = datetime(2024, 5, 15, 10, 0, 0, tzinfo=timezone.utc)
+TEST_DOC_CREATED_AT_STR = TEST_DOC_CREATED_AT.isoformat() # String format for API
 
 # Content parts dictionary mimicking the structure expected by the indexer task
 TEST_DOC_CONTENT_PARTS = {
@@ -48,115 +53,20 @@ TEST_DOC_CONTENT_PARTS = {
     "content_chunk_0": TEST_DOC_CHUNK_0,
     "content_chunk_1": TEST_DOC_CHUNK_1,
 }
+# Convert dicts to JSON strings for the API call
+TEST_DOC_CONTENT_PARTS_JSON = json.dumps(TEST_DOC_CONTENT_PARTS)
+TEST_DOC_METADATA_JSON = json.dumps(TEST_DOC_METADATA)
+
 
 TEST_QUERY_TEXT_SEMANTIC = "information about solar panels" # Relevant to chunk 1
 TEST_QUERY_TEXT_KEYWORD = "Phoenix proposal" # Relevant to title and chunk 0
 
 
-# --- Helper Function for Test Setup ---
+# --- Fixtures ---
 
-# Define a simple class conforming to the Document protocol for the helper
-class SimpleTestDocument(Document):
-    def __init__(self, data: Dict[str, Any]):
-        self._data = data
-
-    @property
-    def source_type(self) -> str: return self._data["source_type"]
-    @property
-    def source_id(self) -> str: return self._data["source_id"]
-    @property
-    def source_uri(self) -> Optional[str]: return self._data.get("source_uri")
-    @property
-    def title(self) -> Optional[str]: return self._data.get("title")
-    @property
-    def created_at(self) -> Optional[datetime]: return self._data.get("created_at")
-    @property
-    def metadata(self) -> Optional[Dict[str, Any]]: return self._data.get("metadata")
-
-
-async def _ingest_and_index_document(
-    engine,
-    doc_data: Dict[str, Any], # Contains source_id, title, etc.
-    content_parts: Dict[str, str],
-    task_timeout: float = 15.0,
-    notify_event: Optional[asyncio.Event] = None
-) -> Tuple[int, str]:
-    """
-    Helper to simulate document ingestion: adds document record, enqueues task,
-    notifies worker, waits for completion, and returns IDs.
-
-    Args:
-        engine: The database engine fixture.
-        doc_data: Dictionary with metadata for the 'documents' table.
-        content_parts: Dictionary with content parts for the indexing task payload.
-        task_timeout: Timeout for waiting for the task.
-        notify_event: Event to signal the worker.
-
-    Returns:
-        A tuple containing (document_db_id, indexing_task_id).
-    """
-    document_db_id = None
-    indexing_task_id = f"test-index-doc-{doc_data['source_id']}-{uuid.uuid4()}" # Generate unique task ID
-    source_id = doc_data.get("source_id", "UNKNOWN_SOURCE_ID")
-
-    async with DatabaseContext(engine=engine) as db:
-        logger.info(f"Helper: Adding document record for source_id: {source_id}")
-        # Create a Document object conforming to the protocol
-        doc_for_storage = SimpleTestDocument(doc_data)
-        document_db_id = await storage.add_document(
-            db,
-            doc=doc_for_storage,
-            enriched_doc_metadata=None # Assuming metadata is already in doc_data['metadata']
-        )
-        assert document_db_id is not None, f"Failed to get DB ID for document {source_id}"
-        logger.info(f"Helper: Document record added (DB ID: {document_db_id})")
-
-        # Enqueue the processing task
-        task_payload = {
-            "document_id": document_db_id,
-            "content_parts": content_parts,
-        }
-        logger.info(f"Helper: Enqueuing 'process_uploaded_document' task (ID: {indexing_task_id}) for DB ID {document_db_id}")
-        await enqueue_task(
-            db_context=db,
-            task_id=indexing_task_id,
-            task_type="process_uploaded_document",
-            payload=task_payload,
-            notify_event=notify_event # Pass the event
-        )
-        logger.info(f"Helper: Task {indexing_task_id} enqueued.")
-
-    # Wait for the specific task to complete
-    logger.info(f"Helper: Waiting for task {indexing_task_id} to complete...")
-    await wait_for_tasks_to_complete(
-        engine, task_ids={indexing_task_id}, timeout_seconds=task_timeout
-    )
-    logger.info(f"Helper: Task {indexing_task_id} reported as complete.")
-
-    return document_db_id, indexing_task_id
-
-
-# --- Test Functions ---
-
-@pytest.mark.asyncio
-async def test_document_indexing_and_query_e2e(pg_vector_db_engine):
-    """
-    End-to-end test for document ingestion via simulated API call, indexing
-    via task worker, and vector/keyword query retrieval.
-    1. Setup Mock Embedder.
-    2. Instantiate DocumentIndexer with mock embedder.
-    3. Instantiate TaskWorker and register the 'process_uploaded_document' handler.
-    4. Simulate document ingestion using the helper function (adds doc, enqueues task).
-    5. Start the task worker loop in the background.
-    6. Wait for the specific indexing task to complete using the helper.
-    7. Stop the task worker loop.
-    8. Generate query embeddings for relevant text/keywords.
-    9. Execute query_vectors for semantic and keyword searches.
-    10. Verify the ingested document is found in the results.
-    """
-    logger.info("\n--- Running Document Indexing E2E Test ---")
-
-    # --- Arrange: Mock Embeddings ---
+@pytest_asyncio.fixture(scope="function")
+async def mock_embedding_generator() -> MockEmbeddingGenerator:
+    """Provides a function-scoped mock embedding generator instance."""
     # Create deterministic embeddings for known text parts
     title_embedding = (
         np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.1
@@ -172,7 +82,6 @@ async def test_document_indexing_and_query_e2e(pg_vector_db_engine):
     # Make keyword query embedding closer to title embedding
     query_keyword_embedding = (np.array(title_embedding) + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.02).tolist()
 
-
     embedding_map = {
         TEST_DOC_TITLE: title_embedding,
         TEST_DOC_CHUNK_0: chunk0_embedding,
@@ -180,15 +89,80 @@ async def test_document_indexing_and_query_e2e(pg_vector_db_engine):
         TEST_QUERY_TEXT_SEMANTIC: query_semantic_embedding,
         TEST_QUERY_TEXT_KEYWORD: query_keyword_embedding,
     }
-    mock_embedder = MockEmbeddingGenerator(
+    generator = MockEmbeddingGenerator(
         embedding_map=embedding_map,
         model_name=TEST_EMBEDDING_MODEL,
         default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(), # Default if needed
     )
+    # Store embeddings needed for queries later in the test
+    generator._test_query_semantic_embedding = query_semantic_embedding
+    generator._test_query_keyword_embedding = query_keyword_embedding
+    return generator
+
+
+@pytest_asyncio.fixture(scope="function")
+async def http_client(
+    pg_vector_db_engine, # Ensure DB is setup before app starts
+    mock_embedding_generator: MockEmbeddingGenerator # Inject the mock generator
+) -> httpx.AsyncClient:
+    """
+    Provides a test client for the FastAPI application, configured with
+    the test database and mock embedding generator.
+    """
+    # Inject the mock embedding generator into the app's state
+    # This is crucial so the API endpoint dependency uses the mock
+    fastapi_app.state.embedding_generator = mock_embedding_generator
+    logger.info("Injected mock embedding generator into FastAPI app state for test client.")
+
+    # The pg_vector_db_engine fixture already patches storage.base.engine
+    # so the app will use the correct test database.
+
+    async with httpx.AsyncClient(app=fastapi_app, base_url="http://test") as client:
+        yield client
+    logger.info("Test HTTP client closed.")
+    # Clean up app state if necessary, though function scope might handle it
+    if hasattr(fastapi_app.state, "embedding_generator"):
+         del fastapi_app.state.embedding_generator
+
+
+# --- Helper Function for Test Setup (REMOVED) ---
+# The API call replaces the need for _ingest_and_index_document
+
+
+# --- Test Functions ---
+
+@pytest.mark.asyncio
+async def test_document_indexing_and_query_e2e(
+    pg_vector_db_engine, # Still needed for direct DB checks/queries
+    http_client: httpx.AsyncClient, # Use the test client
+    mock_embedding_generator: MockEmbeddingGenerator # Get the generator instance
+):
+    """
+    End-to-end test for document ingestion via simulated API call, indexing
+    via task worker, and vector/keyword query retrieval.
+    1. Setup Mock Embedder (via fixture).
+    2. Setup Test HTTP Client (via fixture, configured with mock embedder).
+    3. Instantiate DocumentIndexer with the *same* mock embedder.
+    4. Instantiate TaskWorker and register the 'process_uploaded_document' handler.
+    5. Start the task worker loop in the background.
+    6. Call the `/api/documents/upload` endpoint using the HTTP client.
+    7. Fetch the enqueued task ID from the database.
+    8. Wait for the specific indexing task to complete.
+    9. Stop the task worker loop.
+    10. Execute query_vectors for semantic and keyword searches.
+    11. Verify the ingested document is found in the results.
+    """
+    logger.info("\n--- Running Document Indexing E2E Test via API ---")
+
+    # --- Arrange: Mock Embeddings (Done via fixture) ---
+    # Retrieve query embeddings stored in the fixture instance
+    query_semantic_embedding = mock_embedding_generator._test_query_semantic_embedding
+    query_keyword_embedding = mock_embedding_generator._test_query_keyword_embedding
 
     # --- Arrange: Instantiate Indexer ---
-    document_indexer = DocumentIndexer(embedding_generator=mock_embedder)
-    logger.info(f"DocumentIndexer initialized with mock embedding generator ({TEST_EMBEDDING_MODEL}).")
+    # IMPORTANT: Use the *same* mock generator instance provided by the fixture
+    document_indexer = DocumentIndexer(embedding_generator=mock_embedding_generator)
+    logger.info(f"DocumentIndexer initialized with mock embedding generator ({mock_embedding_generator.model_name}).")
 
     # --- Arrange: Register Task Handler ---
     # Create a TaskWorker instance for this test and register the handler
@@ -212,26 +186,57 @@ async def test_document_indexing_and_query_e2e(pg_vector_db_engine):
     document_db_id = None
     indexing_task_id = None
     try:
-        # --- Act: Ingest Document and Wait for Indexing ---
-        doc_data_to_store = {
+        # --- Act: Call API to Ingest Document ---
+        api_form_data = {
             "source_type": TEST_DOC_SOURCE_TYPE,
             "source_id": TEST_DOC_SOURCE_ID,
             "title": TEST_DOC_TITLE,
-            "created_at": TEST_DOC_CREATED_AT,
-            "metadata": TEST_DOC_METADATA,
+            "created_at": TEST_DOC_CREATED_AT_STR,
+            "metadata": TEST_DOC_METADATA_JSON, # Send as JSON string
+            "content_parts": TEST_DOC_CONTENT_PARTS_JSON, # Send as JSON string
             # source_uri could be added if needed
         }
-        document_db_id, indexing_task_id = await _ingest_and_index_document(
-            pg_vector_db_engine,
-            doc_data_to_store,
-            TEST_DOC_CONTENT_PARTS,
-            notify_event=test_new_task_event # Pass the worker's event
-        )
+        logger.info(f"Calling POST /api/documents/upload for source_id: {TEST_DOC_SOURCE_ID}")
+        response = await http_client.post("/api/documents/upload", data=api_form_data)
 
-        # Wait again to be sure (wait_for_tasks_to_complete handles completion check)
+        # Assert API call success
+        assert response.status_code == 202, f"API call failed: {response.status_code} - {response.text}"
+        response_data = response.json()
+        assert "document_id" in response_data
+        assert response_data.get("task_enqueued") is True
+        document_db_id = response_data["document_id"]
+        logger.info(f"API call successful. Document DB ID: {document_db_id}")
+
+        # --- Act: Fetch the Task ID ---
+        # Need to query the DB to find the task enqueued by the API call
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            # Wait briefly for task to likely appear in DB after API commit
+            await asyncio.sleep(0.2)
+            select_task_stmt = select(tasks_table.c.task_id).where(
+                # Filter by task type and payload content (document_id)
+                tasks_table.c.task_type == "process_uploaded_document",
+                # Note: JSON operators might be DB specific (e.g., ->> for postgres)
+                # Using LIKE for simplicity, adjust if needed for robustness
+                tasks_table.c.payload.cast(sqlalchemy.Text).like(f'%\"document_id\": {document_db_id}%')
+            ).order_by(tasks_table.c.created_at.desc()).limit(1) # Get the latest matching task
+
+            task_info = await db.fetch_one(select_task_stmt)
+            assert task_info is not None, f"Could not find enqueued task for document ID {document_db_id}"
+            indexing_task_id = task_info["task_id"]
+            logger.info(f"Found indexing task ID: {indexing_task_id} for document DB ID: {document_db_id}")
+
+        # --- Act: Wait for Indexing Task Completion ---
+        # Signal the worker (in case it was waiting) - API doesn't pass the event,
+        # but worker polls periodically anyway. Setting it ensures faster pickup if needed.
+        test_new_task_event.set()
+        logger.info(f"Waiting for task {indexing_task_id} to complete...")
         await wait_for_tasks_to_complete(
-             pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=10.0
+             pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=20.0 # Increased timeout slightly
         )
+        logger.info(f"Task {indexing_task_id} reported as complete.")
+
+
+        # --- Assertions (Remain the same as before) ---
 
         # --- Act & Assert: Semantic Query ---
         semantic_query_results = None
@@ -259,17 +264,17 @@ async def test_document_indexing_and_query_e2e(pg_vector_db_engine):
         assert (
             found_semantic_result is not None
         ), f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in semantic query results: {semantic_query_results}"
+        found_semantic_result = next((r for r in semantic_query_results if r.get("source_id") == TEST_DOC_SOURCE_ID), None)
+        assert found_semantic_result is not None, f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in semantic query results: {semantic_query_results}"
         logger.info(f"Found matching semantic result: {found_semantic_result}")
-
-        # Check distance (should be small since query embedding was close to chunk1)
         assert "distance" in found_semantic_result, "Semantic result missing 'distance' field"
         assert found_semantic_result["distance"] < 0.1, f"Semantic distance should be small, but was {found_semantic_result['distance']}"
-        # Check the content matched (should be chunk 1)
         assert found_semantic_result.get("embedding_type") == "content_chunk"
         assert found_semantic_result.get("embedding_source_content") == TEST_DOC_CHUNK_1
         assert found_semantic_result.get("title") == TEST_DOC_TITLE
         assert found_semantic_result.get("source_type") == TEST_DOC_SOURCE_TYPE
-        assert found_semantic_result.get("doc_metadata") == TEST_DOC_METADATA # Check metadata persistence
+        # Metadata comes back as string from JSONB sometimes, compare parsed dicts
+        assert found_semantic_result.get("doc_metadata") == TEST_DOC_METADATA
 
         # --- Act & Assert: Keyword Query ---
         keyword_query_results = None
@@ -300,46 +305,39 @@ async def test_document_indexing_and_query_e2e(pg_vector_db_engine):
         assert (
             found_keyword_result is not None
         ), f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in keyword query results: {keyword_query_results}"
+        found_keyword_result = next((r for r in keyword_query_results if r.get("source_id") == TEST_DOC_SOURCE_ID), None)
+        assert found_keyword_result is not None, f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in keyword query results: {keyword_query_results}"
         logger.info(f"Found matching keyword result: {found_keyword_result}")
-
-        # Check scores (RRF and FTS should be present)
         assert "rrf_score" in found_keyword_result, "Keyword result missing 'rrf_score' field"
         assert "fts_score" in found_keyword_result, "Keyword result missing 'fts_score' field"
         assert found_keyword_result["fts_score"] > 0, f"Keyword FTS score should be positive, but was {found_keyword_result['fts_score']}"
-
-        # Check the content matched (could be title or chunk 0 due to keywords)
         assert found_keyword_result.get("embedding_type") in ["title", "content_chunk"]
         if found_keyword_result.get("embedding_type") == "title":
             assert found_keyword_result.get("embedding_source_content") == TEST_DOC_TITLE
         else: # content_chunk
             assert found_keyword_result.get("embedding_source_content") == TEST_DOC_CHUNK_0
-
         assert found_keyword_result.get("title") == TEST_DOC_TITLE
         assert found_keyword_result.get("source_type") == TEST_DOC_SOURCE_TYPE
 
-        logger.info("--- Document Indexing E2E Test Passed ---")
+        logger.info("--- Document Indexing E2E Test via API Passed ---")
 
     finally:
+        # --- Cleanup ---
         # Stop the worker
         logger.info(f"Stopping background task worker {worker_id}...")
-        test_shutdown_event.set() # Signal the worker loop to exit
-        # Give the worker time to process the shutdown signal
+        test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
             logger.info(f"Background task worker {worker_id} stopped.")
         except asyncio.TimeoutError:
             logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
             worker_task.cancel()
-            # Await cancellation if needed
-            try:
-                await worker_task
-            except asyncio.CancelledError:
-                logger.info(f"Worker task {worker_id} cancellation confirmed.")
+            try: await worker_task
+            except asyncio.CancelledError: logger.info(f"Worker task {worker_id} cancellation confirmed.")
         except Exception as e:
              logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
 
-        # Optional: Clean up the specific document and task if needed for isolation,
-        # though function-scoped fixtures usually handle this.
+        # Clean up document and task
         if document_db_id:
              try:
                  async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
@@ -347,10 +345,10 @@ async def test_document_indexing_and_query_e2e(pg_vector_db_engine):
                      logger.info(f"Cleaned up test document DB ID {document_db_id}")
              except Exception as cleanup_err:
                  logger.warning(f"Error during test document cleanup: {cleanup_err}")
+        # Task should be 'done' or 'failed', but delete entry if needed
         if indexing_task_id:
              try:
                  async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                     # Manually delete task if necessary (wait_for_tasks should ensure it's done/failed)
                      delete_stmt = tasks_table.delete().where(tasks_table.c.task_id == indexing_task_id)
                      await db_cleanup.execute_with_retry(delete_stmt)
                      logger.info(f"Cleaned up test task ID {indexing_task_id}")
