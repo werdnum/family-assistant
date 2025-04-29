@@ -496,9 +496,24 @@ class ProcessingService:
         # Note: For callbacks, the role might ideally be 'system' or a specific 'callback' role,
         # but using 'user' is often necessary for the LLM to properly attend to it as the primary input.
         # If LLM behavior is odd, consider experimenting with the role here.
+        # Simplify content if it's just a single text part, otherwise keep the list structure
+        trigger_content: Union[str, List[Dict[str, Any]]]
+        if (
+            isinstance(trigger_content_parts, list)
+            and len(trigger_content_parts) == 1
+            and isinstance(trigger_content_parts[0], dict)
+            and trigger_content_parts[0].get("type") == "text"
+            and "text" in trigger_content_parts[0]
+        ):
+            trigger_content = trigger_content_parts[0]["text"]
+            logger.debug("Simplified single text part content to string.")
+        else:
+            trigger_content = trigger_content_parts # Keep as list for multi-part/non-text
+            logger.debug("Keeping trigger content as list (multi-part or non-text).")
+
         trigger_message = {
             "role": "user",  # Treat trigger as user input for processing flow
-            "content": trigger_content_parts,
+            "content": trigger_content,
         }
         messages.append(trigger_message)
         logger.debug(f"Appended trigger message to LLM history: {trigger_message}")
