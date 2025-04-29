@@ -119,20 +119,6 @@ class LiteLLMClient:
             "tools": tools,
             "tool_choice": effective_tool_choice,
         }
-        # --- BEGIN DEBUG LOGGING ---
-        try:
-            # Log the full request payload for debugging
-            request_payload_str = json.dumps(call_kwargs, indent=2, default=str) # Use default=str as fallback
-            logger.info(f"--- LiteLLM Request Payload ---")
-            logger.info(request_payload_str)
-            logger.info(f"--- End LiteLLM Request Payload ---")
-        except Exception as log_err:
-            logger.error(f"Error logging request payload: {log_err}", exc_info=True)
-            # Log raw messages if JSON dump fails
-            logger.info("Raw messages passed to LiteLLM:")
-            for i, msg in enumerate(messages):
-                logger.info(f"  Message {i}: {msg}")
-        # --- END DEBUG LOGGING ---
         try:
             response = await acompletion(**call_kwargs)
 
