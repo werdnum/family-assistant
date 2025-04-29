@@ -377,10 +377,11 @@ class ProcessingService:
                                             "tool_call_id": raw_call.get(
                                                 "call_id", "missing_id"
                                             ),
-                                            "content": raw_call.get(
+                                            # Ensure content is always a string for tool role
+                                            "content": str(raw_call.get(
                                                 "response_content",
                                                 "Error: Missing tool response content",
-                                            ),
+                                            )),
                                         }
                                     )
                         else:
