@@ -16,6 +16,7 @@ from litellm.exceptions import (
     RateLimitError,
     ServiceUnavailableError,
     APIError,
+    BadRequestError,
 )
 
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
@@ -150,10 +151,12 @@ class LiteLLMClient:
             RateLimitError,
             ServiceUnavailableError,
             APIError,
+            BadRequestError,
         ) as e:
             logger.error(
                 f"LiteLLM API error for model {self.model}: {e}", exc_info=True
             )
+            logger.info("Input passed to model: %r", messages)
             raise  # Re-raise the specific LiteLLM exception
         except Exception as e:
             logger.error(
