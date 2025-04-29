@@ -35,11 +35,16 @@ from family_assistant.storage.context import DatabaseContext
 logger = logging.getLogger(__name__)
 
 
+# Import telegram errors for specific checking
+from telegram.error import Conflict
+
+
 class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     """Handles specific Telegram updates (messages, commands) and delegates processing."""
 
     def __init__(
         self,
+        telegram_service: "TelegramService", # Accept the service instance
         application: Application,
         allowed_chat_ids: List[int],
         developer_chat_id: Optional[int],
@@ -430,10 +435,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         logger.debug(f"Task entry removed for chat {chat_id} via callback.")
 
     async def error_handler(self, update: object, context: CallbackContext) -> None:
-        """Log the error and send a telegram message to notify the developer."""
-        # Use the error stored in context
+        """Log the error, store it in the service, and notify the developer."""
         error = context.error
         logger.error(f"Exception while handling an update: {error}", exc_info=error)
+
+        # Store the error in the TelegramService instance
+        if self.telegram_service:
+            self.telegram_service._last_error = error
+            # Log if polling might stop due to this error
+            if isinstance(error, Conflict):
+                 logger.critical(f"Telegram Conflict error detected: {error}. Polling will likely stop.")
+            elif isinstance(error, Exception): # Catch other potential fatal errors if needed
+                 # You might add checks for other specific errors that stop polling
+                 pass
 
         tb_list = traceback.format_exception(None, error, error.__traceback__)
         tb_string = "".join(tb_list)
@@ -503,6 +517,8 @@ class TelegramService:
         """
         logger.info("Initializing TelegramService...")
         self.application = ApplicationBuilder().token(telegram_token).build()
+        self._was_started: bool = False
+        self._last_error: Optional[Exception] = None
 
         # Store the ProcessingService instance in bot_data for access in handlers
         # Note: This assumes handlers might still need direct access via context.bot_data
@@ -510,8 +526,9 @@ class TelegramService:
         self.application.bot_data["processing_service"] = processing_service
         logger.info("Stored ProcessingService instance in application.bot_data.")
 
-        # Instantiate the handler class
-        self.update_handler = TelegramUpdateHandler(  # Use renamed class
+        # Instantiate the handler class, passing self (the service instance)
+        self.update_handler = TelegramUpdateHandler(
+            telegram_service=self, # Pass self
             application=self.application,
             allowed_chat_ids=allowed_chat_ids,
             developer_chat_id=developer_chat_id,
@@ -530,10 +547,18 @@ class TelegramService:
         await self.application.start()
         # Use Update.ALL_TYPES to ensure all relevant updates are received
         await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        self._was_started = True # Mark as started
+        self._last_error = None # Clear last error on successful start
         logger.info("Telegram polling started successfully.")
+
+    @property
+    def last_error(self) -> Optional[Exception]:
+        """Returns the last error encountered by the error handler."""
+        return self._last_error
 
     async def stop_polling(self):
         """Stops the polling and shuts down the application gracefully."""
+        self._was_started = False # Mark as stopped (or stopping)
         if self.application and self.application.updater:
             logger.info("Stopping Telegram polling...")
             try:
