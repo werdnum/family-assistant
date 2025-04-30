@@ -90,7 +90,7 @@ shell = "symbex -m family_assistant --docs -ni > SYMBOLS.md"
 
 [tool.poe.tasks.test]
 help = "Run pylint in errors-only mode and full pytest suite with verbose output"
-shell = "pylint src --errors-only && pytest -s -v tests"
+shell = "pylint src -j0 --errors-only && pytest -s -v tests"
 
 
 # --- Tool Configuration (Example: Ruff) ---
