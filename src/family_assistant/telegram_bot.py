@@ -248,7 +248,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             trigger_content_parts=trigger_content_parts,
                             user_name=user_name,
                         )
-                    )
+                    # Removed extra closing parenthesis from line above
 
             if llm_response_content:
                 try:

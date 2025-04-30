@@ -532,7 +532,8 @@ class ProcessingService:
         # Tool definitions are now fetched inside process_message
         try:
             # Call the process_message method of the *same* instance (self)
-            llm_response_content, tool_info = await self.process_message(
+            # Unpack all three return values: content, tool_info, reasoning_info
+            llm_response_content, tool_info, reasoning_info = await self.process_message(
                 db_context=db_context,  # Pass context
                 messages=messages,
                 chat_id=chat_id,
