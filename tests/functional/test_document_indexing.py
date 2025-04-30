@@ -9,6 +9,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, Tuple, Optional, List # Add missing typing imports
+from unittest.mock import MagicMock # Add this import
 
 import httpx # Import httpx
 import numpy as np
