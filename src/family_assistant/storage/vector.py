@@ -159,18 +159,16 @@ class DocumentEmbeddingRecord(Base):
         sa.Index("idx_doc_embeddings_type_model", embedding_type, embedding_model),
         sa.Index("idx_doc_embeddings_document_chunk", document_id, chunk_index),
         # GIN expression index for FTS is now created conditionally in init_vector_db
-        # Example Partial HNSW index for a specific model/dimension
-        # Requires manual creation via raw SQL in init_vector_db or migrations
-        # NOTE: When using SQLAlchemy's Index construct for pgvector HNSW,
-        # reference the column name directly, not with a cast.
-        # The operator class is specified via postgresql_ops.
+        # Example Partial HNSW index for a specific model/dimension using an expression
+        # This casts the dimensionless 'embedding' column to vector(1536) for the index.
         sa.Index(
             "idx_doc_embeddings_gemini_1536_hnsw_cos",
-            "embedding", # Reference the column name directly
+            sa.text("embedding::vector(1536)"), # Use the expression with cast
             postgresql_using="hnsw",
             postgresql_where=sa.text("embedding_model = 'gemini-exp-03-07'"), # Example filter
             postgresql_with={"m": 16, "ef_construction": 64}, # Example HNSW parameters
-            postgresql_ops={"embedding": "vector_cosine_ops"},  # Move operator class here
+            # Apply the operator class to the expression
+            postgresql_ops={"embedding::vector(1536)": "vector_cosine_ops"},
         ),
     )
 
