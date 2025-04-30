@@ -37,10 +37,17 @@ class DocumentIndexer:
         self.embedding_generator = embedding_generator
         logger.info(f"DocumentIndexer initialized with embedding generator: {type(embedding_generator).__name__}")
 
-    async def process_document(self, db_context: DatabaseContext, payload: Dict[str, Any]):
+    async def process_document(self, exec_context: ToolExecutionContext, payload: Dict[str, Any]):
         """
         Task handler method to process and index content parts provided for a document.
+        Receives ToolExecutionContext from the TaskWorker.
         """
+        # Extract db_context from the execution context
+        db_context = exec_context.db_context
+        if not db_context:
+             logger.error("DatabaseContext not found in ToolExecutionContext for process_document.")
+             raise ValueError("Missing DatabaseContext dependency in context.")
+
         document_id = payload.get("document_id")
         content_parts: Optional[Dict[str, str]] = payload.get("content_parts") # e.g., {"title": "...", "content_chunk_0": "..."}
 
@@ -112,10 +119,11 @@ class DocumentIndexer:
             meta = embedding_metadata[i]
             logger.debug(f"Adding embedding: doc={document_id}, chunk={meta['chunk_index']}, type={meta['embedding_type']}, model={embedding_model_name}")
             try:
+                # Use the extracted db_context here
                 await storage.add_embedding(
-                    db_context=db_context,
+                    db_context=db_context, # Pass the extracted DatabaseContext
                     document_id=document_id,
-                    chunk_index=meta['chunk_index'], # Correct indentation
+                    chunk_index=meta['chunk_index'],
                     embedding_type=meta['embedding_type'], # Correct indentation
                     embedding=embedding_vector, # Correct indentation
                     embedding_model=embedding_model_name, # Correct indentation
