@@ -148,7 +148,7 @@ class DocumentEmbeddingRecord(Base):
     content_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=functions.now()
-    )  # Use explicit import
+    )
 
     document_record: Mapped["DocumentRecord"] = sa.orm.relationship(
         "DocumentRecord", back_populates="embeddings"

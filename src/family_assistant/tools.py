@@ -719,32 +719,22 @@ class LocalToolsProvider:
             needs_exec_context = False
             needs_db_context = False
             needs_embedding_generator = False
-            needs_calendar_config = False # Flag for calendar config
 
             for param_name, param in sig.parameters.items():
                 # Check if the function expects the full context object
                 if param.annotation is ToolExecutionContext:
                     needs_exec_context = True
-                    break # If it needs the full context, no need to check others
-
-            # If not expecting full context, check for specific injectable dependencies
-            if not needs_exec_context:
-                for param_name, param in sig.parameters.items():
-                    if param.annotation is DatabaseContext and param_name == "db_context":
-                        needs_db_context = True
-                    elif param.annotation is EmbeddingGenerator and param_name == "embedding_generator":
-                        needs_embedding_generator = True
-                    # Check if it expects calendar_config directly (less likely now with ToolExecutionContext)
-                    # elif param_name == "calendar_config" and param.annotation is Dict:
-                    #     needs_calendar_config = True
+                if param.annotation is DatabaseContext and param_name == "db_context":
+                    needs_db_context = True
+                elif param.annotation is EmbeddingGenerator and param_name == "embedding_generator":
+                    needs_embedding_generator = True
 
             # Inject dependencies based on flags
             # Always check for exec_context first
             if needs_exec_context:
                 call_args['exec_context'] = context
 
-            # *Separately* check for and inject other specific dependencies,
-            # regardless of whether exec_context was injected.
+            # Check for and inject other specific dependencies.
             if needs_db_context:
                  # Only inject if not already covered by exec_context (though harmless if redundant)
                  if 'db_context' not in call_args:
@@ -755,7 +745,6 @@ class LocalToolsProvider:
                 else:
                     logger.error(f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider.")
                     return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
-            # Add checks for other potential specific dependencies here if needed in the future
 
             # Clean up arguments not expected by the function signature
             # (Ensures we don't pass exec_context if only db_context was needed, etc.)

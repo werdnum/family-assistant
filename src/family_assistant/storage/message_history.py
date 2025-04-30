@@ -20,13 +20,12 @@ from sqlalchemy import (
     insert,
     desc,
 )
-from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.dialects.postgresql import JSONB
 
-# Use absolute package path
-from family_assistant.storage.base import metadata  # Keep metadata
+from family_assistant.storage.base import metadata
 
-# Remove get_engine import
-from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,7 @@ message_history_table = Table(
     Column("timestamp", DateTime(timezone=True), nullable=False, index=True),
     Column("role", String, nullable=False),  # 'user' or 'assistant'
     Column("content", Text, nullable=False),
-    Column("tool_calls_info", JSON, nullable=True),
+    Column("tool_calls_info", JSON().with_variant(JSONB, "postgresql"), nullable=True),
 )
 
 
