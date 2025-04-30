@@ -602,8 +602,8 @@ async def main_async(
     # No need to pass database_url here.
     await init_db()
     # Initialize vector DB components (extension, indexes)
-    # get_db_context *can* take a database_url to potentially override the default engine.
-    async with await get_db_context(database_url=config["database_url"]) as db_ctx:
+    # get_db_context uses the engine configured in storage/base.py by default.
+    async with await get_db_context() as db_ctx:
         await storage.init_vector_db(db_ctx) # Initialize vector specific parts
 
     # Load MCP config and connect to servers using config dict
@@ -654,7 +654,7 @@ async def main_async(
         allowed_chat_ids=config["allowed_chat_ids"], # Get from config dict
         developer_chat_id=config["developer_chat_id"], # Get from config dict
         processing_service=processing_service,
-        get_db_context_func=functools.partial(get_db_context, database_url=config["database_url"]), # Pass DB URL to context getter
+        get_db_context_func=get_db_context, # Pass the function directly
     )
 
     # Start polling using the service method
