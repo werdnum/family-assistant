@@ -167,10 +167,10 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     # Note: test_db_engine fixture comes from the root conftest.py
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance
-        add_response_content, add_tool_info = (
+        # Unpack all 4 return values, assign unused ones to _
+        add_response_content, add_tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,  # Pass the context
-                # processing_service argument removed
                 application=mock_application,
                 chat_id=TEST_CHAT_ID,
                 trigger_content_parts=add_note_trigger,
@@ -225,10 +225,10 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance again
-        retrieve_response_content, retrieve_tool_info = (
+        # Unpack all 4 return values, assign unused ones to _
+        retrieve_response_content, retrieve_tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,  # Pass the context
-                # processing_service argument removed
                 application=mock_application,
                 chat_id=TEST_CHAT_ID,
                 trigger_content_parts=retrieve_note_trigger,
