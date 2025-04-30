@@ -163,12 +163,12 @@ class DocumentEmbeddingRecord(Base):
         # This casts the dimensionless 'embedding' column to vector(1536) for the index.
         sa.Index(
             "idx_doc_embeddings_gemini_1536_hnsw_cos",
-            sa.text("embedding::vector(1536)"), # Use the expression with cast
+            # Define the exact expression including the operator class using sa.text
+            sa.text("(embedding::vector(1536)) vector_cosine_ops"),
             postgresql_using="hnsw",
             postgresql_where=sa.text("embedding_model = 'gemini-exp-03-07'"), # Example filter
             postgresql_with={"m": 16, "ef_construction": 64}, # Example HNSW parameters
-            # Apply the operator class to the expression
-            postgresql_ops={"embedding::vector(1536)": "vector_cosine_ops"},
+            # postgresql_ops is not needed here as the opclass is part of the text expression
         ),
     )
 
