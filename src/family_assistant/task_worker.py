@@ -144,12 +144,12 @@ async def handle_llm_callback(
 
         # Call the ProcessingService directly, using dependencies from context
         # Unpack all expected return values (content, tool_info, reasoning, error)
-        llm_response_content, tool_call_info, _, _ = (
+        llm_response_content, tool_call_info, _ = (
             await processing_service.process_message( # Use service from context
-                db_context=db_context, # Use db_context from context
+                db_context=db_context,
                 messages=messages_for_llm,
-                chat_id=chat_id, # Use chat_id from context
-                application=application,  # Use application from context
+                chat_id=chat_id,
+                application=application,
             )
         )
 
