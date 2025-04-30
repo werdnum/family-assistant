@@ -739,27 +739,23 @@ class LocalToolsProvider:
                     #     needs_calendar_config = True
 
             # Inject dependencies based on flags
+            # Always check for exec_context first
             if needs_exec_context:
-                # Pass the full context object, which now includes calendar_config
                 call_args['exec_context'] = context
-            else:
-                # Inject individual dependencies if needed
-                if needs_db_context:
-                    call_args['db_context'] = context.db_context
-                if needs_embedding_generator:
-                    if self._embedding_generator:
-                        call_args['embedding_generator'] = self._embedding_generator
-                    else:
-                        logger.error(f"Tool '{name}' requires an embedding generator, but none was provided.")
-                        return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
-                # Inject calendar_config if needed (less likely now)
-                # if needs_calendar_config:
-                #     if self._calendar_config:
-                #         call_args['calendar_config'] = self._calendar_config
-                #     else:
-                #         logger.error(f"Tool '{name}' requires calendar config, but none was provided.")
-                #         return f"Error: Tool '{name}' cannot be executed because calendar config is missing."
 
+            # *Separately* check for and inject other specific dependencies,
+            # regardless of whether exec_context was injected.
+            if needs_db_context:
+                 # Only inject if not already covered by exec_context (though harmless if redundant)
+                 if 'db_context' not in call_args:
+                     call_args['db_context'] = context.db_context
+            if needs_embedding_generator:
+                if self._embedding_generator:
+                    call_args['embedding_generator'] = self._embedding_generator
+                else:
+                    logger.error(f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider.")
+                    return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
+            # Add checks for other potential specific dependencies here if needed in the future
 
             # Clean up arguments not expected by the function signature
             # (Ensures we don't pass exec_context if only db_context was needed, etc.)
