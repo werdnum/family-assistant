@@ -341,6 +341,7 @@ async def test_search_documents_tool(pg_vector_db_engine):
         tool_context = ToolExecutionContext(
             chat_id=123, # Dummy chat ID
             db_context=exec_db_context,
+            calendar_config={}, # Add missing calendar_config
             application=None # Not needed for search_documents tool
         )
 
