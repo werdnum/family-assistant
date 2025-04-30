@@ -128,16 +128,15 @@ CONFIG_FILE_PATH = "config.yaml" # Path to the new config file
 # new_task_event = task_worker.new_task_event # Removed
 
 # --- Global Variables ---
-# application: Optional[Application] = None # Removed global application instance
-ALLOWED_CHAT_IDS: list[int] = []
-DEVELOPER_CHAT_ID: Optional[int] = None
-PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
-CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
-TIMEZONE_STR: str = "UTC"  # Default timezone
-APP_CONFIG: Dict[str, Any] = {} # Global dict to hold loaded config.yaml
-# shutdown_event moved higher up
-# from collections import defaultdict # Moved to telegram_bot.py
+# Configuration will be loaded into a dictionary instead of individual globals
+# ALLOWED_CHAT_IDS: list[int] = [] # Replaced by config dict
+# DEVELOPER_CHAT_ID: Optional[int] = None # Replaced by config dict
+# PROMPTS: Dict[str, str] = {} # Replaced by config dict
+# CALENDAR_CONFIG: Dict[str, Any] = {} # Replaced by config dict
+# TIMEZONE_STR: str = "UTC" # Replaced by config dict
+# APP_CONFIG: Dict[str, Any] = {} # Replaced by config dict
 
+# State variables remain global for now
 mcp_sessions: Dict[str, ClientSession] = (
     {}
 )  # Stores active MCP client sessions {server_id: session}
@@ -162,158 +161,172 @@ mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
 
 
 # --- Configuration Loading ---
-def load_config():
-    """Loads configuration from environment variables, prompts.yaml, and config.yaml."""
-    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG, TIMEZONE_STR, APP_CONFIG
-    load_dotenv()  # Load environment variables from .env file
+def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
+    """
+    Loads configuration according to the defined hierarchy:
+    Defaults -> config.yaml -> Environment Variables.
+    CLI arguments are applied *after* this function runs.
 
-    # --- Load config.yaml ---
+    Args:
+        config_file_path: Path to the main YAML configuration file.
+
+    Returns:
+        A dictionary containing the resolved configuration.
+    """
+    # 1. Code Defaults
+    config_data: Dict[str, Any] = {
+        "telegram_token": None,
+        "openrouter_api_key": None,
+        "allowed_chat_ids": [],
+        "developer_chat_id": None,
+        "model": "openrouter/google/gemini-flash-1.5", # Default model
+        "embedding_model": "gemini/gemini-embedding-exp-03-07", # Default embedding model
+        "embedding_dimensions": 1536, # Default dimension
+        "timezone": "UTC",
+        "database_url": "sqlite+aiosqlite:///family_assistant.db", # Default DB
+        "max_history_messages": 5,
+        "history_max_age_hours": 24,
+        "litellm_debug": False,
+        "calendar_config": {},
+        "llm_parameters": {},
+        "prompts": {},
+        "mcp_config": {"mcpServers": {}}, # Default empty MCP config
+    }
+    logger.info("Initialized config with code defaults.")
+
+    # 2. Load config.yaml
     try:
-        with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
-            loaded_config = yaml.safe_load(f)
-            if isinstance(loaded_config, dict):
-                APP_CONFIG = loaded_config
-                logger.info(f"Successfully loaded main configuration from {CONFIG_FILE_PATH}")
+        with open(config_file_path, "r", encoding="utf-8") as f:
+            yaml_config = yaml.safe_load(f)
+            if isinstance(yaml_config, dict):
+                # Merge YAML config, overwriting defaults
+                config_data.update(yaml_config)
+                logger.info(f"Loaded and merged configuration from {config_file_path}")
             else:
-                logger.error(f"Failed to load config: {CONFIG_FILE_PATH} is not a valid dictionary.")
-                APP_CONFIG = {}
+                logger.warning(f"Config file {config_file_path} is not a valid dictionary. Ignoring.")
     except FileNotFoundError:
-        logger.warning(f"{CONFIG_FILE_PATH} not found. Using default configurations where applicable.")
-        APP_CONFIG = {}
+        logger.warning(f"{config_file_path} not found. Using default configurations.")
     except yaml.YAMLError as e:
-        logger.error(f"Error parsing {CONFIG_FILE_PATH}: {e}")
-        APP_CONFIG = {}
+        logger.error(f"Error parsing {config_file_path}: {e}. Using previous defaults.")
 
-    # --- Telegram Config ---
-    chat_ids_str = os.getenv("ALLOWED_CHAT_IDS", "")
-    if chat_ids_str:
+    # 3. Load Environment Variables (overriding config file)
+    load_dotenv() # Load .env file if present
+
+    # Secrets (should ONLY come from env)
+    config_data["telegram_token"] = os.getenv("TELEGRAM_BOT_TOKEN", config_data["telegram_token"])
+    config_data["openrouter_api_key"] = os.getenv("OPENROUTER_API_KEY", config_data["openrouter_api_key"])
+    config_data["database_url"] = os.getenv("DATABASE_URL", config_data["database_url"])
+    caldav_pass_env = os.getenv("CALDAV_PASSWORD") # Load separately
+
+    # Other Env Vars
+    config_data["model"] = os.getenv("LLM_MODEL", config_data["model"])
+    config_data["embedding_model"] = os.getenv("EMBEDDING_MODEL", config_data["embedding_model"])
+    config_data["embedding_dimensions"] = int(os.getenv("EMBEDDING_DIMENSIONS", str(config_data["embedding_dimensions"])))
+    config_data["timezone"] = os.getenv("TIMEZONE", config_data["timezone"])
+    config_data["litellm_debug"] = os.getenv("LITELLM_DEBUG", str(config_data["litellm_debug"])).lower() in ("true", "1", "yes")
+
+    # Parse comma-separated lists from Env Vars
+    allowed_ids_str = os.getenv("ALLOWED_CHAT_IDS")
+    if allowed_ids_str is not None: # Only override if env var is explicitly set
         try:
-            ALLOWED_CHAT_IDS = [
-                int(cid.strip()) for cid in chat_ids_str.split(",") if cid.strip()
+            config_data["allowed_chat_ids"] = [
+                int(cid.strip()) for cid in allowed_ids_str.split(",") if cid.strip()
             ]
-            logger.info(f"Loaded {len(ALLOWED_CHAT_IDS)} allowed chat IDs.")
         except ValueError:
-            logger.error(
-                "Invalid format for ALLOWED_CHAT_IDS in .env file. Should be comma-separated integers."
-            )
-            ALLOWED_CHAT_IDS = []
-    else:
-        logger.warning("ALLOWED_CHAT_IDS not set. Bot will respond in all chats.")
-        ALLOWED_CHAT_IDS = []
+            logger.error("Invalid format for ALLOWED_CHAT_IDS env var. Using previous value.")
 
-    dev_chat_id_str = os.getenv("DEVELOPER_CHAT_ID")
-    if dev_chat_id_str:
+    dev_id_str = os.getenv("DEVELOPER_CHAT_ID")
+    if dev_id_str is not None: # Only override if env var is explicitly set
         try:
-            DEVELOPER_CHAT_ID = int(dev_chat_id_str)
-            logger.info(f"Developer chat ID set to {DEVELOPER_CHAT_ID}.")
+            config_data["developer_chat_id"] = int(dev_id_str)
         except ValueError:
-            logger.error("Invalid DEVELOPER_CHAT_ID in .env file. Must be an integer.")
-            DEVELOPER_CHAT_ID = None
-    else:
-        logger.warning(
-            "DEVELOPER_CHAT_ID not set. Error notifications will not be sent."
-        )
-        DEVELOPER_CHAT_ID = None
+            logger.error("Invalid DEVELOPER_CHAT_ID env var. Using previous value.")
 
+    # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
+    caldav_user_env = os.getenv("CALDAV_USERNAME")
+    caldav_urls_str_env = os.getenv("CALDAV_CALENDAR_URLS")
+    ical_urls_str_env = os.getenv("ICAL_URLS")
+
+    temp_calendar_config = {}
+    if caldav_user_env and caldav_pass_env and caldav_urls_str_env:
+        caldav_urls_env = [url.strip() for url in caldav_urls_str_env.split(",") if url.strip()]
+        if caldav_urls_env:
+            temp_calendar_config["caldav"] = {
+                "username": caldav_user_env,
+                "password": caldav_pass_env, # Use password loaded earlier
+                "calendar_urls": caldav_urls_env,
+            }
+            logger.info("Loaded CalDAV config from environment variables.")
+    if ical_urls_str_env:
+        ical_urls_env = [url.strip() for url in ical_urls_str_env.split(",") if url.strip()]
+        if ical_urls_env:
+            temp_calendar_config["ical"] = {"urls": ical_urls_env}
+            logger.info("Loaded iCal config from environment variables.")
+
+    # Only update calendar_config if env vars provided valid config
+    if temp_calendar_config:
+        config_data["calendar_config"] = temp_calendar_config
+    elif not config_data.get("calendar_config"): # If no config from yaml either
+         logger.warning("No calendar sources configured in config file or environment variables.")
+
+    # Validate Timezone
+    try:
+        zoneinfo.ZoneInfo(config_data["timezone"])
+    except zoneinfo.ZoneInfoNotFoundError:
+        logger.error(f"Invalid timezone '{config_data['timezone']}'. Defaulting to UTC.")
+        config_data["timezone"] = "UTC"
+
+    # 4. Load other config files (Prompts, MCP)
     # Load prompts from YAML file
     try:
         with open("prompts.yaml", "r", encoding="utf-8") as f:
             loaded_prompts = yaml.safe_load(f)
             if isinstance(loaded_prompts, dict):
-                PROMPTS = loaded_prompts
+                config_data["prompts"] = loaded_prompts # Store in config dict
                 logger.info("Successfully loaded prompts from prompts.yaml")
             else:
-                logger.error(
-                    "Failed to load prompts: prompts.yaml is not a valid dictionary."
-                )
-                PROMPTS = {}  # Reset to empty if loading fails
+                logger.error("Failed to load prompts: prompts.yaml is not a valid dictionary.")
     except FileNotFoundError:
         logger.error("prompts.yaml not found. Using default prompt structures.")
-        PROMPTS = {}  # Ensure PROMPTS is initialized
     except yaml.YAMLError as e:
         logger.error(f"Error parsing prompts.yaml: {e}")
-        PROMPTS = {}  # Reset to empty on parsing error
 
-    # --- Calendar Config (CalDAV & iCal) ---
-    CALENDAR_CONFIG = {}  # Initialize the combined config dict
-    caldav_enabled = False
-    ical_enabled = False
-
-    # CalDAV settings
-    caldav_user = os.getenv("CALDAV_USERNAME")
-    caldav_pass = os.getenv("CALDAV_PASSWORD")
-    caldav_urls_str = os.getenv("CALDAV_CALENDAR_URLS")
-    caldav_urls = (
-        [url.strip() for url in caldav_urls_str.split(",")] if caldav_urls_str else []
-    )
-
-    if caldav_user and caldav_pass and caldav_urls:
-        CALENDAR_CONFIG["caldav"] = {
-            "username": caldav_user,
-            "password": caldav_pass,
-            "calendar_urls": caldav_urls,
-        }
-        caldav_enabled = True
-        logger.info(
-            f"Loaded CalDAV configuration for {len(caldav_urls)} specific calendar URL(s)."
-        )
-    else:
-        logger.info(
-            "CalDAV configuration incomplete or disabled (requires USERNAME, PASSWORD, CALENDAR_URLS)."
-        )
-
-    # iCal settings
-    ical_urls_str = os.getenv("ICAL_URLS")
-    ical_urls = (
-        [url.strip() for url in ical_urls_str.split(",")] if ical_urls_str else []
-    )
-
-    if ical_urls:
-        CALENDAR_CONFIG["ical"] = {
-            "urls": ical_urls,
-        }
-        ical_enabled = True
-        logger.info(f"Loaded iCal configuration for {len(ical_urls)} URL(s).")
-    else:
-        logger.info("iCal configuration incomplete or disabled (requires ICAL_URLS).")
-
-    if not caldav_enabled and not ical_enabled:
-        logger.warning(
-            "No calendar sources (CalDAV or iCal) are configured. Calendar features will be disabled."
-        )
-        CALENDAR_CONFIG = {}  # Ensure it's empty if nothing is enabled
-
-    # --- Timezone Config ---
-    loaded_tz = os.getenv("TIMEZONE", "UTC")
+    # Load MCP config from JSON file
+    mcp_config_path = "mcp_config.json"
     try:
-        zoneinfo.ZoneInfo(loaded_tz)
-        TIMEZONE_STR = str(loaded_tz)
-        logger.info(f"Using timezone: {TIMEZONE_STR}")
-    except zoneinfo.ZoneInfoNotFoundError:
-        logger.error(
-            f"Invalid TIMEZONE '{loaded_tz}' specified in .env. Defaulting to UTC."
-        )
-        TIMEZONE_STR = "UTC"  # Keep the default if invalid
+        with open(mcp_config_path, "r", encoding="utf-8") as f:
+            loaded_mcp_config = json.load(f)
+            if isinstance(loaded_mcp_config, dict):
+                 config_data["mcp_config"] = loaded_mcp_config # Store in config dict
+                 logger.info(f"Successfully loaded MCP config from {mcp_config_path}")
+            else:
+                 logger.error(f"Failed to load MCP config: {mcp_config_path} is not a valid dictionary.")
+    except FileNotFoundError:
+        logger.info(f"{mcp_config_path} not found. MCP features may be disabled.")
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding {mcp_config_path}: {e}")
+
+    # Log final loaded non-secret config for verification
+    loggable_config = {k: v for k, v in config_data.items() if k not in ['telegram_token', 'openrouter_api_key', 'database_url']}
+    if 'calendar_config' in loggable_config and 'caldav' in loggable_config['calendar_config']:
+        loggable_config['calendar_config']['caldav'].pop('password', None) # Remove password before logging
+    logger.info(f"Final configuration loaded (excluding secrets): {json.dumps(loggable_config, indent=2, default=str)}")
+
+    return config_data
 
 
 # --- MCP Configuration Loading & Connection ---
-async def load_mcp_config_and_connect():
-    """Loads MCP server config, connects to servers, and discovers tools."""
-    global mcp_sessions, mcp_tools, tool_name_to_server_id, mcp_exit_stack
-    config_path = "mcp_config.json"
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except FileNotFoundError:
-        logger.info(f"{config_path} not found. Skipping MCP server connections.")
-        return
-    except json.JSONDecodeError as e:
-        logger.error(
-            f"Error decoding {config_path}: {e}. Skipping MCP server connections."
-        )
-        return
+async def load_mcp_config_and_connect(mcp_config: Dict[str, Any]): # Accept MCP config dict
+    """Connects to MCP servers defined in the config and discovers tools."""
+    global mcp_sessions, mcp_tools, tool_name_to_server_id, mcp_exit_stack # Keep using globals for state
 
-    mcp_server_configs = config.get("mcpServers", {})
+    # Clear previous state if reloading? For now, assume it runs once at start.
+    mcp_sessions.clear()
+    mcp_tools.clear()
+    tool_name_to_server_id.clear()
+    # Note: We don't recreate mcp_exit_stack here, it's managed globally.
+
+    mcp_server_configs = mcp_config.get("mcpServers", {}) # Get servers from passed config
     if not mcp_server_configs:
         logger.info("No servers defined in mcpServers section of mcp_config.json.")
         return
@@ -443,33 +456,39 @@ async def load_mcp_config_and_connect():
 
 
 # --- Argument Parsing ---
+# Define parser here, but parse arguments later in main() after loading config
 parser = argparse.ArgumentParser(description="Family Assistant Bot")
 parser.add_argument(
     "--telegram-token",
-    default=os.getenv("TELEGRAM_BOT_TOKEN"),
-    help="Telegram Bot Token (overrides .env)",
+    default=None, # Default is None, will be loaded from env/config
+    help="Telegram Bot Token (overrides environment variable)",
 )
 parser.add_argument(
     "--openrouter-api-key",
-    default=os.getenv("OPENROUTER_API_KEY"),
-    help="OpenRouter API Key (overrides .env)",
+    default=None, # Default is None, will be loaded from env/config
+    help="OpenRouter API Key (overrides environment variable)",
 )
 parser.add_argument(
     "--model",
-    default="openrouter/google/gemini-2.5-pro-preview-03-25",
-    help="LLM model to use via OpenRouter (e.g., openrouter/google/gemini-2.5-pro-preview-03-25)",
+    default=None, # Default is None, will be loaded from env/config
+    help="LLM model identifier (overrides config file and environment variable)",
 )
 parser.add_argument(
     "--embedding-model",
-    default=os.getenv("EMBEDDING_MODEL", "gemini/gemini-embedding-exp-03-07"), # Example default
-    help="Embedding model to use (e.g., gemini-embedding-exp-03-07, all-MiniLM-L6-v2)",
+    default=None, # Default is None, will be loaded from env/config
+    help="Embedding model identifier (overrides config file and environment variable)",
 )
-
-# --- Initial Configuration Load ---
-# Load config from .env and prompts.yaml first
-load_config()
+parser.add_argument(
+    '--embedding-dimensions',
+    type=int,
+    default=None, # Default is None, will be loaded from env/config
+    help="Embedding model dimensionality (overrides config file and environment variable)"
+)
+# Add argument for config file path?
+# parser.add_argument('--config', default='config.yaml', help='Path to the main YAML configuration file.')
 
 # --- Signal Handlers ---
+# Define handlers before main() where they are registered
 async def shutdown_handler(
     signal_name: str, telegram_service: Optional[TelegramService]
 ):  # Accept service instance
@@ -526,54 +545,51 @@ def reload_config_handler(signum, frame):
 
 # --- Main Application Setup & Run ---
 async def main_async(
-    cli_args: argparse.Namespace,
+    config: Dict[str, Any] # Accept the resolved config dictionary
 ) -> Optional[TelegramService]:  # Return service instance or None
-    """Initializes and runs the bot application."""
+    """Initializes and runs the bot application using the provided configuration."""
     # global application # Removed
-    logger.info(f"Using model: {cli_args.model}")  # Use cli_args
+    logger.info(f"Using model: {config['model']}")
 
-    # --- Validate Essential Config from args ---
-    if not cli_args.telegram_token:
-        raise ValueError(
-            "Telegram Bot Token must be provided via --telegram-token or TELEGRAM_BOT_TOKEN env var"
-        )
-    if not cli_args.openrouter_api_key:
-        raise ValueError(
-            "OpenRouter API Key must be provided via --openrouter-api-key or OPENROUTER_API_KEY env var"
-        )
+    # --- Validate Essential Config ---
+    # Secrets should have been loaded by load_config() from env vars
+    if not config.get("telegram_token"):
+        raise ValueError("Telegram Bot Token is missing (check env var TELEGRAM_BOT_TOKEN).")
+    if not config.get("openrouter_api_key"):
+        raise ValueError("OpenRouter API Key is missing (check env var OPENROUTER_API_KEY).")
 
     # Set OpenRouter API key for LiteLLM (if using LiteLLMClient)
-    os.environ["OPENROUTER_API_KEY"] = cli_args.openrouter_api_key
+    # This might be redundant if LiteLLM picks it up automatically, but explicit is okay.
+    os.environ["OPENROUTER_API_KEY"] = config["openrouter_api_key"]
 
-    # --- LLM Client and Processing Service Instantiation ---
-    # Extract LLM parameters from loaded config
-    llm_parameters = APP_CONFIG.get("llm_parameters", {})
-    logger.info(f"Loaded LLM parameters from config: {llm_parameters}")
-
-    # Instantiate LiteLLMClient, passing the parameters
+    # --- LLM Client Instantiation ---
     llm_client: LLMInterface = LiteLLMClient(
-        model=cli_args.model,
-        model_parameters=llm_parameters # Pass the loaded parameters
+        model=config["model"],
+        model_parameters=config.get("llm_parameters", {}) # Get from config dict
     )
 
     # --- Embedding Generator Instantiation ---
-    # For now, assume LiteLLM based on --embedding-model arg
     embedding_generator: EmbeddingGenerator
+    embedding_model_name = config["embedding_model"]
+    embedding_dimensions = config["embedding_dimensions"]
     # Example check for local model (adjust condition as needed)
-    if cli_args.embedding_model.startswith("/") or cli_args.embedding_model in ["all-MiniLM-L6-v2", "other-local-model-name"]:
+    if embedding_model_name.startswith("/") or embedding_model_name in ["all-MiniLM-L6-v2", "other-local-model-name"]:
          try:
-             # Ensure sentence-transformers is installed if using local
              if "SentenceTransformerEmbeddingGenerator" not in dir(embeddings):
                  raise ImportError("sentence-transformers library not installed, cannot use local embedding model.")
              embedding_generator = embeddings.SentenceTransformerEmbeddingGenerator(
-                 model_name_or_path=cli_args.embedding_model
+                 model_name_or_path=embedding_model_name
+                 # Pass dimensions if the local model class supports it? Check SentenceTransformer docs.
              )
          except (ImportError, ValueError, RuntimeError) as local_embed_err:
-             logger.critical(f"Failed to initialize local embedding model '{cli_args.embedding_model}': {local_embed_err}")
+             logger.critical(f"Failed to initialize local embedding model '{embedding_model_name}': {local_embed_err}")
              raise SystemExit(f"Local embedding model initialization failed: {local_embed_err}")
     else:
         # Assume API-based model via LiteLLM
-        embedding_generator = LiteLLMEmbeddingGenerator(model=cli_args.embedding_model, dimensions=cli_args.embedding_dimensions)
+        embedding_generator = LiteLLMEmbeddingGenerator(
+            model=embedding_model_name,
+            dimensions=embedding_dimensions # Pass dimensions from config
+        )
 
     logger.info(f"Using embedding generator: {type(embedding_generator).__name__} with model: {embedding_generator.model_name}")
 
@@ -581,20 +597,23 @@ async def main_async(
     fastapi_app.state.embedding_generator = embedding_generator
     logger.info("Stored embedding generator in FastAPI app state.")
 
-    # Initialize database schema first (needed by ProcessingService potentially via tools)
-    await init_db()
+    # Initialize database schema first
+    # Use database_url from config
+    await init_db(database_url=config["database_url"])
     # Initialize vector DB components (extension, indexes)
-    async with await get_db_context() as db_ctx:
+    # Pass engine created by init_db or get it again based on config
+    async with await get_db_context(database_url=config["database_url"]) as db_ctx:
         await storage.init_vector_db(db_ctx) # Initialize vector specific parts
-    # Load MCP config and connect to servers
-    await load_mcp_config_and_connect()  # Populates mcp_sessions, mcp_tools, tool_name_to_server_id
+
+    # Load MCP config and connect to servers using config dict
+    await load_mcp_config_and_connect(config["mcp_config"]) # Pass MCP config part
 
     # --- Instantiate Tool Providers ---
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
         embedding_generator=embedding_generator,
-        calendar_config=CALENDAR_CONFIG, # Pass calendar config
+        calendar_config=config["calendar_config"], # Get from config dict
     )
     mcp_provider = MCPToolsProvider(
         mcp_definitions=mcp_tools,  # Use discovered MCP tool definitions
@@ -606,45 +625,35 @@ async def main_async(
         composite_provider = CompositeToolsProvider(
             providers=[local_provider, mcp_provider]
         )
-        # Eagerly fetch definitions once to cache and validate
         await composite_provider.get_tool_definitions()
         logger.info("CompositeToolsProvider initialized and validated.")
     except ValueError as provider_err:
-        logger.critical(
-            f"Failed to initialize CompositeToolsProvider: {provider_err}",
-            exc_info=True,
-        )
-        # Exit or handle error appropriately - critical failure
+        logger.critical(f"Failed to initialize CompositeToolsProvider: {provider_err}", exc_info=True)
         raise SystemExit(f"Tool provider initialization failed: {provider_err}")
 
     # --- Instantiate Processing Service ---
     processing_service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=composite_provider,  # Inject the composite provider
-        # Pass configuration needed for context building
-        prompts=PROMPTS,
-        calendar_config=CALENDAR_CONFIG,
-        timezone_str=TIMEZONE_STR,
-        max_history_messages=MAX_HISTORY_MESSAGES,
-        history_max_age_hours=HISTORY_MAX_AGE_HOURS,
+        tools_provider=composite_provider,
+        prompts=config["prompts"], # Get from config dict
+        calendar_config=config["calendar_config"], # Get from config dict
+        timezone_str=config["timezone"], # Get from config dict
+        max_history_messages=config["max_history_messages"], # Get from config dict
+        history_max_age_hours=config["history_max_age_hours"], # Get from config dict
     )
-    logger.info(
-        f"ProcessingService initialized with {type(llm_client).__name__}, {type(composite_provider).__name__} and configuration."
-    )
+    logger.info(f"ProcessingService initialized with configuration.")
 
     # --- Instantiate Indexers ---
     document_indexer = DocumentIndexer(embedding_generator=embedding_generator)
-    # Set email indexing dependencies (still uses setter pattern for now)
-    # TODO: Refactor email_indexer to class-based DI as well
     set_indexing_dependencies(embedding_generator=embedding_generator, llm_client=llm_client)
 
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
-        telegram_token=cli_args.telegram_token,
-        allowed_chat_ids=ALLOWED_CHAT_IDS,
-        developer_chat_id=DEVELOPER_CHAT_ID,
+        telegram_token=config["telegram_token"], # Get from config dict
+        allowed_chat_ids=config["allowed_chat_ids"], # Get from config dict
+        developer_chat_id=config["developer_chat_id"], # Get from config dict
         processing_service=processing_service,
-        get_db_context_func=get_db_context,
+        get_db_context_func=functools.partial(get_db_context, database_url=config["database_url"]), # Pass DB URL to context getter
     )
 
     # Start polling using the service method
@@ -716,58 +725,43 @@ async def main_async(
 
 
 def main() -> int:  # Return an exit code
-    """Sets up argument parsing, event loop, and signal handlers."""
-    # --- Argument Parsing (Defined and Executed Here) ---
-    parser = argparse.ArgumentParser(description="Family Assistant Bot")
-    parser.add_argument(
-        "--telegram-token",
-        default=os.getenv("TELEGRAM_BOT_TOKEN"),
-        help="Telegram Bot Token (overrides .env)",
-    )
-    parser.add_argument(
-        "--openrouter-api-key",
-        default=os.getenv("OPENROUTER_API_KEY"),
-        help="OpenRouter API Key (overrides .env)",
-    )
-    parser.add_argument(
-        "--model",
-        # Default model updated based on previous usage and module-level definition
-        default=os.getenv("LLM_MODEL", "openrouter/google/gemini-2.5-flash-preview"),
-        help="LLM model to use (e.g., openrouter/google/gemini-flash-2.5-flash-preview)",
-    )
-    parser.add_argument(
-        "--embedding-model",
-        default=os.getenv("EMBEDDING_MODEL", "gemini/gemini-embedding-exp-03-07"), # Updated default
-        help="Embedding model to use (e.g., gemini/gemini-embedding-exp-03-07, text-embedding-ada-002, all-MiniLM-L6-v2)",
-    )
-    parser.add_argument(
-        '--embedding_dimensions',
-        default=os.getenv("EMBEDDING_DIMENSIONS", 1536),
-        type=int,
-        help="Embedding model dimensionality, leave blank for default"
-    )
-    args = parser.parse_args()  # Parse args here
+    """Loads config, parses args, sets up event loop, and runs the application."""
+
+    # 1. Load Configuration (Defaults -> YAML -> Env Vars)
+    config_data = load_config()
+
+    # 2. Parse CLI Arguments
+    args = parser.parse_args()
+
+    # 3. Apply CLI Overrides (CLI > Env > YAML > Defaults)
+    if args.telegram_token is not None:
+        config_data["telegram_token"] = args.telegram_token
+        logger.info("Overriding Telegram token with CLI argument.")
+    if args.openrouter_api_key is not None:
+        config_data["openrouter_api_key"] = args.openrouter_api_key
+        logger.info("Overriding OpenRouter API key with CLI argument.")
+    if args.model is not None:
+        config_data["model"] = args.model
+        logger.info(f"Overriding LLM model with CLI argument: {args.model}")
+    if args.embedding_model is not None:
+        config_data["embedding_model"] = args.embedding_model
+        logger.info(f"Overriding embedding model with CLI argument: {args.embedding_model}")
+    if args.embedding_dimensions is not None:
+        config_data["embedding_dimensions"] = args.embedding_dimensions
+        logger.info(f"Overriding embedding dimensions with CLI argument: {args.embedding_dimensions}")
+    # Add overrides for other CLI args if introduced (e.g., --config)
 
     # --- Event Loop and Signal Handlers ---
     loop = asyncio.get_event_loop()
-
-    # --- Event Loop and Signal Handlers ---
-    loop = asyncio.get_event_loop()
-
-    # Placeholder for telegram_service instance to be passed to handler
-    # This is slightly tricky as the service is created *inside* main_async
-    # We might need to create the service earlier or use a different mechanism.
-    # Let's adjust main_async slightly to create the service earlier.
-
-    # --- Run main_async ---
     telegram_service_instance = None  # Initialize
+
     try:
         logger.info("Starting application...")
-        # Pass parsed args to main_async
-        # main_async will now return the created telegram_service instance
-        telegram_service_instance = loop.run_until_complete(main_async(args))
+        # Pass the final resolved config dictionary to main_async
+        telegram_service_instance = loop.run_until_complete(main_async(config_data))
 
         # --- Setup Signal Handlers *after* service creation ---
+        # Pass the service instance to the shutdown handler lambda
         if telegram_service_instance:
             signal_map = {
                 signal.SIGINT: "SIGINT",
