@@ -259,7 +259,9 @@ class ProcessingService:
                     fallback_content = (
                         "Tool execution finished, but I couldn't generate a summary."
                     )
-                    return fallback_content, executed_tool_info
+                    # Store reasoning from the second call even if content is empty
+                    final_reasoning_info = second_llm_output.reasoning_info
+                    return fallback_content, executed_tool_info, final_reasoning_info # Return reasoning
 
             # --- No Tool Calls ---
             elif llm_output.content:
@@ -267,10 +269,13 @@ class ProcessingService:
                 logger.info(
                     f"Received LLM response (no tool call): {response_content[:100]}..."
                 )
-                return response_content, None
+                # Reasoning info already stored from the first call
+                return response_content, None, final_reasoning_info # Return reasoning
             else:
                 logger.warning("LLM response had neither content nor tool calls.")
-                return None, None
+                 # Store reasoning info even if response is empty
+                final_reasoning_info = llm_output.reasoning_info
+                return None, None, final_reasoning_info # Return reasoning
 
         except Exception as e:
             logger.error(

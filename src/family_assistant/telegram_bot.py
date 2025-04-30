@@ -213,8 +213,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 trigger_content_parts = [text_content_part]
 
-        llm_response_content = None
-        tool_call_info = None
+        llm_response_content: Optional[str] = None
+        tool_call_info: Optional[List[Dict[str, Any]]] = None
+        reasoning_info: Optional[Dict[str, Any]] = None # Added
+        processing_error_traceback: Optional[str] = None # Added
         logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
         try:
