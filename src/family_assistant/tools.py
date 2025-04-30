@@ -770,10 +770,14 @@ class LocalToolsProvider:
 
             # Execute the function with prepared arguments
             result = await callable_func(**call_args)
-                    call_args['embedding_generator'] = self._embedding_generator
-                else:
-                    # This should ideally not happen if initialization is correct
-                    logger.error(f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider.")
+            # The following block seems to be a leftover duplicate and caused the IndentationError.
+            # The logic for injecting embedding_generator is handled earlier.
+            #    if self._embedding_generator:
+            #        call_args['embedding_generator'] = self._embedding_generator
+            #    else:
+            #        # This should ideally not happen if initialization is correct
+            #        logger.error(f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider.")
+            #        return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
                     return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
 
             # Remove context/generator args from call_args if they were not in the original arguments dict
