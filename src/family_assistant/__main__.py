@@ -121,6 +121,7 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 MAX_HISTORY_MESSAGES = 5  # Number of recent messages to include (excluding current)
 HISTORY_MAX_AGE_HOURS = 24  # Only include messages from the last X hours
+CONFIG_FILE_PATH = "config.yaml" # Path to the new config file
 
 # Events are now imported directly
 # shutdown_event = task_worker.shutdown_event # Removed
@@ -133,6 +134,7 @@ DEVELOPER_CHAT_ID: Optional[int] = None
 PROMPTS: Dict[str, str] = {}  # Global dict to hold loaded prompts
 CALENDAR_CONFIG: Dict[str, Any] = {}  # Stores CalDAV and iCal settings
 TIMEZONE_STR: str = "UTC"  # Default timezone
+APP_CONFIG: Dict[str, Any] = {} # Global dict to hold loaded config.yaml
 # shutdown_event moved higher up
 # from collections import defaultdict # Moved to telegram_bot.py
 
@@ -161,9 +163,26 @@ mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
 
 # --- Configuration Loading ---
 def load_config():
-    """Loads configuration from environment variables and prompts.yaml."""
-    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG, TIMEZONE_STR  # Added TIMEZONE_STR
+    """Loads configuration from environment variables, prompts.yaml, and config.yaml."""
+    global ALLOWED_CHAT_IDS, DEVELOPER_CHAT_ID, PROMPTS, CALENDAR_CONFIG, TIMEZONE_STR, APP_CONFIG
     load_dotenv()  # Load environment variables from .env file
+
+    # --- Load config.yaml ---
+    try:
+        with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+            loaded_config = yaml.safe_load(f)
+            if isinstance(loaded_config, dict):
+                APP_CONFIG = loaded_config
+                logger.info(f"Successfully loaded main configuration from {CONFIG_FILE_PATH}")
+            else:
+                logger.error(f"Failed to load config: {CONFIG_FILE_PATH} is not a valid dictionary.")
+                APP_CONFIG = {}
+    except FileNotFoundError:
+        logger.warning(f"{CONFIG_FILE_PATH} not found. Using default configurations where applicable.")
+        APP_CONFIG = {}
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing {CONFIG_FILE_PATH}: {e}")
+        APP_CONFIG = {}
 
     # --- Telegram Config ---
     chat_ids_str = os.getenv("ALLOWED_CHAT_IDS", "")
@@ -527,8 +546,15 @@ async def main_async(
     os.environ["OPENROUTER_API_KEY"] = cli_args.openrouter_api_key
 
     # --- LLM Client and Processing Service Instantiation ---
-    # For now, default to LiteLLMClient
-    llm_client: LLMInterface = LiteLLMClient(model=cli_args.model)
+    # Extract LLM parameters from loaded config
+    llm_parameters = APP_CONFIG.get("llm_parameters", {})
+    logger.info(f"Loaded LLM parameters from config: {llm_parameters}")
+
+    # Instantiate LiteLLMClient, passing the parameters
+    llm_client: LLMInterface = LiteLLMClient(
+        model=cli_args.model,
+        model_parameters=llm_parameters # Pass the loaded parameters
+    )
 
     # --- Embedding Generator Instantiation ---
     # For now, assume LiteLLM based on --embedding-model arg
