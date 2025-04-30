@@ -1,0 +1,34 @@
+# .build - Configuration for the build and deploy script
+
+# --- Image Details ---
+# Base image name (registry/repository)
+IMAGE_BASE_NAME=containers.alexsmith.dev/family-assistant
+
+# Tag to use for 'latest' or 'stable' (often 'latest')
+LATEST_TAG=latest
+
+# Optional: Specify a fixed version tag instead of generating one based on date/revision
+# If commented out or empty, a tag like YYYYMMDD_REVISION will be generated.
+# VERSION_TAG=my-specific-tag-1.2.3
+
+# Optional: Specify a revision number for the generated tag (e.g., 1, 2, 3)
+# If commented out or empty, the script will try to determine the next revision for today's date.
+# REVISION=1
+
+# --- Build Details ---
+# Dockerfile name
+DOCKERFILE=Dockerfile
+
+# Build context directory (usually '.')
+BUILD_CONTEXT=.
+
+# --- Deployment Details ---
+# Kubernetes namespace
+KUBE_NAMESPACE=ml-bot
+
+# Kubernetes deployment name
+KUBE_DEPLOYMENT=family-assistant
+
+# Container name within the deployment spec to update
+# Often the same as KUBE_DEPLOYMENT, but specify if different
+KUBE_CONTAINER=family-assistant
