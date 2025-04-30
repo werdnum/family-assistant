@@ -8,6 +8,7 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Aim for clarity and readability.
 *   Use type hints consistently.
 *   Keep functions and methods focused and concise.
+*   Write code as it should appear in the repository. Do not comment out code or leave comments explaining your changes. That's what commit messages are for.
 
 ## Design and Testability
 
@@ -45,7 +46,6 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Use the standard `logging` module.
 *   Obtain loggers using `logging.getLogger(__name__)` at the module level.
 *   Use appropriate log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-*   Be mindful of sensitive information in logs.
 *   Keep log messages concise but informative. Avoid overly verbose logging in production.
 
 ## Error Handling
