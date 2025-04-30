@@ -1,10 +1,18 @@
 # from .__main__ import load_config
-def load_config():
-    "Loads configuration from environment variables and prompts.yaml."
+def load_config(config_file_path: str=CONFIG_FILE_PATH) -> Dict[(str, Any)]:
+    """Loads configuration according to the defined hierarchy:
+    Defaults -> config.yaml -> Environment Variables.
+    CLI arguments are applied *after* this function runs.
+
+    Args:
+        config_file_path: Path to the main YAML configuration file.
+
+    Returns:
+        A dictionary containing the resolved configuration."""
 
 # from .__main__ import load_mcp_config_and_connect
-async def load_mcp_config_and_connect():
-    "Loads MCP server config, connects to servers, and discovers tools."
+async def load_mcp_config_and_connect(mcp_config: Dict[(str, Any)]):
+    "Connects to MCP servers defined in the config and discovers tools."
 
 # from .__main__ import shutdown_handler
 async def shutdown_handler(signal_name: str, telegram_service: Optional[TelegramService]):
@@ -15,12 +23,12 @@ def reload_config_handler(signum, frame):
     "Handles SIGHUP for config reloading (placeholder)."
 
 # from .__main__ import main_async
-async def main_async(cli_args: ?) -> Optional[TelegramService]:
-    "Initializes and runs the bot application."
+async def main_async(config: Dict[(str, Any)]) -> Optional[TelegramService]:
+    "Initializes and runs the bot application using the provided configuration."
 
 # from .__main__ import main
 def main() -> int:
-    "Sets up argument parsing, event loop, and signal handlers."
+    "Loads config, parses args, sets up event loop, and runs the application."
 
 # from .calendar_integration import format_datetime_or_date
 def format_datetime_or_date(dt_obj: ?, is_end: bool) -> str:
@@ -73,6 +81,62 @@ class PlaybackLLMClient:
     """An LLM client that plays back previously recorded interactions from a file.
     Plays back recorded interactions by matching the input arguments."""
 
+# from .main import load_config
+def load_config():
+    "Loads configuration from environment variables and prompts.yaml."
+
+# from .main import load_mcp_config_and_connect
+async def load_mcp_config_and_connect():
+    "Loads MCP server config, connects to servers, and discovers tools."
+
+# from .main import typing_notifications
+async def typing_notifications(context: ?, chat_id: int, action: str=...):
+    "Context manager to send typing notifications periodically."
+
+# from .main import _generate_llm_response_for_chat
+async def _generate_llm_response_for_chat(processing_service: ProcessingService, chat_id: int, trigger_content_parts: List[Dict[(str, Any)]], user_name: str) -> Tuple[(Optional[str], Optional[List[Dict[(str, Any)]]])]:
+    """Prepares context, message history, calls the ProcessingService, and returns the response.
+
+    Args:
+        chat_id: The target chat ID.
+        trigger_content_parts: List of content parts (text, image_url) for the triggering message.
+        user_name: The user name to format into the system prompt.
+
+    Returns:
+        A tuple: (LLM response string or None, List of tool call info dicts or None)."""
+
+# from .main import start
+async def start(update: Update, context: ?) -> ?:
+    "Sends a welcome message when the /start command is issued."
+
+# from .main import process_chat_queue
+async def process_chat_queue(chat_id: int, context: ?) -> ?:
+    "Processes the message buffer for a given chat."
+
+# from .main import message_handler
+async def message_handler(update: Update, context: ?) -> ?:
+    "Buffers incoming messages and triggers processing if not already running."
+
+# from .main import error_handler
+async def error_handler(update: object, context: CallbackContext) -> ?:
+    "Log the error and send a telegram message to notify the developer."
+
+# from .main import shutdown_handler
+async def shutdown_handler(signal_name: str):
+    "Initiates graceful shutdown."
+
+# from .main import reload_config_handler
+def reload_config_handler(signum, frame):
+    "Handles SIGHUP for config reloading (placeholder)."
+
+# from .main import main_async
+async def main_async(cli_args: ?) -> ?:
+    "Initializes and runs the bot application."
+
+# from .main import main
+def main() -> int:
+    "Sets up argument parsing, event loop, and signal handlers."
+
 # from .embeddings import EmbeddingResult
 class EmbeddingResult:
     "Represents the result of generating embeddings for a list of texts."
@@ -110,6 +174,10 @@ class ToolNotFoundError(LookupError):
 class ToolsProvider(Protocol):
     "Protocol defining the interface for a tool provider."
 
+# from .tools import add_calendar_event_tool
+async def add_calendar_event_tool(exec_context: ToolExecutionContext, summary: str, start_time: str, end_time: str, description: Optional[str], all_day: bool) -> str:
+    "Adds an event to the first configured CalDAV calendar."
+
 # from .tools import schedule_recurring_task_tool
 async def schedule_recurring_task_tool(exec_context: ToolExecutionContext, task_type: str, initial_schedule_time: str, recurrence_rule: str, payload: Dict[(str, Any)], max_retries: Optional[int]=3, description: Optional[str]):
     """Schedules a new recurring task.
@@ -130,6 +198,34 @@ async def schedule_future_callback_tool(exec_context: ToolExecutionContext, call
         exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback."""
+
+# from .tools import search_documents_tool
+async def search_documents_tool(exec_context: ToolExecutionContext, embedding_generator: EmbeddingGenerator, query_text: str, source_types: Optional[List[str]], embedding_types: Optional[List[str]], limit: int=5) -> str:
+    """Searches stored documents using hybrid vector and keyword search.
+
+    Args:
+        exec_context: The execution context containing the database context.
+        embedding_generator: The embedding generator instance.
+        query_text: The natural language query to search for.
+        source_types: Optional list of source types to filter by (e.g., ['email', 'note']).
+        embedding_types: Optional list of embedding types to filter by (e.g., ['content_chunk', 'summary']).
+        limit: Maximum number of results to return.
+
+    Returns:
+        A formatted string containing the search results or an error message."""
+
+# from .tools import get_full_document_content_tool
+async def get_full_document_content_tool(exec_context: ToolExecutionContext, document_id: int) -> str:
+    """Retrieves the full text content associated with a specific document ID.
+    This is typically used after finding a relevant document via search_documents.
+
+    Args:
+        exec_context: The execution context containing the database context.
+        document_id: The unique ID of the document (obtained from search results).
+
+    Returns:
+        A string containing the full concatenated text content of the document,
+        or an error message if not found or content is unavailable."""
 
 # from .tools import LocalToolsProvider
 class LocalToolsProvider:
@@ -153,6 +249,9 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
 
 # from .web_server import SearchResultItem
 class SearchResultItem(BaseModel):
+
+# from .web_server import DocumentUploadResponse
+class DocumentUploadResponse(BaseModel):
 
 # from .web_server import read_root
 async def read_root(request: Request, db_context: DatabaseContext=...):
@@ -188,8 +287,8 @@ async def view_tasks(request: Request, db_context: DatabaseContext=...):
     "Serves the page displaying scheduled tasks."
 
 # from .web_server import health_check
-async def health_check():
-    "Basic health check endpoint."
+async def health_check(request: Request):
+    "Checks basic service health and Telegram polling status."
 
 # from .web_server import vector_search_form
 async def vector_search_form(request: Request, db_context: DatabaseContext=...):
@@ -198,6 +297,10 @@ async def vector_search_form(request: Request, db_context: DatabaseContext=...):
 # from .web_server import handle_vector_search
 async def handle_vector_search(request: Request, semantic_query: Optional[str]=..., keywords: Optional[str]=..., search_type: str=..., embedding_model: Optional[str]=..., embedding_types: List[str]=..., source_types: List[str]=..., created_after: Optional[str]=..., created_before: Optional[str]=..., title_like: Optional[str]=..., metadata_keys: List[str]=..., metadata_values: List[str]=..., limit: int=..., rrf_k: int=..., db_context: DatabaseContext=..., embedding_generator: EmbeddingGenerator=...):
     "Handles the vector search form submission."
+
+# from .web_server import upload_document
+async def upload_document(source_type: str=..., source_id: str=..., content_parts_json: str=..., source_uri: Optional[str]=..., title: Optional[str]=..., created_at_str: Optional[str]=..., metadata_json: Optional[str]=..., db_context: DatabaseContext=...):
+    "API endpoint to upload document metadata and content parts for indexing."
 
 # from .task_worker import handle_log_message
 async def handle_log_message(db_context: DatabaseContext, payload: Any):
@@ -208,24 +311,18 @@ def format_llm_response_for_telegram(response_text: str) -> str:
     "Converts LLM Markdown to Telegram MarkdownV2, with fallback."
 
 # from .task_worker import handle_llm_callback
-async def handle_llm_callback(db_context: DatabaseContext, payload: Any):
-    "Task handler for LLM scheduled callbacks."
+async def handle_llm_callback(exec_context: ToolExecutionContext, payload: Any):
+    """Task handler for LLM scheduled callbacks.
+    Dependencies are accessed via the ToolExecutionContext."""
 
-# from .task_worker import task_worker_loop
-async def task_worker_loop(worker_id: str, wake_up_event: ?):
-    "Continuously polls for and processes tasks."
+# from .task_worker import TaskWorker
+class TaskWorker:
+    "Manages the task processing loop and handler registry."
 
-# from .task_worker import register_task_handler
-def register_task_handler(task_type: str, handler: Callable[(?, Awaitable[?])]):
-    "Register a new task handler function for a specific task type."
-
-# from .task_worker import set_processing_service
-def set_processing_service(service: ProcessingService):
-    "Set the ProcessingService instance from main.py"
-
-# from .task_worker import get_task_handlers
-def get_task_handlers():
-    "Return the current task handlers dictionary"
+# from .document_indexer import DocumentIndexer
+class DocumentIndexer:
+    """Handles the indexing process for documents, primarily those uploaded via API.
+    Takes dependencies via constructor."""
 
 # from .email_indexer import EmailDocument
 class EmailDocument(Document):
@@ -234,8 +331,9 @@ class EmailDocument(Document):
     a received_emails table row."""
 
 # from .email_indexer import handle_index_email
-async def handle_index_email(db_context: DatabaseContext, payload: Dict[(str, Any)]):
-    "Task handler to index a specific email from the received_emails table."
+async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[(str, Any)]):
+    """Task handler to index a specific email from the received_emails table.
+    Receives ToolExecutionContext from the TaskWorker."""
 
 # from .email_indexer import set_indexing_dependencies
 def set_indexing_dependencies(embedding_generator: EmbeddingGenerator, llm_client: Optional[LLMInterface]):
@@ -258,13 +356,55 @@ async def delete_note(db_context: DatabaseContext, title: str) -> bool:
     "Deletes a note by title."
 
 # from .email import store_incoming_email
-async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[(str, Any)]):
+async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[(str, Any)], notify_event: Optional[?]):
     """Parses incoming email data (from Mailgun webhook form) and prepares it for storage.
-    Stores the parsed data in the `received_emails` table using the provided context.
+    Stores the parsed data in the `received_emails` table using the provided context,
+    optionally notifying a worker event.
 
     Args:
         db_context: The DatabaseContext to use for the operation.
         form_data: A dictionary representing the form data received from the webhook."""
+
+# from .testing import test_engine
+async def test_engine() -> AsyncGenerator[(AsyncEngine, ?)]:
+    """Create an in-memory SQLite database engine for testing.
+
+    This fixture creates an isolated in-memory SQLite database for testing.
+    It yields an AsyncEngine that can be used to create connections and
+    execute queries. When the test is complete, the engine is disposed of.
+
+    Yields:
+        An AsyncEngine connected to an in-memory SQLite database."""
+
+# from .testing import test_db_context
+async def test_db_context(test_engine: AsyncEngine) -> AsyncGenerator[(DatabaseContext, ?)]:
+    """Create a DatabaseContext with a test engine.
+
+    This fixture creates a DatabaseContext using the test_engine fixture.
+    It yields the context for use in tests.
+
+    Args:
+        test_engine: The test engine fixture.
+
+    Yields:
+        A DatabaseContext connected to the test engine."""
+
+# from .testing import run_with_test_db
+async def run_with_test_db(test_func: Callable[(?, T)], *args, **kwargs) -> T:
+    """Run a test function with a test database.
+
+    This function creates an in-memory SQLite database, initializes it with
+    the application's schema, and then runs the provided test function with
+    a DatabaseContext connected to the test database.
+
+    Args:
+        test_func: An async function that takes a DatabaseContext as its first
+                 argument, followed by any additional arguments.
+        *args: Positional arguments to pass to the test function.
+        **kwargs: Keyword arguments to pass to the test function.
+
+    Returns:
+        The return value of the test function."""
 
 # from .vector_search import MetadataFilter
 class MetadataFilter:
@@ -479,8 +619,8 @@ def get_engine():
     "Returns the initialized SQLAlchemy async engine."
 
 # from .message_history import add_message_to_history
-async def add_message_to_history(db_context: DatabaseContext, chat_id: int, message_id: int, timestamp: datetime, role: str, content: str, tool_calls_info: Optional[List[Dict[(str, Any)]]]):
-    "Adds a message to the history table, including optional tool call info."
+async def add_message_to_history(db_context: DatabaseContext, chat_id: int, message_id: int, timestamp: datetime, role: str, content: Optional[str], tool_calls_info: Optional[List[Dict[(str, Any)]]], reasoning_info: Optional[Dict[(str, Any)]], error_traceback: Optional[str]):
+    "Adds a message to the history table, including optional tool call, reasoning, and error info."
 
 # from .message_history import get_recent_history
 async def get_recent_history(db_context: DatabaseContext, chat_id: int, limit: int, max_age: timedelta) -> List[Dict[(str, Any)]]:
@@ -488,7 +628,7 @@ async def get_recent_history(db_context: DatabaseContext, chat_id: int, limit: i
 
 # from .message_history import get_message_by_id
 async def get_message_by_id(db_context: DatabaseContext, chat_id: int, message_id: int) -> Optional[Dict[(str, Any)]]:
-    "Retrieves a specific message by its chat and message ID."
+    "Retrieves a specific message by its chat and message ID, including all fields."
 
 # from .message_history import get_grouped_message_history
 async def get_grouped_message_history(db_context: DatabaseContext) -> Dict[(int, List[Dict[(str, Any)]])]:
