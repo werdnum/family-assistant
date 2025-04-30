@@ -233,11 +233,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             db_context_getter = self.get_db_context()  # Get the coroutine first
             async with await db_context_getter as db_context:  # await to get the context manager
                 async with self._typing_notifications(context, chat_id):
-                    # Call the method on the ProcessingService instance
-                    llm_response_content, tool_call_info = (
-                        await self.processing_service.generate_llm_response_for_chat(
+                    # Call the method on the ProcessingService instance, capture all return values
+                    (
+                        llm_response_content,
+                        tool_call_info,
+                        reasoning_info, # Capture reasoning
+                        processing_error_traceback, # Capture traceback
+                    ) = await self.processing_service.generate_llm_response_for_chat(
                             db_context=db_context,
-                            # processing_service is now self.processing_service, no need to pass
                             application=self.application,
                             chat_id=chat_id,
                             trigger_content_parts=trigger_content_parts,
@@ -274,34 +277,36 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         text="Sorry, I couldn't process that request.",
                         reply_to_message_id=reply_target_message_id,
                     )
+            # If an error occurred during processing, processing_error_traceback will be set
+            elif processing_error_traceback and reply_target_message_id:
+                 logger.info(f"Sending error message to chat {chat_id} due to processing error.")
+                 await context.bot.send_message(
+                     chat_id=chat_id,
+                     text="Sorry, something went wrong while processing your request.",
+                     reply_to_message_id=reply_target_message_id,
+                 )
 
         except Exception as e:
+            # This catches errors *outside* the generate_llm_response_for_chat call
+            # (e.g., DB connection issues before the call, Telegram API errors sending reply)
             logger.error(
-                f"Error processing message batch for chat {chat_id}: {e}", exc_info=True
+                f"Unhandled error in process_chat_queue for chat {chat_id}: {e}", exc_info=True
             )
+            # Capture traceback if not already captured by generate_llm_response_for_chat
+            if not processing_error_traceback:
+                import traceback
+                processing_error_traceback = traceback.format_exc()
+
+            # Attempt to notify user if possible
             if reply_target_message_id:
-                try:
+                with contextlib.suppress(Exception): # Suppress errors sending the error message
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text="Sorry, something went wrong while processing your request.",
+                        text="Sorry, an unexpected error occurred.",
                         reply_to_message_id=reply_target_message_id,
                     )
-                except Exception as reply_err:
-                    logger.error(
-                        f"Failed to send error reply to chat {chat_id}: {reply_err}"
-                    )
-                    try:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text="Sorry, something went wrong while processing your request (reply failed).",
-                        )
-                    except Exception as fallback_err:
-                        logger.error(
-                            f"Failed to send fallback error message to chat {chat_id}: {fallback_err}"
-                        )
             # Let the main error handler notify the developer
-            # Re-raise the exception so the main error handler catches it
-            raise e
+            raise e # Re-raise for the main error handler
 
         finally:
             try:
@@ -319,13 +324,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             role="user",
                             content=history_user_content,
                             tool_calls_info=None,
+                            # Add traceback here if an error occurred during processing of this user message
+                            error_traceback=processing_error_traceback,
+                            reasoning_info=None, # User messages don't have reasoning
                         )
                     else:
                         logger.warning(
                             f"Could not store batched user message for chat {chat_id} due to missing message ID."
                         )
 
-                    if llm_response_content and reply_target_message_id:
+                    # Store assistant message (even if content is None/fallback, to capture reasoning/tools)
+                    # Only store if processing didn't fail *before* generating a response structure
+                    if reply_target_message_id and not processing_error_traceback: # Don't store assistant msg if processing failed entirely
                         bot_message_pseudo_id = reply_target_message_id + 1
                         await self.storage.add_message_to_history(
                             db_context=db_context_for_history,
@@ -333,9 +343,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             message_id=bot_message_pseudo_id,
                             timestamp=datetime.now(timezone.utc),
                             role="assistant",
-                            content=llm_response_content,
+                            content=llm_response_content, # Could be None or fallback text
                             tool_calls_info=tool_call_info,
+                            reasoning_info=reasoning_info, # Store reasoning
+                            error_traceback=None, # Error is stored with user message
                         )
+                    elif processing_error_traceback:
+                         logger.info(f"Skipping storage of assistant message for chat {chat_id} due to processing error.")
             except Exception as db_err:
                 logger.error(
                     f"Failed to store batched message history in DB for chat {chat_id}: {db_err}",

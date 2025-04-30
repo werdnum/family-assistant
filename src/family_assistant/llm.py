@@ -44,9 +44,8 @@ class LLMOutput:
     """Standardized output structure from an LLM call."""
 
     content: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = field(
-        default_factory=list
-    )  # Store raw tool call dicts
+    tool_calls: Optional[List[Dict[str, Any]]] = field(default=None) # Store raw tool call dicts
+    reasoning_info: Optional[Dict[str, Any]] = field(default=None) # Store reasoning/usage data
 
 
 class LLMInterface(Protocol):
@@ -181,9 +180,24 @@ class LiteLLMClient:
                     status_code=500,
                 )  # Simulate server error
 
-            # Extract content and tool calls
+            # Extract content, tool calls, and potentially reasoning/usage info
             content = response_message.content
             raw_tool_calls = response_message.tool_calls
+            reasoning_info = None
+            # Example: Extract usage data if available (common place for token counts)
+            if hasattr(response, 'usage') and response.usage:
+                try:
+                    # Convert Pydantic usage object to dict
+                    reasoning_info = response.usage.model_dump(mode="json")
+                    logger.debug(f"Extracted usage data as reasoning_info: {reasoning_info}")
+                except Exception as usage_err:
+                    logger.warning(f"Could not serialize response.usage: {usage_err}")
+
+            # Add other potential reasoning fields if the model/API provides them
+            # e.g., if response has a 'debug' or 'reasoning_steps' field:
+            # if hasattr(response, 'reasoning_steps'):
+            #     if reasoning_info is None: reasoning_info = {}
+            #     reasoning_info['steps'] = response.reasoning_steps
 
             # Convert LiteLLM ToolCall objects to simple dicts for the LLMOutput
             tool_calls_list = []
@@ -195,10 +209,12 @@ class LiteLLMClient:
                     )  # Use model_dump for pydantic v2+
 
             logger.debug(
-                f"LiteLLM response received. Content: {bool(content)}. Tool Calls: {len(tool_calls_list)}"
+                f"LiteLLM response received. Content: {bool(content)}. Tool Calls: {len(tool_calls_list)}. Reasoning: {bool(reasoning_info)}"
             )
             return LLMOutput(
-                content=content, tool_calls=tool_calls_list if tool_calls_list else None
+                content=content,
+                tool_calls=tool_calls_list if tool_calls_list else None,
+                reasoning_info=reasoning_info # Pass extracted reasoning info
             )
 
         except (

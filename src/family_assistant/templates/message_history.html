@@ -34,24 +34,40 @@
                     {% if message.role == 'assistant' and message.tool_calls_info %}
                     <details class="tool-info-details">
                         <summary>Tool Calls ({{ message.tool_calls_info|length }})</summary>
-                        <div class="tool-info-content"> <!-- Use div instead of pre for structure -->
+                        <div class="tool-info-content">
                             {% for tool_call in message.tool_calls_info %}
-                            <strong>Tool:</strong> {{ tool_call.function_name }}<br>
-                            <strong>Call ID:</strong> {{ tool_call.call_id }}<br>
-                            <strong>Arguments:</strong><pre>{{ tool_call.arguments | tojson(indent=2) }}</pre>
-                            <strong>Response:</strong><pre>{{ tool_call.response_content }}</pre>
-                            {% if not loop.last %}---{% endif %}
+                            <div class="tool-call-item">
+                                <strong>Tool:</strong> {{ tool_call.function_name }}<br>
+                                <strong>Call ID:</strong> {{ tool_call.call_id }}<br>
+                                <strong>Arguments:</strong><pre>{{ tool_call.arguments | tojson(indent=2) }}</pre>
+                                <strong>Response:</strong><pre>{{ tool_call.response_content }}</pre>
+                            </div>
+                            {% if not loop.last %}<hr class="tool-separator">{% endif %}
                             {% endfor %}
                         </div>
+                    </details>
+                    {% endif %}
+                    {% if message.reasoning_info %}
+                    <details class="reasoning-info-details">
+                        <summary>Reasoning/Usage Info</summary>
+                        <pre class="reasoning-info-content">{{ message.reasoning_info | tojson(indent=2) }}</pre>
+                    </details>
+                    {% endif %}
+                    {% if message.error_traceback %}
+                    <details class="error-traceback-details">
+                        <summary class="error-summary">Processing Error Occurred</summary>
+                        <pre class="error-traceback-content">{{ message.error_traceback }}</pre>
                     </details>
                     {% endif %}
                 </div>
             </div>
             {% endfor %}
         </div>
+        {% else %}
+        <p>No messages found for this chat.</p>
         {% endfor %}
     {% else %}
-        <p>No message history found.</p>
+        <p>No message history found for any chat.</p>
     {% endif %}
 </main>
 

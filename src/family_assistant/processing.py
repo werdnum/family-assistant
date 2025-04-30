@@ -84,10 +84,10 @@ class ProcessingService:
         messages: List[Dict[str, Any]],
         chat_id: int,
         application: Application,
-    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
+    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
         """
         Sends the conversation history to the LLM via the injected client,
-        handles potential tool calls using the injected tools provider and database context,
+        handles potential tool calls using the injected tools provider,
         and returns the final response content along with details of any tool calls made.
 
         Args:
@@ -99,8 +99,10 @@ class ProcessingService:
             A tuple containing:
             - The final response content string from the LLM (or None).
             - A list of dictionaries detailing executed tool calls (or None).
+            - A dictionary containing reasoning/usage info from the final LLM call (or None).
         """
         executed_tool_info: List[Dict[str, Any]] = []
+        final_reasoning_info: Optional[Dict[str, Any]] = None # Added
         logger.info(
             f"Processing {len(messages)} messages for chat {chat_id}. Last message: {messages[-1]['content'][:100]}..."
         )
@@ -119,10 +121,10 @@ class ProcessingService:
                 tools=all_tools,
                 tool_choice="auto" if all_tools else None,
             )
+            # Store reasoning from the first call (might be overwritten if tools are called)
+            final_reasoning_info = llm_output.reasoning_info
 
-            tool_calls = (
-                llm_output.tool_calls
-            )  # Get tool calls from the standardized output
+            tool_calls = llm_output.tool_calls # Get tool calls from the standardized output
 
             # --- Handle Tool Calls (if any) ---
             if tool_calls:
@@ -275,8 +277,8 @@ class ProcessingService:
                 f"Error during LLM interaction or tool handling in ProcessingService: {e}",
                 exc_info=True,
             )
-            # Ensure tuple is returned even on error
-            return None, None
+            # Ensure tuple is returned even on error, include None for reasoning
+            return None, None, None
 
     async def generate_llm_response_for_chat(
         self,
@@ -285,10 +287,10 @@ class ProcessingService:
         chat_id: int,
         trigger_content_parts: List[Dict[str, Any]],
         user_name: str,
-    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
+    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], Optional[str]]:
         """
         Prepares context, message history, calls the LLM processing logic,
-        and returns the response.
+        and returns the response, tool info, reasoning info, and any processing error traceback.
 
         Args:
             db_context: The database context to use for storage operations.
@@ -298,8 +300,9 @@ class ProcessingService:
             user_name: The user name to format into the system prompt.
 
         Returns:
-            A tuple: (LLM response string or None, List of tool call info dicts or None).
+            A tuple: (LLM response string or None, List of tool call info dicts or None, Reasoning info dict or None, Error traceback string or None).
         """
+        error_traceback: Optional[str] = None # Initialize traceback
         logger.debug(
             f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
         )
@@ -395,12 +398,12 @@ class ProcessingService:
                         f"Expected list for raw_tool_calls_info, got {type(raw_info_list)}. Skipping tool call reconstruction."
                     )
                 # Skip adding the original combined message dictionary 'msg' as we added parts separately
-            else:
+            elif msg["role"] != "error": # Don't include previous error messages in history sent to LLM
                 messages.append({"role": msg["role"], "content": msg["content"] or ''})
 
         # messages.extend(history_messages) # Removed this line, processing is now done above
         logger.debug(
-            f"Processed {len(history_messages)} DB history messages into LLM format."
+            f"Processed {len(history_messages)} DB history messages into LLM format (excluding 'error' role)."
         )
 
         # --- Prepare System Prompt Context ---
@@ -530,11 +533,15 @@ class ProcessingService:
                 chat_id=chat_id,
                 application=application,
             )
-            return llm_response_content, tool_info
+            # Return content, tool info, and reasoning info
+            return llm_response_content, tool_info, reasoning_info, None # No error traceback
         except Exception as e:
             logger.error(
                 f"Error during ProcessingService interaction for chat {chat_id}: {e}",
                 exc_info=True,
             )
-            # Return None for both parts on error
-            return None, None
+            # Capture traceback on error
+            import traceback
+            error_traceback = traceback.format_exc()
+            # Return None for content/tools/reasoning, but include the traceback
+            return None, None, None, error_traceback
