@@ -674,9 +674,16 @@ async def main_async(
     logger.info("Web server running on http://0.0.0.0:8000")
 
     # --- Instantiate Task Worker ---
+    # Ensure telegram_service and application are initialized before this
+    if not telegram_service or not hasattr(telegram_service, 'application'):
+         logger.critical("Telegram service or application not initialized before TaskWorker creation.")
+         raise SystemExit("Critical error: Cannot create TaskWorker without Telegram application.")
+
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
-        # Pass other dependencies if needed by its methods or handlers registered here
+        application=telegram_service.application, # Pass application instance
+        calendar_config=config["calendar_config"], # Pass calendar config
+        timezone_str=config["timezone"], # Pass timezone string
     )
 
     # --- Register Task Handlers with the Worker Instance ---
@@ -688,18 +695,8 @@ async def main_async(
     # Register email indexing handler (still using module-level function for now)
     # TODO: Refactor email_indexer and register its method here
     task_worker_instance.register_task_handler("index_email", handle_index_email)
-    # Register LLM callback handler, pre-binding dependencies (processing_service and application)
-    # Ensure telegram_service and its application are available here
-    if telegram_service and hasattr(telegram_service, 'application'):
-        application_instance = telegram_service.application
-        task_worker_instance.register_task_handler(
-            "llm_callback",
-            functools.partial(handle_llm_callback, processing_service, application_instance) # Bind both
-        )
-    else:
-        logger.error("Could not register llm_callback handler: TelegramService or Application not initialized.")
-        # Decide how to handle this - raise error? Log and continue without the handler?
-        # For now, log the error. The worker won't be able to process this task type.
+    # Register LLM callback handler directly (dependencies passed via context by worker)
+    task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
 
     logger.info(f"Registered task handlers for worker {task_worker_instance.worker_id}: {list(task_worker_instance.get_task_handlers().keys())}")
 

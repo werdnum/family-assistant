@@ -88,38 +88,44 @@ def format_llm_response_for_telegram(response_text: str) -> str:
 
 
 async def handle_llm_callback(
-    processing_service: ProcessingService, # Dependency injected via partial
-    application: "Application", # Dependency injected via partial. Forward ref if Application not imported.
-    db_context: DatabaseContext, # Dependency provided by TaskWorker._process_task
+    exec_context: ToolExecutionContext, # Accept execution context
     payload: Any # Payload from the task queue
 ):
     """
     Task handler for LLM scheduled callbacks.
-    Dependencies (processing_service, application) are injected via functools.partial during registration.
+    Dependencies are accessed via the ToolExecutionContext.
     """
-    # Dependencies are now passed directly as arguments
+    # Access dependencies from the execution context
+    processing_service = exec_context.processing_service # TaskWorker passes its own instance
+    application = exec_context.application
+    db_context = exec_context.db_context
+    chat_id = exec_context.chat_id # Get chat_id from context
+
+    # Basic validation of dependencies from context
     if not processing_service:
-        # This check might be redundant if registration guarantees it, but safe to keep.
-        logger.error("ProcessingService instance was not provided to handle_llm_callback.")
-        raise ValueError("Missing ProcessingService dependency for LLM callback.")
+        logger.error("ProcessingService not found in ToolExecutionContext for handle_llm_callback.")
+        raise ValueError("Missing ProcessingService dependency in context.")
     if not application:
-        # This check might be redundant if registration guarantees it, but safe to keep.
-        logger.error("Telegram Application instance was not provided to handle_llm_callback.")
-        raise ValueError("Missing Application dependency for LLM callback.")
+        logger.error("Application not found in ToolExecutionContext for handle_llm_callback.")
+        raise ValueError("Missing Application dependency in context.")
+    if not db_context:
+        logger.error("DatabaseContext not found in ToolExecutionContext for handle_llm_callback.")
+        raise ValueError("Missing DatabaseContext dependency in context.")
+    if not chat_id: # chat_id should be set by _process_task
+        logger.error("Chat ID not found in ToolExecutionContext for handle_llm_callback.")
+        raise ValueError("Missing Chat ID in context.")
 
     # Extract necessary info from payload
-    chat_id = payload.get("chat_id")
+    # chat_id is now from context
     callback_context = payload.get("callback_context")
 
-    if not chat_id or not callback_context:
-        logger.error(f"Invalid payload for llm_callback task: {payload}")
-        raise ValueError(
-            "Missing required fields in payload: chat_id or callback_context"
-        )
+    # Validate payload content
+    if not callback_context:
+        logger.error(f"Invalid payload for llm_callback task (missing callback_context): {payload}")
+        raise ValueError("Missing required field in payload: callback_context")
 
     logger.info(f"Handling LLM callback for chat_id {chat_id}")
-    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
-    message_to_send = f"System Callback: The time is now {current_time_str}.\n\nYou previously scheduled a callback with the following context:\n\n---\n{callback_context}\n---"  # This seems unused?
+    current_time_str = datetime.now(zoneinfo.ZoneInfo(exec_context.timezone_str)).strftime("%Y-%m-%d %H:%M:%S %Z") # Use timezone from context
 
     try:
         # Construct the trigger message content for the LLM
@@ -138,13 +144,13 @@ async def handle_llm_callback(
         # Tool definitions are fetched within process_message now
         # all_tools = local_tools_definition + mcp_tools # Removed
 
-        # Call the ProcessingService directly, passing the application instance
+        # Call the ProcessingService directly, using dependencies from context
         llm_response_content, tool_call_info = (
-            await processing_service.process_message( # Use the passed-in instance
-                db_context=db_context,
+            await processing_service.process_message( # Use service from context
+                db_context=db_context, # Use db_context from context
                 messages=messages_for_llm,
-                chat_id=chat_id,
-                application=application,  # Pass application for ToolExecutionContext
+                chat_id=chat_id, # Use chat_id from context
+                application=application,  # Use application from context
             )
         )
 
@@ -226,24 +232,33 @@ class TaskWorker:
     def __init__(
         self,
         processing_service: ProcessingService,
+        application: Application, # Add application dependency
+        calendar_config: Dict[str, Any], # Add calendar config
+        timezone_str: str, # Add timezone string
     ):
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
+        self.application = application # Store application instance
+        self.calendar_config = calendar_config # Store calendar config
+        self.timezone_str = timezone_str # Store timezone string
         # Initialize handlers - specific handlers are registered externally
-        self.task_handlers: Dict[str, Callable[[DatabaseContext, Any], Awaitable[None]]] = {}
+        # Update handler signature type hint
+        self.task_handlers: Dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]] = {}
         self.worker_id = f"worker-{uuid.uuid4()}"
         logger.info(f"TaskWorker instance {self.worker_id} created.")
 
     def register_task_handler(
         self,
         task_type: str,
-        handler: Callable[[DatabaseContext, Any], Awaitable[None]]
+        # Update handler signature type hint
+        handler: Callable[[ToolExecutionContext, Any], Awaitable[None]]
     ):
         """Register a task handler function for a specific task type."""
         self.task_handlers[task_type] = handler
         logger.info(f"Worker {self.worker_id}: Registered handler for task type: {task_type}")
 
-    def get_task_handlers(self) -> Dict[str, Callable[[DatabaseContext, Any], Awaitable[None]]]:
+    # Update return type hint
+    def get_task_handlers(self) -> Dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]]:
          """Return the current task handlers dictionary for this worker."""
          return self.task_handlers
 
@@ -268,10 +283,36 @@ class TaskWorker:
             return # Stop processing this task
 
         try:
-            logger.debug(
-                f"Worker {self.worker_id} executing handler for task {task['task_id']}"
+            # --- Create Execution Context ---
+            # Extract chat_id from payload if available (needed for context)
+            # Default to 0 or None if not applicable for the task type?
+            # For llm_callback, it should be present.
+            chat_id = task.get("payload", {}).get("chat_id", 0) # Default to 0 if missing
+            if not chat_id and task["task_type"] == "llm_callback":
+                 logger.error(f"Task {task['task_id']} (llm_callback) missing chat_id in payload. Cannot create context.")
+                 # Mark task as failed? Or raise error?
+                 await storage.update_task_status(
+                     db_context=db_context,
+                     task_id=task["task_id"],
+                     status="failed",
+                     error="Missing chat_id in payload for llm_callback",
+                 )
+                 return # Stop processing
+
+            exec_context = ToolExecutionContext(
+                chat_id=chat_id,
+                db_context=db_context,
+                calendar_config=self.calendar_config,
+                application=self.application,
+                processing_service=self.processing_service, # Pass processing service
+                timezone_str=self.timezone_str,
             )
-            await handler(db_context, task["payload"])
+            # --- Execute Handler with Context ---
+            logger.debug(
+                f"Worker {self.worker_id} executing handler for task {task['task_id']} with context."
+            )
+            # Pass the context and the original payload
+            await handler(exec_context, task["payload"])
 
             # Task details for logging and recurrence
             task_id = task["task_id"]
