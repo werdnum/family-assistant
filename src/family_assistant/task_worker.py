@@ -4,10 +4,9 @@ Task worker implementation for background processing.
 
 import asyncio
 import logging
-import asyncio
-import logging
 import random
 import uuid
+import zoneinfo # Add this import
 from dateutil import rrule
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Callable, Awaitable
@@ -21,10 +20,8 @@ from family_assistant.indexing.email_indexer import handle_index_email # Import 
 from family_assistant.indexing.document_indexer import DocumentIndexer
 # Import functools for partial application
 import functools
-
-# Use absolute imports based on the package structure
-from family_assistant import storage  # Import for task queue operations
-from family_assistant.processing import ProcessingService  # Import the service
+# Import Application for type hinting
+from telegram.ext import Application
 
 # Import tool definitions and context from the tools module
 from family_assistant.tools import (
