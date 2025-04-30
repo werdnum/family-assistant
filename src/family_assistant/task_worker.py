@@ -26,9 +26,10 @@ import functools
 from family_assistant import storage  # Import for task queue operations
 from family_assistant.processing import ProcessingService  # Import the service
 
-# Import tool definitions from the new tools module
+# Import tool definitions and context from the tools module
 from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
+    ToolExecutionContext, # Import the context class
 )
 from telegramify_markdown import markdownify
 from telegram.helpers import escape_markdown
