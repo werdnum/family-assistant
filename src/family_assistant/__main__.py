@@ -665,8 +665,8 @@ async def main_async(
     logger.info("Stored TelegramService instance in FastAPI app state.")
 
     # --- Uvicorn Server Setup ---
-    config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
-    server = uvicorn.Server(config)
+    uvicorn_config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
+    server = uvicorn.Server(uvicorn_config)
 
     # Run Uvicorn server concurrently (polling is already running)
     # telegram_task = asyncio.create_task(application.updater.start_polling(allowed_updates=Update.ALL_TYPES)) # Removed duplicate start_polling
