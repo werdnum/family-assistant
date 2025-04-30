@@ -88,25 +88,26 @@ def format_llm_response_for_telegram(response_text: str) -> str:
 
 
 async def handle_llm_callback(
-    processing_service: ProcessingService, # Dependency passed in
-    db_context: DatabaseContext,
-    payload: Any
+    processing_service: ProcessingService, # Dependency injected via partial
+    application: "Application", # Dependency injected via partial. Forward ref if Application not imported.
+    db_context: DatabaseContext, # Dependency provided by TaskWorker._process_task
+    payload: Any # Payload from the task queue
 ):
-    """Task handler for LLM scheduled callbacks."""
-    # Dependency is passed directly
+    """
+    Task handler for LLM scheduled callbacks.
+    Dependencies (processing_service, application) are injected via functools.partial during registration.
+    """
+    # Dependencies are now passed directly as arguments
     if not processing_service:
+        # This check might be redundant if registration guarantees it, but safe to keep.
         logger.error("ProcessingService instance was not provided to handle_llm_callback.")
         raise ValueError("Missing ProcessingService dependency for LLM callback.")
-
-    # Still need application reference to send messages back
-    application = payload.get("_application_ref") # Keep this for sending messages
-
     if not application:
-        logger.error(
-            "Cannot handle LLM callback: Telegram application reference not set"
-        )
-        raise RuntimeError("Missing application reference in payload")
+        # This check might be redundant if registration guarantees it, but safe to keep.
+        logger.error("Telegram Application instance was not provided to handle_llm_callback.")
+        raise ValueError("Missing Application dependency for LLM callback.")
 
+    # Extract necessary info from payload
     chat_id = payload.get("chat_id")
     callback_context = payload.get("callback_context")
 
