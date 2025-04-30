@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+# Forward reference ProcessingService if not imported
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from family_assistant.processing import ProcessingService
+
 @dataclass
 class ToolExecutionContext:
     """Context passed to tool execution functions."""
@@ -42,9 +47,8 @@ class ToolExecutionContext:
     chat_id: int
     db_context: DatabaseContext
     calendar_config: Dict[str, Any] # Add calendar config
-    application: Optional[Application] = (
-        None  # Still needed for schedule_future_callback
-    )
+    application: Optional[Application] = None
+    processing_service: Optional["ProcessingService"] = None # Add processing service
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC" # Default, should be overridden
 
