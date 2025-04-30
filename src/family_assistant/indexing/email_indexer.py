@@ -22,6 +22,7 @@ from family_assistant.llm import LLMInterface # Protocol for LLM (optional enric
 
 # Import the Document protocol from the correct location
 from family_assistant.storage.vector import Document
+from family_assistant.tools import ToolExecutionContext # Import the context class
 
 logger = logging.getLogger(__name__)
 
