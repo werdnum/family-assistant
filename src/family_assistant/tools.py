@@ -35,11 +35,12 @@ logger = logging.getLogger(__name__)
 
 
 # Forward reference ProcessingService if not imported
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from family_assistant.processing import ProcessingService
+# from typing import TYPE_CHECKING # Removed TYPE_CHECKING guard
+# if TYPE_CHECKING:
+#     from family_assistant.processing import ProcessingService
+from family_assistant.processing import ProcessingService # Direct import for diagnosis
 
-@dataclass # Moved decorator here
+@dataclass
 class ToolExecutionContext:
     """Context passed to tool execution functions."""
 
