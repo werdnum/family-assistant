@@ -168,7 +168,16 @@ async def test_document_indexing_and_query_e2e(
 
     # --- Arrange: Register Task Handler ---
     # Create a TaskWorker instance for this test and register the handler
-    worker = TaskWorker(processing_service=None) # No processing service needed for this handler
+    # Provide dummy/mock values for the required arguments
+    mock_application = MagicMock() # Mock the application object
+    dummy_calendar_config = {}
+    dummy_timezone_str = "UTC"
+    worker = TaskWorker(
+        processing_service=None, # No processing service needed for this handler
+        application=mock_application,
+        calendar_config=dummy_calendar_config,
+        timezone_str=dummy_timezone_str,
+    )
     worker.register_task_handler(
         "process_uploaded_document", document_indexer.process_document # Register the method
     )

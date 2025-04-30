@@ -168,7 +168,16 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
 
     # --- Arrange: Register Task Handler ---
     # Create a TaskWorker instance for this test and register the handler
-    worker = TaskWorker(processing_service=None)
+    # Provide dummy/mock values for the required arguments
+    mock_application = MagicMock() # Mock the application object
+    dummy_calendar_config = {}
+    dummy_timezone_str = "UTC"
+    worker = TaskWorker(
+        processing_service=None, # No processing service needed for this handler
+        application=mock_application,
+        calendar_config=dummy_calendar_config,
+        timezone_str=dummy_timezone_str,
+    )
     worker.register_task_handler("index_email", handle_index_email)
     logger.info("TaskWorker created and 'index_email' task handler registered.")
 
