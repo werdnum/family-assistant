@@ -143,8 +143,17 @@ llm_client_instance: Optional[LLMInterface] = None # Optional for enrichment
 
 
 # --- Task Handler Implementation ---
-async def handle_index_email(db_context: DatabaseContext, payload: Dict[str, Any]):
-    """Task handler to index a specific email from the received_emails table."""
+async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[str, Any]):
+    """
+    Task handler to index a specific email from the received_emails table.
+    Receives ToolExecutionContext from the TaskWorker.
+    """
+    # Extract db_context from the execution context
+    db_context = exec_context.db_context
+    if not db_context:
+         logger.error("DatabaseContext not found in ToolExecutionContext for handle_index_email.")
+         raise ValueError("Missing DatabaseContext dependency in context.")
+
     email_db_id = payload.get("email_db_id")
     if not email_db_id:
         raise ValueError("Missing 'email_db_id' in index_email task payload.")
