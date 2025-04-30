@@ -14,6 +14,7 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.embeddings import EmbeddingGenerator, EmbeddingResult # Protocol for embedding
 # Import the Document protocol from the correct location (though not directly used here, good practice)
 from family_assistant.storage.vector import Document
+from family_assistant.tools import ToolExecutionContext # Import the context class
 
 logger = logging.getLogger(__name__)
 
