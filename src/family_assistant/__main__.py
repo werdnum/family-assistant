@@ -568,7 +568,8 @@ async def main_async(
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
-        embedding_generator=embedding_generator, # Pass the generator instance
+        embedding_generator=embedding_generator,
+        calendar_config=CALENDAR_CONFIG, # Pass calendar config
     )
     mcp_provider = MCPToolsProvider(
         mcp_definitions=mcp_tools,  # Use discovered MCP tool definitions

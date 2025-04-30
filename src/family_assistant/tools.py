@@ -6,9 +6,13 @@ import asyncio
 import json
 import logging
 import uuid
+import inspect # Needed for signature inspection
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, time # Added date, time
 from typing import List, Dict, Any, Optional, Protocol, Callable
+
+import caldav # Added for CalDAV operations
+import vobject # Added for VEVENT creation
 
 from dateutil import rrule
 from dateutil.parser import isoparse
@@ -34,10 +38,13 @@ class ToolExecutionContext:
     """Context passed to tool execution functions."""
 
     chat_id: int
-    db_context: DatabaseContext  # Add database context
+    db_context: DatabaseContext
+    calendar_config: Dict[str, Any] # Add calendar config
     application: Optional[Application] = (
         None  # Still needed for schedule_future_callback
     )
+    # Add other context elements as needed, e.g., timezone_str
+    timezone_str: str = "UTC" # Default, should be overridden
 
 
 # --- Custom Exception ---
@@ -80,8 +87,112 @@ class ToolsProvider(Protocol):
         ...
 
 
-# --- Local Tool Implementations (Moved from processing.py) ---
+# --- Local Tool Implementations ---
 # Refactored to accept context: ToolExecutionContext
+
+async def add_calendar_event_tool(
+    exec_context: ToolExecutionContext,
+    summary: str,
+    start_time: str,
+    end_time: str,
+    description: Optional[str] = None,
+    all_day: bool = False,
+) -> str:
+    """
+    Adds an event to the first configured CalDAV calendar.
+    """
+    logger.info(f"Executing add_calendar_event_tool: {summary}")
+    calendar_config = exec_context.calendar_config
+    caldav_config = calendar_config.get("caldav")
+
+    if not caldav_config:
+        return "Error: CalDAV is not configured. Cannot add calendar event."
+
+    username = caldav_config.get("username")
+    password = caldav_config.get("password")
+    calendar_urls = caldav_config.get("calendar_urls", [])
+
+    if not username or not password or not calendar_urls:
+        return "Error: CalDAV configuration is incomplete (missing user, pass, or URL). Cannot add event."
+
+    target_calendar_url = calendar_urls[0] # Use the first configured URL
+    logger.info(f"Targeting CalDAV calendar: {target_calendar_url}")
+
+    try:
+        # Parse start and end times
+        if all_day:
+            # For all-day events, parse as date objects
+            dtstart = isoparse(start_time).date()
+            dtend = isoparse(end_time).date()
+            # Basic validation: end date must be after start date for all-day
+            if dtend <= dtstart:
+                 raise ValueError("End date must be after start date for all-day events.")
+        else:
+            # For timed events, parse as datetime objects, require timezone
+            dtstart = isoparse(start_time)
+            dtend = isoparse(end_time)
+            if dtstart.tzinfo is None or dtend.tzinfo is None:
+                raise ValueError("Start and end times must include timezone information (e.g., +02:00 or Z).")
+            # Basic validation: end time must be after start time
+            if dtend <= dtstart:
+                raise ValueError("End time must be after start time for timed events.")
+
+        # Create VEVENT component using vobject
+        cal = vobject.iCalendar()
+        cal.add('vevent')
+        vevent = cal.vevent
+        vevent.add('uid').value = str(uuid.uuid4())
+        vevent.add('summary').value = summary
+        vevent.add('dtstart').value = dtstart # vobject handles date vs datetime
+        vevent.add('dtend').value = dtend     # vobject handles date vs datetime
+        vevent.add('dtstamp').value = datetime.now(timezone.utc)
+        if description:
+            vevent.add('description').value = description
+
+        event_data = cal.serialize()
+        logger.debug(f"Generated VEVENT data:\n{event_data}")
+
+        # Connect to CalDAV server and save event (synchronous, run in executor)
+        def save_event_sync():
+            logger.debug(f"Connecting to CalDAV: {target_calendar_url}")
+            # Need to create client and get calendar object within the sync function
+            with caldav.DAVClient(
+                url=target_calendar_url, username=username, password=password
+            ) as client:
+                # Get the specific calendar object
+                # This assumes target_calendar_url is the *direct* URL to the calendar collection
+                target_calendar = client.calendar(url=target_calendar_url)
+                if not target_calendar:
+                     # This error handling might be tricky inside the sync function
+                     # Let's rely on exceptions for now.
+                     raise ConnectionError(f"Failed to obtain calendar object for URL: {target_calendar_url}")
+
+                logger.info(f"Saving event to calendar: {target_calendar.url}")
+                # Use the save_event method which takes the VCALENDAR string
+                new_event = target_calendar.save_event(event_data)
+                logger.info(f"Event saved successfully. URL: {getattr(new_event, 'url', 'N/A')}")
+                return f"OK. Event '{summary}' added to the calendar."
+
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, save_event_sync)
+            return result
+        except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:
+            logger.error(f"Error during synchronous CalDAV save operation: {sync_err}", exc_info=True)
+            # Provide a more specific error if possible
+            if "authentication" in str(sync_err).lower():
+                return "Error: Failed to add event due to CalDAV authentication failure."
+            elif "not found" in str(sync_err).lower():
+                 return f"Error: Failed to add event. Calendar not found at URL: {target_calendar_url}"
+            else:
+                return f"Error: Failed to add event to CalDAV calendar. {sync_err}"
+
+    except ValueError as ve:
+        logger.error(f"Invalid arguments for adding calendar event: {ve}")
+        return f"Error: Invalid arguments provided. {ve}"
+    except Exception as e:
+        logger.error(f"Unexpected error adding calendar event: {e}", exc_info=True)
+        return f"Error: An unexpected error occurred while adding the event. {e}"
 
 
 async def schedule_recurring_task_tool(
@@ -382,6 +493,7 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
     "schedule_recurring_task": schedule_recurring_task_tool,
     "search_documents": search_documents_tool,
     "get_full_document_content": get_full_document_content_tool, # Add the new tool function
+    "add_calendar_event": add_calendar_event_tool, # Add the new calendar event tool
 }
 
 # Define local tools in the format LiteLLM expects (OpenAI format)
@@ -524,6 +636,40 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_calendar_event",
+            "description": "Adds a new event to the primary family calendar (requires CalDAV configuration). Use this to schedule appointments, reminders with duration, or block out time.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "The title or brief summary of the event.",
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "The start date or datetime of the event in ISO 8601 format. MUST include timezone offset (e.g., '2025-05-20T09:00:00+02:00' for timed event, '2025-05-21' for all-day).",
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "The end date or datetime of the event in ISO 8601 format. MUST include timezone offset (e.g., '2025-05-20T10:30:00+02:00' for timed event, '2025-05-22' for all-day - note: end date is exclusive for all-day).",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional. A more detailed description or notes for the event.",
+                    },
+                    "all_day": {
+                        "type": "boolean",
+                        "description": "Set to true if this is an all-day event, false or omit if it has specific start/end times. Determines if start/end times are treated as dates or datetimes.",
+                        "default": False,
+                    },
+                },
+                "required": ["summary", "start_time", "end_time"],
+            },
+        },
+    },
 ]
 
 
@@ -540,10 +686,12 @@ class LocalToolsProvider:
         definitions: List[Dict[str, Any]],
         implementations: Dict[str, Callable],
         embedding_generator: Optional[EmbeddingGenerator] = None, # Accept generator
+        calendar_config: Optional[Dict[str, Any]] = None, # Accept calendar config
     ):
         self._definitions = definitions
         self._implementations = implementations
         self._embedding_generator = embedding_generator # Store generator
+        self._calendar_config = calendar_config # Store calendar config
         logger.info(
             f"LocalToolsProvider initialized with {len(self._definitions)} tools: {list(self._implementations.keys())}"
         )
@@ -568,23 +716,60 @@ class LocalToolsProvider:
             needs_exec_context = False
             needs_db_context = False
             needs_embedding_generator = False
+            needs_calendar_config = False # Flag for calendar config
 
             for param_name, param in sig.parameters.items():
+                # Check if the function expects the full context object
                 if param.annotation is ToolExecutionContext:
                     needs_exec_context = True
-                elif param.annotation is DatabaseContext and param_name == "db_context":
-                    needs_db_context = True
-                elif param.annotation is EmbeddingGenerator and param_name == "embedding_generator":
-                    needs_embedding_generator = True
+                    break # If it needs the full context, no need to check others
 
+            # If not expecting full context, check for specific injectable dependencies
+            if not needs_exec_context:
+                for param_name, param in sig.parameters.items():
+                    if param.annotation is DatabaseContext and param_name == "db_context":
+                        needs_db_context = True
+                    elif param.annotation is EmbeddingGenerator and param_name == "embedding_generator":
+                        needs_embedding_generator = True
+                    # Check if it expects calendar_config directly (less likely now with ToolExecutionContext)
+                    # elif param_name == "calendar_config" and param.annotation is Dict:
+                    #     needs_calendar_config = True
+
+            # Inject dependencies based on flags
             if needs_exec_context:
+                # Pass the full context object, which now includes calendar_config
                 call_args['exec_context'] = context
-            elif needs_db_context:
-                 # Inject db_context if the function expects it directly
-                 call_args['db_context'] = context.db_context
+            else:
+                # Inject individual dependencies if needed
+                if needs_db_context:
+                    call_args['db_context'] = context.db_context
+                if needs_embedding_generator:
+                    if self._embedding_generator:
+                        call_args['embedding_generator'] = self._embedding_generator
+                    else:
+                        logger.error(f"Tool '{name}' requires an embedding generator, but none was provided.")
+                        return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
+                # Inject calendar_config if needed (less likely now)
+                # if needs_calendar_config:
+                #     if self._calendar_config:
+                #         call_args['calendar_config'] = self._calendar_config
+                #     else:
+                #         logger.error(f"Tool '{name}' requires calendar config, but none was provided.")
+                #         return f"Error: Tool '{name}' cannot be executed because calendar config is missing."
 
-            if needs_embedding_generator:
-                if self._embedding_generator:
+
+            # Clean up arguments not expected by the function signature
+            # (Ensures we don't pass exec_context if only db_context was needed, etc.)
+            expected_args = set(sig.parameters.keys())
+            args_to_remove = set(call_args.keys()) - expected_args
+            for arg_name in args_to_remove:
+                # Only remove if it wasn't part of the original LLM arguments
+                if arg_name not in arguments:
+                    del call_args[arg_name]
+
+
+            # Execute the function with prepared arguments
+            result = await callable_func(**call_args)
                     call_args['embedding_generator'] = self._embedding_generator
                 else:
                     # This should ideally not happen if initialization is correct
