@@ -316,7 +316,8 @@ async def schedule_future_callback_tool(
         payload = {
             "chat_id": chat_id,
             "callback_context": context,
-            "_application_ref": application,  # Pass the global application reference
+            # Application instance should not be stored in payload.
+            # It will be injected into the task handler at runtime.
         }
 
         # TODO: Need access to the new_task_event from main.py to notify worker.
