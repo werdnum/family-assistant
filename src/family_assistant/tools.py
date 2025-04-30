@@ -11,6 +11,7 @@ import zoneinfo
 from dataclasses import dataclass
 from datetime import datetime, timezone, date, time # Added date, time
 from typing import List, Dict, Any, Optional, Protocol, Callable
+from zoneinfo import ZoneInfo
 
 import caldav
 import vobject
