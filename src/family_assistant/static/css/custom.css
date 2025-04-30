@@ -256,3 +256,64 @@ a.button-link:hover {
     /* Add table-based CSS rules here if desired */
     /* Hide the card layout, show a table */
 /* } */
+
+/* Added styles for message history details */
+.reasoning-info-details,
+.error-traceback-details {
+    margin-top: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 0.5rem;
+    background-color: var(--accent-bg); /* Use accent background for visibility */
+}
+
+.reasoning-info-details summary,
+.error-traceback-details summary {
+    cursor: pointer;
+    font-weight: bold;
+    color: var(--text-light); /* Lighter text for summary */
+    margin-bottom: 0.3rem; /* Space below summary */
+}
+
+.reasoning-info-content,
+.error-traceback-content {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background-color: var(--bg); /* Match main background or keep accent */
+    border-radius: var(--border-radius);
+    max-height: 300px; /* Limit height */
+    overflow-y: auto; /* Add scrollbar if needed */
+    white-space: pre-wrap; /* Wrap long lines */
+    word-break: break-all; /* Break long words/lines */
+    font-size: 0.9em; /* Slightly smaller font */
+    border: 1px solid var(--border); /* Add border to pre */
+}
+
+.error-summary {
+    color: var(--error); /* Use error color for summary */
+    font-weight: bold;
+}
+
+.error-traceback-content {
+    border-left: 3px solid var(--error); /* Add a visual cue for errors */
+    color: var(--error); /* Make text error color */
+}
+
+.tool-call-item {
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px dashed var(--border);
+}
+.tool-call-item:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+hr.tool-separator {
+   display: none; /* Hide the old hr if using the item border */
+}
+
+/* Adjust message content padding if details blocks look cramped */
+.message-content {
+    padding-bottom: 0.5rem; /* Add some space at the bottom */
+}
