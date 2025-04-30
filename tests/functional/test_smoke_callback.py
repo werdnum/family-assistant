@@ -21,7 +21,8 @@ from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
     ToolExecutionContext,
 )
-from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event # Import events
+# Import TaskWorker, events, and the specific handler needed for registration
+from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event, handle_llm_callback
 from family_assistant import storage # For direct task checking
 
 # Import the rule-based mock LLM
