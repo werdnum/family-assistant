@@ -253,7 +253,9 @@ class ProcessingService:
                     logger.info(
                         f"Received final LLM response after tool call: {final_content[:100]}..."
                     )
-                    return final_content, executed_tool_info
+                    # Store reasoning from the second call
+                    final_reasoning_info = second_llm_output.reasoning_info
+                    return final_content, executed_tool_info, final_reasoning_info # Return reasoning
                 else:
                     logger.warning("Second LLM response after tool call was empty.")
                     fallback_content = (
