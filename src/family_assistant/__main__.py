@@ -179,18 +179,18 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         "openrouter_api_key": None,
         "allowed_chat_ids": [],
         "developer_chat_id": None,
-        "model": "openrouter/google/gemini-flash-1.5", # Default model
-        "embedding_model": "gemini/gemini-embedding-exp-03-07", # Default embedding model
-        "embedding_dimensions": 1536, # Default dimension
+        "model": "openrouter/google/gemini-2.5-pro-preview-03-25",  # Default model
+        "embedding_model": "gemini/gemini-embedding-exp-03-07",  # Default embedding model
+        "embedding_dimensions": 1536,  # Default dimension
         "timezone": "UTC",
-        "database_url": "sqlite+aiosqlite:///family_assistant.db", # Default DB
+        "database_url": "sqlite+aiosqlite:///family_assistant.db",  # Default DB
         "max_history_messages": 5,
         "history_max_age_hours": 24,
         "litellm_debug": False,
         "calendar_config": {},
         "llm_parameters": {},
         "prompts": {},
-        "mcp_config": {"mcpServers": {}}, # Default empty MCP config
+        "mcp_config": {"mcpServers": {}},  # Default empty MCP config
     }
     logger.info("Initialized config with code defaults.")
 
@@ -267,7 +267,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     if temp_calendar_config:
         config_data["calendar_config"] = temp_calendar_config
     elif not config_data.get("calendar_config"): # If no config from yaml either
-         logger.warning("No calendar sources configured in config file or environment variables.")
+        logger.warning("No calendar sources configured in config file or environment variables.")
 
     # Validate Timezone
     try:
@@ -297,10 +297,10 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         with open(mcp_config_path, "r", encoding="utf-8") as f:
             loaded_mcp_config = json.load(f)
             if isinstance(loaded_mcp_config, dict):
-                 config_data["mcp_config"] = loaded_mcp_config # Store in config dict
-                 logger.info(f"Successfully loaded MCP config from {mcp_config_path}")
+                config_data["mcp_config"] = loaded_mcp_config # Store in config dict
+                logger.info(f"Successfully loaded MCP config from {mcp_config_path}")
             else:
-                 logger.error(f"Failed to load MCP config: {mcp_config_path} is not a valid dictionary.")
+                logger.error(f"Failed to load MCP config: {mcp_config_path} is not a valid dictionary.")
     except FileNotFoundError:
         logger.info(f"{mcp_config_path} not found. MCP features may be disabled.")
     except json.JSONDecodeError as e:
