@@ -26,7 +26,7 @@ from contextlib import AsyncExitStack  # For managing multiple async contexts
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple  # Added Tuple
 
-import pytz  # Added for timezone handling
+import zoneinfo
 from dotenv import load_dotenv
 import uvicorn
 import functools # Import functools
@@ -267,11 +267,10 @@ def load_config():
     # --- Timezone Config ---
     loaded_tz = os.getenv("TIMEZONE", "UTC")
     try:
-        # Validate the timezone string using pytz
-        pytz.timezone(loaded_tz)
-        TIMEZONE_STR = loaded_tz
+        zoneinfo.ZoneInfo(loaded_tz)
+        TIMEZONE_STR = str(loaded_tz)
         logger.info(f"Using timezone: {TIMEZONE_STR}")
-    except pytz.exceptions.UnknownTimeZoneError:
+    except zoneinfo.ZoneInfoNotFoundError:
         logger.error(
             f"Invalid TIMEZONE '{loaded_tz}' specified in .env. Defaulting to UTC."
         )

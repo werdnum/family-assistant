@@ -6,19 +6,20 @@ import asyncio
 import json
 import logging
 import uuid
-import inspect # Needed for signature inspection
+import inspect
+import zoneinfo
 from dataclasses import dataclass
 from datetime import datetime, timezone, date, time # Added date, time
 from typing import List, Dict, Any, Optional, Protocol, Callable
 
-import caldav # Added for CalDAV operations
-import vobject # Added for VEVENT creation
+import caldav
+import vobject
 
 from dateutil import rrule
 from dateutil.parser import isoparse
-from mcp import ClientSession  # Required for MCPToolsProvider type hint
-from telegram.ext import Application  # Required for ToolExecutionContext
-from sqlalchemy.sql import text # For executing raw SQL
+from mcp import ClientSession
+from telegram.ext import Application
+from sqlalchemy.sql import text
 
 # Import storage functions needed by local tools
 from family_assistant import storage
@@ -227,9 +228,10 @@ async def schedule_recurring_task_tool(
         initial_dt = isoparse(initial_schedule_time)
         if initial_dt.tzinfo is None:
             logger.warning(
-                f"Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming UTC."
+                f"Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming %s.",
+                exec_context.timezone,
             )
-            initial_dt = initial_dt.replace(tzinfo=timezone.utc)
+            initial_dt = initial_dt.replace(tzinfo=ZoneInfo(exec_context.timezone))
 
         # Ensure it's in the future (optional, but good practice)
         if initial_dt <= datetime.now(timezone.utc):
@@ -301,9 +303,9 @@ async def schedule_future_callback_tool(
         if scheduled_dt.tzinfo is None:
             # Or raise error, forcing LLM to provide timezone
             logger.warning(
-                f"Callback time '{callback_time}' lacks timezone. Assuming UTC."
+                f"Callback time '{callback_time}' lacks timezone. Assuming %s.", exec_context.timezone
             )
-            scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
+            scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(exec_context.timezone))
 
         # Ensure it's in the future (optional, but good practice)
         if scheduled_dt <= datetime.now(timezone.utc):
