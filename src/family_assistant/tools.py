@@ -785,7 +785,7 @@ class LocalToolsProvider:
             #         return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
 
             # Execute the function with prepared arguments (This is the first and only execution needed)
-            result = await callable_func(**call_args)
+            # result = await callable_func(**call_args) # This line was duplicated, removing it. The call happens on line 775.
 
             # Ensure result is a string
             if result is None:  # Handle None case explicitly
