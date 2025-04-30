@@ -7,7 +7,10 @@
 llm_parameters:
   # Example for Gemini models via OpenRouter
   "openrouter/google/gemini-":
-    reasoning_effort: medium
+    reasoning: # Nest OpenRouter-specific reasoning params here
+      effort: medium
+    # Other top-level parameters for this model could still go here
+    # temperature: 0.8
   # Example for another model type
   # "anthropic/claude-3-":
   #   temperature: 0.75
