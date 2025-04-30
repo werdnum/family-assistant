@@ -140,11 +140,13 @@ class ProcessingService:
 
                 # --- Execute Tool Calls using ToolsProvider ---
                 tool_response_messages = []
-                # Create execution context including the db_context
+                # Create execution context including db_context and calendar_config
                 tool_execution_context = ToolExecutionContext(
                     chat_id=chat_id,
-                    db_context=db_context,  # Pass db_context here
+                    db_context=db_context,
+                    calendar_config=self.calendar_config, # Pass calendar config from service
                     application=application,
+                    timezone_str=self.timezone_str, # Pass timezone string
                 )
 
                 for tool_call_dict in tool_calls:
