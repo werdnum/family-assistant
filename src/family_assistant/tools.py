@@ -784,18 +784,7 @@ class LocalToolsProvider:
             # Removing the duplicate, incorrectly indented line below:
             #         return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
 
-            # Remove context/generator args from call_args if they were not in the original arguments dict
-            # This prevents passing them if the function doesn't expect them explicitly
-            # (e.g. if 'db_context' was passed in arguments but function expects 'exec_context')
-            if 'exec_context' in call_args and 'exec_context' not in arguments:
-                 if not needs_exec_context: del call_args['exec_context']
-            if 'db_context' in call_args and 'db_context' not in arguments:
-                 if not needs_db_context and not needs_exec_context: del call_args['db_context'] # Don't delete if exec_context needed it
-            if 'embedding_generator' in call_args and 'embedding_generator' not in arguments:
-                 if not needs_embedding_generator: del call_args['embedding_generator']
-
-
-            # Execute the function with prepared arguments
+            # Execute the function with prepared arguments (This is the first and only execution needed)
             result = await callable_func(**call_args)
 
             # Ensure result is a string
