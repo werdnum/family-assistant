@@ -119,17 +119,30 @@ class LiteLLMClient:
         call_kwargs = self.default_kwargs.copy()
 
         # Find and merge model-specific parameters from config
-        specific_params = {}
+        reasoning_params_config = None
         for pattern, params in self.model_parameters.items():
+            matched = False
             if pattern.endswith("-"): # Prefix match
-                if self.model.startswith(pattern[:-1]): # Match prefix (remove trailing '-')
-                    specific_params.update(params)
-                    logger.debug(f"Applying parameters for prefix '{pattern}': {params}")
+                if self.model.startswith(pattern[:-1]):
+                    matched = True
             elif self.model == pattern: # Exact match
-                specific_params.update(params)
-                logger.debug(f"Applying parameters for exact match '{pattern}': {params}")
-        # Merge specific params, potentially overriding defaults if keys overlap
-        call_kwargs.update(specific_params)
+                matched = True
+
+            if matched:
+                logger.debug(f"Applying parameters for pattern '{pattern}': {params}")
+                # Separate reasoning params if present
+                if "reasoning" in params and isinstance(params["reasoning"], dict):
+                    reasoning_params_config = params["reasoning"].copy()
+                    # Remove reasoning from top-level params to avoid duplication
+                    params_copy = params.copy()
+                    del params_copy["reasoning"]
+                    call_kwargs.update(params_copy) # Merge non-reasoning params
+                else:
+                    # Merge all params if no 'reasoning' key
+                    call_kwargs.update(params)
+                # Assuming only one pattern should match, break after first match?
+                # Or allow multiple patterns to contribute/override? Let's assume first match wins for now.
+                break # Stop after first matching pattern
 
         # Add model and messages (always required)
         call_kwargs["model"] = self.model
@@ -139,10 +152,14 @@ class LiteLLMClient:
         if tools:
             call_kwargs["tools"] = tools
             call_kwargs["tool_choice"] = tool_choice
-        # Note: If tools is None, we don't pass tool_choice either.
+
+        # Add the nested 'reasoning' object specifically for OpenRouter models if configured
+        if self.model.startswith("openrouter/") and reasoning_params_config:
+            call_kwargs["reasoning"] = reasoning_params_config
+            logger.debug(f"Adding nested 'reasoning' parameter for OpenRouter: {reasoning_params_config}")
 
         logger.debug(
-            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(tools)}. Final Kwargs: {call_kwargs}"
+            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(tools)}. Final Kwargs: {json.dumps(call_kwargs, default=str)}" # Use json.dumps for better logging
         )
         try:
             response = await acompletion(**call_kwargs)
