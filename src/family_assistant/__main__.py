@@ -28,20 +28,6 @@ from typing import Optional, List, Dict, Any, Tuple  # Added Tuple
 
 import pytz  # Added for timezone handling
 from dotenv import load_dotenv
-
-# from telegram import Update # No longer needed here
-# from telegram.constants import ChatAction, ParseMode # Moved to telegram_bot.py
-# from telegram.ext import ( # No longer needed here
-#     Application,
-#     ApplicationBuilder,
-#     # CallbackContext, # Moved to telegram_bot.py
-#     # CommandHandler, # Moved to telegram_bot.py
-#     # ContextTypes, # Moved to telegram_bot.py
-#     # MessageHandler, # Moved to telegram_bot.py
-#     # filters, # Moved to telegram_bot.py
-# )
-# import telegramify_markdown # Moved to telegram_bot.py
-# from telegram.helpers import escape_markdown # Moved to telegram_bot.py
 import uvicorn
 import functools # Import functools
 
