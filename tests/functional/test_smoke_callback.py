@@ -174,19 +174,9 @@ async def test_schedule_and_execute_callback(test_db_engine):
     # Register the necessary handler for this test
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
 
-    # --- Patch storage.enqueue_task to notify our test event ---
-    # This ensures the worker wakes up immediately if the task is ready
-    original_enqueue_task = storage.enqueue_task
-    async def patched_enqueue_task(*args, **kwargs):
-        # Call the original function first
-        result = await original_enqueue_task(*args, **kwargs)
-        # If a notify_event kwarg wasn't explicitly passed *or* if it was our event,
-        # set our test event. This is a bit broad but ensures notification.
-        # A more precise patch could check scheduled_at vs now.
-        if 'notify_event' not in kwargs or kwargs['notify_event'] is test_new_task_event:
-             logger.debug(f"Patched enqueue_task: Notifying test_new_task_event for task {kwargs.get('task_id')}")
-             test_new_task_event.set()
-        return result
+    # --- Remove enqueue_task patch ---
+    # Relying on worker polling and asyncio.sleep instead of patching event notification
+    logger.info("Enqueue_task patch removed. Relying on worker polling.")
 
     # --- Part 1: Schedule the callback ---
     logger.info("--- Part 1: Scheduling Callback ---")
@@ -194,10 +184,10 @@ async def test_schedule_and_execute_callback(test_db_engine):
     schedule_request_trigger = [{"type": "text", "text": schedule_request_text}]
 
     scheduled_task_id = None
-    with patch('family_assistant.storage.enqueue_task', new=patched_enqueue_task):
-        async with DatabaseContext(engine=test_db_engine) as db_context:
-            schedule_response_content, schedule_tool_info, _, _ = (
-                await processing_service.generate_llm_response_for_chat(
+    # Removed patch context manager
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        schedule_response_content, schedule_tool_info, _, _ = (
+            await processing_service.generate_llm_response_for_chat(
                     db_context=db_context,
                     application=mock_application, # Pass mock application
                     chat_id=TEST_CHAT_ID,
