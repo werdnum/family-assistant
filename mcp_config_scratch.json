@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+        "browser": {
+      "command": "deno",
+      "args": [
+        "run",
+        "-A",
+        "npm:@playwright/mcp@latest",
+        "--headless",
+        "--browser",
+        "chromium"
+       ]
+    }
+}

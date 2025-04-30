@@ -4,17 +4,6 @@
       "command": "uvx",
       "args": ["mcp-server-time", "--local-timezone=Australia/Sydney"]
     },
-    "browser": {
-      "command": "deno",
-      "args": [
-        "run",
-        "-A",
-        "npm:@playwright/mcp@latest",
-        "--headless",
-        "--browser",
-        "chromium"
-       ]
-    },
     "fetch": {
       "command": "uvx",
       "args": ["mcp-server-fetch"]
