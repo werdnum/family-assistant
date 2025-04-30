@@ -80,21 +80,32 @@ class LLMInterface(Protocol):
 class LiteLLMClient:
     """LLM client implementation using the LiteLLM library."""
 
-    def __init__(self, model: str, **kwargs: Any):
+    def __init__(
+        self,
+        model: str,
+        model_parameters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any
+    ):
         """
         Initializes the LiteLLM client.
 
         Args:
             model: The identifier of the model to use (e.g., "openrouter/google/gemini-flash-1.5").
+            model_parameters: A dictionary where keys are model names/prefixes
+                              and values are dicts of parameters specific to those models.
             **kwargs: Additional keyword arguments to pass directly to litellm.acompletion
-                      on every call (e.g., temperature, max_tokens).
+                      on every call (e.g., temperature, max_tokens). These are
+                      applied *before* model-specific parameters.
         """
         if not model:
             raise ValueError("LLM model identifier cannot be empty.")
         self.model = model
-        self.completion_kwargs = kwargs
+        self.default_kwargs = kwargs # Store base kwargs
+        self.model_parameters = model_parameters or {} # Store model-specific params
         logger.info(
-            f"LiteLLMClient initialized for model: {self.model} with kwargs: {self.completion_kwargs}"
+            f"LiteLLMClient initialized for model: {self.model} "
+            f"with default kwargs: {self.default_kwargs} "
+            f"and model-specific parameters: {self.model_parameters}"
         )
 
     async def generate_response(
@@ -104,21 +115,35 @@ class LiteLLMClient:
         tool_choice: Optional[str] = "auto",
     ) -> LLMOutput:
         """Generates a response using LiteLLM."""
-        effective_tool_choice = (
-            tool_choice if tools else None
-        )  # Don't specify tool_choice if no tools are given
+        # Start with default kwargs passed during initialization
+        call_kwargs = self.default_kwargs.copy()
+
+        # Find and merge model-specific parameters from config
+        specific_params = {}
+        for pattern, params in self.model_parameters.items():
+            if pattern.endswith("-"): # Prefix match
+                if self.model.startswith(pattern[:-1]): # Match prefix (remove trailing '-')
+                    specific_params.update(params)
+                    logger.debug(f"Applying parameters for prefix '{pattern}': {params}")
+            elif self.model == pattern: # Exact match
+                specific_params.update(params)
+                logger.debug(f"Applying parameters for exact match '{pattern}': {params}")
+        # Merge specific params, potentially overriding defaults if keys overlap
+        call_kwargs.update(specific_params)
+
+        # Add model and messages (always required)
+        call_kwargs["model"] = self.model
+        call_kwargs["messages"] = messages
+
+        # Add tools and tool_choice if tools are provided
+        if tools:
+            call_kwargs["tools"] = tools
+            call_kwargs["tool_choice"] = tool_choice
+        # Note: If tools is None, we don't pass tool_choice either.
 
         logger.debug(
-            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(tools)}. Tool choice: {effective_tool_choice}"
+            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(tools)}. Final Kwargs: {call_kwargs}"
         )
-        # Combine fixed kwargs with per-call args
-        call_kwargs = {
-            **self.completion_kwargs,
-            "model": self.model,
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": effective_tool_choice,
-        }
         try:
             response = await acompletion(**call_kwargs)
 

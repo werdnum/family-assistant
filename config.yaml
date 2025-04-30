@@ -1,0 +1,17 @@
+# Configuration for Family Assistant
+
+# LLM provider-specific parameters
+# Keys can be full model names or prefixes (ending with '-')
+# Parameters defined here will be passed as keyword arguments to litellm.completion
+# for matching models.
+llm_parameters:
+  # Example for Gemini models via OpenRouter
+  "openrouter/google/gemini-":
+    reasoning_effort: medium
+  # Example for another model type
+  # "anthropic/claude-3-":
+  #   temperature: 0.75
+  #   top_k: 50
+
+# Other future configurations can go here
+# e.g., web_server_port: 8080
