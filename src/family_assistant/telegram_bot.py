@@ -271,15 +271,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         text=llm_response_content,
                         reply_to_message_id=reply_target_message_id,
                     )
-            else:
-                logger.warning("Received empty response from LLM.")
-                if reply_target_message_id:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text="Sorry, I couldn't process that request.",
-                        reply_to_message_id=reply_target_message_id,
-                    )
-            # If an error occurred during processing, processing_error_traceback will be set
+            # If an error occurred during processing, check for traceback *before* handling empty response
             elif processing_error_traceback and reply_target_message_id:
                  logger.info(f"Sending error message to chat {chat_id} due to processing error.")
                  await context.bot.send_message(
@@ -287,6 +279,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                      text="Sorry, something went wrong while processing your request.",
                      reply_to_message_id=reply_target_message_id,
                  )
+            # Only handle empty response if there was no content AND no processing error
+            else:
+                logger.warning("Received empty response from LLM (and no processing error detected).")
+                if reply_target_message_id:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="Sorry, I couldn't process that request.", # Generic message for empty response
+                        reply_to_message_id=reply_target_message_id,
+                    )
 
         except Exception as e:
             # This catches errors *outside* the generate_llm_response_for_chat call
