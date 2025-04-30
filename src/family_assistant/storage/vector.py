@@ -163,11 +163,12 @@ class DocumentEmbeddingRecord(Base):
         # Requires manual creation via raw SQL in init_vector_db or migrations
         sa.Index(
             "idx_doc_embeddings_gemini_1536_hnsw_cos",
-            # Note: Need to explicitly use sa.text for the column expression part
-            sa.text("(embedding::vector(1536)) vector_cosine_ops"), # Raw SQL for cast + opclass
+            # Use cast expression without operator class in the expression
+            cast(DocumentEmbeddingRecord.embedding, sa.text("vector(1536)")), 
             postgresql_using="hnsw",
             postgresql_where=sa.text("embedding_model = 'gemini-exp-03-07'"),
             postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},  # Move operator class here
         ),
     )
 
