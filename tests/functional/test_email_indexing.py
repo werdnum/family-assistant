@@ -391,9 +391,18 @@ async def test_vector_ranking(pg_vector_db_engine):
     form_data3["subject"] = email3_title # Use variable
 
     # Create TaskWorker instance and start it
-    worker = TaskWorker(processing_service=None)
+    # Provide dummy/mock values for the required arguments
+    mock_application_rank = MagicMock() # Mock the application object
+    dummy_calendar_config_rank = {}
+    dummy_timezone_str_rank = "UTC"
+    worker = TaskWorker(
+        processing_service=None, # No processing service needed for this handler
+        application=mock_application_rank,
+        calendar_config=dummy_calendar_config_rank,
+        timezone_str=dummy_timezone_str_rank,
+    )
     worker.register_task_handler("index_email", handle_index_email)
-    
+
     worker_id = f"test-worker-rank-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
@@ -517,9 +526,18 @@ async def test_metadata_filtering(pg_vector_db_engine):
     form_data2["X-Custom-Type"] = "invoice" # Simulate metadata
 
     # Create TaskWorker instance and start it
-    worker = TaskWorker(processing_service=None)
+    # Provide dummy/mock values for the required arguments
+    mock_application_meta = MagicMock() # Mock the application object
+    dummy_calendar_config_meta = {}
+    dummy_timezone_str_meta = "UTC"
+    worker = TaskWorker(
+        processing_service=None, # No processing service needed for this handler
+        application=mock_application_meta,
+        calendar_config=dummy_calendar_config_meta,
+        timezone_str=dummy_timezone_str_meta,
+    )
     worker.register_task_handler("index_email", handle_index_email)
-    
+
     worker_id = f"test-worker-meta-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
@@ -642,9 +660,18 @@ async def test_keyword_filtering(pg_vector_db_engine):
     form_data2["subject"] = email2_title # Use variable for title
 
     # Create TaskWorker instance and start it
-    worker = TaskWorker(processing_service=None)
+    # Provide dummy/mock values for the required arguments
+    mock_application_kw = MagicMock() # Mock the application object
+    dummy_calendar_config_kw = {}
+    dummy_timezone_str_kw = "UTC"
+    worker = TaskWorker(
+        processing_service=None, # No processing service needed for this handler
+        application=mock_application_kw,
+        calendar_config=dummy_calendar_config_kw,
+        timezone_str=dummy_timezone_str_kw,
+    )
     worker.register_task_handler("index_email", handle_index_email)
-    
+
     worker_id = f"test-worker-keyword-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
