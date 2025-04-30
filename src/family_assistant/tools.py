@@ -31,14 +31,10 @@ from family_assistant.embeddings import EmbeddingGenerator # Import embedding ge
 
 logger = logging.getLogger(__name__)
 
-# --- Tool Execution Context ---
 
-
-# Forward reference ProcessingService if not imported
-# from typing import TYPE_CHECKING # Removed TYPE_CHECKING guard
-# if TYPE_CHECKING:
-#     from family_assistant.processing import ProcessingService
-from family_assistant.processing import ProcessingService # Direct import for diagnosis
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from family_assistant.processing import ProcessingService
 
 @dataclass
 class ToolExecutionContext:
