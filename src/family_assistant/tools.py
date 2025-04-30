@@ -778,7 +778,8 @@ class LocalToolsProvider:
             #        # This should ideally not happen if initialization is correct
             #        logger.error(f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider.")
             #        return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
-                    return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
+            # Removing the duplicate, incorrectly indented line below:
+            #         return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
 
             # Remove context/generator args from call_args if they were not in the original arguments dict
             # This prevents passing them if the function doesn't expect them explicitly
