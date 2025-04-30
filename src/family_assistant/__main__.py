@@ -598,10 +598,11 @@ async def main_async(
     logger.info("Stored embedding generator in FastAPI app state.")
 
     # Initialize database schema first
-    # Use database_url from config
-    await init_db(database_url=config["database_url"])
+    # init_db uses the engine configured in storage/base.py, which reads DATABASE_URL env var.
+    # No need to pass database_url here.
+    await init_db()
     # Initialize vector DB components (extension, indexes)
-    # Pass engine created by init_db or get it again based on config
+    # get_db_context *can* take a database_url to potentially override the default engine.
     async with await get_db_context(database_url=config["database_url"]) as db_ctx:
         await storage.init_vector_db(db_ctx) # Initialize vector specific parts
 
