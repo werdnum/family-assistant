@@ -476,6 +476,79 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning(f"Cannot remove task entry for chat {chat_id}: processing_tasks dict not found.")
 
 
+    # --- Confirmation Handling Logic ---
+
+    async def _request_confirmation_impl(
+        self,
+        chat_id: int,
+        context: ContextTypes.DEFAULT_TYPE,
+        prompt_text: str,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        timeout: float,
+    ) -> bool:
+        """Internal implementation to send confirmation and wait."""
+        confirm_uuid = str(uuid.uuid4())
+        logger.info(f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}")
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"),
+                    InlineKeyboardButton("❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"),
+                ]
+            ]
+        )
+
+        try:
+            # Send the confirmation message
+            sent_message = await context.bot.send_message(
+                chat_id=chat_id,
+                text=prompt_text, # Assumes already MarkdownV2 formatted/escaped
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=keyboard,
+            )
+            logger.debug(f"Confirmation message sent (Message ID: {sent_message.message_id})")
+        except Exception as send_err:
+            logger.error(f"Failed to send confirmation message to chat {chat_id}: {send_err}", exc_info=True)
+            # Cannot proceed without sending the message
+            raise RuntimeError(f"Failed to send confirmation message: {send_err}") from send_err
+
+        # Create and store the Future
+        confirmation_future = asyncio.get_running_loop().create_future()
+        self.pending_confirmations[confirm_uuid] = confirmation_future
+
+        try:
+            # Wait for the future to be set by the callback handler, with timeout
+            logger.debug(f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {timeout}s)")
+            user_confirmed = await asyncio.wait_for(confirmation_future, timeout=timeout)
+            logger.info(f"Confirmation response received for {confirm_uuid}: {user_confirmed}")
+            return user_confirmed
+        except asyncio.TimeoutError:
+            logger.warning(f"Confirmation {confirm_uuid} timed out after {timeout}s.")
+            # Clean up the original confirmation message (remove keyboard)
+            try:
+                await context.bot.edit_message_reply_markup(
+                    chat_id=chat_id,
+                    message_id=sent_message.message_id,
+                    reply_markup=None # Remove keyboard
+                )
+                await context.bot.edit_message_text(
+                     chat_id=chat_id,
+                     message_id=sent_message.message_id,
+                     text=prompt_text + "\n\n\\(Confirmation timed out\\)", # Append timeout message
+                     parse_mode=ParseMode.MARKDOWN_V2,
+                )
+            except Exception as edit_err:
+                logger.warning(f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}")
+            # Future is automatically cancelled by wait_for on timeout, but remove from dict
+            self.pending_confirmations.pop(confirm_uuid, None)
+            raise # Re-raise TimeoutError for the caller (ConfirmingToolsProvider)
+        finally:
+            # Ensure future is removed from dict if it's still there (e.g., cancellation)
+            self.pending_confirmations.pop(confirm_uuid, None)
+
+
     async def confirmation_callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handles button presses for tool confirmations."""
         query = update.callback_query
