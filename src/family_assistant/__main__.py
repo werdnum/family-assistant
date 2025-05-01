@@ -646,11 +646,13 @@ def main() -> int:  # Return an exit code
     # --- Event Loop and Signal Handlers ---
     loop = asyncio.get_event_loop()
     telegram_service_instance = None  # Initialize
+    mcp_provider_instance = None # Initialize MCP provider instance
 
     try:
         logger.info("Starting application...")
         # Pass the final resolved config dictionary to main_async
-        telegram_service_instance = loop.run_until_complete(main_async(config_data))
+        # Capture both returned instances
+        telegram_service_instance, mcp_provider_instance = loop.run_until_complete(main_async(config_data))
 
         # --- Setup Signal Handlers *after* service creation ---
         # Pass the service instance to the shutdown handler lambda
