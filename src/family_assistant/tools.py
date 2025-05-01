@@ -173,7 +173,7 @@ async def add_calendar_event_tool(
         vevent.add('summary').value = summary
         vevent.add('dtstart').value = dtstart # vobject handles date vs datetime
         vevent.add('dtend').value = dtend     # vobject handles date vs datetime
-        vevent.add('dtstamp').value = datetime.now(timezone.utc)
+        vevent.add('dtstamp').value = datetime.now(ZoneInfo("UTC")) # Use ZoneInfo for UTC
         if description:
             vevent.add('description').value = description
 
