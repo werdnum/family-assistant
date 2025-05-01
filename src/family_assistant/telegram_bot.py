@@ -7,6 +7,7 @@ import json
 import logging
 import traceback
 import uuid
+import functools # Ensure functools is imported
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
