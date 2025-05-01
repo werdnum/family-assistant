@@ -415,8 +415,15 @@ async def modify_calendar_event_tool(
                 logger.debug(f"Found event.") # Removed ETag logging
 
                 # Parse existing event data
-                cal = vobject.readComponents(event.data)
-                vevent = next(cal).vevent # Assuming single VEVENT
+                # readComponents yields components; we expect one top-level iCalendar component
+                ical_component_generator = vobject.readComponents(event.data)
+                try:
+                    ical_component = next(ical_component_generator)
+                    # Assuming the main component contains a single VEVENT
+                    vevent = ical_component.vevent
+                except (StopIteration, AttributeError) as parse_err:
+                     logger.error(f"Failed to parse VEVENT from event data for UID {uid}: {parse_err}", exc_info=True)
+                     return f"Error: Could not parse existing event data for UID {uid}."
 
                 # Apply modifications
                 modified = False
@@ -467,11 +474,12 @@ async def modify_calendar_event_tool(
                      return "Error: Event end time cannot be before or same as start time."
 
                 if modified:
-                    # Update timestamp
+                    # Update timestamp on the vevent itself
                     vevent.dtstamp.value = datetime.now(ZoneInfo("UTC")) # Use ZoneInfo for UTC
-                    updated_ical_data = cal.serialize()
+                    # Serialize the modified iCalendar component
+                    updated_ical_data = ical_component.serialize()
                     logger.debug(f"Attempting to save modified event.") # Removed ETag logging
-                    # Save the event without ETag
+                    # Save the event without ETag, using the serialized data of the modified component
                     event.save(data=updated_ical_data)
                     logger.info(f"Successfully saved modified event UID {uid}")
                     return f"OK. Event '{getattr(vevent, 'summary', {}).value}' updated."
