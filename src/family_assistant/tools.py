@@ -545,7 +545,7 @@ async def get_message_history_tool(
 
        return "\n".join(formatted_history)
 
-    except Exception as e:
+   except Exception as e:
         logger.error(f"Error executing get_message_history_tool for chat {chat_id}: {e}", exc_info=True)
         return f"Error: Failed to retrieve message history. {e}"
 
