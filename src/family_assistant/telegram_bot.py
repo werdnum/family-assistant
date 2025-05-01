@@ -82,6 +82,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         # Internal state for message batching
         self.chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = (
             defaultdict(list)
         )
         self.processing_tasks: Dict[int, asyncio.Task] = {}

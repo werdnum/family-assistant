@@ -1452,25 +1452,3 @@ class ConfirmingToolsProvider(ToolsProvider):
 
 
 # Removed set_application_instance helper
-                )
-                return result  # Return immediately on success
-            except ToolNotFoundError:
-                logger.debug(
-                    f"Tool '{name}' not found in provider {type(provider).__name__}. Trying next."
-                )
-                continue  # Try the next provider
-            except Exception as e:
-                # Handle unexpected errors during execution attempt
-                logger.error(
-                    f"Error executing tool '{name}' with provider {type(provider).__name__}: {e}",
-                    exc_info=True,
-                )
-                # Return an error string immediately, as something went wrong beyond just not finding the tool
-                return f"Error during execution attempt with {type(provider).__name__}: {e}"
-
-        # If loop completes, no provider handled the tool
-        logger.error(f"Tool '{name}' not found in any registered provider.")
-        raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
-
-
-# Removed set_application_instance helper
