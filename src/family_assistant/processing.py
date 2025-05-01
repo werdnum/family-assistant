@@ -75,9 +75,9 @@ class ProcessingService:
         self.timezone_str = timezone_str
         self.max_history_messages = max_history_messages
         self.history_max_age_hours = history_max_age_hours
+        # Store the confirmation callback function if provided at init? No, get from context.
 
     # Removed _execute_function_call method (if it was previously here)
-        self.prompts = prompts
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.max_history_messages = max_history_messages
@@ -91,6 +91,8 @@ class ProcessingService:
         messages: List[Dict[str, Any]],
         chat_id: int,
         application: Application,
+        # Add the confirmation callback function from TelegramService/Handler
+        request_confirmation_callback: Optional[Callable[..., Awaitable[bool]]] = None,
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
         """
         Sends the conversation history to the LLM via the injected client,
@@ -156,6 +158,8 @@ class ProcessingService:
                     calendar_config=self.calendar_config, # Pass calendar config from service
                     application=application,
                     timezone_str=self.timezone_str, # Pass timezone string
+                    # Pass the confirmation callback into the context
+                    request_confirmation_callback=request_confirmation_callback,
                 )
 
                 for tool_call_dict in tool_calls:
@@ -301,6 +305,8 @@ class ProcessingService:
         chat_id: int,
         trigger_content_parts: List[Dict[str, Any]],
         user_name: str,
+        # Add confirmation callback parameter
+        request_confirmation_callback: Optional[Callable[..., Awaitable[bool]]] = None,
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], Optional[str]]:
         """
         Prepares context, message history, calls the LLM processing logic,
@@ -547,6 +553,8 @@ class ProcessingService:
                 messages=messages,
                 chat_id=chat_id,
                 application=application,
+                # Pass the confirmation callback down
+                request_confirmation_callback=request_confirmation_callback,
             )
             # Return content, tool info, and reasoning info
             return llm_response_content, tool_info, reasoning_info, None # No error traceback

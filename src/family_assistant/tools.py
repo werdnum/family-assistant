@@ -27,9 +27,11 @@ from family_assistant import storage
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store # Import vector search
 from family_assistant.embeddings import EmbeddingGenerator # Import embedding generator type
-from family_assistant.storage.message_history import get_recent_history # Import history function
 from datetime import timedelta # Import timedelta
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup # For confirmation buttons
 
+# Import calendar helper functions
+from .calendar_integration import format_datetime_or_date, parse_event
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +51,35 @@ class ToolExecutionContext:
     processing_service: Optional["ProcessingService"] = None # Add processing service
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC" # Default, should be overridden
+    # Callback to request confirmation from the user interface (e.g., Telegram)
+    request_confirmation_callback: Optional[
+        Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
+    ] = None
 
 
-# --- Custom Exception ---
+# --- Custom Exceptions ---
 
 
 class ToolNotFoundError(LookupError):
     """Custom exception raised when a tool cannot be found by any provider."""
 
+    pass
+
+
+class ToolConfirmationRequired(Exception):
+    """
+    Special exception raised by ConfirmingToolsProvider to signal that
+    confirmation is needed before proceeding. Contains info for the UI layer.
+    """
+    def __init__(self, confirmation_prompt: str, tool_name: str, tool_args: Dict[str, Any]):
+        self.confirmation_prompt = confirmation_prompt
+        self.tool_name = tool_name
+        self.tool_args = tool_args
+        super().__init__(f"Confirmation required for tool '{tool_name}'")
+
+
+class ToolConfirmationFailed(Exception):
+    """Raised when user denies confirmation or it times out."""
     pass
 
 
@@ -561,11 +584,96 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
     "search_documents": search_documents_tool,
     "get_full_document_content": get_full_document_content_tool,
     "add_calendar_event": add_calendar_event_tool,
-    "get_message_history": get_message_history_tool, # Add the new history tool
+    "get_message_history": get_message_history_tool,
+    # Add the new calendar tools (implementations added previously or below)
+    "search_calendar_events": search_calendar_events_tool,
+    "modify_calendar_event": modify_calendar_event_tool,
+    "delete_calendar_event": delete_calendar_event_tool,
 }
 
+# --- Tool Confirmation Renderers ---
+
+def _format_event_details_for_confirmation(details: Optional[Dict[str, Any]]) -> str:
+    """Formats fetched event details for inclusion in confirmation prompts."""
+    if not details:
+        return "Event details not found."
+    summary = details.get('summary', 'No Title')
+    start_str = format_datetime_or_date(details.get('start'), is_end=False)
+    end_str = format_datetime_or_date(details.get('end'), is_end=True)
+    all_day = details.get('all_day', False)
+    if all_day:
+        return f"'{summary}' (All Day: {start_str})"
+    else:
+        return f"'{summary}' ({start_str} - {end_str})"
+
+def render_delete_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]]) -> str:
+    """Renders the confirmation message for deleting a calendar event."""
+    event_desc = _format_event_details_for_confirmation(event_details)
+    cal_url = args.get('calendar_url', 'Unknown Calendar')
+    # Use MarkdownV2 compatible formatting
+    return (
+        f"Please confirm you want to *delete* the event:\n"
+        f"Event: {telegramify_markdown.escape_markdown(event_desc)}\n"
+        f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`"
+    )
+
+def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]]) -> str:
+    """Renders the confirmation message for modifying a calendar event."""
+    event_desc = _format_event_details_for_confirmation(event_details)
+    cal_url = args.get('calendar_url', 'Unknown Calendar')
+    changes = []
+    # Use MarkdownV2 compatible formatting for code blocks/inline code
+    if args.get('new_summary'): changes.append(f"\\- Set summary to: `{telegramify_markdown.escape_markdown(args['new_summary'])}`")
+    if args.get('new_start_time'): changes.append(f"\\- Set start time to: `{telegramify_markdown.escape_markdown(args['new_start_time'])}`")
+    if args.get('new_end_time'): changes.append(f"\\- Set end time to: `{telegramify_markdown.escape_markdown(args['new_end_time'])}`")
+    if args.get('new_description'): changes.append(f"\\- Set description to: `{telegramify_markdown.escape_markdown(args['new_description'])}`")
+    if args.get('new_all_day') is not None: changes.append(f"\\- Set all\\-day status to: `{args['new_all_day']}`")
+
+    return (
+        f"Please confirm you want to *modify* the event:\n"
+        f"Event: {telegramify_markdown.escape_markdown(event_desc)}\n"
+        f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`\n"
+        f"With the following changes:\n" + "\n".join(changes)
+    )
+
+TOOL_CONFIRMATION_RENDERERS: Dict[str, Callable[[Dict[str, Any], Optional[Dict[str, Any]]], str]] = {
+    "delete_calendar_event": render_delete_calendar_event_confirmation,
+    "modify_calendar_event": render_modify_calendar_event_confirmation,
+    # Add renderers for other tools requiring confirmation
+}
+
+
+# --- Helper to Fetch Event Details by UID (used by Confirming Provider) ---
+
+def _fetch_event_details_sync(username: str, password: str, calendar_url: str, uid: str) -> Optional[Dict[str, Any]]:
+    """Synchronously fetches details for a single event by UID."""
+    logger.debug(f"Fetching details for event UID {uid} from {calendar_url}")
+    try:
+        with caldav.DAVClient(url=calendar_url, username=username, password=password) as client:
+            target_calendar = client.calendar(url=calendar_url)
+            if not target_calendar:
+                logger.error(f"Could not get calendar object for {calendar_url}")
+                return None
+            event = target_calendar.event_by_uid(uid)
+            parsed = parse_event(event.data) # Reuse existing parser
+            if parsed:
+                # Add UID and calendar URL for completeness, though not strictly needed by renderer
+                parsed['uid'] = uid
+                parsed['calendar_url'] = calendar_url
+                return parsed
+            else:
+                logger.warning(f"Failed to parse event data for UID {uid} in {calendar_url}")
+                return None
+    except caldav.lib.error.NotFoundError:
+        logger.warning(f"Event UID {uid} not found in {calendar_url}")
+        return None
+    except (caldav.lib.error.DAVError, ConnectionError, Exception) as e:
+        logger.error(f"Error fetching event details for UID {uid} from {calendar_url}: {e}", exc_info=True)
+        return None
+
+
+# --- Tool Definitions ---
 # Define local tools in the format LiteLLM expects (OpenAI format)
-# TODO: Dynamically fetch valid source_types and embedding_types for descriptions?
 # Hardcoding common examples for now.
 TOOLS_DEFINITION: List[Dict[str, Any]] = [
     {
@@ -767,6 +875,8 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
 
 
 import inspect # Needed for signature inspection
+import uuid # For confirmation IDs
+import telegramify_markdown # For escaping confirmation prompts
 
 class LocalToolsProvider:
     """Provides and executes locally defined Python functions as tools."""
@@ -994,10 +1104,12 @@ class CompositeToolsProvider:
 
     def __init__(self, providers: List[ToolsProvider]):
         self._providers = providers
+        self._providers = providers
         self._tool_definitions: Optional[List[Dict[str, Any]]] = None
+        self._tool_map: Dict[str, ToolsProvider] = {} # Map tool name to provider
         self._validated = False  # Flag to track if validation has run
         logger.info(
-            f"CompositeToolsProvider initialized with {len(providers)} providers. Validation will occur on first use."
+            f"CompositeToolsProvider initialized with {len(providers)} providers. Validation and mapping will occur on first use."
         )
 
     # Removed synchronous _validate_providers method
@@ -1007,8 +1119,9 @@ class CompositeToolsProvider:
         if self._tool_definitions is None:
             all_definitions = []
             all_names = set()
+            self._tool_map = {} # Reset map on re-fetch
             logger.info(
-                "Fetching tool definitions from providers for the first time..."
+                "Fetching tool definitions and building tool map from providers for the first time..."
             )
             for i, provider in enumerate(self._providers):
                 try:
@@ -1035,10 +1148,11 @@ class CompositeToolsProvider:
                             if name:
                                 if name in all_names:
                                     # Raise error immediately if duplicate found during fetch
-                                    raise ValueError(
-                                        f"Duplicate tool name '{name}' found in provider {i} ({type(provider).__name__}). Tool names must be unique across all providers."
-                                    )
+                                    error_msg = f"Duplicate tool name '{name}' found in provider {i} ({type(provider).__name__}). Tool names must be unique across all providers."
+                                    logger.error(error_msg)
+                                    raise ValueError(error_msg)
                                 all_names.add(name)
+                                self._tool_map[name] = provider # Map name to provider instance
 
                 except Exception as e:
                     logger.error(
@@ -1058,20 +1172,189 @@ class CompositeToolsProvider:
 
             self._tool_definitions = all_definitions
             logger.info(
-                f"Fetched and cached {len(self._tool_definitions)} tool definitions from providers."
+                f"Fetched and cached {len(self._tool_definitions)} tool definitions from {len(self._providers)} providers. Mapped {len(self._tool_map)} tools."
             )
         return self._tool_definitions
 
     async def execute_tool(
         self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
     ) -> str:
+        # Ensure definitions are loaded and map is built
+        if not self._validated:
+            await self.get_tool_definitions() # This also builds the map
+
         logger.debug(f"Composite provider attempting to execute tool '{name}'...")
-        for provider in self._providers:
+        provider = self._tool_map.get(name)
+
+        if not provider:
+            logger.error(f"Tool '{name}' not found in any registered provider via tool map.")
+            raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
+
+        try:
+            # Attempt to execute with the mapped provider
+            result = await provider.execute_tool(name, arguments, context)
+            logger.debug(
+                f"Tool '{name}' executed successfully by mapped provider {type(provider).__name__}."
+            )
+            return result # Return immediately on success
+        except ToolNotFoundError:
+            # This shouldn't happen if the map is correct, but handle defensively
+            logger.error(
+                f"Tool '{name}' mapped to {type(provider).__name__}, but provider raised ToolNotFoundError. This indicates an internal inconsistency."
+            )
+            raise # Re-raise the unexpected ToolNotFoundError
+        except Exception as e:
+            # Handle unexpected errors during execution attempt
+            logger.error(
+                f"Error executing tool '{name}' with mapped provider {type(provider).__name__}: {e}",
+                exc_info=True,
+            )
+            # Return an error string immediately, as something went wrong beyond just not finding the tool
+            return f"Error during execution attempt with {type(provider).__name__}: {e}"
+
+        # # If loop completes, no provider handled the tool -- This part is replaced by map lookup
+        # logger.error(f"Tool '{name}' not found in any registered provider.")
+        # raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
+
+
+# --- Confirming Tools Provider Wrapper ---
+
+class ConfirmingToolsProvider(ToolsProvider):
+    """
+    A wrapper provider that intercepts calls to specific tools,
+    requests user confirmation via a callback, and then either executes
+    the tool with the wrapped provider or returns a cancellation message.
+    """
+    DEFAULT_CONFIRMATION_TIMEOUT = 3600.0 # 1 hour
+
+    def __init__(
+        self,
+        wrapped_provider: ToolsProvider,
+        confirmation_timeout: float = DEFAULT_CONFIRMATION_TIMEOUT,
+        calendar_config: Optional[Dict[str, Any]] = None, # Needed for fetching details
+    ):
+        self.wrapped_provider = wrapped_provider
+        self.confirmation_timeout = confirmation_timeout
+        self.calendar_config = calendar_config # Store calendar config
+        self._tool_definitions: Optional[List[Dict[str, Any]]] = None
+        self._tools_requiring_confirmation: Set[str] = set()
+        logger.info(
+            f"ConfirmingToolsProvider initialized, wrapping {type(wrapped_provider).__name__}. Timeout: {confirmation_timeout}s."
+        )
+
+    async def get_tool_definitions(self) -> List[Dict[str, Any]]:
+        # Fetch definitions from the wrapped provider and identify tools needing confirmation
+        if self._tool_definitions is None:
+            definitions = await self.wrapped_provider.get_tool_definitions()
+            self._tools_requiring_confirmation = set()
+            for tool_def in definitions:
+                func_def = tool_def.get("function", {})
+                if func_def.get("requires_confirmation"):
+                    name = func_def.get("name")
+                    if name:
+                        self._tools_requiring_confirmation.add(name)
+            self._tool_definitions = definitions
+            logger.info(
+                f"ConfirmingToolsProvider identified {len(self._tools_requiring_confirmation)} tools requiring confirmation: {self._tools_requiring_confirmation}"
+            )
+        return self._tool_definitions
+
+    async def _get_event_details_for_confirmation(self, tool_name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Fetches event details if the tool is calendar-related and requires it."""
+        if tool_name not in ["modify_calendar_event", "delete_calendar_event"]:
+            return None # Only fetch for relevant tools
+
+        uid = arguments.get("uid")
+        calendar_url = arguments.get("calendar_url")
+        if not uid or not calendar_url:
+            logger.warning(f"Cannot fetch event details for {tool_name}: Missing uid or calendar_url in arguments.")
+            return None
+
+        if not self.calendar_config:
+            logger.warning(f"Cannot fetch event details for {tool_name}: Calendar config not provided to ConfirmingToolsProvider.")
+            return None
+
+        caldav_config = self.calendar_config.get("caldav")
+        if not caldav_config:
+            logger.warning(f"Cannot fetch event details for {tool_name}: CalDAV config missing.")
+            return None
+
+        username = caldav_config.get("username")
+        password = caldav_config.get("password")
+        if not username or not password:
+            logger.warning(f"Cannot fetch event details for {tool_name}: CalDAV user/pass missing.")
+            return None
+
+        try:
+            loop = asyncio.get_running_loop()
+            details = await loop.run_in_executor(
+                None,
+                _fetch_event_details_sync,
+                username, password, calendar_url, uid
+            )
+            return details
+        except Exception as e:
+            logger.error(f"Error fetching event details for confirmation: {e}", exc_info=True)
+            return None # Return None on error, confirmation prompt will show basic info
+
+    async def execute_tool(
+        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+    ) -> str:
+        # Ensure definitions are loaded to know which tools need confirmation
+        if self._tool_definitions is None:
+            await self.get_tool_definitions()
+
+        if name in self._tools_requiring_confirmation:
+            logger.info(f"Tool '{name}' requires user confirmation.")
+            if not context.request_confirmation_callback:
+                logger.error(f"Cannot request confirmation for tool '{name}': No callback provided in ToolExecutionContext.")
+                return f"Error: Tool '{name}' requires confirmation, but the system is not configured to ask for it."
+
+            # 1. Fetch event details if needed for rendering
+            event_details = await self._get_event_details_for_confirmation(name, arguments)
+
+            # 2. Get the renderer
+            renderer = TOOL_CONFIRMATION_RENDERERS.get(name)
+            if not renderer:
+                logger.error(f"No confirmation renderer found for tool '{name}'. Using default prompt.")
+                # Fallback prompt - escape user-provided args carefully
+                args_str = json.dumps(arguments, indent=2, default=str)
+                confirmation_prompt = f"Please confirm executing tool `{telegramify_markdown.escape_markdown(name)}` with arguments:\n```json\n{telegramify_markdown.escape_markdown(args_str)}\n```"
+            else:
+                confirmation_prompt = renderer(arguments, event_details) # Pass details to renderer
+
+            # 3. Request confirmation via callback (which handles Future creation/waiting)
             try:
-                # Attempt to execute with the current provider
-                result = await provider.execute_tool(name, arguments, context)
-                logger.debug(
-                    f"Tool '{name}' executed successfully by {type(provider).__name__}."
+                logger.debug(f"Requesting confirmation for tool '{name}' via callback.")
+                # The callback is expected to handle the timeout internally via asyncio.wait_for
+                user_confirmed = await context.request_confirmation_callback(
+                    prompt_text=confirmation_prompt,
+                    tool_name=name, # Pass tool name for context if needed by callback
+                    tool_args=arguments, # Pass args for context if needed by callback
+                    # Timeout is handled by the callback implementation now
+                )
+
+                if user_confirmed:
+                    logger.info(f"User confirmed execution for tool '{name}'. Proceeding.")
+                    # Execute the tool using the wrapped provider
+                    return await self.wrapped_provider.execute_tool(name, arguments, context)
+                else:
+                    logger.info(f"User cancelled execution for tool '{name}'.")
+                    return f"OK. Action cancelled by user for tool '{name}'."
+
+            except asyncio.TimeoutError:
+                 logger.warning(f"Confirmation request for tool '{name}' timed out.")
+                 return f"Action cancelled: Confirmation request for tool '{name}' timed out."
+            except Exception as conf_err:
+                 logger.error(f"Error during confirmation request for tool '{name}': {conf_err}", exc_info=True)
+                 return f"Error during confirmation process for tool '{name}': {conf_err}"
+        else:
+            # Tool does not require confirmation, execute directly
+            logger.debug(f"Tool '{name}' does not require confirmation. Executing directly.")
+            return await self.wrapped_provider.execute_tool(name, arguments, context)
+
+
+# Removed set_application_instance helper
                 )
                 return result  # Return immediately on success
             except ToolNotFoundError:
