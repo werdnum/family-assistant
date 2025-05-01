@@ -67,6 +67,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
     CompositeToolsProvider,
+    ConfirmingToolsProvider, # Import the class directly
     ToolExecutionContext,
     ToolsProvider,  # Import protocol for type hinting
 )
@@ -635,7 +636,7 @@ async def main_async(
         raise SystemExit(f"Tool provider initialization failed: {provider_err}")
 
     # --- Wrap with Confirming Provider ---
-    confirming_provider = tools.ConfirmingToolsProvider(
+    confirming_provider = ConfirmingToolsProvider( # Use the imported class name directly
         wrapped_provider=composite_provider,
         calendar_config=config["calendar_config"], # Pass calendar config for detail fetching
         # confirmation_timeout=... # Optional: Set custom timeout if needed
