@@ -926,22 +926,26 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
 
 # --- Tool Confirmation Renderers ---
 
-def _format_event_details_for_confirmation(details: Optional[Dict[str, Any]]) -> str:
+def _format_event_details_for_confirmation(details: Optional[Dict[str, Any]], timezone_str: str) -> str:
     """Formats fetched event details for inclusion in confirmation prompts."""
     if not details:
         return "Event details not found."
     summary = details.get('summary', 'No Title')
-    start_str = format_datetime_or_date(details.get('start'), is_end=False)
-    end_str = format_datetime_or_date(details.get('end'), is_end=True)
+    # Pass timezone_str to the formatting function
+    start_str = format_datetime_or_date(details.get('start'), timezone_str, is_end=False)
+    end_str = format_datetime_or_date(details.get('end'), timezone_str, is_end=True)
     all_day = details.get('all_day', False)
     if all_day:
+        # All-day events typically don't need timezone formatting, but pass it anyway for consistency
+        # Or adjust format_datetime_or_date to handle date objects without requiring timezone_str
+        # Assuming format_datetime_or_date handles date objects gracefully.
         return f"'{summary}' (All Day: {start_str})"
     else:
         return f"'{summary}' ({start_str} - {end_str})"
 
-def render_delete_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]]) -> str:
+def render_delete_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str) -> str:
     """Renders the confirmation message for deleting a calendar event."""
-    event_desc = _format_event_details_for_confirmation(event_details)
+    event_desc = _format_event_details_for_confirmation(event_details, timezone_str) # Pass timezone
     cal_url = args.get('calendar_url', 'Unknown Calendar')
     # Use MarkdownV2 compatible formatting
     return (
@@ -950,9 +954,9 @@ def render_delete_calendar_event_confirmation(args: Dict[str, Any], event_detail
         f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`"
     )
 
-def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]]) -> str:
+def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str) -> str:
     """Renders the confirmation message for modifying a calendar event."""
-    event_desc = _format_event_details_for_confirmation(event_details)
+    event_desc = _format_event_details_for_confirmation(event_details, timezone_str) # Pass timezone
     cal_url = args.get('calendar_url', 'Unknown Calendar')
     changes = []
     # Use MarkdownV2 compatible formatting for code blocks/inline code
@@ -969,7 +973,8 @@ def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_detail
         f"With the following changes:\n" + "\n".join(changes)
     )
 
-TOOL_CONFIRMATION_RENDERERS: Dict[str, Callable[[Dict[str, Any], Optional[Dict[str, Any]]], str]] = {
+# Update the Callable signature to include timezone_str
+TOOL_CONFIRMATION_RENDERERS: Dict[str, Callable[[Dict[str, Any], Optional[Dict[str, Any]], str], str]] = {
     "delete_calendar_event": render_delete_calendar_event_confirmation,
     "modify_calendar_event": render_modify_calendar_event_confirmation,
 }
@@ -1748,7 +1753,8 @@ class ConfirmingToolsProvider(ToolsProvider):
                 args_str = json.dumps(arguments, indent=2, default=str)
                 confirmation_prompt = f"Please confirm executing tool `{telegramify_markdown.escape_markdown(name)}` with arguments:\n```json\n{telegramify_markdown.escape_markdown(args_str)}\n```"
             else:
-                confirmation_prompt = renderer(arguments, event_details) # Pass details to renderer
+                # Pass timezone_str from context to the renderer
+                confirmation_prompt = renderer(arguments, event_details, context.timezone_str)
 
             # 3. Request confirmation via callback (which handles Future creation/waiting)
             try:
