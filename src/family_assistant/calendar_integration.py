@@ -694,6 +694,7 @@ async def search_calendar_events_tool(
                             logger.debug(f"  -> Accessing and parsing event.data...")
                             event_data = event.data
                             # Pass timezone_str when parsing within the tool context
+                            # Use the parse_event function defined within this module
                             parsed = parse_event(event_data, timezone_str=exec_context.timezone_str)
 
                             if not parsed:
@@ -923,7 +924,8 @@ async def delete_calendar_event_tool(
                 # Attempt to parse summary before deleting for better confirmation message
                 summary = "Unknown Summary"
                 try:
-                    parsed = parse_event(event.data)
+                    # Use the parse_event function defined within this module
+                    parsed = parse_event(event.data, timezone_str=exec_context.timezone_str) # Pass timezone for consistency
                     if parsed and parsed.get("summary"):
                         summary = parsed["summary"]
                 except Exception:

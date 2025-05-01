@@ -125,119 +125,93 @@ class ToolsProvider(Protocol):
 async def schedule_recurring_task_tool(
     exec_context: ToolExecutionContext,  # Renamed to avoid conflict
     task_type: str,
-    start_time: str,
-    end_time: str,
-    description: Optional[str] = None,
-    all_day: bool = False,
-) -> str:
+    initial_schedule_time: str,
+    recurrence_rule: str,
+    payload: Dict[str, Any],
+    max_retries: Optional[int] = 3,
+    description: Optional[str] = None,  # Optional description for the task ID
+):
     """
-    Adds an event to the first configured CalDAV calendar.
+    Schedules a new recurring task.
+
+    Args:
+        exec_context: The execution context containing db_context and timezone_str.
+        task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
+        initial_schedule_time: ISO 8601 datetime string for the *first* run.
+        recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
+        payload: JSON object containing data needed by the task handler.
+        max_retries: Maximum number of retries for each instance (default 3).
+        description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief').
     """
-    logger.info(f"Executing add_calendar_event_tool: {summary}")
-    calendar_config = exec_context.calendar_config
-    caldav_config = calendar_config.get("caldav")
-
-    if not caldav_config:
-        return "Error: CalDAV is not configured. Cannot add calendar event."
-
-    username = caldav_config.get("username")
-    password = caldav_config.get("password")
-    calendar_urls = caldav_config.get("calendar_urls", [])
-
-    if not username or not password or not calendar_urls:
-        return "Error: CalDAV configuration is incomplete (missing user, pass, or URL). Cannot add event."
-
-    target_calendar_url = calendar_urls[0] # Use the first configured URL
-    logger.info(f"Targeting CalDAV calendar: {target_calendar_url}")
+    logger.info(f"Executing schedule_recurring_task_tool: type='{task_type}', initial='{initial_schedule_time}', rule='{recurrence_rule}'")
+    db_context = exec_context.db_context # Get db_context from execution context
 
     try:
-        # Parse start and end times
-        if all_day:
-            # For all-day events, parse as date objects
-            dtstart = isoparse(start_time).date()
-            dtend = isoparse(end_time).date()
-            # Basic validation: end date must be after start date for all-day
-            if dtend <= dtstart:
-                 raise ValueError("End date must be after start date for all-day events.")
-        else:
-            # For timed events, parse as datetime objects, require timezone
-            # For timed events, parse as datetime objects
-            dtstart = isoparse(start_time)
-            dtend = isoparse(end_time)
-            # Assume configured timezone if none is provided in the input string
-            local_tz = ZoneInfo(exec_context.timezone_str)
-            if dtstart.tzinfo is None:
-                logger.warning(f"Start time '{start_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
-                dtstart = dtstart.replace(tzinfo=local_tz)
-            if dtend.tzinfo is None:
-                logger.warning(f"End time '{end_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
-                dtend = dtend.replace(tzinfo=local_tz)
-
-            # Basic validation: end time must be after start time
-            if dtend <= dtstart:
-                raise ValueError("End time must be after start time for timed events.")
-
-        # Create VEVENT component using vobject
-        cal = vobject.iCalendar()
-        cal.add('vevent')
-        vevent = cal.vevent
-        vevent.add('uid').value = str(uuid.uuid4())
-        vevent.add('summary').value = summary
-        vevent.add('dtstart').value = dtstart # vobject handles date vs datetime
-        vevent.add('dtend').value = dtend     # vobject handles date vs datetime
-        vevent.add('dtstamp').value = datetime.now(ZoneInfo("UTC")) # Use ZoneInfo for UTC
-        if description:
-            vevent.add('description').value = description
-
-        event_data = cal.serialize()
-        logger.debug(f"Generated VEVENT data:\n{event_data}")
-
-        # Connect to CalDAV server and save event (synchronous, run in executor)
-        def save_event_sync():
-            logger.debug(f"Connecting to CalDAV: {target_calendar_url}")
-            # Need to create client and get calendar object within the sync function
-            with caldav.DAVClient(
-                url=target_calendar_url, username=username, password=password
-            ) as client:
-                # Get the specific calendar object
-                # This assumes target_calendar_url is the *direct* URL to the calendar collection
-                target_calendar = client.calendar(url=target_calendar_url)
-                if not target_calendar:
-                     # This error handling might be tricky inside the sync function
-                     # Let's rely on exceptions for now.
-                     raise ConnectionError(f"Failed to obtain calendar object for URL: {target_calendar_url}")
-
-                logger.info(f"Saving event to calendar: {target_calendar.url}")
-                # Use the save_event method which takes the VCALENDAR string
-                new_event = target_calendar.save_event(event_data)
-                logger.info(f"Event saved successfully. URL: {getattr(new_event, 'url', 'N/A')}")
-                return f"OK. Event '{summary}' added to the calendar."
-
+        # Validate recurrence rule format (basic validation)
         try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, save_event_sync)
-            return result
-        except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:
-            logger.error(f"Error during synchronous CalDAV save operation: {sync_err}", exc_info=True)
-            # Provide a more specific error if possible
-            if "authentication" in str(sync_err).lower():
-                return "Error: Failed to add event due to CalDAV authentication failure."
-            elif "not found" in str(sync_err).lower():
-                 return f"Error: Failed to add event. Calendar not found at URL: {target_calendar_url}"
-            else:
-                return f"Error: Failed to add event to CalDAV calendar. {sync_err}"
+            # We don't need dtstart here, just parsing validity
+            rrule.rrulestr(recurrence_rule)
+        except ValueError as rrule_err:
+            raise ValueError(f"Invalid recurrence_rule format: {rrule_err}")
 
+        # Parse the initial schedule time
+        initial_dt = isoparse(initial_schedule_time)
+        if initial_dt.tzinfo is None:
+            logger.warning(
+                f"Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+            )
+            initial_dt = initial_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
+
+        # Ensure it's in the future (optional, but good practice)
+        # Comparing offset-aware with offset-naive will raise TypeError if initial_dt is naive
+        # Ensure comparison is done with aware datetime
+        now_aware = datetime.now(initial_dt.tzinfo or timezone.utc) # Use parsed timezone or UTC
+        if initial_dt <= now_aware:
+            raise ValueError("Initial schedule time must be in the future.")
+
+        # Generate the *initial* unique task ID
+        base_id = f"recurring_{task_type}"
+        if description:
+            safe_desc = "".join(
+                c if c.isalnum() or c in ["-", "_"] else "_"
+                for c in description.lower()
+            )
+            base_id += f"_{safe_desc}"
+        initial_task_id = f"{base_id}_{uuid.uuid4()}"
+
+        # Enqueue the first instance using the db_context from exec_context
+        await storage.enqueue_task(
+            db_context=db_context,  # Pass db_context
+            task_id=initial_task_id,
+            task_type=task_type,
+            payload=payload,
+            scheduled_at=initial_dt,
+            max_retries_override=max_retries,  # Correct argument name
+            recurrence_rule=recurrence_rule,
+            # original_task_id=None, # Let enqueue_task handle setting it to initial_task_id
+            # notify_event=new_task_event # No immediate notification needed usually
+        )
+        logger.info(
+            f"Scheduled initial recurring task {initial_task_id} (Type: {task_type}) starting at {initial_dt} with rule '{recurrence_rule}'"
+        )
+        return f"OK. Recurring task '{initial_task_id}' scheduled starting {initial_schedule_time} with rule '{recurrence_rule}'."
     except ValueError as ve:
-        logger.error(f"Invalid arguments for adding calendar event: {ve}")
+        logger.error(f"Invalid arguments for scheduling recurring task: {ve}")
         return f"Error: Invalid arguments provided. {ve}"
     except Exception as e:
-        logger.error(f"Unexpected error adding calendar event: {e}", exc_info=True)
-        return f"Error: An unexpected error occurred while adding the event. {e}"
+        logger.error(f"Failed to schedule recurring task: {e}", exc_info=True)
+        return "Error: Failed to schedule the recurring task."
 
 
-# --- Implementations for Search/Modify/Delete Calendar Events ---
+# --- Implementations for Search/Modify/Delete Calendar Events (These were moved to calendar_integration.py) ---
+# The functions below (search, modify, delete) seem to be duplicated here incorrectly.
+# They should only exist in calendar_integration.py.
+# Removing the duplicated implementations from tools.py.
 
-async def search_calendar_events_tool(
+# --- End Calendar Tool Implementations ---
+
+
+async def schedule_future_callback_tool(
     exec_context: ToolExecutionContext,
     query_text: str,
     start_date_str: Optional[str] = None,
