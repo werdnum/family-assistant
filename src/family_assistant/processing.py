@@ -54,10 +54,22 @@ class ProcessingService:
         calendar_config: Dict[str, Any],
         timezone_str: str,
         max_history_messages: int,
-        history_max_age_hours: int,
+        history_max_age_hours: int, # Recommended value is now 1
     ):
         """
         Initializes the ProcessingService.
+
+        Args:
+            llm_client: An object implementing the LLMInterface protocol.
+            tools_provider: An object implementing the ToolsProvider protocol.
+            prompts: Dictionary containing loaded prompts.
+            calendar_config: Dictionary containing calendar configuration.
+            timezone_str: The configured timezone string (e.g., "Europe/London").
+            max_history_messages: Max number of history messages to fetch.
+            history_max_age_hours: Max age of history messages to fetch (in hours). Recommended: 1.
+        """
+        self.llm_client = llm_client
+        self.tools_provider = tools_provider
 
         Args:
             llm_client: An object implementing the LLMInterface protocol.

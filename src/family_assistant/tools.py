@@ -27,6 +27,8 @@ from family_assistant import storage
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store # Import vector search
 from family_assistant.embeddings import EmbeddingGenerator # Import embedding generator type
+from family_assistant.storage.message_history import get_recent_history # Import history function
+from datetime import timedelta # Import timedelta
 
 
 logger = logging.getLogger(__name__)
@@ -487,6 +489,67 @@ async def get_full_document_content_tool(
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
 
 
+async def get_message_history_tool(
+    exec_context: ToolExecutionContext,
+    limit: int = 10,
+    max_age_hours: int = 24,
+) -> str:
+    """
+    Retrieves recent message history for the current chat, with optional filters.
+
+    Args:
+        exec_context: The execution context containing chat_id and db_context.
+        limit: Maximum number of messages to retrieve (default: 10).
+        max_age_hours: Maximum age of messages in hours (default: 24).
+
+    Returns:
+        A formatted string containing the message history or an error message.
+    """
+    chat_id = exec_context.chat_id
+    db_context = exec_context.db_context
+    logger.info(f"Executing get_message_history_tool for chat {chat_id} (limit={limit}, max_age_hours={max_age_hours})")
+
+    try:
+        max_age_delta = timedelta(hours=max_age_hours)
+        history_messages = await get_recent_history(
+            db_context=db_context,
+            chat_id=chat_id,
+            limit=limit,
+            max_age=max_age_delta,
+        )
+
+        if not history_messages:
+            return "No message history found matching the specified criteria."
+
+        # Format the history for the LLM
+        formatted_history = ["Retrieved message history:"]
+        for msg in history_messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            timestamp = msg.get("timestamp")
+            time_str = timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if timestamp else "Unknown Time"
+
+            # Basic formatting, could be enhanced
+            formatted_history.append(f"[{time_str}] {role.capitalize()}: {content[:200]}{'...' if len(content) > 200 else ''}") # Truncate long messages
+
+            # Include tool call info if present (simplified)
+            if role == "assistant" and msg.get("tool_calls_info_raw"):
+                tool_calls = msg.get("tool_calls_info_raw", [])
+                if isinstance(tool_calls, list):
+                    for call in tool_calls:
+                         if isinstance(call, dict):
+                             func_name = call.get('function_name', 'unknown_tool')
+                             args = call.get('arguments', {})
+                             resp = call.get('response_content', '')
+                             formatted_history.append(f"  -> Called Tool: {func_name}({json.dumps(args)}) -> Response: {resp[:100]}{'...' if len(resp) > 100 else ''}")
+
+        return "\n".join(formatted_history)
+
+    except Exception as e:
+        logger.error(f"Error executing get_message_history_tool for chat {chat_id}: {e}", exc_info=True)
+        return f"Error: Failed to retrieve message history. {e}"
+
+
 # --- Local Tool Definitions and Mappings (Moved from processing.py) ---
 
 # Map tool names to their actual implementation functions
@@ -496,8 +559,9 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
     "schedule_future_callback": schedule_future_callback_tool,
     "schedule_recurring_task": schedule_recurring_task_tool,
     "search_documents": search_documents_tool,
-    "get_full_document_content": get_full_document_content_tool, # Add the new tool function
-    "add_calendar_event": add_calendar_event_tool, # Add the new calendar event tool
+    "get_full_document_content": get_full_document_content_tool,
+    "add_calendar_event": add_calendar_event_tool,
+    "get_message_history": get_message_history_tool, # Add the new history tool
 }
 
 # Define local tools in the format LiteLLM expects (OpenAI format)
@@ -671,6 +735,29 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["summary", "start_time", "end_time"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_message_history",
+            "description": "Retrieve past messages from the current conversation history. Use this if you need context from earlier in the conversation that might not be in the default short-term history window.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Optional. The maximum number of messages to retrieve (most recent first). Default is 10.",
+                        "default": 10,
+                    },
+                    "max_age_hours": {
+                        "type": "integer",
+                        "description": "Optional. Retrieve messages only up to this many hours old. Default is 24.",
+                        "default": 24,
+                    },
+                },
+                "required": [], # No parameters are strictly required, defaults will be used
             },
         },
     },
