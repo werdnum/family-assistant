@@ -302,22 +302,27 @@ async def search_calendar_events_tool(
                         event_url_attr = getattr(event, 'url', 'N/A') # Get URL for logging
                         logger.info(f"Processing event: URL={event_url_attr}") # Log first
 
-                        # --- Check UID *before* parsing data ---
-                        if not hasattr(event, 'uid') or not event.uid:
-                            logger.info(f"  -> Excluded: Event missing UID. URL={event_url_attr}") # Changed log message
-                            continue # Skip to next event
-                        # --- End UID Check ---
-
+                        parsed = None # Initialize parsed to None
                         try:
+                            # --- Parse event data *first* ---
                             event_data = event.data
                             parsed = parse_event(event_data) # Reuse your existing parser
 
                             if not parsed:
-                                logger.info(f"  -> Excluded: Failed to parse event data. URL={event_url_attr}, UID={event.uid}") # Added UID to log
+                                logger.info(f"  -> Excluded: Failed to parse event data. URL={event_url_attr}")
                                 continue # Skip to next event
 
-                            # Now we know we have parsed data and a UID
-                            logger.info(f"  -> Parsed event details (UID: {event.uid}): {repr(parsed)}") # Added UID to log
+                            # --- Log parsed details *before* UID check ---
+                            logger.info(f"  -> Parsed event details: {repr(parsed)}") # Log the repr of the parsed dict
+
+                            # --- Check UID *after* parsing and logging ---
+                            if not hasattr(event, 'uid') or not event.uid:
+                                logger.info(f"  -> Excluded: Event missing UID. URL={event_url_attr}, Parsed Summary='{parsed.get('summary', 'N/A')}'")
+                                continue # Skip to next event
+                            # --- End UID Check ---
+
+                            # Now we know we have parsed data AND a UID
+                            logger.info(f"  -> Event has UID: {event.uid}") # Log UID confirmation separately
                             summary = parsed.get("summary", "")
                             summary_lower = summary.lower()
 
