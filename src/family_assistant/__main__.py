@@ -634,10 +634,21 @@ async def main_async(
         logger.critical(f"Failed to initialize CompositeToolsProvider: {provider_err}", exc_info=True)
         raise SystemExit(f"Tool provider initialization failed: {provider_err}")
 
+    # --- Wrap with Confirming Provider ---
+    confirming_provider = tools.ConfirmingToolsProvider(
+        wrapped_provider=composite_provider,
+        calendar_config=config["calendar_config"], # Pass calendar config for detail fetching
+        # confirmation_timeout=... # Optional: Set custom timeout if needed
+    )
+    # Ensure the confirming provider loads its definitions (identifies tools needing confirmation)
+    await confirming_provider.get_tool_definitions()
+    logger.info("ConfirmingToolsProvider initialized and definitions loaded.")
+
+
     # --- Instantiate Processing Service ---
     processing_service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=composite_provider,
+        tools_provider=confirming_provider, # Use the confirming provider wrapper
         prompts=config["prompts"],
         calendar_config=config["calendar_config"],
         timezone_str=config["timezone"],
