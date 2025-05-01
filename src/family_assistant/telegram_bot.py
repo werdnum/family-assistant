@@ -259,7 +259,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             trigger_content_parts=trigger_content_parts,
                                             user_name=user_name,
                                             # Pass the confirmation request callback
-                                            request_confirmation_callback=self.request_confirmation_from_user,
+                                            request_confirmation_callback=self._request_confirmation_impl, # Use the correct internal method
                                         )
 
             # Create ForceReply object
