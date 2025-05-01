@@ -308,10 +308,11 @@ async def search_calendar_events_tool(
                             # --- Access and parse event data ---
                             logger.debug(f"  -> Accessing and parsing event.data...")
                             event_data = event.data
-                            parsed = parse_event(event_data) # parse_event now returns UID
+                            # Pass timezone_str when parsing within the tool context
+                            parsed = parse_event(event_data, timezone_str=exec_context.timezone_str)
 
                             if not parsed:
-                                # parse_event logs details if it fails or lacks essential fields (like UID)
+                                # parse_event logs details if it fails or lacks essential fields
                                 logger.info(f"  -> Excluded: Failed to parse event data or missing essential fields. URL={event_url_attr}")
                                 continue # Skip to next event
 
@@ -993,8 +994,11 @@ TOOL_CONFIRMATION_RENDERERS: Dict[str, Callable[[Dict[str, Any], Optional[Dict[s
 
 # --- Helper to Fetch Event Details by UID (used by Confirming Provider) ---
 
-def _fetch_event_details_sync(username: str, password: str, calendar_url: str, uid: str) -> Optional[Dict[str, Any]]:
-    """Synchronously fetches details for a single event by UID."""
+def _fetch_event_details_sync(username: str, password: str, calendar_url: str, uid: str, timezone_str: str) -> Optional[Dict[str, Any]]:
+    """
+    Synchronously fetches details for a single event by UID.
+    Requires timezone_str to correctly parse naive datetimes.
+    """
     logger.debug(f"Fetching details for event UID {uid} from {calendar_url}")
     try:
         with caldav.DAVClient(url=calendar_url, username=username, password=password) as client:
@@ -1003,9 +1007,11 @@ def _fetch_event_details_sync(username: str, password: str, calendar_url: str, u
                 logger.error(f"Could not get calendar object for {calendar_url}")
                 return None
             event = target_calendar.event_by_uid(uid)
-            parsed = parse_event(event.data) # Reuse existing parser
+            # Pass timezone_str when parsing event details for confirmation
+            # Note: timezone_str needs to be passed into _fetch_event_details_sync
+            parsed = parse_event(event.data, timezone_str=timezone_str) # Pass timezone
             if parsed:
-                # Add UID and calendar URL for completeness, though not strictly needed by renderer
+                # Add UID and calendar URL for completeness
                 parsed['uid'] = uid
                 parsed['calendar_url'] = calendar_url
                 return parsed
@@ -1730,10 +1736,11 @@ class ConfirmingToolsProvider(ToolsProvider):
 
         try:
             loop = asyncio.get_running_loop()
+            # Pass the timezone string from the context to the sync helper
             details = await loop.run_in_executor(
                 None,
                 _fetch_event_details_sync,
-                username, password, calendar_url, uid
+                username, password, calendar_url, uid, context.timezone_str # Pass timezone
             )
             return details
         except Exception as e:

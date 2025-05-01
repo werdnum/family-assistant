@@ -73,8 +73,18 @@ def format_datetime_or_date(dt_obj: datetime | date, timezone_str: str, is_end: 
         return str(dt_obj)  # Fallback
 
 
-def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
-    """Parses VCALENDAR data into a dictionary, including the UID."""
+def parse_event(event_data: str, timezone_str: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Parses VCALENDAR data into a dictionary, including the UID.
+    If timezone_str is provided, naive datetimes will be localized to that timezone.
+    """
+    local_tz: Optional[ZoneInfo] = None
+    if timezone_str:
+        try:
+            local_tz = ZoneInfo(timezone_str)
+        except Exception:
+            logger.warning(f"Invalid timezone string '{timezone_str}' provided to parse_event. Naive datetimes will not be localized.")
+
     try:
         cal = vobject.readComponents(event_data)
         # Assuming the first component is the VEVENT
@@ -91,8 +101,18 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
 
         is_all_day = not isinstance(dtstart, datetime)
 
+        # Localize naive datetimes if timezone is provided
+        if local_tz:
+            if isinstance(dtstart, datetime) and dtstart.tzinfo is None:
+                dtstart = dtstart.replace(tzinfo=local_tz)
+                logger.debug(f"Localized naive dtstart to {timezone_str}")
+            if isinstance(dtend, datetime) and dtend.tzinfo is None:
+                dtend = dtend.replace(tzinfo=local_tz)
+                logger.debug(f"Localized naive dtend to {timezone_str}")
+
         # If dtend is missing, assume duration based on type (e.g., 1 hour for timed, 1 day for all-day)
-        if dtend is None:
+        # Do this *after* potential localization
+        if dtend is None and dtstart is not None: # Check dtstart is not None
             if is_all_day:
                 dtend = dtstart + timedelta(days=1)
             else:
@@ -231,7 +251,8 @@ def _fetch_caldav_events_sync(
                     try:
                         event_url_attr = getattr(event, "url", "N/A")
                         event_data = event.data  # Access data synchronously
-                        parsed = parse_event(event_data)
+                        # Pass the timezone_str to parse_event for localization
+                        parsed = parse_event(event_data, timezone_str=timezone_str)
                         if parsed:
                             all_events.append(parsed)
                         else:
@@ -397,20 +418,38 @@ def format_events_for_prompt(
     )
 
     for event in events:
-        start_dt = event["start"]
+        start_dt_orig = event["start"]
+        end_dt_orig = event["end"]
+
+        # --- Ensure datetimes are timezone-aware before formatting ---
+        # Apply local_tz to any naive datetime objects (likely from iCal)
+        start_dt = start_dt_orig
+        if isinstance(start_dt, datetime) and start_dt.tzinfo is None:
+            logger.debug(f"Applying timezone {timezone_str} to naive start_dt {start_dt} in format_events_for_prompt")
+            start_dt = start_dt.replace(tzinfo=local_tz)
+
+        end_dt = end_dt_orig
+        if isinstance(end_dt, datetime) and end_dt.tzinfo is None:
+             logger.debug(f"Applying timezone {timezone_str} to naive end_dt {end_dt} in format_events_for_prompt")
+             end_dt = end_dt.replace(tzinfo=local_tz)
+        # --- End timezone awareness check ---
+
+
         start_date_only = (
-            start_dt.date() if isinstance(start_dt, datetime) else start_dt
+            start_dt.date() if isinstance(start_dt, datetime) else start_dt_orig # Use original if it was a date
         )
 
         # Skip events that have already ended (useful if fetch range includes past)
-        # Compare end time with current time in the local timezone
-        end_dt = event["end"]
+        # Compare end time (now guaranteed to be aware or a date) with current time
         now_aware = datetime.now(local_tz)
-        # Convert end_dt to aware datetime if it's just a date (end of day)
+
+        # Convert end_dt (potentially localized datetime or original date) to aware datetime for comparison
         if isinstance(end_dt, date) and not isinstance(end_dt, datetime):
-            end_dt_aware = datetime.combine(end_dt, time.min, tzinfo=local_tz) # End of day is start of next day
+            # All-day event ends at the start of the next day
+            end_dt_aware = datetime.combine(end_dt, time.min, tzinfo=local_tz)
         elif isinstance(end_dt, datetime):
-            end_dt_aware = end_dt.astimezone(local_tz)
+            # It's already aware (either originally or localized above)
+            end_dt_aware = end_dt.astimezone(local_tz) # Ensure it's in the *local* tz for comparison
         else:
             end_dt_aware = None # Cannot compare if end time is invalid
 
@@ -418,9 +457,9 @@ def format_events_for_prompt(
            logger.debug(f"Skipping past event: '{event['summary']}' ended at {end_dt_aware}")
            continue
 
-        # Format start/end times using the timezone
-        start_str = format_datetime_or_date(event["start"], timezone_str, is_end=False)
-        end_str = format_datetime_or_date(event["end"], timezone_str, is_end=True)
+        # Format start/end times (using potentially localized datetimes) using the timezone
+        start_str = format_datetime_or_date(start_dt, timezone_str, is_end=False)
+        end_str = format_datetime_or_date(end_dt, timezone_str, is_end=True)
         summary = event["summary"]
 
         fmt = all_day_fmt if event["all_day"] else event_fmt
