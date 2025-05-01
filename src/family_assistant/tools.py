@@ -31,8 +31,9 @@ from family_assistant.embeddings import EmbeddingGenerator # Import embedding ge
 from datetime import timedelta # Import timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup # For confirmation buttons
 
-# Import calendar helper functions
-from .calendar_integration import format_datetime_or_date, parse_event
+# Import calendar helper functions AND tool implementations
+from . import calendar_integration
+from .calendar_integration import format_datetime_or_date # Keep this specific import for renderers
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +120,11 @@ class ToolsProvider(Protocol):
 # --- Local Tool Implementations ---
 # Refactored to accept context: ToolExecutionContext
 
-async def add_calendar_event_tool(
-    exec_context: ToolExecutionContext,
-    summary: str,
+# Calendar tool implementations (add, search, modify, delete) moved to calendar_integration.py
+
+async def schedule_recurring_task_tool(
+    exec_context: ToolExecutionContext,  # Renamed to avoid conflict
+    task_type: str,
     start_time: str,
     end_time: str,
     description: Optional[str] = None,
@@ -929,11 +932,12 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
     "schedule_recurring_task": schedule_recurring_task_tool,
     "search_documents": search_documents_tool,
     "get_full_document_content": get_full_document_content_tool,
-    "add_calendar_event": add_calendar_event_tool,
     "get_message_history": get_message_history_tool,
-    "search_calendar_events": search_calendar_events_tool,
-    "modify_calendar_event": modify_calendar_event_tool,
-    "delete_calendar_event": delete_calendar_event_tool,
+    # Calendar tools now imported from calendar_integration module
+    "add_calendar_event": calendar_integration.add_calendar_event_tool,
+    "search_calendar_events": calendar_integration.search_calendar_events_tool,
+    "modify_calendar_event": calendar_integration.modify_calendar_event_tool,
+    "delete_calendar_event": calendar_integration.delete_calendar_event_tool,
 }
 
 # --- Tool Confirmation Renderers ---
@@ -992,38 +996,7 @@ TOOL_CONFIRMATION_RENDERERS: Dict[str, Callable[[Dict[str, Any], Optional[Dict[s
 }
 
 
-# --- Helper to Fetch Event Details by UID (used by Confirming Provider) ---
-
-def _fetch_event_details_sync(username: str, password: str, calendar_url: str, uid: str, timezone_str: str) -> Optional[Dict[str, Any]]:
-    """
-    Synchronously fetches details for a single event by UID.
-    Requires timezone_str to correctly parse naive datetimes.
-    """
-    logger.debug(f"Fetching details for event UID {uid} from {calendar_url}")
-    try:
-        with caldav.DAVClient(url=calendar_url, username=username, password=password) as client:
-            target_calendar = client.calendar(url=calendar_url)
-            if not target_calendar:
-                logger.error(f"Could not get calendar object for {calendar_url}")
-                return None
-            event = target_calendar.event_by_uid(uid)
-            # Pass timezone_str when parsing event details for confirmation
-            # Note: timezone_str needs to be passed into _fetch_event_details_sync
-            parsed = parse_event(event.data, timezone_str=timezone_str) # Pass timezone
-            if parsed:
-                # Add UID and calendar URL for completeness
-                parsed['uid'] = uid
-                parsed['calendar_url'] = calendar_url
-                return parsed
-            else:
-                logger.warning(f"Failed to parse event data for UID {uid} in {calendar_url}")
-                return None
-    except caldav.lib.error.NotFoundError:
-        logger.warning(f"Event UID {uid} not found in {calendar_url}")
-        return None
-    except (caldav.lib.error.DAVError, ConnectionError, Exception) as e:
-        logger.error(f"Error fetching event details for UID {uid} from {calendar_url}: {e}", exc_info=True)
-        return None
+# --- Helper to Fetch Event Details by UID (moved to calendar_integration.py) ---
 
 
 # --- Tool Definitions ---
@@ -1739,10 +1712,10 @@ class ConfirmingToolsProvider(ToolsProvider):
 
         try:
             loop = asyncio.get_running_loop()
-            # Pass the timezone string from the context to the sync helper
+            # Pass the timezone string from the context to the sync helper (now in calendar_integration)
             details = await loop.run_in_executor(
                 None,
-                _fetch_event_details_sync,
+                calendar_integration._fetch_event_details_sync, # Call the moved function
                 username, password, calendar_url, uid, context.timezone_str # Pass timezone
             )
             return details
