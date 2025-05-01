@@ -70,18 +70,13 @@ class ProcessingService:
         """
         self.llm_client = llm_client
         self.tools_provider = tools_provider
+        self.prompts = prompts
+        self.calendar_config = calendar_config
+        self.timezone_str = timezone_str
+        self.max_history_messages = max_history_messages
+        self.history_max_age_hours = history_max_age_hours
 
-        Args:
-            llm_client: An object implementing the LLMInterface protocol.
-            tools_provider: An object implementing the ToolsProvider protocol.
-            prompts: Dictionary containing loaded prompts.
-            calendar_config: Dictionary containing calendar configuration.
-            timezone_str: The configured timezone string (e.g., "Europe/London").
-            max_history_messages: Max number of history messages to fetch.
-            history_max_age_hours: Max age of history messages to fetch.
-        """
-        self.llm_client = llm_client
-        self.tools_provider = tools_provider
+    # Removed _execute_function_call method (if it was previously here)
         self.prompts = prompts
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
