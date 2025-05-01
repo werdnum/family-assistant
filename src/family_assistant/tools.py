@@ -479,8 +479,8 @@ async def modify_calendar_event_tool(
                     # Serialize the modified iCalendar component
                     updated_ical_data = ical_component.serialize()
                     logger.debug(f"Attempting to save modified event.") # Removed ETag logging
-                    # Save the event without ETag, using the serialized data of the modified component
-                    event.save(data=updated_ical_data)
+                    # Save the event without ETag, passing the serialized data as a positional argument
+                    event.save(updated_ical_data)
                     logger.info(f"Successfully saved modified event UID {uid}")
                     return f"OK. Event '{getattr(vevent, 'summary', {}).value}' updated."
                 else:
