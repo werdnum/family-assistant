@@ -139,16 +139,16 @@ CONFIG_FILE_PATH = "config.yaml" # Path to the new config file
 # APP_CONFIG: Dict[str, Any] = {} # Replaced by config dict
 
 # State variables remain global for now
-mcp_sessions: Dict[str, ClientSession] = (
-    {}
-)  # Stores active MCP client sessions {server_id: session}
+# mcp_sessions: Dict[str, ClientSession] = ( # REMOVED - Managed by MCPToolsProvider
+#     {}
+# )
 # --- State for message batching (Moved to TelegramBotHandler) ---
 # chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 # message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
 # processing_tasks: Dict[int, asyncio.Task] = {}
-mcp_tools: List[Dict[str, Any]] = []  # Stores discovered MCP tools in OpenAI format
-tool_name_to_server_id: Dict[str, str] = {}  # Maps MCP tool names to their server_id
-mcp_exit_stack = AsyncExitStack()  # Manages MCP server process lifecycles
+# mcp_tools: List[Dict[str, Any]] = [] # REMOVED - Managed by MCPToolsProvider
+# tool_name_to_server_id: Dict[str, str] = {} # REMOVED - Managed by MCPToolsProvider
+# mcp_exit_stack = AsyncExitStack() # REMOVED - Managed by MCPToolsProvider
 
 
 # Task handler registry is now part of the TaskWorker instance
@@ -318,144 +318,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     return config_data
 
 
-# --- MCP Configuration Loading & Connection ---
-async def load_mcp_config_and_connect(mcp_config: Dict[str, Any]): # Accept MCP config dict
-    """Connects to MCP servers defined in the config and discovers tools."""
-    global mcp_sessions, mcp_tools, tool_name_to_server_id, mcp_exit_stack # Keep using globals for state
-
-    # Clear previous state if reloading? For now, assume it runs once at start.
-    mcp_sessions.clear()
-    mcp_tools.clear()
-    tool_name_to_server_id.clear()
-    # Note: We don't recreate mcp_exit_stack here, it's managed globally.
-
-    mcp_server_configs = mcp_config.get("mcpServers", {}) # Get servers from passed config
-    if not mcp_server_configs:
-        logger.info("No servers defined in mcpServers section of mcp_config.json.")
-        return
-
-    logger.info(f"Found {len(mcp_server_configs)} MCP server configurations.")
-
-    async def _connect_and_discover_mcp(
-        server_id: str, server_conf: Dict[str, Any]
-    ) -> Tuple[Optional[ClientSession], List[Dict[str, Any]], Dict[str, str]]:
-        """Connects to a single MCP server, discovers tools, and returns results."""
-        discovered_tools = []
-        tool_map = {}
-        session = None
-
-        command = server_conf.get("command")
-        args = server_conf.get("args", [])
-        env_config = server_conf.get("env")  # Original env config from JSON
-
-        # --- Resolve environment variable placeholders ---
-        resolved_env = None
-        if isinstance(env_config, dict):
-            resolved_env = {}
-            for key, value in env_config.items():
-                if isinstance(value, str) and value.startswith("$"):
-                    env_var_name = value[1:]  # Remove the leading '$'
-                    resolved_value = os.getenv(env_var_name)
-                    if resolved_value is not None:
-                        resolved_env[key] = resolved_value
-                        logger.debug(
-                            f"Resolved env var '{env_var_name}' for MCP server '{server_id}'"
-                        )
-                    else:
-                        logger.warning(
-                            f"Env var '{env_var_name}' for MCP server '{server_id}' not found in environment. Omitting."
-                        )
-                        # Optionally, keep the placeholder or raise an error
-                        # resolved_env[key] = value # Keep placeholder if preferred
-                else:
-                    # Keep non-placeholder values as is
-                    resolved_env[key] = value
-        elif env_config is not None:
-            logger.warning(
-                f"MCP server '{server_id}' has non-dictionary 'env' configuration. Ignoring."
-            )
-        # --- End environment variable resolution ---
-
-        if not command:
-            logger.error(f"MCP server '{server_id}': 'command' is missing.")
-            return None, [], {}
-
-        logger.info(
-            f"Attempting connection and discovery for MCP server '{server_id}'..."
-        )
-        try:
-            server_params = StdioServerParameters(
-                command=command, args=args, env=resolved_env
-            )
-            # Use the *global* exit stack to manage contexts
-            read_stream, write_stream = await mcp_exit_stack.enter_async_context(
-                stdio_client(server_params)
-            )
-            session = await mcp_exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-            await session.initialize()
-            logger.info(f"Initialized session with MCP server '{server_id}'.")
-
-            response = await session.list_tools()
-            server_tools = response.tools
-            logger.info(f"Server '{server_id}' provides {len(server_tools)} tools.")
-            for tool in server_tools:
-                discovered_tools.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.inputSchema,  # Assuming MCP schema is compatible
-                            # 'required' field might be nested differently, adjust if needed based on MCP spec
-                        },
-                    }
-                )
-                tool_map[tool.name] = server_id
-                logger.info(f" -> Discovered tool: {tool.name}")
-            return session, discovered_tools, tool_map
-
-        except Exception as e:
-            logger.error(f"Failed for MCP server '{server_id}': {e}", exc_info=True)
-            return None, [], {}  # Return empty on failure
-
-    # --- Create connection tasks ---
-    connection_tasks = [
-        _connect_and_discover_mcp(server_id, server_conf)
-        for server_id, server_conf in mcp_server_configs.items()
-    ]
-
-    # --- Run tasks concurrently ---
-    logger.info(
-        f"Starting parallel connection to {len(connection_tasks)} MCP server(s)..."
-    )
-    results = await asyncio.gather(*connection_tasks, return_exceptions=True)
-    logger.info("Finished parallel MCP connection attempts.")
-
-    # --- Process results ---
-    for i, result in enumerate(results):
-        server_id = list(mcp_server_configs.keys())[i]  # Get corresponding server_id
-        if isinstance(result, Exception):
-            logger.error(f"Gather caught exception for server '{server_id}': {result}")
-        elif result:
-            session, discovered, tool_map = result
-            if session:
-                mcp_sessions[server_id] = session  # Store successful session
-                mcp_tools.extend(discovered)
-                tool_name_to_server_id.update(tool_map)
-            else:
-                logger.warning(
-                    f"Connection/discovery seems to have failed silently for server '{server_id}' (result: {result})."
-                )
-        else:
-            logger.warning(
-                f"Received unexpected empty result for server '{server_id}'."
-            )
-
-    logger.info(
-        f"Finished MCP setup. Active sessions: {len(mcp_sessions)}. Total discovered tools: {len(mcp_tools)}"
-    )
+# --- MCP Configuration Loading & Connection --- (REMOVED - Handled by MCPToolsProvider)
+# async def load_mcp_config_and_connect(mcp_config: Dict[str, Any]):
+#    ... (Removed function body) ...
 
 
 # --- Argument Parsing ---
@@ -492,16 +357,16 @@ parser.add_argument(
 
 # --- Signal Handlers ---
 # Define handlers before main() where they are registered
+# Add mcp_provider argument
 async def shutdown_handler(
-    signal_name: str, telegram_service: Optional[TelegramService]
-):  # Accept service instance
+    signal_name: str,
+    telegram_service: Optional[TelegramService],
+    mcp_provider: Optional[MCPToolsProvider], # Add MCP provider instance
+):
     """Initiates graceful shutdown."""
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
     # Ensure the event is set to signal other parts of the application
     if not shutdown_event.is_set():  # Check before setting
-        shutdown_event.set()
-    # Ensure the event is set to signal other parts of the application
-    if not shutdown_event.is_set():
         shutdown_event.set()
 
     # --- Graceful Task Cancellation ---
@@ -530,10 +395,14 @@ async def shutdown_handler(
 
     # Uvicorn server shutdown is handled in main_async when shutdown_event is set
 
-    # Close MCP sessions via the exit stack
-    logger.info("Closing MCP server connections...")
-    await mcp_exit_stack.aclose()
-    logger.info("MCP server connections closed.")
+    # Close MCP sessions via the provider's close method
+    if mcp_provider:
+        logger.info("Closing MCP server connections via provider...")
+        await mcp_provider.close()
+        logger.info("MCP server connections closed.")
+    else:
+        logger.warning("MCPToolsProvider instance was None during shutdown.")
+
 
     # Telegram application shutdown is now handled within telegram_service.stop_polling()
 
@@ -547,12 +416,14 @@ def reload_config_handler(signum, frame):
 
 
 # --- Main Application Setup & Run ---
+# Return tuple: (TelegramService, MCPToolsProvider) or (None, None)
 async def main_async(
     config: Dict[str, Any] # Accept the resolved config dictionary
-) -> Optional[TelegramService]:  # Return service instance or None
+) -> Tuple[Optional[TelegramService], Optional[MCPToolsProvider]]:
     """Initializes and runs the bot application using the provided configuration."""
     # global application # Removed
     logger.info(f"Using model: {config['model']}")
+    mcp_provider = None # Initialize mcp_provider
 
     # --- Validate Essential Config ---
     # Secrets should have been loaded by load_config() from env vars
@@ -609,8 +480,8 @@ async def main_async(
     async with await get_db_context() as db_ctx:
         await storage.init_vector_db(db_ctx) # Initialize vector specific parts
 
-    # Load MCP config and connect to servers using config dict
-    await load_mcp_config_and_connect(config["mcp_config"]) # Pass MCP config part
+    # Load MCP config and connect to servers using config dict (REMOVED - Handled by provider)
+    # await load_mcp_config_and_connect(config["mcp_config"]) # Pass MCP config part
 
     # --- Instantiate Tool Providers ---
     local_provider = LocalToolsProvider(
@@ -619,10 +490,11 @@ async def main_async(
         embedding_generator=embedding_generator,
         calendar_config=config["calendar_config"], # Get from config dict
     )
+    # Instantiate MCP provider, passing the server configs from the main config
+    # It will connect on first use (e.g., when get_tool_definitions is called)
     mcp_provider = MCPToolsProvider(
-        mcp_definitions=mcp_tools,  # Use discovered MCP tool definitions
-        mcp_sessions=mcp_sessions,
-        tool_name_to_server_id=tool_name_to_server_id,
+        mcp_server_configs=config.get("mcp_config", {}).get("mcpServers", {}),
+        # mcp_client=None # Optional: pass a shared mcp.Client if needed elsewhere
     )
     # Combine providers
     try:
@@ -739,8 +611,9 @@ async def main_async(
 
     logger.info("All services stopped. Final shutdown.")
     # Telegram application shutdown is handled by telegram_service.stop_polling() called from shutdown_handler
+    # MCP provider cleanup is handled by shutdown_handler calling mcp_provider.close()
 
-    return telegram_service  # Return the created service instance
+    return telegram_service, mcp_provider # Return both instances
 
 
 def main() -> int:  # Return an exit code
@@ -827,9 +700,9 @@ def main() -> int:  # Return an exit code
         logger.warning(f"Received {type(ex).__name__}, initiating shutdown.")
         # Ensure shutdown runs if loop was interrupted directly
         if not shutdown_event.is_set():
-            # Run the async shutdown handler within the loop, passing the service instance
+            # Run the async shutdown handler within the loop, passing both instances
             loop.run_until_complete(
-                shutdown_handler(type(ex).__name__, telegram_service_instance)
+                shutdown_handler(type(ex).__name__, telegram_service_instance, mcp_provider_instance)
             )
     finally:
         # Task cleanup is handled within shutdown_handler
