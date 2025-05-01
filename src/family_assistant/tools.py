@@ -299,27 +299,48 @@ async def search_calendar_events_tool(
 
                     for event in results:
                         events_checked += 1
+                        event_url_attr = getattr(event, 'url', 'N/A') # Get URL for logging
                         try:
                             event_data = event.data
+                            logger.debug(f"Processing event: URL={event_url_attr}")
                             parsed = parse_event(event_data) # Reuse your existing parser
-                            if parsed and hasattr(event, 'uid') and event.uid:
-                                summary_lower = parsed.get("summary", "").lower()
-                                # Basic substring matching
-                                if query_lower in summary_lower:
-                                    events_matched += 1
-                                    found_details.append({
-                                        "uid": str(event.uid), # Ensure UID is string
-                                        "summary": parsed.get("summary"),
+
+                            if not parsed:
+                                logger.debug(f"  -> Excluded: Failed to parse event data. URL={event_url_attr}")
+                                continue # Skip to next event
+
+                            if not hasattr(event, 'uid') or not event.uid:
+                                logger.debug(f"  -> Excluded: Event missing UID. URL={event_url_attr}, Parsed Summary='{parsed.get('summary', 'N/A')}'")
+                                continue # Skip to next event
+
+                            # Now we know we have parsed data and a UID
+                            summary = parsed.get("summary", "")
+                            summary_lower = summary.lower()
+
+                            # Basic substring matching
+                            if query_lower in summary_lower:
+                                events_matched += 1
+                                logger.debug(f"  -> Matched: Query '{query_lower}' found in summary '{summary}'. UID={event.uid}")
+                                found_details.append({
+                                    "uid": str(event.uid), # Ensure UID is string
+                                    "summary": summary,
                                         "start": parsed.get("start"), # Keep original object for sorting/details
-                                        "end": parsed.get("end"), # Keep original object
-                                        "all_day": parsed.get("all_day"),
-                                        "calendar_url": cal_url # Include the source calendar URL
-                                    })
-                                    if len(found_details) >= limit:
-                                        break # Stop searching this calendar if limit reached
-                        except Exception as parse_err:
-                            logger.warning(f"Error parsing event {getattr(event, 'url', 'N/A')} in {cal_url}: {parse_err}")
+                                    "start": parsed.get("start"), # Keep original object for sorting/details
+                                    "end": parsed.get("end"), # Keep original object
+                                    "all_day": parsed.get("all_day"),
+                                    "calendar_url": cal_url # Include the source calendar URL
+                                })
+                                if len(found_details) >= limit:
+                                    logger.debug(f"Reached search limit ({limit}). Stopping search in calendar {cal_url}.")
+                                    break # Stop searching this calendar if limit reached
+                            else:
+                                # Log why it didn't match
+                                logger.debug(f"  -> Excluded: Query text '{query_lower}' not found in summary '{summary}'. UID={event.uid}")
+
+                        except Exception as process_err:
+                            logger.warning(f"Error processing event {event_url_attr} in {cal_url}: {process_err}", exc_info=True)
                     if len(found_details) >= limit:
+                         logger.debug(f"Reached search limit ({limit}). Stopping search across remaining calendars.")
                          break # Stop searching other calendars if limit reached
 
             except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:
