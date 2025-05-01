@@ -269,7 +269,7 @@ async def fetch_upcoming_events(
             logger.debug("Scheduling synchronous CalDAV fetch in executor.")
             caldav_task = loop.run_in_executor(
                 None,  # Use default executor
-                _fetch_caldav_events_sync,  # Renamed function
+                _fetch_caldav_events_sync,
                 username,
                 password,
                 calendar_urls,
@@ -277,7 +277,7 @@ async def fetch_upcoming_events(
             tasks.append(caldav_task)
         else:
             logger.warning(
-                "CalDAV config present but incomplete (missing user/pass/urls). Skipping CalDAV fetch."
+                "CalDAV config present (%r) but incomplete (missing user/pass/urls). Skipping CalDAV fetch.", caldav_config
             )
 
     # --- Schedule iCal Fetch (if configured) ---
