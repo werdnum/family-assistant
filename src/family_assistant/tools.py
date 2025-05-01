@@ -302,10 +302,30 @@ async def search_calendar_events_tool(
                         event_url_attr = getattr(event, 'url', 'N/A') # Get URL for logging
                         logger.info(f"Processing event: URL={event_url_attr}") # Log first
 
+                        # --- Log initial event state ---
+                        try:
+                            initial_uid = getattr(event, 'uid', 'MISSING')
+                            logger.info(f"  -> Initial state: hasattr(uid)={hasattr(event, 'uid')}, event.uid='{initial_uid}'")
+                        except Exception as e:
+                            logger.warning(f"  -> Error checking initial event.uid: {e}")
+                        # --- End initial log ---
+
                         parsed = None # Initialize parsed to None
                         try:
-                            # --- Parse event data *first* ---
+                            # --- Access event data ---
+                            logger.info(f"  -> Accessing event.data...")
                             event_data = event.data
+                            logger.info(f"  -> Accessed event.data (Length: {len(event_data) if event_data else 0})")
+
+                            # --- Log state after accessing .data ---
+                            try:
+                                after_data_uid = getattr(event, 'uid', 'MISSING')
+                                logger.info(f"  -> State after .data access: hasattr(uid)={hasattr(event, 'uid')}, event.uid='{after_data_uid}'")
+                            except Exception as e:
+                                logger.warning(f"  -> Error checking event.uid after .data access: {e}")
+                            # --- End log after .data ---
+
+                            # --- Parse event data ---
                             parsed = parse_event(event_data) # Reuse your existing parser
 
                             if not parsed:
