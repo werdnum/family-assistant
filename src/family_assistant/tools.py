@@ -882,7 +882,6 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
     "get_full_document_content": get_full_document_content_tool,
     "add_calendar_event": add_calendar_event_tool,
     "get_message_history": get_message_history_tool,
-    # Add the new calendar tools (implementations added previously or below)
     "search_calendar_events": search_calendar_events_tool,
     "modify_calendar_event": modify_calendar_event_tool,
     "delete_calendar_event": delete_calendar_event_tool,
@@ -936,7 +935,6 @@ def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_detail
 TOOL_CONFIRMATION_RENDERERS: Dict[str, Callable[[Dict[str, Any], Optional[Dict[str, Any]]], str]] = {
     "delete_calendar_event": render_delete_calendar_event_confirmation,
     "modify_calendar_event": render_modify_calendar_event_confirmation,
-    # Add renderers for other tools requiring confirmation
 }
 
 
@@ -1235,7 +1233,6 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                 },
                 "required": ["uid", "calendar_url"], # Require UID and URL, at least one 'new_' field should be provided logically
             },
-            # Mark as requiring confirmation
             "requires_confirmation": True,
         },
     },
@@ -1258,7 +1255,6 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                 },
                 "required": ["uid", "calendar_url"],
             },
-            # Mark as requiring confirmation
             "requires_confirmation": True,
         },
     },
@@ -1747,5 +1743,3 @@ class ConfirmingToolsProvider(ToolsProvider):
             logger.debug(f"Tool '{name}' does not require confirmation. Executing directly.")
             return await self.wrapped_provider.execute_tool(name, arguments, context)
 
-
-# Removed set_application_instance helper
