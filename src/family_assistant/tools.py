@@ -376,8 +376,7 @@ async def modify_calendar_event_tool(
 
                 logger.debug(f"Fetching event with UID {uid} from {calendar_url}")
                 event = target_calendar.event_by_uid(uid)
-                original_etag = getattr(event, 'etag', None) # Get ETag if available
-                logger.debug(f"Found event. ETag: {original_etag}")
+                logger.debug(f"Found event.") # Removed ETag logging
 
                 # Parse existing event data
                 cal = vobject.readComponents(event.data)
@@ -429,9 +428,9 @@ async def modify_calendar_event_tool(
                     # Update timestamp
                     vevent.dtstamp.value = datetime.now(ZoneInfo("UTC")) # Use ZoneInfo for UTC
                     updated_ical_data = cal.serialize()
-                    logger.debug(f"Attempting to save modified event with ETag: {original_etag}")
-                    # Use save method with etag for concurrency check
-                    event.save(data=updated_ical_data, etag=original_etag) # Check caldav docs for exact method signature
+                    logger.debug(f"Attempting to save modified event.") # Removed ETag logging
+                    # Save the event without ETag
+                    event.save(data=updated_ical_data)
                     logger.info(f"Successfully saved modified event UID {uid}")
                     return f"OK. Event '{getattr(vevent, 'summary', {}).value}' updated."
                 else:
@@ -441,9 +440,7 @@ async def modify_calendar_event_tool(
         except caldav.lib.error.NotFoundError:
             logger.error(f"Event with UID {uid} not found in calendar {calendar_url}.")
             return f"Error: Event with UID {uid} not found."
-        except caldav.lib.error.PreconditionFailed: # Example ETag mismatch error
-             logger.warning(f"ETag mismatch modifying event UID {uid}. Event may have changed.")
-             return "Error: Could not modify event. It seems to have been changed by someone else recently. Please try searching and modifying again."
+        # Removed PreconditionFailed handler as ETag is not used
         except (caldav.lib.error.DAVError, ConnectionError, ValueError, Exception) as sync_err:
             logger.error(f"Error modifying event UID {uid}: {sync_err}", exc_info=True)
             return f"Error: Failed to modify event. {sync_err}"
