@@ -300,21 +300,24 @@ async def search_calendar_events_tool(
                     for event in results:
                         events_checked += 1
                         event_url_attr = getattr(event, 'url', 'N/A') # Get URL for logging
+                        logger.info(f"Processing event: URL={event_url_attr}") # Log first
+
+                        # --- Check UID *before* parsing data ---
+                        if not hasattr(event, 'uid') or not event.uid:
+                            logger.info(f"  -> Excluded: Event missing UID. URL={event_url_attr}") # Changed log message
+                            continue # Skip to next event
+                        # --- End UID Check ---
+
                         try:
                             event_data = event.data
-                            logger.info(f"Processing event: URL={event_url_attr}") # Changed to info
                             parsed = parse_event(event_data) # Reuse your existing parser
 
                             if not parsed:
-                                logger.info(f"  -> Excluded: Failed to parse event data. URL={event_url_attr}") # Changed to info
-                                continue # Skip to next event
-
-                            if not hasattr(event, 'uid') or not event.uid:
-                                logger.info(f"  -> Excluded: Event missing UID. URL={event_url_attr}, Parsed Summary='{parsed.get('summary', 'N/A')}'") # Changed to info
+                                logger.info(f"  -> Excluded: Failed to parse event data. URL={event_url_attr}, UID={event.uid}") # Added UID to log
                                 continue # Skip to next event
 
                             # Now we know we have parsed data and a UID
-                            logger.info(f"  -> Parsed event details: {repr(parsed)}") # Log the repr of the parsed dict
+                            logger.info(f"  -> Parsed event details (UID: {event.uid}): {repr(parsed)}") # Added UID to log
                             summary = parsed.get("summary", "")
                             summary_lower = summary.lower()
 
