@@ -868,6 +868,103 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
             },
         },
     },
+    # --- Add New Calendar Tools Here ---
+    {
+        "type": "function",
+        "function": {
+            "name": "search_calendar_events",
+            "description": "Search for calendar events based on a query and optional date range. Returns a list of matching events with their details and unique IDs (UIDs). Use this *first* when a user asks to modify or delete an event, to identify the correct event UID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query_text": {
+                        "type": "string",
+                        "description": "Keywords from the user's request describing the event (e.g., 'dentist appointment', 'team meeting').",
+                    },
+                    "start_date_str": {
+                        "type": "string",
+                        "description": "Optional. The start date for the search range (ISO 8601 format, e.g., '2025-05-20'). Defaults to today if omitted.",
+                    },
+                    "end_date_str": {
+                        "type": "string",
+                        "description": "Optional. The end date for the search range (ISO 8601 format, e.g., '2025-05-22'). Defaults to start_date + 2 days if omitted.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Optional. Maximum number of events to return (default: 5).",
+                        "default": 5,
+                    }
+                },
+                "required": ["query_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "modify_calendar_event",
+            "description": "Modifies an existing calendar event identified by its UID. Requires the UID obtained from search_calendar_events. Only provide parameters for the fields that need changing. Does *not* currently support modifying recurring events reliably (may affect only the specified instance).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "uid": {
+                        "type": "string",
+                        "description": "The unique ID (UID) of the event to modify, obtained from search_calendar_events.",
+                    },
+                    "calendar_url": {
+                        "type": "string",
+                        "description": "The URL of the calendar containing the event, obtained from search_calendar_events.",
+                    },
+                    "new_summary": {
+                        "type": "string",
+                        "description": "Optional. The new title/summary for the event.",
+                    },
+                    "new_start_time": {
+                        "type": "string",
+                        "description": "Optional. The new start date or datetime (ISO 8601 format with timezone for timed events, e.g., '2025-05-20T11:00:00+02:00' or '2025-05-21').",
+                    },
+                    "new_end_time": {
+                        "type": "string",
+                        "description": "Optional. The new end date or datetime (ISO 8601 format with timezone for timed events, e.g., '2025-05-20T11:30:00+02:00' or '2025-05-22').",
+                    },
+                    "new_description": {
+                        "type": "string",
+                        "description": "Optional. The new detailed description for the event.",
+                    },
+                    "new_all_day": {
+                        "type": "boolean",
+                        "description": "Optional. Set to true if the event should become an all-day event, false if it should become timed. Requires appropriate new_start/end_time.",
+                    },
+                },
+                "required": ["uid", "calendar_url"], # Require UID and URL, at least one 'new_' field should be provided logically
+            },
+            # Mark as requiring confirmation
+            "requires_confirmation": True,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_calendar_event",
+            "description": "Deletes a specific calendar event identified by its UID. Requires the UID obtained from search_calendar_events. Does *not* currently support deleting recurring events reliably (may affect only the specified instance).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "uid": {
+                        "type": "string",
+                        "description": "The unique ID (UID) of the event to delete, obtained from search_calendar_events.",
+                    },
+                     "calendar_url": {
+                        "type": "string",
+                        "description": "The URL of the calendar containing the event, obtained from search_calendar_events.",
+                    },
+                },
+                "required": ["uid", "calendar_url"],
+            },
+            # Mark as requiring confirmation
+            "requires_confirmation": True,
+        },
+    },
 ]
 
 
