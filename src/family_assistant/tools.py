@@ -302,74 +302,47 @@ async def search_calendar_events_tool(
                         event_url_attr = getattr(event, 'url', 'N/A') # Get URL for logging
                         logger.info(f"Processing event: URL={event_url_attr}") # Log first
 
-                        # --- Log initial event state ---
-                        try:
-                            initial_uid = getattr(event, 'uid', 'MISSING')
-                            logger.info(f"  -> Initial state: hasattr(uid)={hasattr(event, 'uid')}, event.uid='{initial_uid}'")
-                        except Exception as e:
-                            logger.warning(f"  -> Error checking initial event.uid: {e}")
-                        # --- End initial log ---
-
                         parsed = None # Initialize parsed to None
                         try:
-                            # --- Access event data ---
-                            logger.info(f"  -> Accessing event.data...")
+                            # --- Access and parse event data ---
+                            logger.debug(f"  -> Accessing and parsing event.data...")
                             event_data = event.data
-                            logger.info(f"  -> Accessed event.data (Length: {len(event_data) if event_data else 0})")
-
-                            # --- Log state after accessing .data ---
-                            try:
-                                after_data_uid = getattr(event, 'uid', 'MISSING')
-                                logger.info(f"  -> State after .data access: hasattr(uid)={hasattr(event, 'uid')}, event.uid='{after_data_uid}'")
-                            except Exception as e:
-                                logger.warning(f"  -> Error checking event.uid after .data access: {e}")
-                            # --- End log after .data ---
-
-                            # --- Parse event data ---
-                            parsed = parse_event(event_data) # Reuse your existing parser
+                            parsed = parse_event(event_data) # parse_event now returns UID
 
                             if not parsed:
-                                logger.info(f"  -> Excluded: Failed to parse event data. URL={event_url_attr}")
+                                # parse_event logs details if it fails or lacks essential fields (like UID)
+                                logger.info(f"  -> Excluded: Failed to parse event data or missing essential fields. URL={event_url_attr}")
                                 continue # Skip to next event
 
-                            # --- Log parsed details *before* UID check ---
-                            logger.info(f"  -> Parsed event details: {repr(parsed)}") # Log the repr of the parsed dict
-
-                            # --- Check UID *after* parsing and logging ---
-                            if not hasattr(event, 'uid') or not event.uid:
-                                logger.info(f"  -> Excluded: Event missing UID. URL={event_url_attr}, Parsed Summary='{parsed.get('summary', 'N/A')}'")
-                                continue # Skip to next event
-                            # --- End UID Check ---
-
-                            # Now we know we have parsed data AND a UID
-                            logger.info(f"  -> Event has UID: {event.uid}") # Log UID confirmation separately
+                            # --- We now have parsed data including the UID ---
+                            parsed_uid = parsed.get("uid") # Get UID from parsed data
                             summary = parsed.get("summary", "")
                             summary_lower = summary.lower()
+                            logger.info(f"  -> Parsed event details (UID: {parsed_uid}): {repr(parsed)}") # Log parsed details with UID
 
-                            # Basic substring matching
+                            # --- Basic substring matching ---
                             if query_lower in summary_lower:
                                 events_matched += 1
-                                logger.debug(f"  -> Matched: Query '{query_lower}' found in summary '{summary}'. UID={event.uid}")
+                                logger.info(f"  -> Matched: Query '{query_lower}' found in summary '{summary}'. UID={parsed_uid}") # Use parsed_uid
                                 found_details.append({
-                                    "uid": str(event.uid), # Ensure UID is string
+                                    "uid": str(parsed_uid), # Use UID from parsed data
                                     "summary": summary,
-                                        "start": parsed.get("start"), # Keep original object for sorting/details
-                                    "start": parsed.get("start"), # Keep original object for sorting/details
-                                    "end": parsed.get("end"), # Keep original object
+                                    "start": parsed.get("start"),
+                                    "end": parsed.get("end"),
                                     "all_day": parsed.get("all_day"),
                                     "calendar_url": cal_url # Include the source calendar URL
                                 })
                                 if len(found_details) >= limit:
-                                    logger.debug(f"Reached search limit ({limit}). Stopping search in calendar {cal_url}.")
+                                    logger.info(f"Reached search limit ({limit}). Stopping search in calendar {cal_url}.")
                                     break # Stop searching this calendar if limit reached
                             else:
                                 # Log why it didn't match
-                                logger.debug(f"  -> Excluded: Query text '{query_lower}' not found in summary '{summary}'. UID={event.uid}")
+                                logger.info(f"  -> Excluded: Query text '{query_lower}' not found in summary '{summary}'. UID={parsed_uid}") # Use parsed_uid
 
                         except Exception as process_err:
                             logger.warning(f"Error processing event {event_url_attr} in {cal_url}: {process_err}", exc_info=True)
                     if len(found_details) >= limit:
-                         logger.debug(f"Reached search limit ({limit}). Stopping search across remaining calendars.")
+                         logger.info(f"Reached search limit ({limit}). Stopping search across remaining calendars.")
                          break # Stop searching other calendars if limit reached
 
             except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:

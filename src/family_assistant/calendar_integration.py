@@ -74,7 +74,7 @@ def format_datetime_or_date(dt_obj: datetime | date, timezone_str: str, is_end: 
 
 
 def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
-    """Parses VCALENDAR data into a dictionary."""
+    """Parses VCALENDAR data into a dictionary, including the UID."""
     try:
         cal = vobject.readComponents(event_data)
         # Assuming the first component is the VEVENT
@@ -82,9 +82,11 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
         summary = vevent.summary.value if hasattr(vevent, "summary") else "No Title"
         dtstart = vevent.dtstart.value if hasattr(vevent, "dtstart") else None
         dtend = vevent.dtend.value if hasattr(vevent, "dtend") else None
+        uid = vevent.uid.value if hasattr(vevent, "uid") else None # Extract UID
 
-        # Basic check for valid event data
-        if not summary or not dtstart:
+        # Basic check for valid event data (UID is mandatory in iCal standard)
+        if not summary or not dtstart or not uid:
+            logger.warning(f"Parsed event missing essential fields (summary, dtstart, or uid). Summary='{summary}', Start='{dtstart}', UID='{uid}'")
             return None
 
         is_all_day = not isinstance(dtstart, datetime)
@@ -97,11 +99,15 @@ def parse_event(event_data: str) -> Optional[Dict[str, Any]]:
                 dtend = dtstart + timedelta(hours=1)  # Default duration assumption
 
         return {
+            "uid": uid, # Include UID in the returned dict
             "summary": summary,
             "start": dtstart,
             "end": dtend,
             "all_day": is_all_day,
         }
+    except StopIteration:
+        logger.error(f"Failed to find VEVENT component in VCALENDAR data: {event_data[:200]}...")
+        return None
     except Exception as e:
         logger.error(
             f"Failed to parse VCALENDAR data: {e}\nData: {event_data[:200]}...",
