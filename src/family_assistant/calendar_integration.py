@@ -101,17 +101,27 @@ def parse_event(event_data: str, timezone_str: Optional[str] = None) -> Optional
 
         is_all_day = not isinstance(dtstart, datetime)
 
-        # Localize naive datetimes if timezone is provided
+        # Ensure start/end datetimes are in the correct local timezone if provided
         if local_tz:
-            if isinstance(dtstart, datetime) and dtstart.tzinfo is None:
-                dtstart = dtstart.replace(tzinfo=local_tz)
-                logger.debug(f"Localized naive dtstart to {timezone_str}")
-            if isinstance(dtend, datetime) and dtend.tzinfo is None:
-                dtend = dtend.replace(tzinfo=local_tz)
-                logger.debug(f"Localized naive dtend to {timezone_str}")
+            if isinstance(dtstart, datetime):
+                if dtstart.tzinfo is None:
+                    # Naive datetime: Assume it's in the target local timezone
+                    dtstart = dtstart.replace(tzinfo=local_tz)
+                    logger.debug(f"Applied local timezone {timezone_str} to naive dtstart")
+                else:
+                    # Aware datetime: Convert it to the target local timezone
+                    dtstart = dtstart.astimezone(local_tz)
+                    logger.debug(f"Converted aware dtstart to target timezone {timezone_str}")
+            # Repeat for dtend, checking if it exists first
+            if isinstance(dtend, datetime):
+                 if dtend.tzinfo is None:
+                    dtend = dtend.replace(tzinfo=local_tz)
+                    logger.debug(f"Applied local timezone {timezone_str} to naive dtend")
+                 else:
+                    dtend = dtend.astimezone(local_tz)
+                    logger.debug(f"Converted aware dtend to target timezone {timezone_str}")
 
-        # If dtend is missing, assume duration based on type (e.g., 1 hour for timed, 1 day for all-day)
-        # Do this *after* potential localization
+        # If dtend is missing, calculate it *after* ensuring dtstart is localized/converted
         if dtend is None and dtstart is not None: # Check dtstart is not None
             if is_all_day:
                 dtend = dtstart + timedelta(days=1)
