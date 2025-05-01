@@ -543,9 +543,9 @@ async def get_message_history_tool(
                             resp = call.get('response_content', '')
                             formatted_history.append(f"  -> Called Tool: {func_name}({json.dumps(args)}) -> Response: {resp}") # Include full response
 
-       return "\n".join(formatted_history)
+        return "\n".join(formatted_history)
 
-   except Exception as e:
+    except Exception as e:
         logger.error(f"Error executing get_message_history_tool for chat {chat_id}: {e}", exc_info=True)
         return f"Error: Failed to retrieve message history. {e}"
 
