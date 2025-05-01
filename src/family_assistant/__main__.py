@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import html
 import argparse
+import copy
 import argparse
 import asyncio
 import contextlib
@@ -16,15 +17,15 @@ import logging
 import os
 import signal
 import sys
-import traceback  # Keep for error handler if needed elsewhere, or remove if only used in bot's handler
+import traceback
 import uuid
 import yaml
-import mcp  # Import MCP
-from mcp import ClientSession, StdioServerParameters  # MCP specifics
-from mcp.client.stdio import stdio_client  # MCP stdio client
-from contextlib import AsyncExitStack  # For managing multiple async contexts
+import mcp
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from contextlib import AsyncExitStack
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any, Tuple  # Added Tuple
+from typing import Optional, List, Dict, Any, Tuple
 
 import zoneinfo
 from dotenv import load_dotenv
@@ -36,9 +37,9 @@ from family_assistant.task_worker import (
     TaskWorker,
     handle_log_message,
     handle_llm_callback,
-    handle_index_email, # Keep email handler import for now
-    shutdown_event, # Import event directly
-    new_task_event, # Import event directly
+    handle_index_email,
+    shutdown_event,
+    new_task_event,
 )
 
 # Import the ProcessingService and LLM interface/clients
@@ -216,7 +217,6 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     config_data["telegram_token"] = os.getenv("TELEGRAM_BOT_TOKEN", config_data["telegram_token"])
     config_data["openrouter_api_key"] = os.getenv("OPENROUTER_API_KEY", config_data["openrouter_api_key"])
     config_data["database_url"] = os.getenv("DATABASE_URL", config_data["database_url"])
-    caldav_pass_env = os.getenv("CALDAV_PASSWORD") # Load separately
 
     # Other Env Vars
     config_data["model"] = os.getenv("LLM_MODEL", config_data["model"])
@@ -244,8 +244,8 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
 
     # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
     caldav_user_env = os.getenv("CALDAV_USERNAME")
+    caldav_pass_env = os.getenv("CALDAV_PASSWORD")
     caldav_urls_str_env = os.getenv("CALDAV_CALENDAR_URLS")
-    ical_urls_str_env = os.getenv("ICAL_URLS")
 
     temp_calendar_config = {}
     if caldav_user_env and caldav_pass_env and caldav_urls_str_env:
@@ -253,10 +253,12 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         if caldav_urls_env:
             temp_calendar_config["caldav"] = {
                 "username": caldav_user_env,
-                "password": caldav_pass_env, # Use password loaded earlier
+                "password": caldav_pass_env,
                 "calendar_urls": caldav_urls_env,
             }
             logger.info("Loaded CalDAV config from environment variables.")
+
+    ical_urls_str_env = os.getenv("ICAL_URLS")
     if ical_urls_str_env:
         ical_urls_env = [url.strip() for url in ical_urls_str_env.split(",") if url.strip()]
         if ical_urls_env:
@@ -307,7 +309,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         logger.error(f"Error decoding {mcp_config_path}: {e}")
 
     # Log final loaded non-secret config for verification
-    loggable_config = {k: v for k, v in config_data.items() if k not in ['telegram_token', 'openrouter_api_key', 'database_url']}
+    loggable_config = copy.deepcopy({k: v for k, v in config_data.items() if k not in ['telegram_token', 'openrouter_api_key', 'database_url']})
     if 'calendar_config' in loggable_config and 'caldav' in loggable_config['calendar_config']:
         loggable_config['calendar_config']['caldav'].pop('password', None) # Remove password before logging
     logger.info(f"Final configuration loaded (excluding secrets): {json.dumps(loggable_config, indent=2, default=str)}")
@@ -636,11 +638,11 @@ async def main_async(
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
-        prompts=config["prompts"], # Get from config dict
-        calendar_config=config["calendar_config"], # Get from config dict
-        timezone_str=config["timezone"], # Get from config dict
-        max_history_messages=config["max_history_messages"], # Get from config dict
-        history_max_age_hours=config["history_max_age_hours"], # Get from config dict
+        prompts=config["prompts"],
+        calendar_config=config["calendar_config"],
+        timezone_str=config["timezone"],
+        max_history_messages=config["max_history_messages"],
+        history_max_age_hours=config["history_max_age_hours"],
     )
     logger.info(f"ProcessingService initialized with configuration.")
 
@@ -650,11 +652,11 @@ async def main_async(
 
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
-        telegram_token=config["telegram_token"], # Get from config dict
-        allowed_chat_ids=config["allowed_chat_ids"], # Get from config dict
-        developer_chat_id=config["developer_chat_id"], # Get from config dict
+        telegram_token=config["telegram_token"],
+        allowed_chat_ids=config["allowed_chat_ids"],
+        developer_chat_id=config["developer_chat_id"],
         processing_service=processing_service,
-        get_db_context_func=get_db_context, # Pass the function directly
+        get_db_context_func=get_db_context,
     )
 
     # Start polling using the service method
@@ -681,9 +683,9 @@ async def main_async(
 
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
-        application=telegram_service.application, # Pass application instance
-        calendar_config=config["calendar_config"], # Pass calendar config
-        timezone_str=config["timezone"], # Pass timezone string
+        application=telegram_service.application,
+        calendar_config=config["calendar_config"],
+        timezone_str=config["timezone"],
     )
 
     # --- Register Task Handlers with the Worker Instance ---
