@@ -654,31 +654,31 @@ def main() -> int:  # Return an exit code
 
         # --- Setup Signal Handlers *after* service creation ---
         # Pass the service instance to the shutdown handler lambda
-        if telegram_service_instance:
-            signal_map = {
-                signal.SIGINT: "SIGINT",
-                signal.SIGTERM: "SIGTERM",
-            }
-            for sig_num, sig_name in signal_map.items():
-                # Pass the service instance to the shutdown handler lambda
-                loop.add_signal_handler(
-                    sig_num,
-                    lambda name=sig_name, service=telegram_service_instance: asyncio.create_task(
-                        shutdown_handler(name, service)  # Pass service instance
-                    ),
-                )
-        else:
-            logger.error(
-                "Failed to create TelegramService, signal handlers not fully set up."
+        # Always set up signal handlers, but pass None for instances if creation failed
+        signal_map = {
+            signal.SIGINT: "SIGINT",
+            signal.SIGTERM: "SIGTERM",
+        }
+        # Need mcp_provider_instance here, which was returned by main_async
+        # Let's assume main_async was correctly modified to return it,
+        # and we need to capture it earlier in the 'try' block.
+        # The previous block failed because the call to main_async wasn't updated first.
+        # Assuming main_async now returns (service, mcp_provider), the call should be:
+        # telegram_service_instance, mcp_provider_instance = loop.run_until_complete(main_async(config_data))
+
+        # Corrected signal handler setup using both instances:
+        for sig_num, sig_name in signal_map.items():
+            # Pass both service and mcp provider instances (which might be None)
+            loop.add_signal_handler(
+                sig_num,
+                lambda name=sig_name, service=telegram_service_instance, mcp=mcp_provider_instance: asyncio.create_task(
+                    shutdown_handler(name, service, mcp) # Pass potentially None instances
+                ),
             )
-            # Fallback simple handler if service creation failed
-            for sig_num, sig_name in signal_map.items():
-                loop.add_signal_handler(
-                    sig_num,
-                    lambda name=sig_name: asyncio.create_task(
-                        shutdown_handler(name, None)
-                    ),
-                )
+        if not telegram_service_instance:
+             logger.error("TelegramService instance creation failed, shutdown might be incomplete.")
+        if not mcp_provider_instance:
+             logger.warning("MCPToolsProvider instance creation failed or not configured.") # Warning as MCP might be optional
 
         # --- Setup SIGHUP Handler (Inside the main try block, after other signals) ---
         if hasattr(signal, "SIGHUP"):
