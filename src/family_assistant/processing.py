@@ -400,13 +400,18 @@ class ProcessingService:
         calendar_context_str = ""
         if self.calendar_config:  # Use self.calendar_config
             try:
+                # Pass timezone string to fetch_upcoming_events
                 upcoming_events = await calendar_integration.fetch_upcoming_events(
-                    self.calendar_config  # Use self.calendar_config
+                    calendar_config=self.calendar_config, # Use self.calendar_config
+                    timezone_str=self.timezone_str # Pass timezone
                 )
+                # Pass timezone string to format_events_for_prompt
                 today_events_str, future_events_str = (
                     calendar_integration.format_events_for_prompt(
-                        upcoming_events, self.prompts
-                    )  # Use self.prompts
+                        events=upcoming_events,
+                        prompts=self.prompts, # Use self.prompts
+                        timezone_str=self.timezone_str # Pass timezone
+                    )
                 )
                 calendar_header_template = self.prompts.get(  # Use self.prompts
                     "calendar_context_header",

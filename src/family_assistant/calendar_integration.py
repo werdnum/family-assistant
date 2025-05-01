@@ -15,50 +15,60 @@ logger = logging.getLogger(__name__)
 # --- Configuration (Now passed via function arguments) ---
 # Environment variables are still read here for the standalone test section (__main__)
 
+from zoneinfo import ZoneInfo # Import ZoneInfo
+
 # --- Helper Functions ---
 
 
-def format_datetime_or_date(dt_obj: datetime | date, is_end: bool = False) -> str:
-    """Formats datetime or date object into a user-friendly string."""
-    if isinstance(dt_obj, datetime):
-        # Format datetime, potentially adjust for end time display
-        # Example: "Today 14:30", "Tomorrow 09:00", "Apr 21 10:00"
-        now = datetime.now(dt_obj.tzinfo)  # Use event's timezone if available
-        today = now.date()
-        tomorrow = today + timedelta(days=1)
+def format_datetime_or_date(dt_obj: datetime | date, timezone_str: str, is_end: bool = False) -> str:
+    """Formats datetime or date object into a user-friendly string, relative to the specified timezone."""
+    try:
+        local_tz = ZoneInfo(timezone_str)
+    except Exception:
+        logger.warning(f"Invalid timezone string '{timezone_str}' in format_datetime_or_date. Falling back to UTC.")
+        local_tz = ZoneInfo("UTC")
 
-        if dt_obj.date() == today:
+    now_local = datetime.now(local_tz)
+    today_local = now_local.date()
+    tomorrow_local = today_local + timedelta(days=1)
+
+    if isinstance(dt_obj, datetime):
+        # Convert event time to local timezone for comparison and display
+        dt_local = dt_obj.astimezone(local_tz)
+        # Example: "Today 14:30", "Tomorrow 09:00", "Apr 21 10:00"
+
+        if dt_local.date() == today_local:
             day_str = "Today"
-        elif dt_obj.date() == tomorrow:
+        elif dt_local.date() == tomorrow_local:
             day_str = "Tomorrow"
         else:
-            day_str = dt_obj.strftime("%b %d")  # e.g., Apr 21
+            day_str = dt_local.strftime("%b %d")  # e.g., Apr 21
 
         # For end times exactly at midnight, display as end of previous day if makes sense
         if is_end and dt_obj.time() == time(0, 0):
             # Check if it's the day after the start date (common for multi-day events ending at midnight)
             # This logic might need refinement based on how start_date is passed or stored
             # For simplicity now, just format as is.
-            pass
+            pass # No specific end-of-day adjustment needed here currently
 
-        return f"{day_str} {dt_obj.strftime('%H:%M')}"
+        return f"{day_str} {dt_local.strftime('%H:%M')}"
 
     elif isinstance(dt_obj, date):
-        # Format date (all-day event)
+        # Format date (all-day event) - Dates don't have timezones inherently
+        # Comparisons are relative to the local timezone's date
         # Example: "Today", "Tomorrow", "Apr 21"
-        today = date.today()
-        tomorrow = today + timedelta(days=1)
 
         # Adjust end date for display: CalDAV often stores end date as the day *after*
+        display_date = dt_obj
         if is_end:
-            dt_obj -= timedelta(days=1)
+            display_date = dt_obj - timedelta(days=1)
 
-        if dt_obj == today:
+        if display_date == today_local:
             return "Today"
-        elif dt_obj == tomorrow:
+        elif display_date == tomorrow_local:
             return "Tomorrow"
         else:
-            return dt_obj.strftime("%b %d")  # e.g., Apr 21
+            return display_date.strftime("%b %d")  # e.g., Apr 21
     else:
         return str(dt_obj)  # Fallback
 
@@ -157,6 +167,7 @@ def _fetch_caldav_events_sync(
     username: str,
     password: str,
     calendar_urls: List[str],
+    timezone_str: str, # Added timezone string
 ) -> List[Dict[str, Any]]:
     """Synchronous function to connect to CalDAV servers using specific calendar URLs and fetch events."""
     logger.debug("Executing synchronous CalDAV fetch using direct calendar URLs.")
@@ -166,9 +177,14 @@ def _fetch_caldav_events_sync(
         logger.error("No calendar URLs provided to _fetch_events_sync.")
         return []
 
-    # Define date range once
-    start_date = date.today()
-    end_date = start_date + timedelta(days=16)  # Search up to 16 days out
+    # Define date range based on the provided timezone
+    try:
+        local_tz = ZoneInfo(timezone_str)
+    except Exception:
+        logger.warning(f"Invalid timezone string '{timezone_str}' in _fetch_caldav_events_sync. Falling back to UTC.")
+        local_tz = ZoneInfo("UTC")
+    start_date = datetime.now(local_tz).date()
+    end_date = start_date + timedelta(days=16)  # Search up to 16 days out (exclusive end)
 
     # Iterate through each specific calendar URL
     for calendar_url in calendar_urls:
@@ -252,6 +268,7 @@ def _fetch_caldav_events_sync(
 
 async def fetch_upcoming_events(
     calendar_config: Dict[str, Any],
+    timezone_str: str, # Added timezone string
 ) -> List[Dict[str, Any]]:
     """Fetches events from configured CalDAV and iCal sources and merges them."""
     logger.debug("Entering fetch_upcoming_events orchestrator.")
@@ -273,6 +290,7 @@ async def fetch_upcoming_events(
                 username,
                 password,
                 calendar_urls,
+                timezone_str, # Pass timezone
             )
             tasks.append(caldav_task)
         else:
@@ -347,14 +365,20 @@ async def fetch_upcoming_events(
 
 
 def format_events_for_prompt(
-    events: List[Dict[str, Any]], prompts: Dict[str, str]
+    events: List[Dict[str, Any]], prompts: Dict[str, str], timezone_str: str # Added timezone string
 ) -> Tuple[str, str]:
     """Formats the fetched events into strings suitable for the prompt."""
-    today = date.today()
-    tomorrow = today + timedelta(days=1)
-    two_weeks_later = today + timedelta(
+    try:
+        local_tz = ZoneInfo(timezone_str)
+    except Exception:
+        logger.warning(f"Invalid timezone string '{timezone_str}' in format_events_for_prompt. Falling back to UTC.")
+        local_tz = ZoneInfo("UTC")
+
+    today_local = datetime.now(local_tz).date()
+    tomorrow_local = today_local + timedelta(days=1)
+    two_weeks_later = today_local + timedelta(
         days=15
-    )  # End of the 14-day window after tomorrow
+    )  # End of the 14-day window after tomorrow (inclusive end date for comparison)
 
     today_tomorrow_events = []
     next_two_weeks_events = []
@@ -373,22 +397,31 @@ def format_events_for_prompt(
         )
 
         # Skip events that have already ended (useful if fetch range includes past)
-        # This check needs refinement if end times aren't precise
-        # end_dt = event["end"]
-        # now_aware = datetime.now(getattr(end_dt, 'tzinfo', None)) # Match timezone if possible
-        # if end_dt < now_aware:
-        #    continue
+        # Compare end time with current time in the local timezone
+        end_dt = event["end"]
+        now_aware = datetime.now(local_tz)
+        # Convert end_dt to aware datetime if it's just a date (end of day)
+        if isinstance(end_dt, date) and not isinstance(end_dt, datetime):
+            end_dt_aware = datetime.combine(end_dt, time.min, tzinfo=local_tz) # End of day is start of next day
+        elif isinstance(end_dt, datetime):
+            end_dt_aware = end_dt.astimezone(local_tz)
+        else:
+            end_dt_aware = None # Cannot compare if end time is invalid
 
-        # Format start/end times
-        start_str = format_datetime_or_date(event["start"], is_end=False)
-        end_str = format_datetime_or_date(event["end"], is_end=True)
+        if end_dt_aware and end_dt_aware <= now_aware:
+           logger.debug(f"Skipping past event: '{event['summary']}' ended at {end_dt_aware}")
+           continue
+
+        # Format start/end times using the timezone
+        start_str = format_datetime_or_date(event["start"], timezone_str, is_end=False)
+        end_str = format_datetime_or_date(event["end"], timezone_str, is_end=True)
         summary = event["summary"]
 
         fmt = all_day_fmt if event["all_day"] else event_fmt
         event_str = fmt.format(start_time=start_str, end_time=end_str, summary=summary)
 
-        # Categorize event
-        if start_date_only <= tomorrow:
+        # Categorize event based on local date
+        if start_date_only <= tomorrow_local:
             today_tomorrow_events.append(event_str)
         elif start_date_only <= two_weeks_later:
             next_two_weeks_events.append(event_str)

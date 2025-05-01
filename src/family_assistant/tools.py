@@ -157,10 +157,18 @@ async def add_calendar_event_tool(
                  raise ValueError("End date must be after start date for all-day events.")
         else:
             # For timed events, parse as datetime objects, require timezone
+            # For timed events, parse as datetime objects
             dtstart = isoparse(start_time)
             dtend = isoparse(end_time)
-            if dtstart.tzinfo is None or dtend.tzinfo is None:
-                raise ValueError("Start and end times must include timezone information (e.g., +02:00 or Z).")
+            # Assume configured timezone if none is provided in the input string
+            local_tz = ZoneInfo(exec_context.timezone_str)
+            if dtstart.tzinfo is None:
+                logger.warning(f"Start time '{start_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
+                dtstart = dtstart.replace(tzinfo=local_tz)
+            if dtend.tzinfo is None:
+                logger.warning(f"End time '{end_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
+                dtend = dtend.replace(tzinfo=local_tz)
+
             # Basic validation: end time must be after start time
             if dtend <= dtstart:
                 raise ValueError("End time must be after start time for timed events.")
@@ -248,10 +256,14 @@ async def search_calendar_events_tool(
         return "Error: CalDAV configuration is incomplete. Cannot search events."
 
     try:
-        start_date_obj = isoparse(start_date_str).date() if start_date_str else date.today()
+        local_tz = ZoneInfo(exec_context.timezone_str)
+        today_local = datetime.now(local_tz).date()
+
+        start_date_obj = isoparse(start_date_str).date() if start_date_str else today_local
         if end_date_str:
             end_date_obj = isoparse(end_date_str).date()
         else:
+            # Default end date: start_date + 3 days (inclusive start, exclusive end for search)
             # Default end date: start_date + 2 days to cover common requests like "tomorrow" or "day after"
             end_date_obj = start_date_obj + timedelta(days=3) # Search up to end of day 2 days after start
 
@@ -405,7 +417,10 @@ async def modify_calendar_event_tool(
                             vevent.dtstart.value = isoparse(new_start_time).date()
                         else:
                             dtstart = isoparse(new_start_time)
-                            if dtstart.tzinfo is None: raise ValueError("New start time needs timezone")
+                            local_tz = ZoneInfo(exec_context.timezone_str)
+                            if dtstart.tzinfo is None:
+                                logger.warning(f"New start time '{new_start_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
+                                dtstart = dtstart.replace(tzinfo=local_tz)
                             vevent.dtstart.value = dtstart
                         modified = True
                     except ValueError as ve: return f"Error parsing new_start_time: {ve}"
@@ -415,7 +430,10 @@ async def modify_calendar_event_tool(
                             vevent.dtend.value = isoparse(new_end_time).date()
                         else:
                             dtend = isoparse(new_end_time)
-                            if dtend.tzinfo is None: raise ValueError("New end time needs timezone")
+                            local_tz = ZoneInfo(exec_context.timezone_str)
+                            if dtend.tzinfo is None:
+                                logger.warning(f"New end time '{new_end_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
+                                dtend = dtend.replace(tzinfo=local_tz)
                             vevent.dtend.value = dtend
                         modified = True
                      except ValueError as ve: return f"Error parsing new_end_time: {ve}"
@@ -548,10 +566,9 @@ async def schedule_recurring_task_tool(
         initial_dt = isoparse(initial_schedule_time)
         if initial_dt.tzinfo is None:
             logger.warning(
-                f"Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming %s.",
-                exec_context.timezone,
+                f"Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming {exec_context.timezone_str}."
             )
-            initial_dt = initial_dt.replace(tzinfo=ZoneInfo(exec_context.timezone))
+            initial_dt = initial_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
 
         # Ensure it's in the future (optional, but good practice)
         if initial_dt <= datetime.now(timezone.utc):
@@ -623,9 +640,9 @@ async def schedule_future_callback_tool(
         if scheduled_dt.tzinfo is None:
             # Or raise error, forcing LLM to provide timezone
             logger.warning(
-                f"Callback time '{callback_time}' lacks timezone. Assuming %s.", exec_context.timezone
+                f"Callback time '{callback_time}' lacks timezone. Assuming {exec_context.timezone_str}."
             )
-            scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(exec_context.timezone))
+            scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
 
         # Ensure it's in the future (optional, but good practice)
         if scheduled_dt <= datetime.now(timezone.utc):
