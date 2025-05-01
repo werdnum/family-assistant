@@ -246,6 +246,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             db_context_getter = self.get_db_context()  # Get the coroutine first
             async with await db_context_getter as db_context:  # await to get the context manager
                 async with self._typing_notifications(context, chat_id):
+                    # Create the partial function for the confirmation callback
+                    # This binds chat_id, context, and timeout from the current scope
+                    confirmation_callback_partial = functools.partial(
+                        self._request_confirmation_impl,
+                        chat_id=chat_id,
+                        context=context, # Pass the Telegram context
+                        timeout=self.confirmation_timeout # Pass the configured timeout
+                    )
+
                     # Call the method on the ProcessingService instance, capture all return values
                     (
                         llm_response_content,
@@ -257,10 +266,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             application=self.application,
                             chat_id=chat_id,
                             trigger_content_parts=trigger_content_parts,
-                                            user_name=user_name,
-                                            # Pass the confirmation request callback
-                                            request_confirmation_callback=self._request_confirmation_impl, # Use the correct internal method
-                                        )
+                            user_name=user_name,
+                            # Pass the partially applied confirmation request callback
+                            request_confirmation_callback=confirmation_callback_partial,
+                        )
 
             # Create ForceReply object
             force_reply_markup = ForceReply(selective=False)

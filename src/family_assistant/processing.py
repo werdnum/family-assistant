@@ -91,8 +91,10 @@ class ProcessingService:
         messages: List[Dict[str, Any]],
         chat_id: int,
         application: Application,
-        # Add the confirmation callback function from TelegramService/Handler
-        request_confirmation_callback: Optional[Callable[..., Awaitable[bool]]] = None,
+        # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
+        request_confirmation_callback: Optional[
+            Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
+        ] = None,
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
         """
         Sends the conversation history to the LLM via the injected client,
@@ -259,8 +261,10 @@ class ProcessingService:
         chat_id: int,
         trigger_content_parts: List[Dict[str, Any]],
         user_name: str,
-        # Add confirmation callback parameter
-        request_confirmation_callback: Optional[Callable[..., Awaitable[bool]]] = None,
+        # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
+        request_confirmation_callback: Optional[
+            Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
+        ] = None,
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], Optional[str]]:
         """
         Prepares context, message history, calls the LLM processing logic,
