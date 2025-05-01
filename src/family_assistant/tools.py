@@ -529,8 +529,8 @@ async def get_message_history_tool(
             timestamp = msg.get("timestamp")
             time_str = timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if timestamp else "Unknown Time"
 
-            # Basic formatting, could be enhanced
-            formatted_history.append(f"[{time_str}] {role.capitalize()}: {content[:200]}{'...' if len(content) > 200 else ''}") # Truncate long messages
+            # Basic formatting, include full content
+            formatted_history.append(f"[{time_str}] {role.capitalize()}: {content}")
 
             # Include tool call info if present (simplified)
             if role == "assistant" and msg.get("tool_calls_info_raw"):
