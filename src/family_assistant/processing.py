@@ -114,8 +114,7 @@ class ProcessingService:
         """
         executed_tool_info: List[Dict[str, Any]] = []
         final_reasoning_info: Optional[Dict[str, Any]] = None
-        accumulated_content_parts: List[str] = [] # Store text parts from LLM responses
-        final_content: Optional[str] = None # Final combined text response
+        final_content: Optional[str] = None # Store final text response from LLM
         max_iterations = 5 # Safety limit for tool call loops
         current_iteration = 1
 
@@ -145,13 +144,15 @@ class ProcessingService:
                     tool_choice="auto" if all_tools and current_iteration < max_iterations else "none",
                 )
 
-                # Store text content from this iteration if present
-                if llm_output.content:
-                    accumulated_content_parts.append(llm_output.content.strip())
-                    logger.debug(f"LLM provided text content in iteration {current_iteration}: {llm_output.content[:100]}...")
-
-                # Store reasoning from the latest call
+                # Store content and reasoning from the latest call
+                # Content will be overwritten in the next iteration if there are tool calls,
+                # so only the final iteration's content persists.
+                final_content = llm_output.content.strip() if llm_output.content else None
                 final_reasoning_info = llm_output.reasoning_info
+                if final_content:
+                    logger.debug(f"LLM provided text content in iteration {current_iteration}: {final_content[:100]}...")
+                else:
+                    logger.debug(f"LLM provided no text content in iteration {current_iteration}.")
 
                 tool_calls = llm_output.tool_calls
 
@@ -229,19 +230,18 @@ class ProcessingService:
             # --- After Loop ---
             if current_iteration > max_iterations:
                 logger.warning(f"Reached maximum tool call iterations ({max_iterations}). Returning current state.")
-                # Add a note about reaching the limit to the accumulated content
-                accumulated_content_parts.append("\n\n(Note: Reached maximum processing depth.)")
+                # If we hit the limit, the last LLM call was forced with tool_choice='none',
+                # so final_content should hold its response. We might add a note.
+                if final_content:
+                    final_content += "\n\n(Note: Reached maximum processing depth.)"
+                else:
+                    final_content = "(Note: Reached maximum processing depth.)"
 
-            # Combine accumulated content parts into the final response string
-            if accumulated_content_parts:
-                # Join parts with double newline for better separation, then strip leading/trailing whitespace
-                final_content = "\n\n".join(filter(None, accumulated_content_parts)).strip() # Filter out None/empty strings before joining
-                if not final_content: # Handle case where parts were empty strings
-                     logger.warning("Final accumulated LLM response content was empty after joining.")
-                     final_content = None # Or set a fallback message
-            else:
-                 logger.warning("No text content was accumulated from LLM responses.")
-                 final_content = None # Or set a fallback message like "Processing complete."
+            # final_content now holds the content from the *last* LLM call
+            if not final_content:
+                 logger.warning("Final LLM response content was empty.")
+                 # Optionally set a fallback message, or leave as None
+                 # final_content = "Processing complete."
 
             # Return the final content, accumulated tool info, and reasoning from the last LLM call
             return final_content, executed_tool_info if executed_tool_info else None, final_reasoning_info
