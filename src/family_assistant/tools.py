@@ -538,12 +538,12 @@ async def get_message_history_tool(
                 if isinstance(tool_calls, list):
                     for call in tool_calls:
                          if isinstance(call, dict):
-                             func_name = call.get('function_name', 'unknown_tool')
-                             args = call.get('arguments', {})
-                             resp = call.get('response_content', '')
-                             formatted_history.append(f"  -> Called Tool: {func_name}({json.dumps(args)}) -> Response: {resp[:100]}{'...' if len(resp) > 100 else ''}")
+                            func_name = call.get('function_name', 'unknown_tool')
+                            args = call.get('arguments', {})
+                            resp = call.get('response_content', '')
+                            formatted_history.append(f"  -> Called Tool: {func_name}({json.dumps(args)}) -> Response: {resp}") # Include full response
 
-        return "\n".join(formatted_history)
+       return "\n".join(formatted_history)
 
     except Exception as e:
         logger.error(f"Error executing get_message_history_tool for chat {chat_id}: {e}", exc_info=True)
