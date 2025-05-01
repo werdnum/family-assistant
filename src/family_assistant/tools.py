@@ -962,8 +962,8 @@ def render_delete_calendar_event_confirmation(args: Dict[str, Any], event_detail
     # Use MarkdownV2 compatible formatting
     return (
         f"Please confirm you want to *delete* the event:\n"
-        f"Event: {telegramify_markdown.escape_markdown(event_desc)}\n"
-        f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`"
+        f"Event: {telegramify_markdown.escape_markdown(event_desc)}"
+        # Removed calendar URL line: f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`"
     )
 
 def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str) -> str:
@@ -981,7 +981,7 @@ def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_detail
     return (
         f"Please confirm you want to *modify* the event:\n"
         f"Event: {telegramify_markdown.escape_markdown(event_desc)}\n"
-        f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`\n"
+        # Removed calendar URL line: f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`\n"
         f"With the following changes:\n" + "\n".join(changes)
     )
 
