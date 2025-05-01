@@ -427,7 +427,7 @@ async def modify_calendar_event_tool(
 
                 if modified:
                     # Update timestamp
-                    vevent.dtstamp.value = datetime.now(timezone.utc)
+                    vevent.dtstamp.value = datetime.now(ZoneInfo("UTC")) # Use ZoneInfo for UTC
                     updated_ical_data = cal.serialize()
                     logger.debug(f"Attempting to save modified event with ETag: {original_etag}")
                     # Use save method with etag for concurrency check
