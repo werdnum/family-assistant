@@ -363,8 +363,8 @@ async def search_calendar_events_tool(
         # Format for LLM (e.g., numbered list)
         response_lines = ["Found potential matches:"]
         for i, details in enumerate(matching_events_details):
-            # Format start/end for display here
-            start_str = format_datetime_or_date(details.get("start"))
+            # Format start/end for display here, passing the timezone
+            start_str = format_datetime_or_date(details.get("start"), exec_context.timezone_str, is_end=False)
             response_lines.append(
                 f"{i+1}. Summary: '{details['summary']}', Start: {start_str}, UID: {details['uid']}, Calendar: {details['calendar_url']}"
             )
