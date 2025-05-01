@@ -1708,8 +1708,11 @@ class ConfirmingToolsProvider(ToolsProvider):
             )
         return self._tool_definitions
 
-    async def _get_event_details_for_confirmation(self, tool_name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Fetches event details if the tool is calendar-related and requires it."""
+    async def _get_event_details_for_confirmation(self, tool_name: str, arguments: Dict[str, Any], context: ToolExecutionContext) -> Optional[Dict[str, Any]]:
+        """
+        Fetches event details if the tool is calendar-related and requires it.
+        Requires the execution context to get the timezone.
+        """
         if tool_name not in ["modify_calendar_event", "delete_calendar_event"]:
             return None # Only fetch for relevant tools
 
@@ -1760,8 +1763,8 @@ class ConfirmingToolsProvider(ToolsProvider):
                 logger.error(f"Cannot request confirmation for tool '{name}': No callback provided in ToolExecutionContext.")
                 return f"Error: Tool '{name}' requires confirmation, but the system is not configured to ask for it."
 
-            # 1. Fetch event details if needed for rendering
-            event_details = await self._get_event_details_for_confirmation(name, arguments)
+            # 1. Fetch event details if needed for rendering, passing the context
+            event_details = await self._get_event_details_for_confirmation(name, arguments, context)
 
             # 2. Get the renderer
             renderer = TOOL_CONFIRMATION_RENDERERS.get(name)
