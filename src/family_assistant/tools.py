@@ -302,15 +302,15 @@ async def search_calendar_events_tool(
                         event_url_attr = getattr(event, 'url', 'N/A') # Get URL for logging
                         try:
                             event_data = event.data
-                            logger.debug(f"Processing event: URL={event_url_attr}")
+                            logger.info(f"Processing event: URL={event_url_attr}") # Changed to info
                             parsed = parse_event(event_data) # Reuse your existing parser
 
                             if not parsed:
-                                logger.debug(f"  -> Excluded: Failed to parse event data. URL={event_url_attr}")
+                                logger.info(f"  -> Excluded: Failed to parse event data. URL={event_url_attr}") # Changed to info
                                 continue # Skip to next event
 
                             if not hasattr(event, 'uid') or not event.uid:
-                                logger.debug(f"  -> Excluded: Event missing UID. URL={event_url_attr}, Parsed Summary='{parsed.get('summary', 'N/A')}'")
+                                logger.info(f"  -> Excluded: Event missing UID. URL={event_url_attr}, Parsed Summary='{parsed.get('summary', 'N/A')}'") # Changed to info
                                 continue # Skip to next event
 
                             # Now we know we have parsed data and a UID
