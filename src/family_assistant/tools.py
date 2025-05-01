@@ -314,6 +314,7 @@ async def search_calendar_events_tool(
                                 continue # Skip to next event
 
                             # Now we know we have parsed data and a UID
+                            logger.info(f"  -> Parsed event details: {repr(parsed)}") # Log the repr of the parsed dict
                             summary = parsed.get("summary", "")
                             summary_lower = summary.lower()
 
