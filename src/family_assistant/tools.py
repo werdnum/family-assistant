@@ -35,29 +35,10 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup # For confirmati
 from . import calendar_integration
 from .calendar_integration import format_datetime_or_date # Keep this specific import for renderers
 
+# Import the context from the new types file
+from .tool_types import ToolExecutionContext
+
 logger = logging.getLogger(__name__)
-
-
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from family_assistant.processing import ProcessingService
-
-@dataclass
-class ToolExecutionContext:
-    """Context passed to tool execution functions."""
-
-    chat_id: int
-    db_context: DatabaseContext
-    calendar_config: Dict[str, Any] # Add calendar config
-    application: Optional[Application] = None
-    processing_service: Optional["ProcessingService"] = None # Add processing service
-    # Add other context elements as needed, e.g., timezone_str
-    timezone_str: str = "UTC" # Default, should be overridden
-    # Callback to request confirmation from the user interface (e.g., Telegram)
-    # This is the signature called by ConfirmingToolsProvider
-    request_confirmation_callback: Optional[
-        Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-    ] = None
 
 
 # --- Custom Exceptions ---
