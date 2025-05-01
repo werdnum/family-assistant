@@ -23,6 +23,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram import ForceReply # Add ForceReply import
 
 # Import necessary types for type hinting
 from family_assistant.processing import ProcessingService
@@ -250,6 +251,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         )
                     # Removed extra closing parenthesis from line above
 
+            # Create ForceReply object
+            force_reply_markup = ForceReply(selective=False)
+
             if llm_response_content:
                 try:
                     converted_markdown = telegramify_markdown.markdownify(
@@ -260,6 +264,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         text=converted_markdown,
                         parse_mode=ParseMode.MARKDOWN_V2,
                         reply_to_message_id=reply_target_message_id,
+                        reply_markup=force_reply_markup, # Add ForceReply
                     )
                 except Exception as md_err:
                     logger.error(
@@ -270,6 +275,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         chat_id=chat_id,
                         text=llm_response_content,
                         reply_to_message_id=reply_target_message_id,
+                        reply_markup=force_reply_markup, # Add ForceReply
                     )
             # If an error occurred during processing, check for traceback *before* handling empty response
             elif processing_error_traceback and reply_target_message_id:
@@ -278,6 +284,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                      chat_id=chat_id,
                      text="Sorry, something went wrong while processing your request.",
                      reply_to_message_id=reply_target_message_id,
+                     reply_markup=force_reply_markup, # Add ForceReply
                  )
             # Only handle empty response if there was no content AND no processing error
             else:
@@ -287,6 +294,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         chat_id=chat_id,
                         text="Sorry, I couldn't process that request.", # Generic message for empty response
                         reply_to_message_id=reply_target_message_id,
+                        reply_markup=force_reply_markup, # Add ForceReply
                     )
 
         except Exception as e:
