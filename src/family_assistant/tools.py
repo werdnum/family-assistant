@@ -10,7 +10,7 @@ import inspect
 import zoneinfo
 from dataclasses import dataclass
 from datetime import datetime, timezone, date, time # Added date, time
-from typing import List, Dict, Any, Optional, Protocol, Callable
+from typing import List, Dict, Any, Optional, Protocol, Callable, Awaitable, Set # Added Awaitable, Set
 from zoneinfo import ZoneInfo
 
 import caldav
@@ -24,6 +24,7 @@ from sqlalchemy.sql import text
 
 # Import storage functions needed by local tools
 from family_assistant import storage
+from family_assistant.storage import get_recent_history # Import history function
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store # Import vector search
 from family_assistant.embeddings import EmbeddingGenerator # Import embedding generator type
@@ -220,6 +221,302 @@ async def add_calendar_event_tool(
     except Exception as e:
         logger.error(f"Unexpected error adding calendar event: {e}", exc_info=True)
         return f"Error: An unexpected error occurred while adding the event. {e}"
+
+
+# --- Implementations for Search/Modify/Delete Calendar Events ---
+
+async def search_calendar_events_tool(
+    exec_context: ToolExecutionContext,
+    query_text: str,
+    start_date_str: Optional[str] = None,
+    end_date_str: Optional[str] = None,
+    limit: int = 5,
+) -> str:
+    """Searches CalDAV events based on query text and date range."""
+    logger.info(f"Executing search_calendar_events_tool: query='{query_text}', start='{start_date_str}', end='{end_date_str}'")
+    calendar_config = exec_context.calendar_config
+    caldav_config = calendar_config.get("caldav")
+
+    if not caldav_config:
+        return "Error: CalDAV is not configured. Cannot search events."
+
+    username = caldav_config.get("username")
+    password = caldav_config.get("password")
+    calendar_urls = caldav_config.get("calendar_urls", [])
+
+    if not username or not password or not calendar_urls:
+        return "Error: CalDAV configuration is incomplete. Cannot search events."
+
+    try:
+        start_date_obj = isoparse(start_date_str).date() if start_date_str else date.today()
+        if end_date_str:
+            end_date_obj = isoparse(end_date_str).date()
+        else:
+            # Default end date: start_date + 2 days to cover common requests like "tomorrow" or "day after"
+            end_date_obj = start_date_obj + timedelta(days=3) # Search up to end of day 2 days after start
+
+        if end_date_obj <= start_date_obj:
+            return "Error: End date must be after start date."
+
+    except ValueError as ve:
+        logger.error(f"Invalid date format for search: {ve}")
+        return f"Error: Invalid date format provided. Use YYYY-MM-DD. {ve}"
+
+    matching_events_details = []
+
+    # --- Synchronous CalDAV Search Logic ---
+    def search_sync():
+        found_details = []
+        query_lower = query_text.lower()
+        events_checked = 0
+        events_matched = 0
+
+        for cal_url in calendar_urls:
+            logger.debug(f"Searching calendar: {cal_url} from {start_date_obj} to {end_date_obj}")
+            try:
+                with caldav.DAVClient(url=cal_url, username=username, password=password) as client:
+                    target_calendar = client.calendar(url=cal_url)
+                    if not target_calendar:
+                        logger.warning(f"Could not get calendar object for {cal_url}")
+                        continue
+
+                    # Fetch events in the range
+                    # Note: This fetches *all* events in the range first.
+                    # More advanced filtering might be possible with specific CalDAV servers/queries.
+                    results = target_calendar.search(start=start_date_obj, end=end_date_obj, event=True, expand=False)
+
+                    for event in results:
+                        events_checked += 1
+                        try:
+                            event_data = event.data
+                            parsed = parse_event(event_data) # Reuse your existing parser
+                            if parsed and hasattr(event, 'uid') and event.uid:
+                                summary_lower = parsed.get("summary", "").lower()
+                                # Basic substring matching
+                                if query_lower in summary_lower:
+                                    events_matched += 1
+                                    found_details.append({
+                                        "uid": str(event.uid), # Ensure UID is string
+                                        "summary": parsed.get("summary"),
+                                        "start": parsed.get("start"), # Keep original object for sorting/details
+                                        "end": parsed.get("end"), # Keep original object
+                                        "all_day": parsed.get("all_day"),
+                                        "calendar_url": cal_url # Include the source calendar URL
+                                    })
+                                    if len(found_details) >= limit:
+                                        break # Stop searching this calendar if limit reached
+                        except Exception as parse_err:
+                            logger.warning(f"Error parsing event {getattr(event, 'url', 'N/A')} in {cal_url}: {parse_err}")
+                    if len(found_details) >= limit:
+                         break # Stop searching other calendars if limit reached
+
+            except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:
+                 logger.error(f"Error searching calendar {cal_url}: {sync_err}", exc_info=True)
+                 # Continue to next calendar
+
+        logger.info(f"Checked {events_checked} events, found {events_matched} potential matches via text filter.")
+        return found_details
+    # --- End Synchronous Logic ---
+
+    try:
+        loop = asyncio.get_running_loop()
+        matching_events_details = await loop.run_in_executor(None, search_sync)
+
+        if not matching_events_details:
+            return "No events found matching your query and date range."
+
+        # Format for LLM (e.g., numbered list)
+        response_lines = ["Found potential matches:"]
+        for i, details in enumerate(matching_events_details):
+            # Format start/end for display here
+            start_str = format_datetime_or_date(details.get("start"))
+            response_lines.append(
+                f"{i+1}. Summary: '{details['summary']}', Start: {start_str}, UID: {details['uid']}, Calendar: {details['calendar_url']}"
+            )
+        return "\n".join(response_lines)
+
+    except Exception as e:
+        logger.error(f"Unexpected error searching calendar events: {e}", exc_info=True)
+        return f"Error: An unexpected error occurred during event search. {e}"
+
+
+async def modify_calendar_event_tool(
+    exec_context: ToolExecutionContext,
+    uid: str,
+    calendar_url: str, # Added calendar_url
+    new_summary: Optional[str] = None,
+    new_start_time: Optional[str] = None,
+    new_end_time: Optional[str] = None,
+    new_description: Optional[str] = None,
+    new_all_day: Optional[bool] = None,
+) -> str:
+    """Modifies a specific CalDAV event by UID."""
+    logger.info(f"Executing modify_calendar_event_tool for UID: {uid} in calendar: {calendar_url}")
+    calendar_config = exec_context.calendar_config
+    caldav_config = calendar_config.get("caldav")
+
+    if not caldav_config:
+        return "Error: CalDAV is not configured. Cannot modify event."
+    username = caldav_config.get("username")
+    password = caldav_config.get("password")
+    if not username or not password:
+         return "Error: CalDAV user/pass missing. Cannot modify event."
+
+    # Check if any modification was actually requested
+    if all(arg is None for arg in [new_summary, new_start_time, new_end_time, new_description, new_all_day]):
+        return "Error: No changes specified. Please provide at least one field to modify (e.g., new_summary, new_start_time)."
+
+    # --- Synchronous CalDAV Modify Logic ---
+    def modify_sync():
+        try:
+            with caldav.DAVClient(url=calendar_url, username=username, password=password) as client:
+                target_calendar = client.calendar(url=calendar_url)
+                if not target_calendar:
+                    raise ValueError(f"Could not get calendar object for {calendar_url}")
+
+                logger.debug(f"Fetching event with UID {uid} from {calendar_url}")
+                event = target_calendar.event_by_uid(uid)
+                original_etag = getattr(event, 'etag', None) # Get ETag if available
+                logger.debug(f"Found event. ETag: {original_etag}")
+
+                # Parse existing event data
+                cal = vobject.readComponents(event.data)
+                vevent = next(cal).vevent # Assuming single VEVENT
+
+                # Apply modifications
+                modified = False
+                if new_summary is not None:
+                    vevent.summary.value = new_summary
+                    modified = True
+                if new_description is not None:
+                    # Add or update description
+                    if hasattr(vevent, 'description'):
+                        vevent.description.value = new_description
+                    else:
+                        vevent.add('description').value = new_description
+                    modified = True
+
+                # Handle time changes (more complex)
+                current_is_all_day = not isinstance(vevent.dtstart.value, datetime)
+                target_all_day = new_all_day if new_all_day is not None else current_is_all_day
+
+                if new_start_time:
+                    try:
+                        if target_all_day:
+                            vevent.dtstart.value = isoparse(new_start_time).date()
+                        else:
+                            dtstart = isoparse(new_start_time)
+                            if dtstart.tzinfo is None: raise ValueError("New start time needs timezone")
+                            vevent.dtstart.value = dtstart
+                        modified = True
+                    except ValueError as ve: return f"Error parsing new_start_time: {ve}"
+                if new_end_time:
+                     try:
+                        if target_all_day:
+                            vevent.dtend.value = isoparse(new_end_time).date()
+                        else:
+                            dtend = isoparse(new_end_time)
+                            if dtend.tzinfo is None: raise ValueError("New end time needs timezone")
+                            vevent.dtend.value = dtend
+                        modified = True
+                     except ValueError as ve: return f"Error parsing new_end_time: {ve}"
+
+                # Basic validation after potential time changes
+                if hasattr(vevent, 'dtend') and vevent.dtend.value <= vevent.dtstart.value:
+                     return "Error: Event end time cannot be before or same as start time."
+
+                if modified:
+                    # Update timestamp
+                    vevent.dtstamp.value = datetime.now(timezone.utc)
+                    updated_ical_data = cal.serialize()
+                    logger.debug(f"Attempting to save modified event with ETag: {original_etag}")
+                    # Use save method with etag for concurrency check
+                    event.save(data=updated_ical_data, etag=original_etag) # Check caldav docs for exact method signature
+                    logger.info(f"Successfully saved modified event UID {uid}")
+                    return f"OK. Event '{getattr(vevent, 'summary', {}).value}' updated."
+                else:
+                    # This case should be caught earlier, but handle defensively
+                    return "No changes applied."
+
+        except caldav.lib.error.NotFoundError:
+            logger.error(f"Event with UID {uid} not found in calendar {calendar_url}.")
+            return f"Error: Event with UID {uid} not found."
+        except caldav.lib.error.PreconditionFailed: # Example ETag mismatch error
+             logger.warning(f"ETag mismatch modifying event UID {uid}. Event may have changed.")
+             return "Error: Could not modify event. It seems to have been changed by someone else recently. Please try searching and modifying again."
+        except (caldav.lib.error.DAVError, ConnectionError, ValueError, Exception) as sync_err:
+            logger.error(f"Error modifying event UID {uid}: {sync_err}", exc_info=True)
+            return f"Error: Failed to modify event. {sync_err}"
+    # --- End Synchronous Logic ---
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, modify_sync)
+        return result
+    except Exception as e:
+        logger.error(f"Unexpected error modifying calendar event: {e}", exc_info=True)
+        return f"Error: An unexpected error occurred while modifying the event. {e}"
+
+
+async def delete_calendar_event_tool(
+    exec_context: ToolExecutionContext,
+    uid: str,
+    calendar_url: str, # Added calendar_url
+) -> str:
+    """Deletes a specific CalDAV event by UID."""
+    logger.info(f"Executing delete_calendar_event_tool for UID: {uid} in calendar: {calendar_url}")
+    calendar_config = exec_context.calendar_config
+    caldav_config = calendar_config.get("caldav")
+
+    if not caldav_config:
+        return "Error: CalDAV is not configured. Cannot delete event."
+    username = caldav_config.get("username")
+    password = caldav_config.get("password")
+    if not username or not password:
+         return "Error: CalDAV user/pass missing. Cannot delete event."
+
+    # --- Synchronous CalDAV Delete Logic ---
+    def delete_sync():
+        try:
+            with caldav.DAVClient(url=calendar_url, username=username, password=password) as client:
+                target_calendar = client.calendar(url=calendar_url)
+                if not target_calendar:
+                    raise ValueError(f"Could not get calendar object for {calendar_url}")
+
+                logger.debug(f"Fetching event with UID {uid} for deletion from {calendar_url}")
+                event = target_calendar.event_by_uid(uid)
+                # Attempt to parse summary before deleting for better confirmation message
+                summary = "Unknown Summary"
+                try:
+                    parsed = parse_event(event.data)
+                    if parsed and parsed.get("summary"):
+                        summary = parsed["summary"]
+                except Exception:
+                    logger.warning(f"Could not parse event {uid} summary before deletion.")
+
+                logger.info(f"Found event '{summary}'. Deleting...")
+                event.delete()
+                logger.info(f"Successfully deleted event UID {uid}")
+                return f"OK. Event '{summary}' deleted."
+
+        except caldav.lib.error.NotFoundError:
+            logger.error(f"Event with UID {uid} not found in calendar {calendar_url} for deletion.")
+            return f"Error: Event with UID {uid} not found."
+        except (caldav.lib.error.DAVError, ConnectionError, ValueError, Exception) as sync_err:
+            logger.error(f"Error deleting event UID {uid}: {sync_err}", exc_info=True)
+            return f"Error: Failed to delete event. {sync_err}"
+    # --- End Synchronous Logic ---
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, delete_sync)
+        return result
+    except Exception as e:
+        logger.error(f"Unexpected error deleting calendar event: {e}", exc_info=True)
+        return f"Error: An unexpected error occurred while deleting the event. {e}"
+
+
+# --- End Calendar Tool Implementations ---
 
 
 async def schedule_recurring_task_tool(
