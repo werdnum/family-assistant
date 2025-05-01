@@ -605,7 +605,6 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan').",
                     },
-                    # chat_id is removed from parameters, it will be inferred from the current context later
                 },
                 "required": ["callback_time", "context"],
             },
