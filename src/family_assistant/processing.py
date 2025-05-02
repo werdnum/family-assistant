@@ -286,32 +286,6 @@ class ProcessingService:
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
         )
         return messages
-    def _format_history_for_llm(
-        self, history_messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Formats message history retrieved from the database into the list structure
-        expected by the LLM, handling assistant tool calls correctly.
-
-        Args:
-            history_messages: List of message dictionaries from storage.get_recent_history.
-
-        Returns:
-            A list of message dictionaries formatted for the LLM API.
-        """
-        # Format the raw history using the new helper method
-        messages = self._format_history_for_llm(history_messages)
-
-        # --- Prepare System Prompt Context ---
-
-
-        request_confirmation_callback: Optional[
-            Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-        ] = None,
-    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], Optional[str]]:
-        """
-        Prepares context, message history, calls the LLM processing logic,
-        and returns the response, tool info, reasoning info, and any processing error traceback.
 
         Args:
             db_context: The database context to use for storage operations.
