@@ -76,14 +76,15 @@ class MCPToolsProvider:
 
             transport_type = server_conf.get("transport", "stdio").lower()
             url = server_conf.get("url") # Needed for SSE
+            token_config = server_conf.get("token") # New dedicated token field for SSE/HTTP
             command = server_conf.get("command") # Needed for STDIO
             args = server_conf.get("args", []) # Needed for STDIO
-            env_config = server_conf.get("env")  # Original env config from JSON
+            env_config = server_conf.get("env")  # Env config primarily for STDIO now
 
-            # --- Resolve environment variable placeholders (used by both transports) ---
-            resolved_env = None
+            # --- Resolve environment variable placeholders for STDIO ---
+            resolved_env_stdio = None # Renamed for clarity
             if isinstance(env_config, dict):
-                resolved_env = {}
+                resolved_env_stdio = {}
                 for key, value in env_config.items():
                     if isinstance(value, str) and value.startswith("$"):
                         env_var_name = value[1:]  # Remove the leading '$'
@@ -101,9 +102,26 @@ class MCPToolsProvider:
                         resolved_env[key] = value
             elif env_config is not None:
                 logger.warning(
-                    f"MCP server '{server_id}' has non-dictionary 'env' configuration. Ignoring."
+                    f"MCP server '{server_id}' has non-dictionary 'env' configuration for stdio. Ignoring."
                 )
-            # --- End environment variable resolution ---
+            # --- End environment variable resolution for STDIO ---
+
+            # --- Resolve token from config or environment variable for SSE/HTTP ---
+            resolved_token_sse = None
+            if token_config and isinstance(token_config, str):
+                if token_config.startswith("$"):
+                    token_env_var_name = token_config[1:]
+                    resolved_token_sse = os.getenv(token_env_var_name)
+                    if resolved_token_sse:
+                        logger.debug(f"Resolved token env var '{token_env_var_name}' for MCP server '{server_id}'")
+                    else:
+                        logger.warning(f"Token env var '{token_env_var_name}' for MCP server '{server_id}' not found in environment.")
+                else:
+                    # Assume the token value is provided directly in the config
+                    resolved_token_sse = token_config
+            elif token_config:
+                logger.warning(f"MCP server '{server_id}' has non-string 'token' configuration. Ignoring.")
+            # --- End token resolution ---
 
 
             logger.info(
@@ -116,7 +134,7 @@ class MCPToolsProvider:
                         logger.error(f"MCP server '{server_id}' (stdio): 'command' is missing.")
                         return None, [], {}
                     server_params = StdioServerParameters(
-                        command=command, args=args, env=resolved_env
+                        command=command, args=args, env=resolved_env_stdio # Use stdio-specific env vars
                     )
                     # Use the provider's exit stack to manage stdio process context
                     read_stream, write_stream = await self._exit_stack.enter_async_context(
@@ -131,15 +149,14 @@ class MCPToolsProvider:
                         logger.error(f"MCP server '{server_id}' (sse): 'url' is missing.")
                         return None, [], {}
 
-                    # Construct headers from resolved env vars (e.g., Authorization)
+                    # Construct headers using the resolved token
                     headers = {}
-                    if resolved_env:
-                        # Look for common token patterns - adjust if your env vars differ
-                        token = resolved_env.get("API_ACCESS_TOKEN") or resolved_env.get("AUTHORIZATION_TOKEN")
-                        if token:
-                            headers["Authorization"] = f"Bearer {token}"
-                            logger.debug(f"Using Authorization header for SSE server '{server_id}'.")
-                        # Add other potential header mappings here if needed
+                    if resolved_token_sse:
+                        headers["Authorization"] = f"Bearer {resolved_token_sse}"
+                        logger.debug(f"Using Authorization header for SSE server '{server_id}'.")
+                    else:
+                        logger.warning(f"No token resolved for SSE server '{server_id}'. Connecting without Authorization header.")
+                        # Add other potential header mappings here if needed from a different config source?
 
                     # Create SSE transport
                     transport = SSEClientTransport(url=url, headers=headers)
