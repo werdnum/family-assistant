@@ -346,26 +346,33 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         finally:
             try:
                 db_context_getter = self.get_db_context()  # Get the coroutine first
-                async with await db_context_getter as db_context_for_history:  # await to get the context manager
-                    if reply_target_message_id:
-                        history_user_content = combined_text
+                async with await db_context_getter as db_context_for_history:
+                    # --- User Message Saving ---
+                    # Get the last update from the batch to use its timestamp and ID
+                    last_user_update: Optional[Update] = None
+                    if buffered_batch:
+                        last_user_update, _ = buffered_batch[-1] # Get the last Update object
+
+                    # Ensure we have a valid message ID and timestamp from the last update
+                    if last_user_update and last_user_update.message and last_user_update.message.message_id and last_user_update.message.date:
+                        user_message_id = last_user_update.message.message_id
+                        user_message_timestamp = last_user_update.message.date # Use actual message timestamp
+                        # Use the combined text for the content for now
+                        history_user_content = combined_text.strip()
                         if first_photo_bytes:
                             history_user_content += " [Image(s) Attached]"
+
                         await self.storage.add_message_to_history(
                             db_context=db_context_for_history,
                             chat_id=chat_id,
-                            message_id=reply_target_message_id,
-                            timestamp=datetime.now(timezone.utc),
+                            message_id=user_message_id,
+                            timestamp=user_message_timestamp, # Use the actual timestamp
                             role="user",
                             content=history_user_content,
                             tool_calls_info=None,
                             # Add traceback here if an error occurred during processing of this user message
                             error_traceback=processing_error_traceback,
                             reasoning_info=None, # User messages don't have reasoning
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not store batched user message for chat {chat_id} due to missing message ID."
                         )
 
                     # Store assistant message (even if content is None/fallback, to capture reasoning/tools)
