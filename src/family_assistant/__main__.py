@@ -95,6 +95,8 @@ from family_assistant.storage.context import (
     # --- Schema Generation Imports ---
     GenerationConfiguration,
     generate_from_schema,
+    DatabaseContext, # Add back DatabaseContext
+    get_db_context, # Add back get_db_context
 )
 
 # Import calendar functions
