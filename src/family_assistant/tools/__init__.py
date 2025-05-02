@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 import uuid
+import os
+import pathlib
 import inspect
 import zoneinfo
 from dataclasses import dataclass
@@ -13,6 +15,7 @@ from datetime import datetime, timezone, date, time # Added date, time
 from typing import List, Dict, Any, Optional, Protocol, Callable, Awaitable, Set # Added Awaitable, Set
 from zoneinfo import ZoneInfo
 
+import aiofiles
 import caldav
 import vobject
 
@@ -486,6 +489,73 @@ def _scan_user_docs() -> List[str]:
 
 # --- User Documentation Tool Implementation ---
 
+# --- Documentation Tool Helper ---
+
+def _scan_user_docs() -> List[str]:
+    """Scans the 'docs/user/' directory for allowed documentation files."""
+    docs_user_dir = pathlib.Path("docs") / "user"
+    allowed_extensions = {".md", ".txt"}
+    available_files = []
+    if docs_user_dir.is_dir():
+        try:
+            for item in os.listdir(docs_user_dir):
+                item_path = docs_user_dir / item
+                if item_path.is_file() and any(item.endswith(ext) for ext in allowed_extensions):
+                    available_files.append(item)
+        except OSError as e:
+            logger.error(f"Error scanning documentation directory '{docs_user_dir}': {e}", exc_info=True)
+    else:
+        logger.warning(f"User documentation directory not found: '{docs_user_dir}'")
+    logger.info(f"Found user documentation files: {available_files}")
+    return available_files
+
+# --- User Documentation Tool Implementation ---
+
+async def get_user_documentation_content_tool(
+    exec_context: ToolExecutionContext,
+    filename: str,
+) -> str:
+    """
+    Retrieves the content of a specified file from the user documentation directory ('docs/user/').
+
+    Args:
+        exec_context: The execution context (not directly used here, but available).
+        filename: The name of the file within the 'docs/user/' directory (e.g., 'USER_GUIDE.md').
+
+    Returns:
+        The content of the file as a string, or an error message if the file is
+        not found, not allowed, or cannot be read.
+    """
+    logger.info(f"Executing get_user_documentation_content_tool for filename: '{filename}'")
+
+    # Basic security: Prevent directory traversal and limit to allowed extensions
+    allowed_extensions = {".md", ".txt"}
+    if ".." in filename or not any(filename.endswith(ext) for ext in allowed_extensions):
+        logger.warning(f"Attempted access to disallowed filename: '{filename}'")
+        return f"Error: Access denied. Invalid filename or extension '{filename}'."
+
+    # Construct the full path relative to the project root (assuming standard structure)
+    # Assumes the script runs from the project root or similar context.
+    docs_user_dir = pathlib.Path("docs") / "user"
+    file_path = (docs_user_dir / filename).resolve()
+
+    # Security Check: Ensure the resolved path is still within the intended directory
+    if docs_user_dir.resolve() not in file_path.parents:
+         logger.error(f"Resolved path '{file_path}' is outside the allowed directory '{docs_user_dir.resolve()}'.")
+         return f"Error: Access denied. Invalid path for filename '{filename}'."
+
+    try:
+        async with aiofiles.open(file_path, mode='r', encoding='utf-8') as f:
+            content = await f.read()
+        logger.info(f"Successfully read content from '{filename}'.")
+        return content
+    except FileNotFoundError:
+        logger.warning(f"User documentation file not found: '{file_path}'")
+        return f"Error: Documentation file '{filename}' not found."
+    except Exception as e:
+        logger.error(f"Error reading user documentation file '{filename}': {e}", exc_info=True)
+        return f"Error: Failed to read documentation file '{filename}'. {e}"
+
 # --- Local Tool Definitions and Mappings (Moved from processing.py) ---
 
 # Map tool names to their actual implementation functions
@@ -497,6 +567,7 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
     "search_documents": search_documents_tool,
     "get_full_document_content": get_full_document_content_tool,
     "get_message_history": get_message_history_tool,
+    "get_user_documentation_content": get_user_documentation_content_tool,
     # Calendar tools now imported from calendar_integration module
     "add_calendar_event": calendar_integration.add_calendar_event_tool,
     "search_calendar_events": calendar_integration.search_calendar_events_tool,
@@ -760,6 +831,23 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
         },
     },
     # --- Add New Calendar Tools Here ---
+        {
+        "type": "function",
+        "function": {
+            "name": "get_user_documentation_content",
+            "description": "Retrieves the content of a specific user documentation file. Use this to answer questions about how the assistant works or what features it has, based on the official documentation.\nAvailable files: {available_doc_files}", # Placeholder added
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "The exact filename of the documentation file to retrieve (e.g., 'USER_GUIDE.md'). Must end in .md or .txt.",
+                    },
+                },
+                "required": ["filename"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -1247,4 +1335,3 @@ class ConfirmingToolsProvider(ToolsProvider):
         logger.info(f"Closing ConfirmingToolsProvider by closing wrapped provider {type(self.wrapped_provider).__name__}...")
         await self.wrapped_provider.close()
         logger.info("ConfirmingToolsProvider finished closing wrapped provider.")
-
