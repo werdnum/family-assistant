@@ -6,9 +6,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Set
-
 import sqlalchemy as sa # Import sqlalchemy
-from sqlalchemy import select, func
+from sqlalchemy import select
+from sqlalchemy.sql.functions import count as sql_count # Alias to avoid confusion with len()
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Use absolute imports if DatabaseContext is defined elsewhere,
@@ -60,7 +60,7 @@ async def wait_for_tasks_to_complete(
             # Use the provided engine to get a context
             async with await get_db_context(engine=engine) as db:
                 # First check for failed tasks
-                failed_query = select(sa.func.count(tasks_table.c.id)).where( # Pass column to count
+                failed_query = select(sql_count(tasks_table.c.id)).where( # Pass column to count
                     tasks_table.c.status == "failed"
                 )
                 # Filter by specific task IDs if provided
@@ -84,7 +84,7 @@ async def wait_for_tasks_to_complete(
                     raise RuntimeError(f"Task(s) failed: {', '.join(failed_ids)}")
 
                 # Build the query to count non-terminal tasks
-                query = select(sa.func.count(tasks_table.c.id)).where( # Pass column to count
+                query = select(sql_count(tasks_table.c.id)).where( # Pass column to count
                     tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
                 )
                 # Filter by specific task IDs if provided
