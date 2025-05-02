@@ -799,11 +799,9 @@ class TelegramService:
             try:
                 await self.application.shutdown()
                 logger.info("Telegram application shut down.")
-                )
             except Exception as e:
                 logger.error(
                     f"Error shutting down Telegram application: {e}", exc_info=True # noqa: F821
                 )
         else:
             logger.info("Telegram application instance not found for shutdown.")
-
