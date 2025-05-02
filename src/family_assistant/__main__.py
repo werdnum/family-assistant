@@ -395,13 +395,13 @@ async def shutdown_handler(
 
     # Uvicorn server shutdown is handled in main_async when shutdown_event is set
 
-    # Close MCP sessions via the provider's close method
-    if mcp_provider:
-        logger.info("Closing MCP server connections via provider...")
-        await mcp_provider.close()
-        logger.info("MCP server connections closed.")
+    # Close tool providers via the generic interface
+    if tools_provider:
+        logger.info("Closing tool providers...")
+        await tools_provider.close() # Call close on the top-level provider
+        logger.info("Tool providers closed.")
     else:
-        logger.warning("MCPToolsProvider instance was None during shutdown.")
+        logger.warning("ToolsProvider instance was None during shutdown.")
 
 
     # Telegram application shutdown is now handled within telegram_service.stop_polling()
@@ -416,14 +416,14 @@ def reload_config_handler(signum, frame):
 
 
 # --- Main Application Setup & Run ---
-# Return tuple: (TelegramService, MCPToolsProvider) or (None, None)
+# Return tuple: (TelegramService, ToolsProvider) or (None, None)
 async def main_async(
     config: Dict[str, Any] # Accept the resolved config dictionary
-) -> Tuple[Optional[TelegramService], Optional[MCPToolsProvider]]:
+) -> Tuple[Optional[TelegramService], Optional[ToolsProvider]]: # Return generic ToolsProvider
     """Initializes and runs the bot application using the provided configuration."""
     # global application # Removed
     logger.info(f"Using model: {config['model']}")
-    mcp_provider = None # Initialize mcp_provider
+    # mcp_provider = None # No longer needed, composite provider is the main one
 
     # --- Validate Essential Config ---
     # Secrets should have been loaded by load_config() from env vars
@@ -611,9 +611,10 @@ async def main_async(
 
     logger.info("All services stopped. Final shutdown.")
     # Telegram application shutdown is handled by telegram_service.stop_polling() called from shutdown_handler
-    # MCP provider cleanup is handled by shutdown_handler calling mcp_provider.close()
+    # MCP provider cleanup is handled by shutdown_handler calling tools_provider.close()
 
-    return telegram_service, mcp_provider # Return both instances
+    # Return the top-level confirming provider instance
+    return telegram_service, confirming_provider
 
 
 def main() -> int:  # Return an exit code
@@ -646,13 +647,13 @@ def main() -> int:  # Return an exit code
     # --- Event Loop and Signal Handlers ---
     loop = asyncio.get_event_loop()
     telegram_service_instance = None  # Initialize
-    mcp_provider_instance = None # Initialize MCP provider instance
+    tools_provider_instance = None # Use generic name
 
     try:
         logger.info("Starting application...")
         # Pass the final resolved config dictionary to main_async
         # Capture both returned instances
-        telegram_service_instance, mcp_provider_instance = loop.run_until_complete(main_async(config_data))
+        telegram_service_instance, tools_provider_instance = loop.run_until_complete(main_async(config_data)) # Assign to generic name
 
         # --- Setup Signal Handlers *after* service creation ---
         # Pass the service instance to the shutdown handler lambda
@@ -670,17 +671,17 @@ def main() -> int:  # Return an exit code
 
         # Corrected signal handler setup using both instances:
         for sig_num, sig_name in signal_map.items():
-            # Pass both service and mcp provider instances (which might be None)
+            # Pass service and generic tools provider instances (which might be None)
             loop.add_signal_handler(
                 sig_num,
-                lambda name=sig_name, service=telegram_service_instance, mcp=mcp_provider_instance: asyncio.create_task(
-                    shutdown_handler(name, service, mcp) # Pass potentially None instances
+                lambda name=sig_name, service=telegram_service_instance, tools=tools_provider_instance: asyncio.create_task(
+                    shutdown_handler(name, service, tools) # Pass potentially None instances
                 ),
             )
         if not telegram_service_instance:
              logger.error("TelegramService instance creation failed, shutdown might be incomplete.")
-        if not mcp_provider_instance:
-             logger.warning("MCPToolsProvider instance creation failed or not configured.") # Warning as MCP might be optional
+        if not tools_provider_instance: # Check generic instance
+             logger.warning("ToolsProvider instance creation failed or not configured.") # Warning if top-level provider is None
 
         # --- Setup SIGHUP Handler (Inside the main try block, after other signals) ---
         if hasattr(signal, "SIGHUP"):
@@ -704,7 +705,7 @@ def main() -> int:  # Return an exit code
         if not shutdown_event.is_set():
             # Run the async shutdown handler within the loop, passing both instances
             loop.run_until_complete(
-                shutdown_handler(type(ex).__name__, telegram_service_instance, mcp_provider_instance)
+                shutdown_handler(type(ex).__name__, telegram_service_instance, tools_provider_instance) # Pass generic provider
             )
     finally:
         # Task cleanup is handled within shutdown_handler
