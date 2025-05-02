@@ -61,7 +61,8 @@
                         <form class="tool-test-form" data-tool-name="{{ tool.function.name }}">
                             <label for="args-editor-{{ loop.index }}">Arguments:</label>
                             {# Container for the JSON editor #}
-                            <div id="args-editor-{{ loop.index }}" class="json-editor-arguments-container" style="height: 200px; margin-bottom: 0.5rem;"></div>
+                            {# Remove fixed height, let the editor manage it #}
+                            <div id="args-editor-{{ loop.index }}" class="json-editor-arguments-container" style="margin-bottom: 0.5rem;"></div>
                             {# Store schema in a script tag for JS to access #}
                             <script id="schema-{{ loop.index }}" type="application/json">{{ tool.function.parameters | tojson | safe }}</script>
                             {# Add unique ID to the button #}
@@ -80,5 +81,9 @@
 
 </body>
 <!-- Link the tool tester JavaScript -->
-<script type="module" src="/static/js/tool_tester.js"></script>
+{# Load json-editor library #}
+<script src="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/jsoneditor.min.js"></script>
+{# Load vanilla-jsoneditor for result display #}
+<script type="module" src="https://unpkg.com/vanilla-jsoneditor/standalone.js"></script>
+<script type="module" src="/static/js/json_editor_tool_tester.js"></script> {# <-- Link to the new JS file #}
 </html>
