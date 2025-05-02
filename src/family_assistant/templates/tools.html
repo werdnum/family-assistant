@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Available Tools</title>
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <link rel="stylesheet" href="/static/css/custom.css">
+    <style>
+        .tool-card { margin-bottom: 1.5rem; padding: 1rem; border: 1px solid var(--border); border-radius: 5px; background-color: var(--bg-secondary); }
+        .tool-card h3 { margin-top: 0; }
+        .tool-card pre { background-color: var(--bg); padding: 0.5rem; border-radius: 3px; white-space: pre-wrap; word-break: break-all; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Available Tools</h1>
+    <nav>
+        <a href="/">View Notes</a>
+        <span>|</span>
+        <a href="/history">View Message History</a>
+        <span>|</span>
+        <a href="/tasks">View Tasks</a>
+        <span>|</span>
+        <a href="/vector-search">Vector Search</a>
+        <span>|</span>
+        <a href="/docs/">Docs</a>
+    </nav>
+</header>
+
+<main>
+    {% if tools %}
+        <p>The LLM has access to the following {{ tools|length }} tools:</p>
+        {% for tool in tools %}
+            <article class="tool-card">
+                <h3>{{ tool.function.name }}</h3>
+                <p>{{ tool.function.description }}</p>
+                <strong>Parameters:</strong>
+                <pre>{{ tool.function.parameters | tojson(indent=2) }}</pre>
+            </article>
+        {% endfor %}
+    {% else %}
+        <p>No tool definitions are currently available.</p>
+    {% endif %}
+</main>
+
+</body>
+</html>
+
