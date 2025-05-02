@@ -1,5 +1,6 @@
 import html
 import logging
+import json # Add json import
 from typing import Dict, Any, Optional
 from functools import lru_cache
 
@@ -38,4 +39,3 @@ def render_schema_as_html(schema_dict: Optional[Dict[str, Any]]) -> str:
     except Exception as e:
         logger.error(f"Failed to generate HTML schema: {e}", exc_info=True)
         return f"<pre>Error generating schema HTML: {html.escape(str(e))}</pre>"
-
