@@ -55,8 +55,11 @@
                     <div style="margin-top: 0.5rem;">
                         {# Pass tool name via data attribute #}
                         <form class="tool-test-form" data-tool-name="{{ tool.function.name }}">
-                            <label for="args-{{ loop.index }}">Arguments (JSON):</label>
-                            <textarea id="args-{{ loop.index }}" name="arguments_json" placeholder='{"parameter_name": "value"}'></textarea>
+                            <label for="args-editor-{{ loop.index }}">Arguments:</label>
+                            {# Container for the JSON editor #}
+                            <div id="args-editor-{{ loop.index }}" class="json-editor-arguments-container" style="height: 200px; margin-bottom: 0.5rem;"></div>
+                            {# Store schema in a script tag for JS to access #}
+                            <script id="schema-{{ loop.index }}" type="application/json">{{ tool.function.parameters | tojson | safe }}</script>
                             <button type="submit">Test Tool</button>
                         </form>
                         {# Container for the result JSON editor #}
