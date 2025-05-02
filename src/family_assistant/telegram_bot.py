@@ -10,7 +10,6 @@ import uuid
 import functools # Ensure functools is imported
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 import telegramify_markdown
 from telegram import Update
@@ -18,7 +17,6 @@ from telegram.constants import ChatAction, ParseMode
 from telegram import (
     ForceReply, # Add ForceReply import
     InlineKeyboardButton,
-    InlineKeyboardMarkup,
     Update,
     Message,
 )
@@ -33,6 +31,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+# Import necessary types for type hinting - moved here
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 # Import necessary types for type hinting
 from family_assistant.processing import ProcessingService
@@ -324,7 +324,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             # This catches errors *outside* the generate_llm_response_for_chat call
             # (e.g., DB connection issues before the call, Telegram API errors sending reply)
             logger.error(
-                f"Unhandled error in process_chat_queue for chat {chat_id}: {e}", exc_info=True
+                f"Unhandled error in process_chat_queue for chat {chat_id}: {e}", exc_info=True # noqa: F821
             )
             # Capture traceback if not already captured by generate_llm_response_for_chat
             if not processing_error_traceback:
@@ -611,7 +611,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                  confirmation_future.cancel()
 
             # Edit the original message to remove keyboard and show status
-            try:
+            try: # noqa: F821
                 await query.edit_message_text(
                     text=original_text + status_text,
                     parse_mode=ParseMode.MARKDOWN_V2,
@@ -792,16 +792,18 @@ class TelegramService:
                 else:
                     logger.info("Telegram polling was not running.")
             except Exception as e:
-                logger.error(f"Error stopping Telegram updater: {e}", exc_info=True)
+                logger.error(f"Error stopping Telegram updater: {e}", exc_info=True) # noqa: F821
 
         if self.application:
             logger.info("Shutting down Telegram application...")
             try:
                 await self.application.shutdown()
                 logger.info("Telegram application shut down.")
+                )
             except Exception as e:
                 logger.error(
-                    f"Error shutting down Telegram application: {e}", exc_info=True
+                    f"Error shutting down Telegram application: {e}", exc_info=True # noqa: F821
                 )
         else:
             logger.info("Telegram application instance not found for shutdown.")
+
