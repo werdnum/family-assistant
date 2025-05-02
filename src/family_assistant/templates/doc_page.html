@@ -4,34 +4,32 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title | default("Documentation") }} - Family Assistant</title>
-    <!-- Basic Styling (Consider linking a shared CSS file) -->
+    <!-- Use existing linked CSS -->
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
     <link rel="stylesheet" href="/static/style.css">
-    <style>
-        /* Minimal styles for doc page if style.css doesn't cover */
-        body { display: flex; }
-        nav { width: 200px; border-right: 1px solid #eee; padding-right: 1em; margin-right: 1em; }
-        nav ul { list-style: none; padding: 0; }
-        nav li a { text-decoration: none; color: #007bff; display: block; padding: 0.5em 0; }
-        nav li a:hover { background-color: #f0f0f0; }
-        main { flex-grow: 1; max-width: 800px; } /* Allow main content to grow */
-        code { background-color: #f0f0f0; padding: 0.2em 0.4em; border-radius: 3px; }
-        pre code { display: block; background-color: #f0f0f0; padding: 1em; border-radius: 5px; overflow-x: auto; }
-    </style>
+    <link rel="stylesheet" href="/static/css/custom.css">
 </head>
 <body>
-    <nav>
-        <h3>Documentation</h3>
-        <ul>
-            {% for doc_file in available_docs %}
-            <li><a href="/docs/{{ doc_file }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a></li>
-            {% endfor %}
-        </ul>
-    </nav>
-    <main>
+    <header>
         <h1>{{ title | default("Documentation") }}</h1>
+        <nav>
+            <a href="/">Home</a>
+            <span>|</span>
+            <a href="/history">History</a>
+            <span>|</span>
+            <a href="/tasks">Tasks</a>
+            <span>|</span>
+            <a href="/vector-search">Vector Search</a>
+            <span>|</span>
+            <span>Docs:</span>
+            {% for doc_file in available_docs %}
+            <a href="/docs/{{ doc_file }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a>
+            {% endfor %}
+        </nav>
+    </header>
+    <main>
         <!-- Rendered Markdown Content -->
         {{ content | safe }}
     </main>
 </body>
 </html>
-
