@@ -632,6 +632,10 @@ def main() -> int:  # Return an exit code
         logger.info(f"Overriding embedding dimensions with CLI argument: {args.embedding_dimensions}")
     # Add overrides for other CLI args if introduced (e.g., --config)
 
+    # --- Store final config in app state for web server access ---
+    fastapi_app.state.config = config_data
+    logger.info("Stored final configuration dictionary in FastAPI app state.")
+
     # --- Event Loop and Signal Handlers ---
     loop = asyncio.get_event_loop()
     telegram_service_instance = None  # Initialize

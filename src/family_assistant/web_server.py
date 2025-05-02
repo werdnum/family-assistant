@@ -690,6 +690,17 @@ async def execute_tool_api(
     """Executes a specified tool with the given arguments."""
     logger.info(f"Received execution request for tool: {tool_name} with args: {payload.arguments}")
 
+    # --- Retrieve necessary config from app state ---
+    app_config = getattr(request.app.state, "config", {}) # Assuming config is stored in state
+    if not app_config:
+        logger.error("Main application configuration not found in app state.")
+        # Fallback to empty dicts/defaults, but log error
+        calendar_config = {}
+        timezone_str = "UTC"
+    else:
+        calendar_config = app_config.get("calendar_config", {})
+        timezone_str = app_config.get("timezone", "UTC")
+
     # --- Create Execution Context ---
     # We need some context, minimum placeholders for now
     # Ideally, we'd get relevant chat_id/user_id if needed by the tool,
@@ -698,8 +709,8 @@ async def execute_tool_api(
         db_context=db_context,
         # embedding_generator=embedding_generator,
         # llm_client=None, # Pass if needed
-        # calendar_config={}, # Pass if needed
-        # timezone_str='UTC', # Pass if needed
+        calendar_config=calendar_config, # Pass fetched calendar config
+        timezone_str=timezone_str,       # Pass fetched timezone string
         # application=None, # Pass if needed
         chat_id=0, # Placeholder chat_id
         request_confirmation_callback=None, # No confirmation from API for now
