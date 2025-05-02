@@ -57,7 +57,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self,
         telegram_service: "TelegramService", # Accept the service instance
         application: Application,
-        allowed_chat_ids: List[int],
+        allowed_user_ids: List[int],
         developer_chat_id: Optional[int],
         processing_service: "ProcessingService",  # Use string quote for forward reference
         get_db_context_func: Callable[
@@ -69,7 +69,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         Args:
             application: The telegram.ext.Application instance.
-            allowed_chat_ids: List of chat IDs allowed to interact with the bot.
+            allowed_user_ids: List of chat IDs allowed to interact with the bot.
             developer_chat_id: Optional chat ID for sending error notifications.
             processing_service: The ProcessingService instance.
             get_db_context_func: Async context manager function to get a DatabaseContext.
@@ -78,7 +78,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         # Imports moved to top level
 
         self.application = application
-        self.allowed_chat_ids = allowed_chat_ids
+        self.allowed_user_ids = allowed_user_ids
         self.developer_chat_id = developer_chat_id
         self.processing_service = processing_service  # Store the service instance
         self.get_db_context = get_db_context_func
@@ -132,12 +132,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Sends a welcome message when the /start command is issued."""
-        chat_id = update.effective_chat.id
-        if self.allowed_chat_ids and chat_id not in self.allowed_chat_ids:
-            logger.warning(f"Unauthorized /start command from chat_id {chat_id}")
+        user_id = update.effective_user.id
+        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
+            logger.warning(f"Unauthorized /start command from chat_id {user_id}")
+            await update.message.reply_text(
+                f"You're not authorized to use this bot. Give your user ID `{user_id}` to the person who runs this bot."
+            )
             return
         await update.message.reply_text(
-            f"Hello! I'm your family assistant. Your chat ID is `{chat_id}`. How can I help?"
+            f"Hello! I'm your family assistant. How can I help?"
         )
 
     async def process_chat_queue(
@@ -425,11 +428,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Buffers incoming messages and triggers processing if not already running."""
+        user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         photo_bytes = None
 
-        if self.allowed_chat_ids and chat_id not in self.allowed_chat_ids:
-            logger.warning(f"Ignoring message from unauthorized chat_id {chat_id}")
+        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
+            logger.warning(f"Ignoring message from unauthorized user {user_id}")
             return
 
         if update.message.photo:
@@ -704,7 +708,7 @@ class TelegramService:
     def __init__(
         self,
         telegram_token: str,
-        allowed_chat_ids: List[int],
+        allowed_user_ids: List[int],
         developer_chat_id: Optional[int],
         processing_service: ProcessingService,
         get_db_context_func: Callable[
@@ -716,7 +720,7 @@ class TelegramService:
 
         Args:
             telegram_token: The Telegram Bot API token.
-            allowed_chat_ids: List of chat IDs allowed to interact with the bot.
+            allowed_user_ids: List of chat IDs allowed to interact with the bot.
             developer_chat_id: Optional chat ID for sending error notifications.
             processing_service: The ProcessingService instance.
             get_db_context_func: Async context manager function to get a DatabaseContext.
@@ -736,7 +740,7 @@ class TelegramService:
         self.update_handler = TelegramUpdateHandler(
             telegram_service=self, # Pass self
             application=self.application,
-            allowed_chat_ids=allowed_chat_ids,
+            allowed_user_ids=allowed_user_ids,
             developer_chat_id=developer_chat_id,
             processing_service=processing_service,
             get_db_context_func=get_db_context_func,
