@@ -702,7 +702,6 @@ async def execute_tool_api(
         # timezone_str='UTC', # Pass if needed
         # application=None, # Pass if needed
         chat_id=0, # Placeholder chat_id
-        user_name="WebTester", # Placeholder user name
         request_confirmation_callback=None, # No confirmation from API for now
     )
 
