@@ -31,7 +31,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-# Import necessary types for type hinting - moved here
+# Import necessary types for type hinting
+from telegram import InlineKeyboardMarkup # Move this import here
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 # Import necessary types for type hinting
@@ -609,7 +610,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                  status_text = "\n\n*Error: Unknown action*"
                  # Keep future in dict? Or cancel it? Let's cancel.
                  confirmation_future.cancel()
-
+            # The noqa was here previously, likely unnecessary if edit_message_text is defined
             # Edit the original message to remove keyboard and show status
             try: # noqa: F821
                 await query.edit_message_text(
@@ -792,16 +793,18 @@ class TelegramService:
                 else:
                     logger.info("Telegram polling was not running.")
             except Exception as e:
-                logger.error(f"Error stopping Telegram updater: {e}", exc_info=True) # noqa: F821
+                logger.error(f"Error stopping Telegram updater: {e}", exc_info=True)
 
         if self.application:
             logger.info("Shutting down Telegram application...")
             try:
                 await self.application.shutdown()
                 logger.info("Telegram application shut down.")
+                )
             except Exception as e:
                 logger.error(
-                    f"Error shutting down Telegram application: {e}", exc_info=True # noqa: F821
+                    f"Error shutting down Telegram application: {e}", exc_info=True
                 )
         else:
             logger.info("Telegram application instance not found for shutdown.")
+
