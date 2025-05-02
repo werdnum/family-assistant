@@ -201,10 +201,6 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     ]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        # Call process_message which includes sending the response
-        await processing_service.process_message(
-            db_context=db_context,
-            chat_id=TEST_CHAT_ID,
         # Call generate_llm_response_for_chat directly
         final_response_content, tool_info, _, _ = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,
@@ -334,9 +330,6 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     ]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        await processing_service.process_message(
-            db_context=db_context,
-            chat_id=TEST_CHAT_ID,
         final_response_content, tool_info, _, _ = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,
             application=MagicMock(), # Provide a basic mock Application
