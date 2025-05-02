@@ -286,17 +286,6 @@ class ProcessingService:
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
         )
         return messages
-
-        Args:
-            db_context: The database context to use for storage operations.
-            application: The Telegram application instance.
-            chat_id: The target chat ID.
-            trigger_content_parts: List of content parts for the triggering message.
-            user_name: The user name to format into the system prompt.
-
-        Returns:
-            A tuple: (LLM response string or None, List of tool call info dicts or None, Reasoning info dict or None, Error traceback string or None).
-        """
         error_traceback: Optional[str] = None # Initialize traceback
         logger.debug(
             f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
