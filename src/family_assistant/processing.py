@@ -54,6 +54,8 @@ class ProcessingService:
         calendar_config: Dict[str, Any],
         timezone_str: str,
         max_history_messages: int,
+        server_url: Optional[str], # Added server_url
+        history_max_age_hours: int,
         history_max_age_hours: int, # Recommended value is now 1
     ):
         """
@@ -66,6 +68,7 @@ class ProcessingService:
             calendar_config: Dictionary containing calendar configuration.
             timezone_str: The configured timezone string (e.g., "Europe/London").
             max_history_messages: Max number of history messages to fetch.
+            server_url: The base URL of the web server.
             history_max_age_hours: Max age of history messages to fetch (in hours). Recommended: 1.
         """
         self.llm_client = llm_client
@@ -74,6 +77,7 @@ class ProcessingService:
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.max_history_messages = max_history_messages
+        self.server_url = server_url or "http://localhost:8000" # Default if not provided
         self.history_max_age_hours = history_max_age_hours
         # Store the confirmation callback function if provided at init? No, get from context.
 
@@ -81,6 +85,7 @@ class ProcessingService:
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.max_history_messages = max_history_messages
+        self.server_url = server_url or "http://localhost:8000" # Default if not provided
         self.history_max_age_hours = history_max_age_hours
 
     # Removed _execute_function_call method (if it was previously here)
@@ -472,6 +477,7 @@ class ProcessingService:
             current_time=current_time_str,
             calendar_context=calendar_context_str,
             notes_context=notes_context_str,
+            server_url=self.server_url, # Add server URL
         ).strip()
 
         if final_system_prompt:

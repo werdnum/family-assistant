@@ -52,6 +52,9 @@ logger = logging.getLogger(__name__)
 # Directory to save raw webhook request bodies for debugging/replay
 MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests"  # TODO: Consider making this configurable via env var
 
+# Load server URL from environment variable (used in templates)
+SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
+
 app = FastAPI(
     title="Family Assistant Web Interface",
     docs_url="/api/docs",  # URL for Swagger UI
@@ -178,7 +181,7 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
     """Serves the main page listing all notes."""
     notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
-        "index.html", {"request": request, "notes": notes}
+        "index.html", {"request": request, "notes": notes, "server_url": SERVER_URL} # Pass SERVER_URL
     )
 
 
@@ -821,7 +824,7 @@ async def serve_documentation(request: Request, filename: str):
         # Scan for other available docs for navigation
         available_docs = _scan_user_docs()
 
-        return templates.TemplateResponse("doc_page.html", {"request": request, "content": content_html, "title": filename, "available_docs": available_docs})
+        return templates.TemplateResponse("doc_page.html", {"request": request, "content": content_html, "title": filename, "available_docs": available_docs, "server_url": SERVER_URL})
     except Exception as e:
         logger.error(f"Error serving documentation file '{filename}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error rendering documentation.")
