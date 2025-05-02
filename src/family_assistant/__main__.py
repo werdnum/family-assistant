@@ -361,7 +361,7 @@ parser.add_argument(
 async def shutdown_handler(
     signal_name: str,
     telegram_service: Optional[TelegramService],
-    mcp_provider: Optional[MCPToolsProvider], # Add MCP provider instance
+    tools_provider: Optional[ToolsProvider], # Use generic ToolsProvider and correct name
 ):
     """Initiates graceful shutdown."""
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
