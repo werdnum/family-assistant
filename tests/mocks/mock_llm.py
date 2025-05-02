@@ -105,7 +105,8 @@ class RuleBasedMockLLMClient(LLMInterface):
                 continue  # Skip to the next rule
 
         # If no rules matched
-        logger.warning("No rules matched the input. Returning default response.")
+        last_message_text = get_last_message_text(messages)
+        logger.warning(f"No rules matched the input. Returning default response. Last message text: '{last_message_text}'")
         return self.default_response
 
 
