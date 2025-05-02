@@ -200,7 +200,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     logger.info("--- Sending request requiring MCP tool call ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ})"
     user_request_trigger = [
-        {"role": "user", "content": user_request_text}
+        {"type": "text", "text": user_request_text}
     ]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
@@ -232,11 +232,6 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         f"Tool result did not contain the expected converted time fragment. Result: '{tool_info[mcp_tool_call_id]['result']}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
 
     logger.info(f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called and result contained expected fragment.")
-    # Note: We don't explicitly mock/verify MCPToolsProvider.execute_tool here.
-    # The test relies on the RuleBasedMockLLM's second rule matching only *after*
-    # the tool result (presumably fetched by the real MCPToolsProvider) is added
-    # to the message history passed back to the LLM by ProcessingService.
-    # This makes it an integration test of ProcessingService and MCPToolsProvider.
 
     logger.info(f"--- MCP Time Conversion Test ({test_run_id}) Passed ---")
 
