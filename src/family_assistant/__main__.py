@@ -58,11 +58,6 @@ from family_assistant.embeddings import (
     SentenceTransformerEmbeddingGenerator, # If available
     MockEmbeddingGenerator, # For testing
 )
-    EmbeddingGenerator,
-    LiteLLMEmbeddingGenerator,
-    SentenceTransformerEmbeddingGenerator, # If available
-    MockEmbeddingGenerator, # For testing
-)
 
 # Import tool definitions from the new tools module
 from family_assistant.tools import (
@@ -101,9 +96,6 @@ from family_assistant.storage.context import (
     GenerationConfiguration,
     generate_from_schema,
 )
-    DatabaseContext,
-    get_db_context,
-)  # Import DatabaseContext and getter
 
 # Import calendar functions
 from family_assistant import calendar_integration
