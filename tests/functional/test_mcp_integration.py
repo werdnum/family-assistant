@@ -43,7 +43,7 @@ TARGET_TZ = "America/Los_Angeles"
 EXPECTED_CONVERTED_TIME_FRAGMENT = "11:30"
 
 # Assume MCP server ID 'time' maps to tool 'convert_time_zone'
-MCP_TIME_TOOL_NAME = "mcp_time_convert_time" # Use the name MCPToolsProvider assigns
+MCP_TIME_TOOL_NAME = "convert_time" # Use the actual tool name provided by mcp-server-time
 
 def find_free_port():
     """Finds an available TCP port on localhost."""
