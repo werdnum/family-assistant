@@ -47,17 +47,15 @@ MCP_TIME_TOOL_NAME = "mcp_time_convert_time_zone"
 # --- Fixture to manage MCP server subprocess ---
 @pytest.fixture(scope="function") # Use function scope to ensure clean server for each test
 async def mcp_time_server():
-    """Starts mcp-server-time as a subprocess and yields its URL."""
-    host = "127.0.0.1"
-    port = 8001 # Example port, ensure it's free
-    server_url = f"http://{host}:{port}"
-    command = ["mcp-server-time", "--host", host, "--port", str(port)]
+    """Starts mcp-server-time as a subprocess for stdio communication."""
+    # Command as expected by MCPToolsProvider for stdio transport
+    command = ["mcp-server-time"]
 
     logger.info(f"Starting MCP time server: {' '.join(command)}")
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     time.sleep(2) # Give server time to start up
 
-    yield server_url # Provide the URL to the test
+    yield # Just manage the lifecycle, no value needed by the test directly
 
     logger.info("Stopping MCP time server...")
     process.terminate()
@@ -65,7 +63,7 @@ async def mcp_time_server():
     logger.info("MCP time server stopped.")
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion(test_db_engine, mcp_time_server):
+async def test_mcp_time_conversion(test_db_engine, mcp_time_server): # Keep fixture param to ensure it runs
     """
     Tests the end-to-end flow involving an MCP tool call:
     1. User asks to convert time between timezones.
@@ -145,9 +143,12 @@ async def test_mcp_time_conversion(test_db_engine, mcp_time_server):
         definitions=local_tools_definition, implementations=local_tool_implementations
     )
 
-    # Hard-coded MCP configuration pointing to the fixture-managed server
+    # Hard-coded MCP configuration using stdio transport.
+    # The fixture ensures the 'mcp-server-time' command is runnable.
     mcp_config = {
-        "time": {"url": mcp_time_server}
+        "time": {
+            "command": "mcp-server-time" # Command to execute for stdio
+        }
     }
     # Instantiate MCP provider with the in-memory config dictionary
     mcp_provider = MCPToolsProvider(mcp_server_configs=mcp_config)
