@@ -34,9 +34,8 @@
     "homeassistant": {
       "transport": "sse",
       "url": "https://homeassistant.alexsmith.dev/mcp_server/sse",
-      "env": {
-        "API_ACCESS_TOKEN": "$HOMEASSISTANT_API_KEY"
-      }
+      "token": "$HOMEASSISTANT_API_KEY" # Use dedicated token field, still referencing env var
+      # "env" is now only used for stdio transport environment variables
     }
   }
 }
