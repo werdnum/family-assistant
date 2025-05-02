@@ -455,12 +455,15 @@ dev = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "httpx" },
+    { name = "mcp-proxy" },
+    { name = "mcp-server-time" },
     { name = "poethepoet" },
     { name = "psycopg-binary" },
     { name = "pylint" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-mock" },
+    { name = "pytest-timeout" },
     { name = "sentence-transformers" },
     { name = "symbex" },
     { name = "testcontainers" },
@@ -481,6 +484,8 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.4" },
     { name = "litellm", specifier = ">=1.38.1,<1.67.3" },
     { name = "mcp", specifier = ">=1.5.0" },
+    { name = "mcp-proxy", marker = "extra == 'dev'", specifier = ">=0.3.0" },
+    { name = "mcp-server-time", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pgvector", specifier = ">=0.2.0" },
     { name = "poethepoet", marker = "extra == 'dev'", specifier = ">=0.11.0" },
@@ -489,6 +494,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-mock", marker = "extra == 'dev'" },
+    { name = "pytest-timeout", marker = "extra == 'dev'" },
     { name = "python-dateutil", specifier = ">=2.9.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart" },
@@ -1142,6 +1148,33 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/95/d2/f587cb965a56e992634bebc8611c5b579af912b74e04eb9164bd49527d21/mcp-1.6.0.tar.gz", hash = "sha256:d9324876de2c5637369f43161cd71eebfd803df5a95e46225cab8d280e366723", size = 200031 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/30/20a7f33b0b884a9d14dd3aa94ff1ac9da1479fe2ad66dd9e2736075d2506/mcp-1.6.0-py3-none-any.whl", hash = "sha256:7bd24c6ea042dbec44c754f100984d186620d8b841ec30f1b19eda9b93a634d0", size = 76077 },
+]
+
+[[package]]
+name = "mcp-proxy"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mcp" },
+    { name = "uvicorn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/f9/f1e05984196e0580ce1bb09ecfdf9dd9e2887958ef4624389d5bc4e654a2/mcp_proxy-0.5.1.tar.gz", hash = "sha256:df94c4fa9f143805bd52b73217e14641e05e4354de5a36b2ec8d61492700d651", size = 17697 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/59/d3b470de3c28141f3e1d6ca3c7435e2d70479eba9936bedb68a4a4325952/mcp_proxy-0.5.1-py3-none-any.whl", hash = "sha256:6d71ec5efc005f33cac056584575e77de556847d66c6deca18447a51396d8cea", size = 11860 },
+]
+
+[[package]]
+name = "mcp-server-time"
+version = "0.6.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/76/65/6f4ac2df4dbed45e2606ceb8d05d2d63f3d1a4a6982babf37059683c88d0/mcp_server_time-0.6.2.tar.gz", hash = "sha256:f8baddaf4787a4ccf8bb585fa936e3537692dd9a24ac2bbe5d2616014f08a6b2", size = 26714 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/71/e5b546bbe8769be4608728624ad4c4c51c93243a124e527b39465bcf559e/mcp_server_time-0.6.2-py3-none-any.whl", hash = "sha256:6b67640eb9df3df834b3de5001e37ca8b0c997ce700b014882b585964094d116", size = 5693 },
 ]
 
 [[package]]
@@ -1956,6 +1989,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c6/90/a955c3ab35ccd41ad4de556596fa86685bf4fc5ffcc62d22d856cfd4e29a/pytest-mock-3.14.0.tar.gz", hash = "sha256:2719255a1efeceadbc056d6bf3df3d1c5015530fb40cf347c0f9afac88410bd0", size = 32814 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f2/3b/b26f90f74e2986a82df6e7ac7e319b8ea7ccece1caec9f8ab6104dc70603/pytest_mock-3.14.0-py3-none-any.whl", hash = "sha256:0b72c38033392a5f4621342fe11e9219ac11ec9d375f8e2a0c164539e0d70f6f", size = 9863 },
+]
+
+[[package]]
+name = "pytest-timeout"
+version = "2.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/0d/04719abc7a4bdb3a7a1f968f24b0f5253d698c9cc94975330e9d3145befb/pytest-timeout-2.3.1.tar.gz", hash = "sha256:12397729125c6ecbdaca01035b9e5239d4db97352320af155b3f5de1ba5165d9", size = 17697 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/03/27/14af9ef8321f5edc7527e47def2a21d8118c6f329a9342cc61387a0c0599/pytest_timeout-2.3.1-py3-none-any.whl", hash = "sha256:68188cb703edfc6a18fad98dc25a3c61e9f24d644b0b70f33af545219fc7813e", size = 14148 },
 ]
 
 [[package]]
