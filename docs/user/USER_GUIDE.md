@@ -30,6 +30,7 @@ You can ask the assistant a wide variety of things:
 *   **Answer Your Questions:**
     *   **About upcoming events:** "What's happening tomorrow?", "Do we have anything scheduled next Saturday?", "List events for the next 14 days." (The assistant reads from connected family calendars.)
     *   **About things you've told it (Notes):** "What was the Wi-Fi password?", "Remind me about the gift ideas we saved.", "Where did we put the spare keys?" (It uses the notes you've asked it to remember.)
+    *   **(Future) Add/Modify Calendar Events:** Soon, you'll be able to ask the assistant to add events directly: "Add dentist appointment for June 5th at 10 AM to the Family Calendar." or "Remind me to call the plumber today at 5 PM" (which would add to a Reminders calendar). You'll need to specify which calendar if multiple are set up.
     *   **About the current time/date:** "What time is it?", "What day is it today?" (Uses its built-in time service.)
     *   **About web content:** "Can you summarize this article: [Full URL]?", "What's the main point of this webpage: [Full URL]?" (Provide the complete web address starting with `http://` or `https://`. Uses its web fetching service.)
     *   **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won the game last night?", "Find me a recipe for banana bread." (Uses the Brave Search service to find information online.)
