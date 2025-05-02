@@ -317,3 +317,15 @@ hr.tool-separator {
 .message-content {
     padding-bottom: 0.5rem; /* Add some space at the bottom */
 }
+
+/* doc_page.html specific styling */
+/* Ensure markdown content has appropriate spacing and readability */
+main article, main section { /* Assuming simple.css uses these for content */
+    margin-bottom: 1.5em;
+}
+
+/* Override simple.css code/pre styles if needed, already somewhat handled */
+/* Example: Ensure code blocks have consistent background */
+main pre {
+    background-color: var(--accent-bg); /* Match other pre blocks */
+}
