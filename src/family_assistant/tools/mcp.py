@@ -14,7 +14,7 @@ import os # Import os for environment variable resolution
 from dateutil import rrule
 from dateutil.parser import isoparse
 from mcp import ClientSession, StdioServerParameters # Removed ServerDetails from here
-from mcp.common import ServerDetails # Import ServerDetails from mcp.common
+# from mcp.common import ServerDetails # REMOVED incorrect import
 from mcp.client.stdio import stdio_client # Import stdio_client
 from telegram.ext import Application
 from sqlalchemy.sql import text
