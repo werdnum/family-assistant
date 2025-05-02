@@ -13,6 +13,12 @@ import aiofiles # For reading docs
 from markdown_it import MarkdownIt # For rendering docs
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, ValidationError # Import BaseModel for request body
+
+# Import tool-related components
+from family_assistant.tools import (
+    ToolsProvider, ToolExecutionContext, ToolNotFoundError
+)
 
 # Import storage functions using absolute package path
 from family_assistant import storage
@@ -149,6 +155,18 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
          raise HTTPException(status_code=500, detail="Invalid embedding generator configuration.")
     return generator
 
+# Dependency function to retrieve the ToolsProvider instance from app state
+async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
+    """Retrieves the configured ToolsProvider instance from app state."""
+    provider = getattr(request.app.state, "tools_provider", None)
+    if not provider:
+        logger.error("ToolsProvider not found in app state.")
+        raise HTTPException(status_code=500, detail="ToolsProvider not configured or available.")
+    # Optional: Check if it adheres to the protocol (runtime check might be complex)
+    # if not isinstance(provider, ToolsProvider): # This check might fail with protocols
+    #     logger.error(f"Object in app state is not a ToolsProvider: {type(provider)}")
+    #     raise HTTPException(status_code=500, detail="Invalid ToolsProvider configuration.")
+    return provider
 # Markdown renderer instance
 md_renderer = MarkdownIt("gfm-like") # Use GitHub Flavored Markdown preset
 
@@ -654,6 +672,62 @@ async def handle_vector_search(
 
 # Need asyncio for gather
 import asyncio
+
+
+# --- Tool Execution API ---
+class ToolExecutionRequest(BaseModel):
+    arguments: Dict[str, Any]
+
+@app.post("/api/tools/execute/{tool_name}", response_class=JSONResponse)
+async def execute_tool_api(
+    tool_name: str,
+    request: Request, # Keep request for potential context later
+    payload: ToolExecutionRequest,
+    tools_provider: ToolsProvider = Depends(get_tools_provider_dependency),
+    db_context: DatabaseContext = Depends(get_db), # Inject DB context if tools need it
+    # embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator_dependency), # Inject if tools need it
+):
+    """Executes a specified tool with the given arguments."""
+    logger.info(f"Received execution request for tool: {tool_name} with args: {payload.arguments}")
+
+    # --- Create Execution Context ---
+    # We need some context, minimum placeholders for now
+    # Ideally, we'd get relevant chat_id/user_id if needed by the tool,
+    # but that's complex for a simple test UI.
+    execution_context = ToolExecutionContext(
+        db_context=db_context,
+        # embedding_generator=embedding_generator,
+        # llm_client=None, # Pass if needed
+        # calendar_config={}, # Pass if needed
+        # timezone_str='UTC', # Pass if needed
+        # application=None, # Pass if needed
+        chat_id=0, # Placeholder chat_id
+        user_name="WebTester", # Placeholder user name
+        request_confirmation_callback=None, # No confirmation from API for now
+    )
+
+    try:
+        result = await tools_provider.execute_tool(
+            name=tool_name,
+            arguments=payload.arguments,
+            context=execution_context
+        )
+        logger.info(f"Tool '{tool_name}' executed successfully.")
+        return JSONResponse(content={"success": True, "result": result}, status_code=200)
+    except ToolNotFoundError:
+        logger.warning(f"Tool '{tool_name}' not found for execution request.")
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found.")
+    except ValidationError as ve: # Catch Pydantic validation errors if execute_tool raises them
+        logger.warning(f"Argument validation error for tool '{tool_name}': {ve}")
+        raise HTTPException(status_code=400, detail=f"Invalid arguments for tool '{tool_name}': {ve}")
+    except TypeError as te: # Catch potential argument mismatches within the tool function
+         logger.error(f"Type error during execution of tool '{tool_name}': {te}", exc_info=True)
+         raise HTTPException(status_code=400, detail=f"Argument mismatch or type error in tool '{tool_name}': {te}")
+    except Exception as e:
+        logger.error(f"Error executing tool '{tool_name}': {e}", exc_info=True)
+        # Avoid leaking internal error details unless intended
+        raise HTTPException(status_code=500, detail=f"An error occurred while executing tool '{tool_name}'.")
+
 
 
 # --- API Routes ---
