@@ -15,7 +15,7 @@ from dateutil import rrule
 from dateutil.parser import isoparse
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.sse import SSEClientTransport # Import SSE transport
+from mcp.client.sse import SSETransport # Corrected import name
 from telegram.ext import Application
 from sqlalchemy.sql import text
 
@@ -158,12 +158,16 @@ class MCPToolsProvider:
                         logger.warning(f"No token resolved for SSE server '{server_id}'. Connecting without Authorization header.")
                         # Add other potential header mappings here if needed from a different config source?
 
-                    # Create SSE transport
-                    transport = SSEClientTransport(url=url, headers=headers)
-                    # Create session with transport, manage session lifecycle with exit stack
-                    # Assuming ClientSession handles transport connection/disconnection via initialize/close
+                    # Create SSE transport instance
+                    transport = SSETransport(url=url, headers=headers)
+                    # Use the transport's connect() context manager via the exit stack
+                    # to get the streams and manage the transport lifecycle.
+                    read_stream, write_stream = await self._exit_stack.enter_async_context(
+                        transport.connect()
+                    )
+                    # Create session with the streams obtained from the transport context
                     session = await self._exit_stack.enter_async_context(
-                         ClientSession(transport=transport) # Pass transport directly
+                        ClientSession(read_stream, write_stream)
                     )
                 else:
                     logger.error(f"Unsupported transport type '{transport_type}' for MCP server '{server_id}'.")

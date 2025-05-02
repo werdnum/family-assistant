@@ -126,7 +126,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     )
     # Mock MCP provider as it's not needed for this test
     mcp_provider = MCPToolsProvider(
-        mcp_definitions=[], mcp_sessions={}, tool_name_to_server_id={}
+        mcp_server_configs={} # Use correct argument name
     )
     composite_provider = CompositeToolsProvider(
         providers=[local_provider, mcp_provider]

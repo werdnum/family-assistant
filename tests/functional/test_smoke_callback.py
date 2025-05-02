@@ -128,7 +128,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
         definitions=local_tools_definition, implementations=local_tool_implementations
     )
     mcp_provider = MCPToolsProvider( # Mock MCP
-        mcp_definitions=[], mcp_sessions={}, tool_name_to_server_id={}
+        mcp_server_configs={} # Use correct argument name
     )
     composite_provider = CompositeToolsProvider(
         providers=[local_provider, mcp_provider]
