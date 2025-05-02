@@ -33,6 +33,9 @@ from family_assistant.storage import (
 # Import vector search components
 from family_assistant.storage.vector_search import (
     query_vector_store,
+    # Import protocol for type hinting when creating the dict for add_document
+    from family_assistant.storage.vector import Document
+from family_assistant.tools import _scan_user_docs # Import the scanner
     VectorSearchQuery,
     MetadataFilter,
 )
@@ -804,7 +807,10 @@ async def serve_documentation(request: Request, filename: str):
         # Render Markdown to HTML
         content_html = md_renderer.render(content_md)
 
-        return templates.TemplateResponse("doc_page.html", {"request": request, "content": content_html, "title": filename})
+        # Scan for other available docs for navigation
+        available_docs = _scan_user_docs()
+
+        return templates.TemplateResponse("doc_page.html", {"request": request, "content": content_html, "title": filename, "available_docs": available_docs})
     except Exception as e:
         logger.error(f"Error serving documentation file '{filename}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error rendering documentation.")
