@@ -4,6 +4,7 @@ import asyncio
 import logging
 import json
 from typing import List, Dict, Any, Optional, Callable, Tuple
+import pytest_asyncio # Import pytest_asyncio
 import subprocess
 import time
 
@@ -52,7 +53,7 @@ def find_free_port():
         return s.getsockname()[1]
 
 # --- Fixture to manage mcp-proxy subprocess for SSE tests ---
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function") # Use pytest_asyncio.fixture
 async def mcp_proxy_server():
     """
     Starts mcp-proxy listening for SSE and forwarding to mcp-server-time via stdio.
