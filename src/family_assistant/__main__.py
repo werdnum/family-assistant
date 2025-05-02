@@ -96,9 +96,6 @@ from family_assistant.storage.context import (
     DatabaseContext, # Add back DatabaseContext
     get_db_context, # Add back get_db_context
 )
-# Import items specifically from json-schema-for-humans
-from json_schema_for_humans.generation_configuration import GenerationConfiguration
-from json_schema_for_humans.generate import generate_from_schema
 
 # Import calendar functions
 from family_assistant import calendar_integration
@@ -499,25 +496,6 @@ async def main_async(
     # Ensure the confirming provider loads its definitions (identifies tools needing confirmation)
     tool_definitions = await confirming_provider.get_tool_definitions()
     logger.info("ConfirmingToolsProvider initialized and definitions loaded.")
-
-    # --- Generate HTML for Tool Schemas ---
-    # Configure json-schema-for-humans (using 'flat' template for simplicity)
-    schema_gen_config = GenerationConfiguration(template_name='flat')
-    for tool_def in tool_definitions:
-        parameters_html = "<p>No parameters defined.</p>" # Default
-        schema_dict = tool_def.get("function", {}).get("parameters")
-        tool_name = tool_def.get("function", {}).get("name", "UnknownTool")
-        if schema_dict and isinstance(schema_dict, dict) and schema_dict.get("properties"): # Check if schema exists and has properties
-            try:
-                # Generate HTML from the schema dictionary
-                parameters_html = generate_from_schema(schema_dict, config=schema_gen_config)
-            except Exception as e:
-                logger.error(f"Failed to generate HTML schema for tool '{tool_name}': {e}", exc_info=True)
-                parameters_html = f"<pre>Error generating schema HTML: {html.escape(str(e))}</pre>"
-        elif schema_dict:
-             parameters_html = "<p>Tool has parameters defined, but the schema structure might be empty or invalid.</p>"
-
-        tool_def['parameters_html'] = parameters_html # Add the generated HTML to the dict
 
     # --- Store tool definitions in app state for web server access ---
     fastapi_app.state.tool_definitions = tool_definitions

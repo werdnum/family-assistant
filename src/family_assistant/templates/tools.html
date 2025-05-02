@@ -41,7 +41,7 @@
                 <h3>{{ tool.function.name }}</h3>
                 <p>{{ tool.function.description }}</p>
                 <strong>Parameters:</strong>
-                {# Render the pre-generated HTML schema using the 'safe' filter #}
+                {# Render the generated HTML schema (passed from web_server) using the 'safe' filter #}
                 <div>{{ tool.parameters_html | safe }}</div>
             </article>
         {% endfor %}
@@ -53,4 +53,3 @@
 </body>
 
 </html>
-
