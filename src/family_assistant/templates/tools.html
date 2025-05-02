@@ -64,7 +64,8 @@
                             <div id="args-editor-{{ loop.index }}" class="json-editor-arguments-container" style="height: 200px; margin-bottom: 0.5rem;"></div>
                             {# Store schema in a script tag for JS to access #}
                             <script id="schema-{{ loop.index }}" type="application/json">{{ tool.function.parameters | tojson | safe }}</script>
-                            <button type="submit">Test Tool</button>
+                            {# Add unique ID to the button #}
+                            <button type="submit" id="submit-button-{{ loop.index }}">Test Tool</button>
                         </form>
                         {# Container for the result JSON editor #}
                         <div class="tool-result-container" id="result-{{ loop.index }}"></div>
