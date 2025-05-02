@@ -4,6 +4,7 @@ import asyncio
 import logging
 import json
 from typing import List, Dict, Any, Optional, Callable, Tuple
+import signal # Import the signal module
 import pytest_asyncio # Import pytest_asyncio
 import subprocess
 import time
@@ -77,7 +78,8 @@ async def mcp_proxy_server():
     yield sse_url # Provide the SSE URL to the test
 
     logger.info("Stopping MCP proxy server...")
-    process.terminate()
+    # Try sending SIGINT (Ctrl+C) for a potentially more graceful shutdown
+    process.send_signal(signal.SIGINT)
     process.wait(timeout=5) # Wait for graceful shutdown
     logger.info("MCP proxy server stopped.")
 
