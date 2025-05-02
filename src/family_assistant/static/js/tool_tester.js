@@ -21,8 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     testForms.forEach(form => {
-        const toolName = form.dataset.toolName;
-        const argsTextarea = form.querySelector('textarea[name="arguments_json"]');        */
+        // Removed redundant variable declarations here, using the ones below
 
         const toolName = form.dataset.toolName;
         const editorContainerId = `args-editor-${form.querySelector('button').id.split('-').pop() || form.closest('.tool-card').id.split('-').pop() || Math.random().toString(36).substring(7)}`; // Derive index or use random for ID
@@ -50,11 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
         form.addEventListener('submit', async (event) => {
             event.preventDefault(); // Prevent default form submission
 
-            const toolName = form.dataset.toolName;
-            const argsTextarea = form.querySelector('textarea[name="arguments_json"]');
-            const resultContainer = form.nextElementSibling; // Assuming result div is immediately after the form
-            const submitButton = form.querySelector('button[type="submit"]');
-        */
+            // Use variables defined outside the listener (toolName, resultContainer, submitButton, argsEditorInstance)
             if (!argsEditorInstance) {
                 resultContainer.innerHTML = '<p class="error">Arguments editor not initialized.</p>';
                 return;
