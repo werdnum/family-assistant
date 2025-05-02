@@ -33,6 +33,8 @@ You can ask the assistant a wide variety of things:
     *   **(Future) Add/Modify Calendar Events:** Soon, you'll be able to ask the assistant to add events directly: "Add dentist appointment for June 5th at 10 AM to the Family Calendar." or "Remind me to call the plumber today at 5 PM" (which would add to a Reminders calendar). You'll need to specify which calendar if multiple are set up.
     *   **About the current time/date:** "What time is it?", "What day is it today?" (Uses its built-in time service.)
     *   **About web content:** "Can you summarize this article: [Full URL]?", "What's the main point of this webpage: [Full URL]?" (Provide the complete web address starting with `http://` or `https://`. Uses its web fetching service.)
+    *   **Search Your Documents:** "Search my notes for 'plumber number'.", "Find emails about the flight booking.", "Look for documents related to 'insurance policy'." (The assistant can search through notes and other documents it has access to. If it finds relevant documents, it will list them.)
+    *   **Retrieve Full Documents:** After a search, if the assistant finds a document (e.g., "Document ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document 123."
     *   **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won the game last night?", "Find me a recipe for banana bread." (Uses the Brave Search service to find information online.)
 
 *   **Remember Things (Notes):**
@@ -44,7 +46,7 @@ You can ask the assistant a wide variety of things:
 
 *   **Schedule Follow-ups:**
     *   If you're discussing something and want the assistant to bring it up again later, you can ask: "Remind me about this tomorrow morning.", "Check back with me on this topic in 3 hours." The assistant will send a message back to the chat at the specified time to continue the conversation.
-
+*   **Schedule Recurring Actions:** Beyond simple follow-ups, the assistant can schedule tasks to happen regularly. For example, you could ask it to "Send a reminder every Sunday evening to take out the bins." (This capability is also used for planned features like the Daily Brief).
 *   **Understand Photos:**
     *   Send a photo directly in the chat along with your question (in the same message): "What kind of flower is this?", "Can you describe what's in this picture?"
 
@@ -63,7 +65,7 @@ The assistant learns and gets information from a few places:
 *   **You Tell It:** When you use commands like "Remember:" or "Add Note:".
 *   **Connected Calendars:** It automatically checks any shared family calendars that have been linked (like Google Calendar, iCloud Calendar, etc.) for upcoming events.
 *   **Recent Conversation:** It remembers the last few messages exchanged in your chat to understand the context of your current request.
-*   **(Future) Forwarded Emails:** As mentioned, the ability to process information from emails you forward is planned.
+*   **Stored Documents:** It can search and retrieve information from notes you've added, and potentially from emails or files you've uploaded or forwarded (depending on setup).
 
 ## 5. Automatic Features
 
@@ -100,4 +102,3 @@ While most interaction happens via Telegram, the web interface is useful for spe
 *   **If you need more help:** Contact the family member who set up and manages the assistant for your family. They can help with configuration issues or more complex problems.
 
 We hope you find your family assistant helpful!
-
