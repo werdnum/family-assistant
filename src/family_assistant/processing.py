@@ -263,6 +263,62 @@ class ProcessingService:
             )
             # Ensure tuple is returned even on error
             return None, None, None
+    def _format_history_for_llm(
+        self, history_messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Formats message history retrieved from the database into the list structure
+        expected by the LLM, handling assistant tool calls correctly.
+
+        Args:
+            history_messages: List of message dictionaries from storage.get_recent_history.
+
+        Returns:
+            A list of message dictionaries formatted for the LLM API.
+        """
+        messages: List[Dict[str, Any]] = []
+        # Process history messages, formatting assistant tool calls correctly
+        for msg in history_messages:
+            # Use .get for safer access to potentially missing keys
+            role = msg.get("role")
+            content = msg.get("content") or ''
+            tool_calls_info = msg.get("tool_calls_info_raw") # This could be None or a list
+            # reasoning_info = msg.get("reasoning_info") # Reasoning info not needed for LLM history format
+            # error_traceback = msg.get("error_traceback") # Error info not needed for LLM history format
+
+            if role == "assistant":
+                # Check if there's actual tool call data (not None, not empty list)
+                if tool_calls_info and isinstance(tool_calls_info, list):
+                    # --- This block handles assistant messages WITH tool calls ---
+                    # (Logic remains the same as before)
+                    reformatted_tool_calls = []
+                    valid_raw_calls = []
+                    for raw_call in tool_calls_info:
+                        if isinstance(raw_call, dict):
+                            call_id = raw_call.get("call_id", f"call_{uuid.uuid4()}")
+                            function_name = raw_call.get("function_name", "unknown_tool")
+                            arguments = raw_call.get("arguments", {})
+                            arguments_str = json.dumps(arguments) if isinstance(arguments, dict) else arguments if isinstance(arguments, str) else "{}"
+                            reformatted_tool_calls.append(
+                                { "id": call_id, "type": "function", "function": { "name": function_name, "arguments": arguments_str, }, }
+                            )
+                            valid_raw_calls.append(raw_call)
+                        else:
+                            logger.warning(f"Skipping non-dict item in raw_tool_calls_info: {raw_call}")
+                    messages.append({ "role": "assistant", "content": content, "tool_calls": reformatted_tool_calls, })
+                    for valid_call in valid_raw_calls:
+                        messages.append({ "role": "tool", "tool_call_id": valid_call.get("call_id", "missing_id"), "content": str(valid_call.get("response_content", "Error: Missing tool response content",)), })
+                else:
+                    # --- This block handles assistant messages WITHOUT tool calls ---
+                    messages.append({"role": "assistant", "content": content})
+            elif role != "error": # Don't include previous error messages in history sent to LLM
+                # Append other non-error messages directly
+                messages.append({"role": role, "content": content})
+
+        logger.debug(
+            f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
+        )
+        return messages
 
     async def generate_llm_response_for_chat(
         self,
@@ -296,7 +352,6 @@ class ProcessingService:
         )
 
         # --- History and Context Preparation ---
-        messages: List[Dict[str, Any]] = []
         try:
             history_messages = (
                 await storage.get_recent_history(  # Use storage directly with context
@@ -315,83 +370,8 @@ class ProcessingService:
             )
             history_messages = []  # Continue with empty history on error
 
-        # Process history messages, formatting assistant tool calls correctly
-        for msg in history_messages:
-            # Use .get for safer access to potentially missing keys
-            role = msg.get("role")
-            content = msg.get("content") or ''
-            tool_calls_info = msg.get("tool_calls_info_raw") # This could be None or a list
-            reasoning_info = msg.get("reasoning_info") # Get reasoning info
-            error_traceback = msg.get("error_traceback") # Get error info
-
-            if role == "assistant":
-                # Check if there's actual tool call data (not None, not empty list)
-                if tool_calls_info and isinstance(tool_calls_info, list):
-                    # --- This block handles assistant messages WITH tool calls ---
-                    reformatted_tool_calls = []
-                    valid_raw_calls = [] # Store valid calls to iterate over for tool responses
-
-                    # First loop: Build the list of reformatted tool calls for the assistant message
-                    for raw_call in tool_calls_info:
-                        if isinstance(raw_call, dict):
-                            # Extract necessary fields safely
-                            call_id = raw_call.get("call_id", f"call_{uuid.uuid4()}")
-                            function_name = raw_call.get("function_name", "unknown_tool")
-                            arguments = raw_call.get("arguments", {})
-                            # Ensure arguments are a JSON string for the API
-                            arguments_str = json.dumps(arguments) if isinstance(arguments, dict) else arguments if isinstance(arguments, str) else "{}"
-
-                            reformatted_tool_calls.append(
-                                {
-                                    "id": call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": function_name,
-                                        "arguments": arguments_str,
-                                    },
-                                }
-                            )
-                            valid_raw_calls.append(raw_call) # Keep track of valid calls
-                        else:
-                            logger.warning(
-                                f"Skipping non-dict item in raw_tool_calls_info: {raw_call}"
-                            )
-
-                    # Append the SINGLE assistant message requesting the tool(s)
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": content,
-                            "tool_calls": reformatted_tool_calls,
-                        }
-                    )
-
-                    # Now append the corresponding TOOL result message(s) using the valid calls
-                    for valid_call in valid_raw_calls:
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": valid_call.get("call_id", "missing_id"), # Use ID from valid call
-                                # Ensure content is always a string for tool role
-                                "content": str(valid_call.get(
-                                    "response_content",
-                                    "Error: Missing tool response content",
-                                )),
-                            }
-                        )
-
-                else:
-                    # --- This block handles assistant messages WITHOUT tool calls ---
-                    # Simply append the message with role and content
-                    messages.append({"role": "assistant", "content": content})
-
-            elif msg["role"] != "error": # Don't include previous error messages in history sent to LLM
-                # Append other non-error messages directly
-                messages.append({"role": role, "content": content})
-
-        logger.debug(
-            f"Processed {len(history_messages)} DB history messages into LLM format (excluding 'error' role)."
-        )
+        # Format the raw history using the new helper method
+        messages = self._format_history_for_llm(history_messages)
 
         # --- Prepare System Prompt Context ---
         system_prompt_template = self.prompts.get(  # Use self.prompts
@@ -539,5 +519,8 @@ class ProcessingService:
             # Capture traceback on error
             import traceback
             error_traceback = traceback.format_exc()
+            # Capture traceback on error
+            import traceback
+            error_traceback = traceback.format_exc()
             # Return None for content/tools/reasoning, but include the traceback
-            return None, None, None, error_traceback
+            return None, None, None, error_traceback # Return traceback here
