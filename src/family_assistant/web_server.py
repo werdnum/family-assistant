@@ -723,7 +723,15 @@ async def execute_tool_api(
             context=execution_context
         )
         logger.info(f"Tool '{tool_name}' executed successfully.")
-        return JSONResponse(content={"success": True, "result": result}, status_code=200)
+
+        # Attempt to parse result if it's a JSON string
+        final_result = result
+        if isinstance(result, str):
+            try:
+                final_result = json.loads(result)
+            except json.JSONDecodeError:
+                pass # Not a JSON string, keep original result
+        return JSONResponse(content={"success": True, "result": final_result}, status_code=200)
     except ToolNotFoundError:
         logger.warning(f"Tool '{tool_name}' not found for execution request.")
         raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found.")
