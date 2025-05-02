@@ -13,9 +13,9 @@ from contextlib import AsyncExitStack # Import AsyncExitStack
 import os # Import os for environment variable resolution
 from dateutil import rrule
 from dateutil.parser import isoparse
-from mcp import ClientSession, StdioServerParameters # Removed ServerDetails from here
-# from mcp.common import ServerDetails # REMOVED incorrect import
-from mcp.client.stdio import stdio_client # Import stdio_client
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.client.sse import SSEClientTransport # Import SSE transport
 from telegram.ext import Application
 from sqlalchemy.sql import text
 
@@ -72,12 +72,15 @@ class MCPToolsProvider:
             discovered_tools = []
             tool_map = {}
             session = None
+            transport = None # Initialize transport variable
 
-            command = server_conf.get("command")
-            args = server_conf.get("args", [])
+            transport_type = server_conf.get("transport", "stdio").lower()
+            url = server_conf.get("url") # Needed for SSE
+            command = server_conf.get("command") # Needed for STDIO
+            args = server_conf.get("args", []) # Needed for STDIO
             env_config = server_conf.get("env")  # Original env config from JSON
 
-            # --- Resolve environment variable placeholders ---
+            # --- Resolve environment variable placeholders (used by both transports) ---
             resolved_env = None
             if isinstance(env_config, dict):
                 resolved_env = {}
@@ -102,26 +105,56 @@ class MCPToolsProvider:
                 )
             # --- End environment variable resolution ---
 
-            if not command:
-                logger.error(f"MCP server '{server_id}': 'command' is missing.")
-                return None, [], {}
 
             logger.info(
-                f"Attempting connection and discovery for MCP server '{server_id}'..."
+                f"Attempting connection and discovery for MCP server '{server_id}' using '{transport_type}' transport..."
             )
             try:
-                server_params = StdioServerParameters(
-                    command=command, args=args, env=resolved_env
-                )
-                # Use the provider's exit stack to manage contexts
-                read_stream, write_stream = await self._exit_stack.enter_async_context(
-                    stdio_client(server_params)
-                )
-                session = await self._exit_stack.enter_async_context(
-                    ClientSession(read_stream, write_stream)
-                )
+                # --- Transport and Session Creation ---
+                if transport_type == "stdio":
+                    if not command:
+                        logger.error(f"MCP server '{server_id}' (stdio): 'command' is missing.")
+                        return None, [], {}
+                    server_params = StdioServerParameters(
+                        command=command, args=args, env=resolved_env
+                    )
+                    # Use the provider's exit stack to manage stdio process context
+                    read_stream, write_stream = await self._exit_stack.enter_async_context(
+                        stdio_client(server_params)
+                    )
+                    # Create session with streams, manage session lifecycle with exit stack
+                    session = await self._exit_stack.enter_async_context(
+                        ClientSession(read_stream, write_stream)
+                    )
+                elif transport_type == "sse":
+                    if not url:
+                        logger.error(f"MCP server '{server_id}' (sse): 'url' is missing.")
+                        return None, [], {}
+
+                    # Construct headers from resolved env vars (e.g., Authorization)
+                    headers = {}
+                    if resolved_env:
+                        # Look for common token patterns - adjust if your env vars differ
+                        token = resolved_env.get("API_ACCESS_TOKEN") or resolved_env.get("AUTHORIZATION_TOKEN")
+                        if token:
+                            headers["Authorization"] = f"Bearer {token}"
+                            logger.debug(f"Using Authorization header for SSE server '{server_id}'.")
+                        # Add other potential header mappings here if needed
+
+                    # Create SSE transport
+                    transport = SSEClientTransport(url=url, headers=headers)
+                    # Create session with transport, manage session lifecycle with exit stack
+                    # Assuming ClientSession handles transport connection/disconnection via initialize/close
+                    session = await self._exit_stack.enter_async_context(
+                         ClientSession(transport=transport) # Pass transport directly
+                    )
+                else:
+                    logger.error(f"Unsupported transport type '{transport_type}' for MCP server '{server_id}'.")
+                    return None, [], {}
+
+                # --- Initialize Session and Discover Tools (Common Logic) ---
                 await session.initialize()
-                logger.info(f"Initialized session with MCP server '{server_id}'.")
+                logger.info(f"Initialized session with MCP server '{server_id}' ({transport_type}).")
 
                 response = await session.list_tools()
                 server_tools = response.tools
