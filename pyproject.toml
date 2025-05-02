@@ -39,6 +39,7 @@ dependencies = [
     "telegramify-markdown>=0.5.1", # For converting Markdown to Telegram MarkdownV2
     "python-dateutil>=2.9.0", # For robust datetime parsing (version updated)
     "markdown-it-py>=3.0.0", # For rendering Markdown in web server
+    "ajv-dist>=1.0.2", # Dependency for vanilla-jsoneditor schema validation
     "mdit-py-plugins>=0.4.0", # Common plugins for markdown-it-py
     "linkify-it-py>=2.0.0", # Required by markdown-it-py for linkify feature
     "pytz>=2024.1", # For timezone handling
