@@ -312,7 +312,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             else:
                 logger.warning("Received empty response from LLM (and no processing error detected).")
                 if reply_target_message_id:
-                    await context.bot.send_message(
+                    sent_assistant_message = await context.bot.send_message(
                         chat_id=chat_id,
                         text="Sorry, I couldn't process that request.", # Generic message for empty response
                         reply_to_message_id=reply_target_message_id,
@@ -333,7 +333,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             # Attempt to notify user if possible
             if reply_target_message_id:
                 with contextlib.suppress(Exception): # Suppress errors sending the error message
-                    await context.bot.send_message(
+                    sent_assistant_message = await context.bot.send_message(
                         chat_id=chat_id,
                         text="Sorry, an unexpected error occurred.",
                         reply_to_message_id=reply_target_message_id,
@@ -368,22 +368,34 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                     # Store assistant message (even if content is None/fallback, to capture reasoning/tools)
                     # Only store if processing didn't fail *before* generating a response structure
-                    if reply_target_message_id and not processing_error_traceback: # Don't store assistant msg if processing failed entirely
-                        bot_message_pseudo_id = reply_target_message_id + 1
-                        await self.storage.add_message_to_history(
-                            db_context=db_context_for_history,
-                            chat_id=chat_id,
-                            message_id=bot_message_pseudo_id,
-                            timestamp=datetime.now(timezone.utc),
-                            role="assistant",
-                            content=llm_response_content, # Could be None or fallback text
-                            tool_calls_info=tool_call_info,
-                            reasoning_info=reasoning_info, # Store reasoning
-                            error_traceback=None, # Error is stored with user message
-                        )
+                    # Also check if we actually sent a message to get its ID and timestamp
+                    if not processing_error_traceback:
+                        if sent_assistant_message:
+                            await self.storage.add_message_to_history(
+                                db_context=db_context_for_history,
+                                chat_id=chat_id,
+                                message_id=sent_assistant_message.message_id, # Use the actual sent message ID
+                                timestamp=sent_assistant_message.date, # Use the actual sent timestamp
+                                role="assistant",
+                                content=llm_response_content, # Could be None or fallback text
+                                tool_calls_info=tool_call_info,
+                                reasoning_info=reasoning_info, # Store reasoning
+                                error_traceback=None, # Error is stored with user message
+                            )
+                            logger.debug(f"Saved assistant response {sent_assistant_message.message_id} to history for chat {chat_id}")
+                        elif llm_response_content or tool_call_info or reasoning_info:
+                            # LLM generated something, but we didn't send a message (or failed to)
+                            # We should still log this state, potentially linking it to the user message
+                            logger.warning(
+                                f"LLM generated response/info for chat {chat_id} but no corresponding message was sent/recorded. "
+                                f"Content: {bool(llm_response_content)}, Tools: {bool(tool_call_info)}, Reasoning: {bool(reasoning_info)}. "
+                                f"This assistant state might be lost to history."
+                            )
+                            # TODO: Consider saving this state associated differently (e.g., user message ID + offset/flag)?
                     elif processing_error_traceback:
                          logger.info(f"Skipping storage of assistant message for chat {chat_id} due to processing error.")
             except Exception as db_err:
+
                 logger.error(
                     f"Failed to store batched message history in DB for chat {chat_id}: {db_err}",
                     exc_info=True,
