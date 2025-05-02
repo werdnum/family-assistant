@@ -55,7 +55,6 @@ class ProcessingService:
         timezone_str: str,
         max_history_messages: int,
         server_url: Optional[str], # Added server_url
-        history_max_age_hours: int,
         history_max_age_hours: int, # Recommended value is now 1
     ):
         """
