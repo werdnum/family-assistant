@@ -6,7 +6,7 @@ import inspect
 import zoneinfo
 from dataclasses import dataclass
 from datetime import datetime, timezone, date, time
-from typing import List, Dict, Any, Optional, Protocol, Callable, Awaitable, Set
+from typing import List, Dict, Any, Optional, Protocol, Callable, Awaitable, Set, Tuple # Added Tuple
 from zoneinfo import ZoneInfo
 
 from contextlib import AsyncExitStack # Import AsyncExitStack
@@ -40,10 +40,10 @@ class MCPToolsProvider:
     def __init__(
         self,
         mcp_server_configs: Dict[str, Dict[str, Any]], # Expects dict {server_id: config}
-        mcp_client: Optional[Client] = None, # Optional pre-configured MCP Client (not used for stdio)
+        # mcp_client: Optional[Client] = None, # Removed unused parameter and type hint
     ):
         self._mcp_server_configs = mcp_server_configs
-        # self._mcp_client = mcp_client # Client not directly used for stdio connections
+        # self._mcp_client = None # Client not directly used for stdio connections
         self._sessions: Dict[str, ClientSession] = {}
         self._tool_map: Dict[str, str] = {} # Map tool name -> server_id
         self._definitions: List[Dict[str, Any]] = []
