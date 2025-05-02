@@ -55,6 +55,13 @@ document.addEventListener('DOMContentLoaded', () => {
             return; // Don't initialize editor if schema fails
         }
 
+        // Check if the global JSONEditor (from @json-editor/json-editor) is loaded
+        if (typeof JSONEditor === 'undefined') {
+             console.error(`JSONEditor library not loaded for tool ${toolName}. Check script loading order in HTML.`);
+             editorContainer.innerHTML = '<p class="error">Error: Input editor library failed to load.</p>';
+             return; // Stop initialization for this form
+        }
+
         // Initialize JSON Editor (for input)
         // Use html theme as it requires no external CSS framework
         const argsEditorInstance = new JSONEditor(editorContainer, {
@@ -110,4 +117,3 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 });
-
