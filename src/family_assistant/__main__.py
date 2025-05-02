@@ -194,6 +194,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         "llm_parameters": {},
         "prompts": {},
         "mcp_config": {"mcpServers": {}},  # Default empty MCP config
+        "server_url": "http://localhost:8000", # Default server URL
     }
     logger.info("Initialized config with code defaults.")
 
@@ -224,6 +225,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     config_data["model"] = os.getenv("LLM_MODEL", config_data["model"])
     config_data["embedding_model"] = os.getenv("EMBEDDING_MODEL", config_data["embedding_model"])
     config_data["embedding_dimensions"] = int(os.getenv("EMBEDDING_DIMENSIONS", str(config_data["embedding_dimensions"])))
+    config_data["server_url"] = os.getenv("SERVER_URL", config_data["server_url"]) # Load SERVER_URL
     config_data["timezone"] = os.getenv("TIMEZONE", config_data["timezone"])
     config_data["litellm_debug"] = os.getenv("LITELLM_DEBUG", str(config_data["litellm_debug"])).lower() in ("true", "1", "yes")
 
@@ -541,6 +543,7 @@ async def main_async(
         timezone_str=config["timezone"],
         max_history_messages=config["max_history_messages"],
         history_max_age_hours=config["history_max_age_hours"],
+        server_url=config["server_url"], # Pass server URL
     )
     logger.info(f"ProcessingService initialized with configuration.")
 

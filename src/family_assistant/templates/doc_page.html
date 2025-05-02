@@ -13,17 +13,17 @@
     <header>
         <h1>{{ title | default("Documentation") }}</h1>
         <nav>
-            <a href="/">Home</a>
+            <a href="{{ server_url }}/">Home</a> <!-- Use absolute URL -->
             <span>|</span>
-            <a href="/history">History</a>
+            <a href="{{ server_url }}/history">History</a>
             <span>|</span>
-            <a href="/tasks">Tasks</a>
+            <a href="{{ server_url }}/tasks">Tasks</a>
             <span>|</span>
-            <a href="/vector-search">Vector Search</a>
+            <a href="{{ server_url }}/vector-search">Vector Search</a>
             <span>|</span>
             <span>Docs:</span>
             {% for doc_file in available_docs %}
-            <a href="/docs/{{ doc_file }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a>
+            <a href="{{ server_url }}/docs/{{ doc_file }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a>
             {% endfor %}
         </nav>
     </header>
