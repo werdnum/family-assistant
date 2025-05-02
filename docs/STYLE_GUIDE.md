@@ -8,7 +8,41 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Aim for clarity and readability.
 *   Use type hints consistently.
 *   Keep functions and methods focused and concise.
-*   Write code as it should appear in the repository. Do not comment out code or leave comments explaining your changes. That's what commit messages are for.
+
+
+## Appropriate use of comments
+
+*   **Purpose:** Use comments primarily to explain *why* something is being done, especially if the reason is not immediately obvious from the code itself. Avoid comments that merely explain *what* the code does, as the code should ideally be self-explanatory.
+*   **Target Audience:** Write comments for future developers (including your future self) who might need to understand the reasoning behind a particular implementation choice or a non-obvious piece of logic.
+*   **Avoid Redundancy:** Do not use comments to reiterate steps that are already clear from the code. Commit messages explain the *change* being made, tracking the evolution; comments explain the state of the code *as it is*.
+*   **Docstrings:** Use docstrings (following PEP 257) for modules, classes, functions, and methods to explain their purpose, arguments, and return values. These are for documenting the public API and usage, distinct from implementation comments.
+
+Write code as it should appear in the repository. Do not comment out code or leave comments explaining your changes. That's what commit messages are for.
+
+Examples
+
+BAD:
+
+```python
+import yaml # Added YAML import for YAMLing
+```
+
+GOOD:
+
+```python
+import yaml
+```
+
+BAD:
+
+```python
+# func do_the_thing():
+# ... moved to thing_doer.py
+```
+
+GOOD:
+
+Nothing - just remove the function.
 
 ## Design and Testability
 
@@ -17,18 +51,10 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   **Test Strategy Focus:** Prioritize realistic integration and functional tests that verify the behavior of components working together. Use `testcontainers` for dependencies like databases where possible. While unit tests have their place for complex, isolated logic, the primary goal is to ensure the system works correctly end-to-end.
 *   **Testable Core Logic:** Separate core application logic (e.g., processing a user request, handling a task) from interface-specific code (e.g., Telegram API interactions, FastAPI request/response handling). Test the core logic directly, making the interface layers thin wrappers.
 
-## Comments and Docstrings
-
-*   **Purpose:** Use comments primarily to explain *why* something is being done, especially if the reason is not immediately obvious from the code itself. Avoid comments that merely explain *what* the code does, as the code should ideally be self-explanatory.
-*   **Target Audience:** Write comments for future developers (including your future self) who might need to understand the reasoning behind a particular implementation choice or a non-obvious piece of logic.
-*   **Avoid Redundancy:** Do not use comments to reiterate steps that are already clear from the code. Commit messages explain the *change* being made, tracking the evolution; comments explain the state of the code *as it is*.
-*   **Docstrings:** Use docstrings (following PEP 257) for modules, classes, functions, and methods to explain their purpose, arguments, and return values. These are for documenting the public API and usage, distinct from implementation comments.
-
 ## Naming Conventions
 
 *   Use `snake_case` for variables, functions, and methods.
 *   Use `PascalCase` for classes.
-
 *   Use `UPPER_SNAKE_CASE` for module-level constants.
 
 ## Imports
