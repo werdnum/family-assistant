@@ -21,8 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     testForms.forEach(form => {
-        // Removed redundant variable declarations here, using the ones below
-
+        // Define variables needed within the event listener scope here
         const toolName = form.dataset.toolName;
         const editorContainerId = `args-editor-${form.querySelector('button').id.split('-').pop() || form.closest('.tool-card').id.split('-').pop() || Math.random().toString(36).substring(7)}`; // Derive index or use random for ID
         const argsEditorContainer = form.querySelector(`#${editorContainerId.startsWith('args-editor-') ? editorContainerId : `args-editor-${editorContainerId}`}`); // Find the editor container dynamically
@@ -49,12 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
         form.addEventListener('submit', async (event) => {
             event.preventDefault(); // Prevent default form submission
 
-            // Use variables defined outside the listener (toolName, resultContainer, submitButton, argsEditorInstance)
-            if (!argsEditorInstance) {
-                resultContainer.innerHTML = '<p class="error">Arguments editor not initialized.</p>';
-                return;
-            }
-
+            // Use variables defined outside the listener (toolName, resultContainer, submitButton, argsEditorInstance) - check editor instance first
 
             // Disable button and clear previous results
             submitButton.disabled = true;
@@ -63,6 +57,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Get content from the JSON editor instance
             let argsJson;
+            // Ensure editor is initialized before trying to get data
+            if (!argsEditorInstance) {
+                resultContainer.innerHTML = '<p class="error">Arguments editor not initialized.</p>';
+                submitButton.disabled = false; // Re-enable button
+                submitButton.textContent = 'Test Tool';
+                return;
+            }
             try {
                 const content = argsEditorInstance.get(); // Get content from editor
                 // Check if content is text or json and handle appropriately
@@ -76,6 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // --- API Call ---
+            let resultData; // Declare resultData outside the try block
              try {
                  const response = await fetch(`/api/tools/execute/${encodeURIComponent(toolName)}`, {
                      method: 'POST',
@@ -86,11 +88,15 @@ document.addEventListener('DOMContentLoaded', () => {
                      body: JSON.stringify({ arguments: argsJson })
                  });
 
+                // Always try to parse JSON, even on error, as API might return error details
+                resultData = await response.json();
+
                 // Clear the "Running..." message before adding the editor
                 resultContainer.innerHTML = '';
 
                 // Display result using vanilla-jsoneditor
                 new createJSONEditor({
+                    // IMPORTANT: Ensure resultData is defined here
                     target: resultContainer,
                     props: {
                         content: { json: resultData },
