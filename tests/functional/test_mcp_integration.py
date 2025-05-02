@@ -203,6 +203,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
+        server_url=None, # Added missing argument
     )
 
     # --- Execute the Request ---
@@ -331,8 +332,8 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
-    dummy_history_age = 24
-    processing_service = ProcessingService(llm_client=llm_client, tools_provider=composite_provider, prompts=dummy_prompts, calendar_config=dummy_calendar_config, timezone_str=dummy_timezone_str, max_history_messages=dummy_max_history, history_max_age_hours=dummy_history_age)
+    dummy_history_age = 24 # Added missing argument
+    processing_service = ProcessingService(llm_client=llm_client, tools_provider=composite_provider, prompts=dummy_prompts, calendar_config=dummy_calendar_config, timezone_str=dummy_timezone_str, max_history_messages=dummy_max_history, history_max_age_hours=dummy_history_age, server_url=None)
 
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call (SSE) ---")
