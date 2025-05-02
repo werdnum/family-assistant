@@ -385,11 +385,9 @@ class ProcessingService:
                     logger.warning(
                         f"Expected list for raw_tool_calls_info, got {type(raw_info_list)}. Skipping tool call reconstruction."
                     )
-                # Skip adding the original combined message dictionary 'msg' as we added parts separately
             elif msg["role"] != "error": # Don't include previous error messages in history sent to LLM
                 messages.append({"role": msg["role"], "content": msg["content"] or ''})
 
-        # messages.extend(history_messages) # Removed this line, processing is now done above
         logger.debug(
             f"Processed {len(history_messages)} DB history messages into LLM format (excluding 'error' role)."
         )
