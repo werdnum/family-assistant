@@ -52,6 +52,12 @@ from family_assistant.llm import (
 # Import Embedding interface/clients
 import family_assistant.embeddings as embeddings
 from family_assistant.embeddings import (
+    # --- Embedding Imports ---
+    EmbeddingGenerator,
+    LiteLLMEmbeddingGenerator,
+    SentenceTransformerEmbeddingGenerator, # If available
+    MockEmbeddingGenerator, # For testing
+)
     EmbeddingGenerator,
     LiteLLMEmbeddingGenerator,
     SentenceTransformerEmbeddingGenerator, # If available
@@ -91,6 +97,10 @@ from family_assistant.storage import (
 # Import the whole storage module for task queue functions etc.
 from family_assistant import storage
 from family_assistant.storage.context import (
+    # --- Schema Generation Imports ---
+    GenerationConfiguration,
+    generate_from_schema,
+)
     DatabaseContext,
     get_db_context,
 )  # Import DatabaseContext and getter
@@ -494,6 +504,25 @@ async def main_async(
     # Ensure the confirming provider loads its definitions (identifies tools needing confirmation)
     tool_definitions = await confirming_provider.get_tool_definitions()
     logger.info("ConfirmingToolsProvider initialized and definitions loaded.")
+
+    # --- Generate HTML for Tool Schemas ---
+    # Configure json-schema-for-humans (using 'flat' template for simplicity)
+    schema_gen_config = GenerationConfiguration(template_name='flat')
+    for tool_def in tool_definitions:
+        parameters_html = "<p>No parameters defined.</p>" # Default
+        schema_dict = tool_def.get("function", {}).get("parameters")
+        tool_name = tool_def.get("function", {}).get("name", "UnknownTool")
+        if schema_dict and isinstance(schema_dict, dict) and schema_dict.get("properties"): # Check if schema exists and has properties
+            try:
+                # Generate HTML from the schema dictionary
+                parameters_html = generate_from_schema(schema_dict, config=schema_gen_config)
+            except Exception as e:
+                logger.error(f"Failed to generate HTML schema for tool '{tool_name}': {e}", exc_info=True)
+                parameters_html = f"<pre>Error generating schema HTML: {html.escape(str(e))}</pre>"
+        elif schema_dict:
+             parameters_html = "<p>Tool has parameters defined, but the schema structure might be empty or invalid.</p>"
+
+        tool_def['parameters_html'] = parameters_html # Add the generated HTML to the dict
 
     # --- Store tool definitions in app state for web server access ---
     fastapi_app.state.tool_definitions = tool_definitions
