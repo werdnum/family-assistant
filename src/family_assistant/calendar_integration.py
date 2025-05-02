@@ -154,7 +154,10 @@ def parse_event(event_data: str, timezone_str: Optional[str] = None) -> Optional
 # --- Core Fetching Functions ---
 
 
-async def _fetch_ical_events_async(ical_urls: List[str]) -> List[Dict[str, Any]]:
+async def _fetch_ical_events_async(
+    ical_urls: List[str],
+    timezone_str: str # Added timezone string
+) -> List[Dict[str, Any]]:
     """Asynchronously fetches and parses events from a list of iCal URLs."""
     all_events = []
     async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
@@ -189,7 +192,8 @@ async def _fetch_ical_events_async(ical_urls: List[str]) -> List[Dict[str, Any]]
                 for component in cal:
                     if component.name.upper() == "VEVENT":
                         parsed = parse_event(
-                            component.serialize()
+                            component.serialize(),
+                            timezone_str=timezone_str # Pass timezone here
                         )  # Reuse existing parser
                         if parsed:
                             all_events.append(parsed)
@@ -346,7 +350,8 @@ async def fetch_upcoming_events(
         ical_urls = ical_config.get("urls", [])
         if ical_urls:
             logger.debug("Scheduling asynchronous iCal fetch.")
-            ical_task = asyncio.create_task(_fetch_ical_events_async(ical_urls))
+            # Pass timezone_str to the iCal fetcher
+            ical_task = asyncio.create_task(_fetch_ical_events_async(ical_urls, timezone_str))
             tasks.append(ical_task)
         else:
             logger.warning(
@@ -379,12 +384,20 @@ async def fetch_upcoming_events(
 
     # --- Sort Combined Events ---
     def get_sort_key(event):
-        """Converts date to datetime for sorting."""
+        """Converts date to timezone-aware datetime for sorting."""
         start_val = event["start"]
         if isinstance(start_val, date) and not isinstance(start_val, datetime):
-            # Convert date to datetime at midnight for comparison
-            return datetime.combine(start_val, time.min)
-        # Assume datetime objects are directly comparable (might need tz handling if mixed)
+            # Convert date to datetime at midnight *in the local timezone*
+            try:
+                local_tz = ZoneInfo(timezone_str)
+            except Exception:
+                local_tz = ZoneInfo("UTC") # Fallback
+            return datetime.combine(start_val, time.min, tzinfo=local_tz)
+        elif isinstance(start_val, datetime) and start_val.tzinfo is None:
+            # This case *should* be handled by parse_event now, but handle defensively
+            logger.warning(f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying fallback timezone.")
+            local_tz = ZoneInfo(timezone_str) # Use local_tz defined above or re-fetch
+            return start_val.replace(tzinfo=local_tz)
         return start_val
 
     try:
