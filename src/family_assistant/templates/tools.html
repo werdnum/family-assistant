@@ -15,6 +15,10 @@
 
         .tool-card { margin-bottom: 1.5rem; padding: 1rem; border: 1px solid var(--border); border-radius: 5px; background-color: var(--bg-secondary); }
         .tool-card h3 { margin-top: 0; }
+        /* Style for the test form */
+        .tool-test-form textarea { width: 100%; min-height: 100px; font-family: monospace; margin-bottom: 0.5rem; }
+        .tool-result-container { margin-top: 0.5rem; border: 1px dashed var(--border); padding: 0.5rem; min-height: 50px; background-color: var(--bg); }
+        .tool-result-container .error { color: var(--error); font-weight: bold;}
     </style>
 </head>
 <body>
@@ -46,6 +50,19 @@
                     {# Render the generated HTML schema (passed from web_server) using the 'safe' filter #}
                     <div style="margin-top: 0.5rem;">{{ tool.parameters_html | safe }}</div>
                 </details>
+                <details style="margin-top: 1rem;">
+                    <summary style="cursor: pointer; font-weight: bold;">Test Tool</summary>
+                    <div style="margin-top: 0.5rem;">
+                        {# Pass tool name via data attribute #}
+                        <form class="tool-test-form" data-tool-name="{{ tool.function.name }}">
+                            <label for="args-{{ loop.index }}">Arguments (JSON):</label>
+                            <textarea id="args-{{ loop.index }}" name="arguments_json" placeholder='{"parameter_name": "value"}'></textarea>
+                            <button type="submit">Test Tool</button>
+                        </form>
+                        {# Container for the result JSON editor #}
+                        <div class="tool-result-container" id="result-{{ loop.index }}"></div>
+                    </div>
+                </details>
             </article>
         {% endfor %}
     {% else %}
@@ -54,5 +71,6 @@
 </main>
 
 </body>
-
+<!-- Link the tool tester JavaScript -->
+<script type="module" src="/static/js/tool_tester.js"></script>
 </html>

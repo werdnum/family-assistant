@@ -500,6 +500,10 @@ async def main_async(
     # --- Store tool definitions in app state for web server access ---
     fastapi_app.state.tool_definitions = tool_definitions
     logger.info(f"Stored {len(tool_definitions)} tool definitions in FastAPI app state.")
+    # --- Store the actual tool provider instance for execution ---
+    fastapi_app.state.tools_provider = confirming_provider # Store the confirming provider
+    logger.info("Stored ToolsProvider instance in FastAPI app state.")
+
 
     # --- Instantiate Processing Service ---
     processing_service = ProcessingService(
