@@ -122,7 +122,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
                         {
-                            "time_str": SOURCE_TIME, # Argument name from mcp-server-time
+                            "time": SOURCE_TIME, # Argument name from mcp-server-time
                             "source_timezone": SOURCE_TZ,
                             "target_timezone": TARGET_TZ,
                         }
@@ -272,7 +272,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
                 "function": {
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
-                        {"time_str": SOURCE_TIME, "source_timezone": SOURCE_TZ, "target_timezone": TARGET_TZ} # Use correct arg names
+                        {"time": SOURCE_TIME, "source_timezone": SOURCE_TZ, "target_timezone": TARGET_TZ} # Use correct arg names
                     ),
                 },
             }
