@@ -39,11 +39,11 @@ TEST_USER_NAME = "MCPTester"
 # --- Time Conversion Details ---
 SOURCE_TIME = "14:30"
 SOURCE_TZ = "America/New_York"
-TARGET_TZ = "Europe/London"
-EXPECTED_CONVERTED_TIME_FRAGMENT = "19:30" # Assuming a 5-hour difference
+TARGET_TZ = "America/Los_Angeles"
+EXPECTED_CONVERTED_TIME_FRAGMENT = "11:30"
 
 # Assume MCP server ID 'time' maps to tool 'convert_time_zone'
-MCP_TIME_TOOL_NAME = "mcp_time_convert_time_zone"
+MCP_TIME_TOOL_NAME = "convert_time"
 
 def find_free_port():
     """Finds an available TCP port on localhost."""
@@ -81,7 +81,7 @@ async def mcp_proxy_server():
     logger.info("MCP proxy server stopped.")
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion(test_db_engine):
+async def test_mcp_time_conversion_stdio(test_db_engine):
     """
     Tests the end-to-end flow involving an MCP tool call:
     1. User asks to convert time between timezones.
@@ -104,7 +104,7 @@ async def test_mcp_time_conversion(test_db_engine):
             "convert" in last_text
             and SOURCE_TIME in last_text
             and "new york" in last_text # Allow fuzzy matching
-            and "london" in last_text
+            and "los angeles" in last_text
             and tools is not None
             and any(tool.get("function", {}).get("name") == MCP_TIME_TOOL_NAME for tool in tools)
         )
@@ -119,9 +119,9 @@ async def test_mcp_time_conversion(test_db_engine):
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
                         {
-                            "time_str": SOURCE_TIME,
-                            "source_tz": SOURCE_TZ,
-                            "target_tz": TARGET_TZ,
+                            "time": SOURCE_TIME,
+                            "source_timezone": SOURCE_TZ,
+                            "target_timezone": TARGET_TZ,
                         }
                     ),
                 },
@@ -201,7 +201,7 @@ async def test_mcp_time_conversion(test_db_engine):
 
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call ---")
-    user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to London time ({TARGET_TZ})"
+    user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ})"
     user_request_trigger = [{"type": "text", "text": user_request_text}]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
@@ -280,7 +280,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
                 "function": {
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
-                        {"time_str": SOURCE_TIME, "source_tz": SOURCE_TZ, "target_tz": TARGET_TZ}
+                        {"time": SOURCE_TIME, "source_timezone": SOURCE_TZ, "target_timezone": TARGET_TZ}
                     ),
                 },
             }
