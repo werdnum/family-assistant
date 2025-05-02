@@ -30,12 +30,13 @@ from family_assistant.storage import (
     get_grouped_message_history,
     get_all_tasks,
 )
+# Import protocol for type hinting when creating the dict for add_document
+from family_assistant.storage.vector import (
+    Document,
+)
 # Import vector search components
 from family_assistant.storage.vector_search import (
     query_vector_store,
-    # Import protocol for type hinting when creating the dict for add_document
-    from family_assistant.storage.vector import Document
-from family_assistant.tools import _scan_user_docs # Import the scanner
     VectorSearchQuery,
     MetadataFilter,
 )
@@ -43,8 +44,8 @@ from family_assistant.tools import _scan_user_docs # Import the scanner
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import EmbeddingGenerator, LiteLLMEmbeddingGenerator # Example
 from pydantic import BaseModel, Field # For structuring results if needed, added Field
-# Import Document protocol for type hinting when creating the dict for add_document
-from family_assistant.storage.vector import Document
+# Import the user docs scanner
+from family_assistant.tools import _scan_user_docs # Import the scanner
 
 logger = logging.getLogger(__name__)
 
