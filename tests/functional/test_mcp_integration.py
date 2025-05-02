@@ -72,7 +72,8 @@ async def mcp_proxy_server():
     ]
 
     logger.info(f"Starting MCP proxy server: {' '.join(command)}")
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Let subprocess stdout/stderr go to parent (test runner) to avoid pipe buffers filling up
+    process = subprocess.Popen(command)
     time.sleep(3) # Give server and proxy time to start up
 
     yield sse_url # Provide the SSE URL to the test
