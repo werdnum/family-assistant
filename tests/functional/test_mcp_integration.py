@@ -299,15 +299,28 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     # --- Instantiate Dependencies ---
     local_provider = LocalToolsProvider(definitions=local_tools_definition, implementations=local_tool_implementations)
 
-    # Hard-coded MCP configuration using SSE transport pointing to the proxy.
+    composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
+
+    # Processing Service (reuse settings)
+    dummy_prompts = {"system_prompt": "Test system prompt for MCP SSE."}
+    dummy_calendar_config = {}
+    dummy_timezone_str = "UTC"
+    dummy_max_history = 5
+    dummy_history_age = 24
+    processing_service = ProcessingService(llm_client=llm_client, tools_provider=composite_provider, prompts=dummy_prompts, calendar_config=dummy_calendar_config, timezone_str=dummy_timezone_str, max_history_messages=dummy_max_history, history_max_age_hours=dummy_history_age)
+
+    # --- Instantiate Dependencies ---
+    local_provider = LocalToolsProvider(definitions=local_tools_definition, implementations=local_tool_implementations)
+
+    # Define MCP config *inside* the test after the fixture yielded the URL
     mcp_config = {
         "time_sse": { # Use a different server ID to avoid clashes if needed
             "transport": "sse",
-            "url": mcp_proxy_server # URL provided by the fixture
+            "url": mcp_proxy_server # URL is now a string from the fixture
         }
     }
     mcp_provider = MCPToolsProvider(mcp_server_configs=mcp_config)
-    await mcp_provider.initialize()
+    await mcp_provider.initialize() # Connect and fetch definitions
 
     composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
 
