@@ -78,9 +78,14 @@ async def mcp_proxy_server():
     yield sse_url # Provide the SSE URL to the test
 
     logger.info("Stopping MCP proxy server...")
-    # Try sending SIGINT (Ctrl+C) for a potentially more graceful shutdown
-    process.send_signal(signal.SIGINT)
-    process.wait(timeout=5) # Wait for graceful shutdown
+    try:
+        # Try sending SIGINT (Ctrl+C) for a potentially more graceful shutdown
+        process.send_signal(signal.SIGINT)
+        process.wait(timeout=5) # Wait for graceful shutdown
+    except subprocess.TimeoutExpired:
+        logger.warning("MCP proxy did not terminate after SIGINT, sending SIGKILL.")
+        process.kill() # Force kill if SIGINT failed
+        process.wait() # Wait for kill to complete
     logger.info("MCP proxy server stopped.")
 
 @pytest.mark.asyncio
