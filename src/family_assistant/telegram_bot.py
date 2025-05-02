@@ -20,6 +20,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Update,
+    Message,
 )
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
@@ -228,7 +229,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         llm_response_content: Optional[str] = None
         tool_call_info: Optional[List[Dict[str, Any]]] = None
         reasoning_info: Optional[Dict[str, Any]] = None # Added
-        sent_assistant_message: Optional[telegram.Message] = None # To store the sent message object
+        sent_assistant_message: Optional[Message] = None # To store the sent message object
         processing_error_traceback: Optional[str] = None # Added
         logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
