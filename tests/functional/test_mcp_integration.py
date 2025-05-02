@@ -4,8 +4,6 @@ import asyncio
 import logging
 import json
 from typing import List, Dict, Any, Optional, Callable, Tuple
-import subprocess
-import time
 from unittest.mock import MagicMock, AsyncMock
 
 # Import necessary components from the application
@@ -44,26 +42,11 @@ EXPECTED_CONVERTED_TIME_FRAGMENT = "19:30" # Assuming a 5-hour difference
 # Assume MCP server ID 'time' maps to tool 'convert_time_zone'
 MCP_TIME_TOOL_NAME = "mcp_time_convert_time_zone"
 
-# --- Fixture to manage MCP server subprocess ---
-@pytest.fixture(scope="function") # Use function scope to ensure clean server for each test
-async def mcp_time_server():
-    """Starts mcp-server-time as a subprocess for stdio communication."""
-    # Command as expected by MCPToolsProvider for stdio transport
-    command = ["mcp-server-time"]
-
-    logger.info(f"Starting MCP time server: {' '.join(command)}")
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    time.sleep(2) # Give server time to start up
-
-    yield # Just manage the lifecycle, no value needed by the test directly
-
-    logger.info("Stopping MCP time server...")
-    process.terminate()
-    process.wait(timeout=5) # Wait for graceful shutdown
-    logger.info("MCP time server stopped.")
+# Note: This test assumes 'mcp-server-time' command is installed and available
+# in the PATH when the test runs, as managed by dev dependencies.
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion(test_db_engine, mcp_time_server): # Keep fixture param to ensure it runs
+async def test_mcp_time_conversion(test_db_engine):
     """
     Tests the end-to-end flow involving an MCP tool call:
     1. User asks to convert time between timezones.
@@ -144,7 +127,7 @@ async def test_mcp_time_conversion(test_db_engine, mcp_time_server): # Keep fixt
     )
 
     # Hard-coded MCP configuration using stdio transport.
-    # The fixture ensures the 'mcp-server-time' command is runnable.
+    # Assumes 'mcp-server-time' command is available via dev dependencies.
     mcp_config = {
         "time": {
             "command": "mcp-server-time" # Command to execute for stdio
