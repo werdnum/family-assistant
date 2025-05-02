@@ -7,9 +7,14 @@
     <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
     <link rel="stylesheet" href="/static/css/custom.css">
     <style>
+        /* Styles for json-schema-for-humans flat template */
+        .schema-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+        .schema-table th, .schema-table td { border: 1px solid var(--border); padding: 0.5rem; text-align: left; }
+        .schema-table th { background-color: var(--accent-bg); }
+        .schema-table code { background-color: var(--bg); padding: 0.1em 0.3em; border-radius: 3px; }
+
         .tool-card { margin-bottom: 1.5rem; padding: 1rem; border: 1px solid var(--border); border-radius: 5px; background-color: var(--bg-secondary); }
         .tool-card h3 { margin-top: 0; }
-        .tool-card pre { background-color: var(--bg); padding: 0.5rem; border-radius: 3px; white-space: pre-wrap; word-break: break-all; }
     </style>
 </head>
 <body>
@@ -36,7 +41,8 @@
                 <h3>{{ tool.function.name }}</h3>
                 <p>{{ tool.function.description }}</p>
                 <strong>Parameters:</strong>
-                <div id="params-{{ loop.index }}" class="json-editor-container"></div> <!-- Unique ID using loop index -->
+                {# Render the pre-generated HTML schema using the 'safe' filter #}
+                <div>{{ tool.parameters_html | safe }}</div>
             </article>
         {% endfor %}
     {% else %}
@@ -46,43 +52,5 @@
 
 </body>
 
-<!-- Load vanilla-jsoneditor -->
-<script type="module">
-    import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
-
-    function initializeEditor(targetId, jsonData) {
-        const target = document.getElementById(targetId);
-        if (!target) {
-            console.error(`Element with ID ${targetId} not found.`);
-            return;
-        }
-
-        // Tool parameters should be a valid JSON object (schema)
-        let content = { json: jsonData };
-
-        try {
-            new createJSONEditor({
-                target: target,
-                props: {
-                    content,
-                    readOnly: true,
-                    mainMenuBar: false,
-                    navigationBar: false,
-                    statusBar: false,
-                    mode: 'tree' // Tree mode is good for schemas
-                }
-            });
-        } catch (error) {
-             console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
-             // Fallback display
-             target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`;
-        }
-    }
-
-    {% for tool in tools %}
-        initializeEditor('params-{{ loop.index }}', {{ tool.function.parameters | tojson | safe }});
-    {% endfor %}
-
-</script>
 </html>
 
