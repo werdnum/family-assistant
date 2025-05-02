@@ -15,7 +15,7 @@ try:
 
     _SCHEMA_GENERATION_AVAILABLE = True
     # Configure once
-    _SCHEMA_GEN_CONFIG = GenerationConfiguration(template_name="flat")
+    _SCHEMA_GEN_CONFIG = GenerationConfiguration(template_name="flat", show_footer=False)
 except ImportError:
     _SCHEMA_GENERATION_AVAILABLE = False
     _SCHEMA_GEN_CONFIG = None # Type: ignore
