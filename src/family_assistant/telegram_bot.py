@@ -139,8 +139,24 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 f"You're not authorized to use this bot. Give your user ID `{user_id}` to the person who runs this bot."
             )
             return
+
+        # Use MarkdownV2 for formatting the list
+        welcome_message = (
+            "Hello\\! I'm your family assistant\\. Here's a quick look at what I can do:\n\n"
+            "• Answer questions about upcoming calendar events\n"
+            "• Add, modify, or delete calendar events\n"
+            "• Remember information you give me \\(add notes\\)\n"
+            "• Answer questions based on saved notes\n"
+            "• Search notes, emails, or documents \\(if configured\\)\n"
+            "• Summarize web pages \\(provide the full URL\\)\n"
+            "• Perform web searches\n"
+            "• Understand photos you send with questions\n"
+            "• Schedule follow\\-up reminders in this chat\n"
+            "• Control Home Assistant devices \\(if configured\\)\n\n"
+            "How can I help you today?"
+        )
         await update.message.reply_text(
-            f"Hello! I'm your family assistant. How can I help?"
+            welcome_message, parse_mode=ParseMode.MARKDOWN_V2
         )
 
     async def process_chat_queue(
@@ -817,4 +833,3 @@ class TelegramService:
                 )
         else:
             logger.info("Telegram application instance not found for shutdown.")
-
