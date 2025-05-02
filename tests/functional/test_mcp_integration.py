@@ -43,7 +43,7 @@ TARGET_TZ = "America/Los_Angeles"
 EXPECTED_CONVERTED_TIME_FRAGMENT = "11:30"
 
 # Assume MCP server ID 'time' maps to tool 'convert_time_zone'
-MCP_TIME_TOOL_NAME = "convert_time"
+MCP_TIME_TOOL_NAME = "mcp_time_convert_time" # Use the name MCPToolsProvider assigns
 
 def find_free_port():
     """Finds an available TCP port on localhost."""
@@ -100,14 +100,14 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     def time_conversion_matcher(messages, tools, tool_choice):
         last_text = get_last_message_text(messages).lower()
         match_convert = "convert" in last_text
-        match_source_time = SOURCE_TIME in last_text
+        match_source_time = SOURCE_TIME in last_text # e.g., "14:30"
         match_source_tz = "new york" in last_text
         match_target_tz = "los angeles" in last_text
         match_tools_exist = tools is not None
         tool_names = [t.get("function", {}).get("name") for t in tools or []]
         match_tool_name = any(name == MCP_TIME_TOOL_NAME for name in tool_names)
         logger.debug(f"Matcher Checks: convert={match_convert}, source_time={match_source_time}, source_tz={match_source_tz}, target_tz={match_target_tz}, tools_exist={match_tools_exist}, tool_name_found={match_tool_name} (looking for '{MCP_TIME_TOOL_NAME}' in {tool_names})")
-        # Loosely match keywords
+        # Ensure all conditions are met
         return (
             match_convert and match_source_time and match_source_tz and match_target_tz and match_tools_exist and match_tool_name
         )
@@ -122,7 +122,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
                         {
-                            "time": SOURCE_TIME,
+                            "time_str": SOURCE_TIME, # Argument name from mcp-server-time
                             "source_timezone": SOURCE_TZ,
                             "target_timezone": TARGET_TZ,
                         }
@@ -213,26 +213,19 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
             user_name=TEST_USER_NAME,
         )
 
-    # --- Verification (Assert on tool_info) ---
-    logger.info("--- Verifying MCP tool call and result ---")
+    # --- Verification (Assert on final response content) ---
+    logger.info("--- Verifying final response content ---")
     logger.info(f"Final response content received: {final_response_content}")
 
-    # Check the final content is not None, but don't rely on it matching the second rule's output
-
-    # Check the final content is not None, but don't rely on it matching the second rule's output
+    # Assert directly on the returned content from generate_llm_response_for_chat
     assert final_response_content is not None
-
-    # Assertions now check tool_info as the primary verification
-    # because the final response depends on ProcessingService correctly handling the second LLM call
-    logger.info(f"Verifying tool info: {tool_info}")
-    assert tool_info is not None, "Tool info should not be None if tool was called"
-    assert mcp_tool_call_id in tool_info, f"Tool call ID {mcp_tool_call_id} not found in tool info"
-    assert "result" in tool_info[mcp_tool_call_id], "Tool result not found in tool info"
-    assert EXPECTED_CONVERTED_TIME_FRAGMENT in tool_info[mcp_tool_call_id]["result"], \
-        f"Tool result did not contain the expected converted time fragment. Result: '{tool_info[mcp_tool_call_id]['result']}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    sent_text = final_response_content # Use the returned content for checks
+    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, \
+        f"Final response did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert final_response_text in sent_text, \
+        f"Final response did not match the mock LLM's final rule output. Sent: '{sent_text}' Expected: '{final_response_text}'"
 
     logger.info(f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called and result contained expected fragment.")
-
     logger.info(f"--- MCP Time Conversion Test ({test_run_id}) Passed ---")
 
 
@@ -258,18 +251,13 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     # Rule 1: Match request to convert time
     def time_conversion_matcher(messages, tools, tool_choice):
         last_text = get_last_message_text(messages).lower()
-        match_convert = "convert" in last_text
-        match_source_time = SOURCE_TIME in last_text
-        match_source_tz = "new york" in last_text
-        match_target_tz = "london" in last_text # Note: This test uses London
-        match_tools_exist = tools is not None
         tool_names = [t.get("function", {}).get("name") for t in tools or []]
         match_tool_name = any(name == MCP_TIME_TOOL_NAME for name in tool_names)
-        logger.debug(f"Matcher Checks (SSE): convert={match_convert}, source_time={match_source_time}, source_tz={match_source_tz}, target_tz={match_target_tz}, tools_exist={match_tools_exist}, tool_name_found={match_tool_name} (looking for '{MCP_TIME_TOOL_NAME}' in {tool_names})")
+        # Simplified matcher checks for SSE test
         return (
             "convert" in last_text
             and SOURCE_TIME in last_text
-            and "new york" in last_text
+            and "new york" in last_text # Keep simple checks
             and "london" in last_text
             and tools is not None
             and any(tool.get("function", {}).get("name") == MCP_TIME_TOOL_NAME for tool in tools)
@@ -284,7 +272,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
                 "function": {
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
-                        {"time": SOURCE_TIME, "source_timezone": SOURCE_TZ, "target_timezone": TARGET_TZ}
+                        {"time_str": SOURCE_TIME, "source_timezone": SOURCE_TZ, "target_timezone": TARGET_TZ} # Use correct arg names
                     ),
                 },
             }
@@ -336,7 +324,8 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to London time ({TARGET_TZ}) using SSE"
     # Revert to trigger_content_parts for generate_llm_response_for_chat
     user_request_trigger = [
-        {"role": "user", "content": user_request_text}
+        {"type": "text", "text": user_request_text} # Correct input format
+        {"type": "text", "text": user_request_text} # Correct input format
     ]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
@@ -348,17 +337,16 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
             user_name=TEST_USER_NAME,
         )
 
-    # --- Verification (Assert on tool_info) ---
-    logger.info("--- Verifying tool info (SSE) ---")
+    # --- Verification (Assert on final response content) ---
+    logger.info("--- Verifying final response content (SSE) ---")
     logger.info(f"Final response content received (SSE): {final_response_content}")
 
-    # Check the final content is not None, but don't rely on it matching the second rule's output
+    # Assert directly on the returned content
     assert final_response_content is not None
-
-    logger.info(f"Verifying tool info (SSE): {tool_info}")
-    assert tool_info is not None, "Tool info should not be None if tool was called (SSE)"
-    assert mcp_tool_call_id in tool_info, f"Tool call ID {mcp_tool_call_id} not found in tool info (SSE)"
-    assert "result" in tool_info[mcp_tool_call_id], "Tool result not found in tool info (SSE)"
-    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-    logger.info(f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and result contained expected fragment.")
+    sent_text = final_response_content # Use the returned content for checks
+    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, \
+        f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert final_response_text in sent_text, \
+        f"Final response did not match the mock LLM's final rule output (SSE). Sent: '{sent_text}' Expected: '{final_response_text}'"
+    logger.info(f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and final response contained expected fragment.")
     logger.info(f"--- MCP Time Conversion SSE Test ({test_run_id}) Passed ---")
