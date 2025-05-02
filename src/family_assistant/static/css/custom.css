@@ -303,6 +303,14 @@ a.button-link:hover {
     color: var(--error); /* Make text error color */
 }
 
+/* Styles for the @json-editor/json-editor arguments container */
+.json-editor-arguments-container {
+    display: block; /* Ensure it behaves as a block */
+    clear: both; /* Clear any potential internal floats */
+    min-height: 100px; /* Give it some minimum space */
+    /* border: 1px dashed cyan; */ /* Uncomment for debugging layout */
+}
+
 .tool-call-item {
     margin-bottom: 0.5rem;
     padding-bottom: 0.5rem;
