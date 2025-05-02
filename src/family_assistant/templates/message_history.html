@@ -41,8 +41,10 @@
                             <div class="tool-call-item">
                                 <strong>Tool:</strong> {{ tool_call.function_name }}<br>
                                 <strong>Call ID:</strong> {{ tool_call.call_id }}<br>
-                                <strong>Arguments:</strong><pre>{{ tool_call.arguments | tojson(indent=2) }}</pre>
-                                <strong>Response:</strong><pre>{{ tool_call.response_content }}</pre>
+                                <strong>Arguments:</strong>
+                                <div id="tool-args-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}" class="json-editor-container"></div>
+                                <strong>Response:</strong>
+                                <div id="tool-resp-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}" class="json-editor-container"></div>
                             </div>
                             {% if not loop.last %}<hr class="tool-separator">{% endif %}
                             {% endfor %}
@@ -52,7 +54,7 @@
                     {% if message.reasoning_info %}
                     <details class="reasoning-info-details">
                         <summary>Reasoning/Usage Info</summary>
-                        <pre class="reasoning-info-content">{{ message.reasoning_info | tojson(indent=2) }}</pre>
+                        <div id="reasoning-{{ chat_id }}-{{ message.message_id }}" class="json-editor-container reasoning-info-content"></div>
                     </details>
                     {% endif %}
                     {% if message.error_traceback %}
@@ -74,9 +76,65 @@
 </main>
 
 <!-- Optional Footer
-<footer>
-    <p>Family Assistant Message History</p>
-</footer>
+<footer> ... </footer>
 -->
+
+<!-- Load vanilla-jsoneditor -->
+<script type="module">
+    import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+
+    function initializeEditor(targetId, jsonData) {
+        const target = document.getElementById(targetId);
+        if (!target) {
+            console.error(`Element with ID ${targetId} not found.`);
+            return;
+        }
+        // Ensure jsonData is an object or attempt parsing if it's a string
+        let content = { json: undefined, text: undefined };
+        if (typeof jsonData === 'object' && jsonData !== null) {
+             content.json = jsonData;
+        } else if (typeof jsonData === 'string') {
+            try {
+                content.json = JSON.parse(jsonData); // Try parsing if it's a string representation
+            } catch (e) {
+                 console.warn(`Data for ${targetId} is not valid JSON, displaying as text:`, jsonData);
+                 content.text = jsonData; // Display as plain text if not valid JSON
+            }
+        } else {
+             console.warn(`Invalid data type for ${targetId}, displaying as text:`, jsonData);
+             content.text = String(jsonData); // Display as string representation
+        }
+
+        try {
+            new createJSONEditor({
+                target: target,
+                props: {
+                    content,
+                    readOnly: true,
+                    mainMenuBar: false,
+                    navigationBar: false,
+                    statusBar: false,
+                    // mode: content.json ? 'tree' : 'text' // Adjust mode based on content type
+                }
+            });
+        } catch (error) {
+             console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
+             target.textContent = `Error loading JSON Viewer: ${error.message}. Data: ${JSON.stringify(jsonData, null, 2)}`;
+        }
+    }
+
+    {% for chat_id, messages in history_by_chat.items() %}
+        {% for message in messages %}
+            {% if message.role == 'assistant' and message.tool_calls_info %}{% for tool_call in message.tool_calls_info %}
+            initializeEditor('tool-args-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}', {{ tool_call.arguments | tojson | safe }});
+            initializeEditor('tool-resp-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}', {{ tool_call.response_content | tojson | safe }}); // Assuming response is JSON or string
+            {% endfor %}{% endif %}
+            {% if message.reasoning_info %}
+            initializeEditor('reasoning-{{ chat_id }}-{{ message.message_id }}', {{ message.reasoning_info | tojson | safe }});
+            {% endif %}
+        {% endfor %}
+    {% endfor %}
+
+</script>
 </body>
 </html>

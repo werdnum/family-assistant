@@ -183,7 +183,7 @@
                 {% if item.doc_metadata %}
                  <details> {# Keep metadata closed by default #}
                     <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Metadata</summary>
-                    <pre class="metadata-display">{{ item.doc_metadata | tojson(indent=2) }}</pre>
+                    <div id="metadata-{{ item.embedding_id }}" class="json-editor-container metadata-display"></div>
                  </details>
                 {% endif %}
 
@@ -213,6 +213,7 @@
 </main>
 
 <script>
+    // --- Existing script for metadata filters ---
     const filtersContainer = document.getElementById('metadata-filters-container');
     const addFilterBtn = document.getElementById('add-filter-btn');
     // Get distinct keys from template (passed by server) - ensure proper escaping if keys contain special chars
@@ -270,6 +271,51 @@
     //     filtersContainer.appendChild(createFilterRow());
     // }
 
+    // --- Script for JSON Editor Initialization ---
+    // Note: This needs to run after the results are rendered.
+    // Placing it here ensures the main script tag runs last.
+    // We need to import the editor again within this script block scope if not already global.
+    // Or better, wrap the editor init logic in a function and call it after the results loop.
+</script>
+
+<script type="module">
+    import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+
+    function initializeJsonEditorForResult(targetId, jsonData) {
+        const target = document.getElementById(targetId);
+        if (!target || !jsonData) {
+             if (!target) console.error(`Element with ID ${targetId} not found.`);
+            return;
+        }
+
+        let content = { json: jsonData }; // Metadata should be a JSON object
+
+        try {
+            new createJSONEditor({
+                target: target,
+                props: {
+                    content,
+                    readOnly: true,
+                    mainMenuBar: false,
+                    navigationBar: false,
+                    statusBar: false,
+                    mode: 'tree' // Tree mode is good for metadata
+                }
+            });
+        } catch (error) {
+             console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
+             target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`; // Fallback
+        }
+    }
+
+    // Initialize editors for each result item's metadata
+    {% if results %}
+    {% for item in results %}
+        {% if item.doc_metadata %}
+        initializeJsonEditorForResult('metadata-{{ item.embedding_id }}', {{ item.doc_metadata | tojson | safe }});
+        {% endif %}
+    {% endfor %}
+    {% endif %}
 </script>
 
 </body>
