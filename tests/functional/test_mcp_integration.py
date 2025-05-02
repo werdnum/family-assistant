@@ -81,7 +81,7 @@ async def mcp_proxy_server():
     logger.info("MCP proxy server stopped.")
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion_stdio(test_db_engine, mock_application, mock_bot): # Add mocks as args
+async def test_mcp_time_conversion_stdio(test_db_engine):
     """
     Tests the end-to-end flow involving an MCP tool call:
     1. User asks to convert time between timezones.
@@ -193,6 +193,12 @@ async def test_mcp_time_conversion_stdio(test_db_engine, mock_application, mock_
         history_max_age_hours=dummy_history_age,
     )
 
+    # --- Instantiate Mocks ---
+    mock_bot = AsyncMock()
+    mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=10001)) # Mock sent message ID
+    mock_application = MagicMock()
+    mock_application.bot = mock_bot
+
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ})"
@@ -236,7 +242,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine, mock_application, mock_
 
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server, mock_application, mock_bot): # Add mocks
+async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     """
     Tests the end-to-end flow involving an MCP tool call via SSE transport,
     using mcp-proxy to forward to mcp-server-time (stdio).
@@ -321,6 +327,12 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server, mock_ap
     dummy_max_history = 5
     dummy_history_age = 24
     processing_service = ProcessingService(llm_client=llm_client, tools_provider=composite_provider, prompts=dummy_prompts, calendar_config=dummy_calendar_config, timezone_str=dummy_timezone_str, max_history_messages=dummy_max_history, history_max_age_hours=dummy_history_age)
+
+    # --- Instantiate Mocks ---
+    mock_bot = AsyncMock()
+    mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=10002)) # Mock sent message ID
+    mock_application = MagicMock()
+    mock_application.bot = mock_bot
 
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call (SSE) ---")
