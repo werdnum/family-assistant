@@ -124,42 +124,6 @@ MAX_HISTORY_MESSAGES = 5  # Number of recent messages to include (excluding curr
 HISTORY_MAX_AGE_HOURS = 24  # Only include messages from the last X hours
 CONFIG_FILE_PATH = "config.yaml" # Path to the new config file
 
-# Events are now imported directly
-# shutdown_event = task_worker.shutdown_event # Removed
-# new_task_event = task_worker.new_task_event # Removed
-
-# --- Global Variables ---
-# Configuration will be loaded into a dictionary instead of individual globals
-# ALLOWED_CHAT_IDS: list[int] = [] # Replaced by config dict
-# DEVELOPER_CHAT_ID: Optional[int] = None # Replaced by config dict
-# PROMPTS: Dict[str, str] = {} # Replaced by config dict
-# CALENDAR_CONFIG: Dict[str, Any] = {} # Replaced by config dict
-# TIMEZONE_STR: str = "UTC" # Replaced by config dict
-# APP_CONFIG: Dict[str, Any] = {} # Replaced by config dict
-
-# State variables remain global for now
-# mcp_sessions: Dict[str, ClientSession] = ( # REMOVED - Managed by MCPToolsProvider
-#     {}
-# )
-# --- State for message batching (Moved to TelegramBotHandler) ---
-# chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-# message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
-# processing_tasks: Dict[int, asyncio.Task] = {}
-# mcp_tools: List[Dict[str, Any]] = [] # REMOVED - Managed by MCPToolsProvider
-# tool_name_to_server_id: Dict[str, str] = {} # REMOVED - Managed by MCPToolsProvider
-# mcp_exit_stack = AsyncExitStack() # REMOVED - Managed by MCPToolsProvider
-
-
-# Task handler registry is now part of the TaskWorker instance
-
-
-# Use task_worker's helper function (remains module-level)
-# format_llm_response_for_telegram = task_worker.format_llm_response_for_telegram
-# ^^^ This is actually defined in task_worker.py but not used here, remove if not needed
-
-
-# Task worker loop is now the run() method of the TaskWorker class
-
 
 # --- Configuration Loading ---
 def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
@@ -178,7 +142,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     config_data: Dict[str, Any] = {
         "telegram_token": None,
         "openrouter_api_key": None,
-        "allowed_chat_ids": [],
+        "allowed_user_ids": [],
         "developer_chat_id": None,
         "model": "openrouter/google/gemini-2.5-pro-preview-03-25",  # Default model
         "embedding_model": "gemini/gemini-embedding-exp-03-07",  # Default embedding model
@@ -228,14 +192,14 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     config_data["litellm_debug"] = os.getenv("LITELLM_DEBUG", str(config_data["litellm_debug"])).lower() in ("true", "1", "yes")
 
     # Parse comma-separated lists from Env Vars
-    allowed_ids_str = os.getenv("ALLOWED_CHAT_IDS")
+    allowed_ids_str = os.getenv("ALLOWED_USER_IDS", os.getenv('ALLOWED_CHAT_IDS'))
     if allowed_ids_str is not None: # Only override if env var is explicitly set
         try:
-            config_data["allowed_chat_ids"] = [
+            config_data["allowed_user_ids"] = [
                 int(cid.strip()) for cid in allowed_ids_str.split(",") if cid.strip()
             ]
         except ValueError:
-            logger.error("Invalid format for ALLOWED_CHAT_IDS env var. Using previous value.")
+            logger.error("Invalid format for ALLOWED_USER_IDS env var. Using previous value.")
 
     dev_id_str = os.getenv("DEVELOPER_CHAT_ID")
     if dev_id_str is not None: # Only override if env var is explicitly set
@@ -552,7 +516,7 @@ async def main_async(
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
         telegram_token=config["telegram_token"],
-        allowed_chat_ids=config["allowed_chat_ids"],
+        allowed_user_ids=config["allowed_user_ids"],
         developer_chat_id=config["developer_chat_id"],
         processing_service=processing_service,
         get_db_context_func=get_db_context,
