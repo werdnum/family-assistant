@@ -60,6 +60,7 @@ dev = [
     "mcp-server-time>=0.1.0", # Ensure mcp-server-time is available for tests
     "symbex>=2.0",
     "alembic>=1.15.2",
+    "pytest-timeout",
 ]
 
 [project.scripts]
