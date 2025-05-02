@@ -46,6 +46,7 @@ from family_assistant.embeddings import EmbeddingGenerator, LiteLLMEmbeddingGene
 from pydantic import BaseModel, Field # For structuring results if needed, added Field
 # Import the user docs scanner
 from family_assistant.tools import _scan_user_docs # Import the scanner
+from family_assistant.tools.schema import render_schema_as_html # Import the new rendering function
 
 logger = logging.getLogger(__name__)
 
@@ -324,9 +325,16 @@ async def view_tools(request: Request):
     try:
         tool_definitions = getattr(request.app.state, "tool_definitions", [])
         if not tool_definitions:
-            logger.warning("No tool definitions found in app state.")
+            logger.warning("No tool definitions found in app state for /tools page.")
+        # Generate HTML for each tool's parameters on demand
+        rendered_tools = []
+        for tool in tool_definitions:
+            tool_copy = tool.copy() # Avoid modifying the original dict in state
+            schema_dict = tool_copy.get("function", {}).get("parameters")
+            tool_copy['parameters_html'] = render_schema_as_html(schema_dict)
+            rendered_tools.append(tool_copy)
         return templates.TemplateResponse(
-            "tools.html", {"request": request, "tools": tool_definitions}
+            "tools.html", {"request": request, "tools": rendered_tools}
         )
     except Exception as e:
         logger.error(f"Error fetching tool definitions: {e}", exc_info=True)
