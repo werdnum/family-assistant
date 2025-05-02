@@ -6,18 +6,13 @@ import uuid  # Added for unique task IDs
 from datetime import datetime, timedelta, timezone # Added timezone, timedelta
 from typing import List, Dict, Any, Optional, Callable, Tuple, Union, Awaitable # Added Union, Awaitable
 
-from dateutil.parser import isoparse  # Added for parsing datetime strings
-
-from typing import List, Dict, Any, Optional, Tuple
-
+from dateutil.parser import isoparse # Added for parsing datetime strings
 import pytz  # Added
 
 # Import the LLM interface and output structure
 from .llm import LLMInterface, LLMOutput
-
 # Import ToolsProvider interface and context
 from .tools import ToolsProvider, ToolExecutionContext, ToolNotFoundError
-
 # Import Application type hint
 from telegram.ext import Application
 
@@ -75,182 +70,6 @@ class ProcessingService:
         self.server_url = server_url or "http://localhost:8000" # Default if not provided
         self.history_max_age_hours = history_max_age_hours
         # Store the confirmation callback function if provided at init? No, get from context.
-
-    # Removed _execute_function_call method (if it was previously here)
-    async def process_message(
-        self,
-        db_context: DatabaseContext,  # Added db_context
-        messages: List[Dict[str, Any]],
-        chat_id: int,
-        application: Application,
-        # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
-        request_confirmation_callback: Optional[
-            Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-        ] = None,
-    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
-        """
-        Sends the conversation history to the LLM via the injected client,
-        handles potential tool calls using the injected tools provider,
-        and returns the final response content along with details of any tool calls made.
-
-        Args:
-            messages: A list of message dictionaries for the LLM.
-            chat_id: The chat ID for context.
-            application: The Telegram Application instance for context.
-
-        Returns:
-            A tuple containing:
-            - The final response content string from the LLM (or None).
-            - A list of dictionaries detailing executed tool calls (or None).
-            - A dictionary containing reasoning/usage info from the final LLM call (or None).
-        """
-        executed_tool_info: List[Dict[str, Any]] = []
-        final_reasoning_info: Optional[Dict[str, Any]] = None
-        final_content: Optional[str] = None # Store final text response from LLM
-        max_iterations = 5 # Safety limit for tool call loops
-        current_iteration = 1
-
-        logger.info(
-            f"Processing {len(messages)} messages for chat {chat_id}. Last message: {messages[-1]['content'][:100]}..."
-        )
-
-        try:
-            # --- Get Tool Definitions ---
-            all_tools = await self.tools_provider.get_tool_definitions()
-            if all_tools:
-                logger.info(f"Providing {len(all_tools)} tools to LLM.")
-            else:
-                logger.info("No tools available from provider.")
-
-            # --- Tool Call Loop ---
-            while current_iteration <= max_iterations:
-                logger.debug(f"Starting LLM interaction loop iteration {current_iteration}/{max_iterations}")
-
-                # --- Log messages being sent to LLM at INFO level ---
-                try:
-                    logger.info(f"Sending {len(messages)} messages to LLM (iteration {current_iteration}):\n{json.dumps(messages, indent=2, default=str)}") # Use default=str for non-serializable types
-                except Exception as json_err:
-                    logger.info(f"Sending {len(messages)} messages to LLM (iteration {current_iteration}) - JSON dump failed: {json_err}. Raw list snippet: {str(messages)[:1000]}...") # Log snippet on failure
-
-                # --- LLM Call ---
-                llm_output: LLMOutput = await self.llm_client.generate_response(
-                    messages=messages,
-                    tools=all_tools,
-                    # Allow tools on all iterations except the last forced one?
-                    # Or force 'none' if the previous call didn't request tools?
-                    # Let's allow 'auto' for now, unless we hit max iterations.
-                    tool_choice="auto" if all_tools and current_iteration < max_iterations else "none",
-                )
-
-                # Store content and reasoning from the latest call
-                # Content will be overwritten in the next iteration if there are tool calls,
-                # so only the final iteration's content persists.
-                final_content = llm_output.content.strip() if llm_output.content else None
-                final_reasoning_info = llm_output.reasoning_info
-                if final_content:
-                    logger.debug(f"LLM provided text content in iteration {current_iteration}: {final_content[:100]}...")
-                else:
-                    logger.debug(f"LLM provided no text content in iteration {current_iteration}.")
-
-                tool_calls = llm_output.tool_calls
-
-                # --- Loop Condition: Break if no tool calls requested ---
-                if not tool_calls:
-                    logger.info("LLM response received with no further tool calls.")
-                    # Final content is built after the loop
-                    break # Exit the loop
-
-                # --- Handle Tool Calls ---
-                logger.info(f"LLM requested {len(tool_calls)} tool call(s) in iteration {current_iteration}.")
-
-                # Append the assistant's response message (containing the tool calls)
-                assistant_message_with_calls = {
-                    "role": "assistant",
-                    "content": llm_output.content, # Include any text content LLM provided along with calls
-                    "tool_calls": tool_calls,
-                }
-                messages.append(assistant_message_with_calls)
-
-                # --- Execute Tool Calls using ToolsProvider ---
-                tool_response_messages = []
-                # Create execution context (can be reused if dependencies don't change)
-                tool_execution_context = ToolExecutionContext(
-                    chat_id=chat_id,
-                    db_context=db_context,
-                    calendar_config=self.calendar_config,
-                    application=application,
-                    timezone_str=self.timezone_str,
-                    request_confirmation_callback=request_confirmation_callback,
-                )
-
-                for tool_call_dict in tool_calls:
-                    call_id = tool_call_dict.get("id")
-                    function_info = tool_call_dict.get("function", {})
-                    function_name = function_info.get("name")
-                    function_args_str = function_info.get("arguments", "{}")
-
-                    if not call_id or not function_name:
-                        logger.error(f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}")
-                        tool_response_messages.append({"tool_call_id": call_id or f"missing_id_{uuid.uuid4()}", "role": "tool", "name": function_name or "unknown_function", "content": "Error: Invalid tool call structure."})
-                        continue
-
-                    try: arguments = json.loads(function_args_str)
-                    except json.JSONDecodeError:
-                        logger.error(f"Failed to parse arguments for tool call {function_name} (iteration {current_iteration}): {function_args_str}")
-                        arguments = {"error": "Failed to parse arguments"}
-                        tool_response_content = f"Error: Invalid arguments format for {function_name}."
-                    else:
-                        try:
-                            tool_response_content = await self.tools_provider.execute_tool(
-                                name=function_name,
-                                arguments=arguments,
-                                context=tool_execution_context,
-                            )
-                        except ToolNotFoundError as tnfe:
-                            logger.error(f"Tool execution failed (iteration {current_iteration}): {tnfe}")
-                            tool_response_content = f"Error: {tnfe}"
-                        except Exception as exec_err:
-                            logger.error(f"Unexpected error executing tool {function_name} (iteration {current_iteration}): {exec_err}", exc_info=True)
-                            tool_response_content = f"Error: Unexpected error executing {function_name}."
-
-                    # Store details for history across all iterations
-                    executed_tool_info.append({"tool_call_id": call_id, "function_name": function_name, "arguments": arguments, "response_content": tool_response_content})
-                    # Append the response message for the LLM for the *next* iteration
-                    tool_response_messages.append({"tool_call_id": call_id, "role": "tool", "name": function_name, "content": tool_response_content})
-
-                # Append all tool response messages for this iteration
-                messages.extend(tool_response_messages)
-
-                # Increment iteration counter
-                current_iteration += 1
-                # --- Loop continues to next LLM call ---
-
-            # --- After Loop ---
-            if current_iteration > max_iterations:
-                logger.warning(f"Reached maximum tool call iterations ({max_iterations}). Returning current state.")
-                # If we hit the limit, the last LLM call was forced with tool_choice='none',
-                # so final_content should hold its response. We might add a note.
-                if final_content:
-                    final_content += "\n\n(Note: Reached maximum processing depth.)"
-                else:
-                    final_content = "(Note: Reached maximum processing depth.)"
-
-            # final_content now holds the content from the *last* LLM call
-            if not final_content:
-                 logger.warning("Final LLM response content was empty.")
-                 # Optionally set a fallback message, or leave as None
-                 # final_content = "Processing complete."
-
-            # Return the final content, accumulated tool info, and reasoning from the last LLM call
-            return final_content, executed_tool_info if executed_tool_info else None, final_reasoning_info
-
-        except Exception as e:
-            logger.error(
-                f"Error during LLM interaction or tool handling loop in ProcessingService: {e}",
-                exc_info=True,
-            )
-            # Ensure tuple is returned even on error
-            return None, None, None
 
     def _format_history_for_llm(
         self, history_messages: List[Dict[str, Any]]
