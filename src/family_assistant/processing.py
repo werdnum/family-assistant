@@ -317,76 +317,77 @@ class ProcessingService:
 
         # Process history messages, formatting assistant tool calls correctly
         for msg in history_messages:
-            if msg["role"] == "assistant" and "tool_calls_info_raw" in msg:
-                # Construct the 'tool_calls' structure expected by LiteLLM/OpenAI
-                # from the stored 'tool_calls_info_raw'
-                reformatted_tool_calls = []
-                raw_info_list = msg.get("tool_calls_info_raw", [])
-                if isinstance(raw_info_list, list):  # Ensure it's a list
-                    for raw_call in raw_info_list:
-                        # Assuming raw_call is a dict like:
-                        # {'call_id': '...', 'function_name': '...', 'arguments': {...}, 'response_content': '...'}
+            # Use .get for safer access to potentially missing keys
+            role = msg.get("role")
+            content = msg.get("content") or ''
+            tool_calls_info = msg.get("tool_calls_info_raw") # This could be None or a list
+            reasoning_info = msg.get("reasoning_info") # Get reasoning info
+            error_traceback = msg.get("error_traceback") # Get error info
+
+            if role == "assistant":
+                # Check if there's actual tool call data (not None, not empty list)
+                if tool_calls_info and isinstance(tool_calls_info, list):
+                    # --- This block handles assistant messages WITH tool calls ---
+                    reformatted_tool_calls = []
+                    valid_raw_calls = [] # Store valid calls to iterate over for tool responses
+
+                    # First loop: Build the list of reformatted tool calls for the assistant message
+                    for raw_call in tool_calls_info:
                         if isinstance(raw_call, dict):
+                            # Extract necessary fields safely
+                            call_id = raw_call.get("call_id", f"call_{uuid.uuid4()}")
+                            function_name = raw_call.get("function_name", "unknown_tool")
+                            arguments = raw_call.get("arguments", {})
+                            # Ensure arguments are a JSON string for the API
+                            arguments_str = json.dumps(arguments) if isinstance(arguments, dict) else arguments if isinstance(arguments, str) else "{}"
+
                             reformatted_tool_calls.append(
                                 {
-                                    "id": raw_call.get(
-                                        "call_id", f"call_{uuid.uuid4()}"
-                                    ),  # Generate ID if missing
+                                    "id": call_id,
                                     "type": "function",
                                     "function": {
-                                        "name": raw_call.get(
-                                            "function_name", "unknown_tool"
-                                        ),
-                                        # Arguments should already be a JSON string or dict from storage
-                                        "arguments": (
-                                            json.dumps(raw_call.get("arguments", {}))
-                                            if isinstance(
-                                                raw_call.get("arguments"), dict
-                                            )
-                                            else raw_call.get("arguments", "{}")
-                                        ),
+                                        "name": function_name,
+                                        "arguments": arguments_str,
                                     },
                                 }
                             )
-                            # Also need to append the corresponding tool response message
-                            # The history mechanism currently stores this *within* the assistant message's info block.
-                            # We need separate 'assistant' (with tool_calls) and 'tool' messages.
-                            # Let's adjust history storage/retrieval or formatting here.
-
-                            # OPTION 1 (Simpler formatting here): Append tool response immediately after
-                            messages.append(
-                                {
-                                    "role": "assistant",
-                                    "content": msg.get("content") or '',
-                                    "tool_calls": reformatted_tool_calls,
-                                }
-                            )
-                            # Now append the corresponding tool result message for each call
-                            for raw_call in raw_info_list:
-                                if isinstance(raw_call, dict):
-                                    messages.append(
-                                        {
-                                            "role": "tool",
-                                            "tool_call_id": raw_call.get(
-                                                "call_id", "missing_id"
-                                            ),
-                                            # Ensure content is always a string for tool role
-                                            "content": str(raw_call.get(
-                                                "response_content",
-                                                "Error: Missing tool response content",
-                                            )),
-                                        }
-                                    )
+                            valid_raw_calls.append(raw_call) # Keep track of valid calls
                         else:
                             logger.warning(
                                 f"Skipping non-dict item in raw_tool_calls_info: {raw_call}"
                             )
-                else:
-                    logger.warning(
-                        f"Expected list for raw_tool_calls_info, got {type(raw_info_list)}. Skipping tool call reconstruction."
+
+                    # Append the SINGLE assistant message requesting the tool(s)
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": content,
+                            "tool_calls": reformatted_tool_calls,
+                        }
                     )
+
+                    # Now append the corresponding TOOL result message(s) using the valid calls
+                    for valid_call in valid_raw_calls:
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": valid_call.get("call_id", "missing_id"), # Use ID from valid call
+                                # Ensure content is always a string for tool role
+                                "content": str(valid_call.get(
+                                    "response_content",
+                                    "Error: Missing tool response content",
+                                )),
+                            }
+                        )
+
+                else:
+                    # --- This block handles assistant messages WITHOUT tool calls ---
+                    # Simply append the message with role and content
+                    messages.append({"role": "assistant", "content": content})
+
             elif msg["role"] != "error": # Don't include previous error messages in history sent to LLM
-                messages.append({"role": msg["role"], "content": msg["content"] or ''})
+                # Append other non-error messages directly
+                messages.append({"role": role, "content": content})
 
         logger.debug(
             f"Processed {len(history_messages)} DB history messages into LLM format (excluding 'error' role)."
