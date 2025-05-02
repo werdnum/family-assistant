@@ -9,11 +9,9 @@ import asyncio
 import contextlib
 import html
 
-# import io # Moved to telegram_bot.py
 import json
 import logging
 
-# import base64 # Moved to telegram_bot.py
 import os
 import signal
 import sys
