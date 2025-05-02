@@ -81,7 +81,7 @@ async def mcp_proxy_server():
     logger.info("MCP proxy server stopped.")
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion_stdio(test_db_engine):
+async def test_mcp_time_conversion_stdio(test_db_engine, mock_application, mock_bot): # Add mocks as args
     """
     Tests the end-to-end flow involving an MCP tool call:
     1. User asks to convert time between timezones.
@@ -193,27 +193,22 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         history_max_age_hours=dummy_history_age,
     )
 
-    # Mock Telegram Application and Bot
-    mock_bot = AsyncMock()
-    mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=10001)) # Mock sent message ID
-    mock_application = MagicMock()
-    mock_application.bot = mock_bot
-
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ})"
-    user_request_trigger = [{"type": "text", "text": user_request_text}]
+    # Construct message history for process_message
+    initial_messages = [
+        {"role": "user", "content": user_request_text}
+    ]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        final_response_content, tool_info, _, _ = await processing_service.generate_llm_response_for_chat(
+        # Call process_message which includes sending the response
+        await processing_service.process_message(
             db_context=db_context,
-            application=mock_application,
             chat_id=TEST_CHAT_ID,
-            trigger_content_parts=user_request_trigger,
-            user_name=TEST_USER_NAME,
+            messages=initial_messages,
+            application=mock_application, # Pass the mock application
         )
-
-    logger.info(f"Final Response from Processing Service: {final_response_content}")
 
     # --- Verification ---
     logger.info("--- Verifying MCP tool usage and final response ---")
@@ -241,7 +236,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
 
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
+async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server, mock_application, mock_bot): # Add mocks
     """
     Tests the end-to-end flow involving an MCP tool call via SSE transport,
     using mcp-proxy to forward to mcp-server-time (stdio).
@@ -327,20 +322,20 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     dummy_history_age = 24
     processing_service = ProcessingService(llm_client=llm_client, tools_provider=composite_provider, prompts=dummy_prompts, calendar_config=dummy_calendar_config, timezone_str=dummy_timezone_str, max_history_messages=dummy_max_history, history_max_age_hours=dummy_history_age)
 
-    # Mock Telegram Bot (reuse setup)
-    mock_bot = AsyncMock()
-    mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=10002))
-    mock_application = MagicMock(); mock_application.bot = mock_bot
-
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call (SSE) ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to London time ({TARGET_TZ}) using SSE"
-    user_request_trigger = [{"type": "text", "text": user_request_text}]
+    initial_messages = [
+        {"role": "user", "content": user_request_text}
+    ]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        final_response_content, _, _, _ = await processing_service.generate_llm_response_for_chat(db_context=db_context, application=mock_application, chat_id=TEST_CHAT_ID, trigger_content_parts=user_request_trigger, user_name=TEST_USER_NAME)
-
-    logger.info(f"Final Response from Processing Service (SSE): {final_response_content}")
+        await processing_service.process_message(
+            db_context=db_context,
+            chat_id=TEST_CHAT_ID,
+            messages=initial_messages,
+            application=mock_application,
+        )
 
     # --- Verification (Identical logic to stdio test) ---
     logger.info("--- Verifying MCP tool usage and final response (SSE) ---")
