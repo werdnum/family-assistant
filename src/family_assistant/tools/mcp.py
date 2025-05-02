@@ -15,7 +15,7 @@ from dateutil import rrule
 from dateutil.parser import isoparse
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.sse import SSETransport # Corrected import name
+from mcp.client.sse import sse_client # Import the correct context manager
 from telegram.ext import Application
 from sqlalchemy.sql import text
 
@@ -72,7 +72,7 @@ class MCPToolsProvider:
             discovered_tools = []
             tool_map = {}
             session = None
-            transport = None # Initialize transport variable
+            # transport = None # Removed unused transport variable
 
             transport_type = server_conf.get("transport", "stdio").lower()
             url = server_conf.get("url") # Needed for SSE
@@ -156,16 +156,15 @@ class MCPToolsProvider:
                         logger.debug(f"Using Authorization header for SSE server '{server_id}'.")
                     else:
                         logger.warning(f"No token resolved for SSE server '{server_id}'. Connecting without Authorization header.")
-                        # Add other potential header mappings here if needed from a different config source?
+                        # Add other potential header mappings here if needed
 
-                    # Create SSE transport instance
-                    transport = SSETransport(url=url, headers=headers)
-                    # Use the transport's connect() context manager via the exit stack
-                    # to get the streams and manage the transport lifecycle.
+                    # Use the sse_client context manager via the exit stack
+                    # to get the streams and manage the connection lifecycle.
+                    # Pass url and headers. Use default timeouts for now.
                     read_stream, write_stream = await self._exit_stack.enter_async_context(
-                        transport.connect()
+                        sse_client(url=url, headers=headers)
                     )
-                    # Create session with the streams obtained from the transport context
+                    # Create session with the streams obtained from the sse_client context
                     session = await self._exit_stack.enter_async_context(
                         ClientSession(read_stream, write_stream)
                     )
