@@ -18,7 +18,7 @@ Welcome to your personal family assistant! This guide explains how to interact w
 
 *   **Web Interface (Secondary):**
     *   There's also a web page you can use for certain tasks, especially managing notes.
-    *   To access it, ask the assistant "What is the link to the web interface?" or ask the family member who set up the assistant for the URL.
+    *   Access it here: `{{ SERVER_URL }}` (This link will be replaced with the actual URL).
 
 *   **Email (Future):**
     *   Soon, you might be able to forward emails (like flight confirmations or event invitations) to a special address so the assistant can automatically store the information. Stay tuned!
@@ -86,7 +86,7 @@ The assistant learns and gets information from a few places:
 
 While most interaction happens via Telegram, the web interface is useful for specific tasks.
 
-*   **Accessing it:** `[Link to Web UI]` (Ask the administrator for the correct link)
+*   **Accessing it:** `{{ SERVER_URL }}` (This link will be replaced with the actual URL).
 *   **What it's for:**
     *   **Viewing/Managing Notes:** This is the best place to see a list of all the notes the assistant has saved. You can easily read, edit the content, or delete notes that are no longer needed.
     *   **Viewing History:** Look back through past conversations the assistant has had (across different chats, if configured).

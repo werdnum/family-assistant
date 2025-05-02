@@ -145,6 +145,9 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
          raise HTTPException(status_code=500, detail="Invalid embedding generator configuration.")
     return generator
 
+# Markdown renderer instance
+md_renderer = MarkdownIt("gfm-like") # Use GitHub Flavored Markdown preset
+
 
 # --- Pydantic model for search results (optional but good practice) ---
 class SearchResultItem(BaseModel):
@@ -818,8 +821,11 @@ async def serve_documentation(request: Request, filename: str):
         async with aiofiles.open(doc_path, mode='r', encoding='utf-8') as f:
             content_md = await f.read()
 
+        # --- Replace placeholder with actual SERVER_URL ---
+        content_md_processed = content_md.replace("{{ SERVER_URL }}", SERVER_URL)
+
         # Render Markdown to HTML
-        content_html = md_renderer.render(content_md)
+        content_html = md_renderer.render(content_md_processed)
 
         # Scan for other available docs for navigation
         available_docs = _scan_user_docs()
