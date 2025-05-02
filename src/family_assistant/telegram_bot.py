@@ -228,6 +228,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         llm_response_content: Optional[str] = None
         tool_call_info: Optional[List[Dict[str, Any]]] = None
         reasoning_info: Optional[Dict[str, Any]] = None # Added
+        sent_assistant_message: Optional[telegram.Message] = None # To store the sent message object
         processing_error_traceback: Optional[str] = None # Added
         logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
@@ -280,7 +281,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     converted_markdown = telegramify_markdown.markdownify(
                         llm_response_content
                     )
-                    await context.bot.send_message(
+                    sent_assistant_message = await context.bot.send_message(
                         chat_id=chat_id,
                         text=converted_markdown,
                         parse_mode=ParseMode.MARKDOWN_V2,
@@ -292,7 +293,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         f"Failed to convert markdown: {md_err}. Sending plain text.",
                         exc_info=True,
                     )
-                    await context.bot.send_message(
+                    sent_assistant_message = await context.bot.send_message(
                         chat_id=chat_id,
                         text=llm_response_content,
                         reply_to_message_id=reply_target_message_id,
