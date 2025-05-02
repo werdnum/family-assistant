@@ -13,7 +13,7 @@ import uuid # For generating event UIDs
 from dateutil.parser import isoparse # For parsing ISO strings in tools
 
 # Import types needed by tools (from the new types file)
-from family_assistant.tool_types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -985,61 +985,3 @@ def _fetch_event_details_sync(username: str, password: str, calendar_url: str, u
     except (caldav.lib.error.DAVError, ConnectionError, Exception) as e:
         logger.error(f"Error fetching event details for UID {uid} from {calendar_url}: {e}", exc_info=True)
         return None
-
-
-if __name__ == "__main__":
-    # Example usage for testing
-    logging.basicConfig(level=logging.INFO)
-    # Load .env for testing standalone
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    # --- Build dummy config for testing ---
-    test_calendar_config = {}
-    caldav_user = os.getenv("CALDAV_USERNAME")
-    caldav_pass = os.getenv("CALDAV_PASSWORD")
-    caldav_urls_str = os.getenv("CALDAV_CALENDAR_URLS")
-    caldav_urls = (
-        [url.strip() for url in caldav_urls_str.split(",")] if caldav_urls_str else []
-    )
-    if caldav_user and caldav_pass and caldav_urls:
-        test_calendar_config["caldav"] = {
-            "username": caldav_user,
-            "password": caldav_pass,
-            "calendar_urls": caldav_urls,
-        }
-
-    ical_urls_str = os.getenv("ICAL_URLS")
-    ical_urls = (
-        [url.strip() for url in ical_urls_str.split(",")] if ical_urls_str else []
-    )
-    if ical_urls:
-        test_calendar_config["ical"] = {"urls": ical_urls}
-    # --- End dummy config ---
-
-    async def run_test():
-        print("Fetching events using orchestrator...")
-        if not test_calendar_config:
-            print("No calendar sources configured in .env for testing.")
-            return
-        events = await fetch_upcoming_events(test_calendar_config)  # Pass the config
-        print(f"\nFetched {len(events)} events from all sources.")
-
-        # Load dummy prompts for formatting test
-        test_prompts = {
-            "event_item_format": "- {start_time} to {end_time}: {summary}",
-            "all_day_event_item_format": "- {start_time} (All Day): {summary}",
-            "no_events_today_tomorrow": "No events scheduled for today or tomorrow.",
-            "no_events_next_two_weeks": "No further events scheduled in the next two weeks.",
-        }
-        today_str, future_str = format_events_for_prompt(events, test_prompts)
-
-        print("\n--- Today & Tomorrow ---")
-        print(today_str)
-        print("\n--- Next 2 Weeks (Max 10) ---")
-        print(future_str)
-
-    import asyncio
-
-    asyncio.run(run_test())
