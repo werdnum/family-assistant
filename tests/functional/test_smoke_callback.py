@@ -150,6 +150,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
+        server_url=None, # Added missing argument
     )
 
     # Mock Telegram Application and Bot
