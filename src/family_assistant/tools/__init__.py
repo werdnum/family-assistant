@@ -1065,6 +1065,19 @@ class CompositeToolsProvider:
         # logger.error(f"Tool '{name}' not found in any registered provider.")
         # raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
 
+    async def close(self):
+        """Closes all contained providers concurrently."""
+        logger.info(f"Closing CompositeToolsProvider and its {len(self._providers)} providers...")
+        close_tasks = [provider.close() for provider in self._providers]
+        results = await asyncio.gather(*close_tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            provider_type = type(self._providers[i]).__name__
+            if isinstance(result, Exception):
+                logger.error(f"Error closing provider {provider_type}: {result}", exc_info=result)
+            else:
+                logger.debug(f"Provider {provider_type} closed successfully.")
+        logger.info("CompositeToolsProvider finished closing providers.")
+
 
 # --- Confirming Tools Provider Wrapper ---
 
