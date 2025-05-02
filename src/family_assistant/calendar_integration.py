@@ -332,7 +332,7 @@ async def fetch_upcoming_events(
                 username,
                 password,
                 calendar_urls,
-                timezone_str, # Pass timezone
+                timezone_str,
             )
             tasks.append(caldav_task)
         else:
