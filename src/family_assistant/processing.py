@@ -138,6 +138,12 @@ class ProcessingService:
             while current_iteration <= max_iterations:
                 logger.debug(f"Starting LLM interaction loop iteration {current_iteration}/{max_iterations}")
 
+                # --- Log messages being sent to LLM at INFO level ---
+                try:
+                    logger.info(f"Sending {len(messages)} messages to LLM (iteration {current_iteration}):\n{json.dumps(messages, indent=2, default=str)}") # Use default=str for non-serializable types
+                except Exception as json_err:
+                    logger.info(f"Sending {len(messages)} messages to LLM (iteration {current_iteration}) - JSON dump failed: {json_err}. Raw list snippet: {str(messages)[:1000]}...") # Log snippet on failure
+
                 # --- LLM Call ---
                 llm_output: LLMOutput = await self.llm_client.generate_response(
                     messages=messages,
