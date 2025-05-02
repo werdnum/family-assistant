@@ -13,7 +13,6 @@ import pytz  # Added
 from .llm import LLMInterface, LLMOutput
 # Import ToolsProvider interface and context
 from .tools import ToolsProvider, ToolExecutionContext, ToolNotFoundError
-# Import Application type hint
 from telegram.ext import Application
 
 # Import DatabaseContext for type hinting
@@ -84,11 +83,8 @@ class ProcessingService:
         Returns:
             A list of message dictionaries formatted for the LLM API.
         """
-        # Format the raw history using the new helper method
-        messages = self._format_history_for_llm(history_messages)
-
-        # --- Prepare System Prompt Context ---
-
+        messages: List[Dict[str, Any]] = []
+        # (Rest of the formatting logic as provided)
         logger.debug(
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
         )
