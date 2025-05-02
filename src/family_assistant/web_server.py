@@ -9,6 +9,8 @@ from datetime import datetime, timezone, date # Added date
 import json
 import pathlib  # Import pathlib for finding template/static dirs
 import telegram.error # Import telegram errors for specific checking in health check
+import aiofiles # For reading docs
+from markdown_it import MarkdownIt # For rendering docs
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -53,6 +55,7 @@ app = FastAPI(title="Family Assistant Web Interface")
 # We want the paths relative to the 'family_assistant' package directory
 try:
     # Get the directory containing the current file (web_server.py)
+    _project_root = pathlib.Path(__file__).parent.parent.parent.resolve()
     current_file_dir = pathlib.Path(__file__).parent.resolve()
     # Go up one level to the package root (src/family_assistant/)
     package_root_dir = current_file_dir
@@ -60,6 +63,7 @@ try:
     templates_dir = package_root_dir / "templates"
     static_dir = package_root_dir / "static"
 
+    # Define docs directory relative to project root
     if not templates_dir.is_dir():
         logger.warning(
             f"Templates directory not found at expected location: {templates_dir}"
@@ -68,6 +72,9 @@ try:
     if not static_dir.is_dir():
         logger.warning(f"Static directory not found at expected location: {static_dir}")
         # Fallback or raise error?
+
+    # Define docs directory relative to project root
+    docs_user_dir = _project_root / "docs" / "user"
 
     # Configure templates using the calculated path
     templates = Jinja2Templates(directory=templates_dir)
@@ -78,6 +85,7 @@ try:
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
     logger.info(f"Templates directory set to: {templates_dir}")
     logger.info(f"Static files directory set to: {static_dir}")
+    logger.info(f"User docs directory set to: {docs_user_dir}")
 
 except NameError:
     # __file__ might not be defined in some execution contexts (e.g., interactive)
@@ -89,6 +97,12 @@ except NameError:
     app.mount(
         "/static", StaticFiles(directory="src/family_assistant/static"), name="static"
     )
+    # Fallback docs path relative to CWD
+    docs_user_dir = pathlib.Path("docs") / "user"
+    logger.warning(f"Using fallback user docs directory: {docs_user_dir}")
+
+# Markdown renderer instance
+md_renderer = MarkdownIt("gfm-like") # Use GitHub Flavored Markdown preset
 
 
 # --- Dependency for Database Context ---
@@ -761,6 +775,39 @@ async def upload_document(
         task_enqueued=task_enqueued,
     )
 
+
+# --- Documentation Route ---
+
+@app.get("/docs/{filename:path}", response_class=HTMLResponse)
+async def serve_documentation(request: Request, filename: str):
+    """Serves rendered Markdown documentation files from the docs/user directory."""
+    allowed_extensions = {".md"}
+    doc_path = (docs_user_dir / filename).resolve()
+
+    # Security Checks
+    if docs_user_dir not in doc_path.parents:
+        logger.warning(f"Attempted directory traversal access to: {doc_path}")
+        raise HTTPException(status_code=404, detail="Document not found (invalid path).")
+
+    if doc_path.suffix not in allowed_extensions:
+        logger.warning(f"Attempted access to non-markdown file: {doc_path}")
+        raise HTTPException(status_code=404, detail="Document not found (invalid file type).")
+
+    if not doc_path.is_file():
+        logger.warning(f"Documentation file not found: {doc_path}")
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    try:
+        async with aiofiles.open(doc_path, mode='r', encoding='utf-8') as f:
+            content_md = await f.read()
+
+        # Render Markdown to HTML
+        content_html = md_renderer.render(content_md)
+
+        return templates.TemplateResponse("doc_page.html", {"request": request, "content": content_html, "title": filename})
+    except Exception as e:
+        logger.error(f"Error serving documentation file '{filename}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error rendering documentation.")
 
 # --- Uvicorn Runner (for standalone testing) ---
 if __name__ == "__main__":
