@@ -92,3 +92,12 @@ class ProcessingService:
 
     async def generate_llm_response_for_chat(
         self,
+        db_context: DatabaseContext,  # Added db_context
+        application: Application,
+        chat_id: int,
+        trigger_content_parts: List[Dict[str, Any]],
+        user_name: str,
+        # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
+        request_confirmation_callback: Optional[
+            Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
+        ] = None,
