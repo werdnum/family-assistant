@@ -299,6 +299,12 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     # --- Instantiate Dependencies ---
     local_provider = LocalToolsProvider(definitions=local_tools_definition, implementations=local_tool_implementations)
 
+    # --- Debugging ---
+    # Check the type and value received from the fixture
+    logger.debug(f"Type of mcp_proxy_server fixture value: {type(mcp_proxy_server)}")
+    logger.debug(f"Value of mcp_proxy_server fixture value: {mcp_proxy_server}")
+    # --- End Debugging ---
+
     # Define MCP config *inside* the test after the fixture yielded the URL
     mcp_config = {
         "time_sse": { # Use a different server ID to avoid clashes if needed
