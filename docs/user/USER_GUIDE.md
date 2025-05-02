@@ -78,8 +78,9 @@ The assistant learns and gets information from a few places:
     *   This brief would likely include a summary of the day's calendar events, reminders (once that feature is added), and perhaps the weather forecast.
     *   This feature will use the assistant's ability to run scheduled tasks automatically.
 
-*   **(Future) Reminders:**
-    *   While you can add events to your main calendar now, setting specific timed reminders that notify you (like "Remind me to call the doctor at 3 PM") might require a dedicated "Reminders" calendar configuration and is considered a future enhancement for streamlined notifications.
+*   **Scheduled Reminders:**
+    *   You can ask the assistant to schedule reminders using its task scheduling feature. For example: "Schedule a task to remind me about 'Take out bins' every Sunday at 7 PM."
+    *   The assistant will then send you a message in the chat at the scheduled time(s). This uses the same mechanism as the "Schedule Recurring Actions" feature mentioned earlier.
 
 ## 6. Using the Web Interface
 
