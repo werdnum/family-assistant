@@ -263,6 +263,7 @@ class ProcessingService:
             )
             # Ensure tuple is returned even on error
             return None, None, None
+
     def _format_history_for_llm(
         self, history_messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -276,58 +277,34 @@ class ProcessingService:
         Returns:
             A list of message dictionaries formatted for the LLM API.
         """
-        messages: List[Dict[str, Any]] = []
-        # Process history messages, formatting assistant tool calls correctly
-        for msg in history_messages:
-            # Use .get for safer access to potentially missing keys
-            role = msg.get("role")
-            content = msg.get("content") or ''
-            tool_calls_info = msg.get("tool_calls_info_raw") # This could be None or a list
-            # reasoning_info = msg.get("reasoning_info") # Reasoning info not needed for LLM history format
-            # error_traceback = msg.get("error_traceback") # Error info not needed for LLM history format
+        # Format the raw history using the new helper method
+        messages = self._format_history_for_llm(history_messages)
 
-            if role == "assistant":
-                # Check if there's actual tool call data (not None, not empty list)
-                if tool_calls_info and isinstance(tool_calls_info, list):
-                    # --- This block handles assistant messages WITH tool calls ---
-                    # (Logic remains the same as before)
-                    reformatted_tool_calls = []
-                    valid_raw_calls = []
-                    for raw_call in tool_calls_info:
-                        if isinstance(raw_call, dict):
-                            call_id = raw_call.get("call_id", f"call_{uuid.uuid4()}")
-                            function_name = raw_call.get("function_name", "unknown_tool")
-                            arguments = raw_call.get("arguments", {})
-                            arguments_str = json.dumps(arguments) if isinstance(arguments, dict) else arguments if isinstance(arguments, str) else "{}"
-                            reformatted_tool_calls.append(
-                                { "id": call_id, "type": "function", "function": { "name": function_name, "arguments": arguments_str, }, }
-                            )
-                            valid_raw_calls.append(raw_call)
-                        else:
-                            logger.warning(f"Skipping non-dict item in raw_tool_calls_info: {raw_call}")
-                    messages.append({ "role": "assistant", "content": content, "tool_calls": reformatted_tool_calls, })
-                    for valid_call in valid_raw_calls:
-                        messages.append({ "role": "tool", "tool_call_id": valid_call.get("call_id", "missing_id"), "content": str(valid_call.get("response_content", "Error: Missing tool response content",)), })
-                else:
-                    # --- This block handles assistant messages WITHOUT tool calls ---
-                    messages.append({"role": "assistant", "content": content})
-            elif role != "error": # Don't include previous error messages in history sent to LLM
-                # Append other non-error messages directly
-                messages.append({"role": role, "content": content})
+        # --- Prepare System Prompt Context ---
 
         logger.debug(
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
         )
         return messages
+    def _format_history_for_llm(
+        self, history_messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Formats message history retrieved from the database into the list structure
+        expected by the LLM, handling assistant tool calls correctly.
 
-    async def generate_llm_response_for_chat(
-        self,
-        db_context: DatabaseContext,  # Added db_context
-        application: Application,
-        chat_id: int,
-        trigger_content_parts: List[Dict[str, Any]],
-        user_name: str,
-        # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
+        Args:
+            history_messages: List of message dictionaries from storage.get_recent_history.
+
+        Returns:
+            A list of message dictionaries formatted for the LLM API.
+        """
+        # Format the raw history using the new helper method
+        messages = self._format_history_for_llm(history_messages)
+
+        # --- Prepare System Prompt Context ---
+
+
         request_confirmation_callback: Optional[
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
         ] = None,
