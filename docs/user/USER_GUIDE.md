@@ -30,7 +30,11 @@ You can ask the assistant a wide variety of things:
 *   **Answer Your Questions:**
     *   **About upcoming events:** "What's happening tomorrow?", "Do we have anything scheduled next Saturday?", "List events for the next 14 days." (The assistant reads from connected family calendars.)
     *   **About things you've told it (Notes):** "What was the Wi-Fi password?", "Remind me about the gift ideas we saved.", "Where did we put the spare keys?" (It uses the notes you've asked it to remember.)
-    *   **(Future) Add/Modify Calendar Events:** Soon, you'll be able to ask the assistant to add events directly: "Add dentist appointment for June 5th at 10 AM to the Family Calendar." or "Remind me to call the plumber today at 5 PM" (which would add to a Reminders calendar). You'll need to specify which calendar if multiple are set up.
+    *   **Add/Modify/Delete Calendar Events:** You can manage your calendar directly:
+        *   **Add:** "Add dentist appointment for June 5th at 10 AM." or "Schedule 'Team Lunch' tomorrow from 12 PM to 1 PM."
+        *   **Search:** "Are there any events next Tuesday?", "Find the dentist appointment in June." (This helps find events before modifying/deleting).
+        *   **Modify:** "Change the 'Team Lunch' to 12:30 PM." (Requires finding the event first. You will be asked to confirm the change.)
+        *   **Delete:** "Delete the 'Dentist Appointment' on June 5th." (Requires finding the event first. You will be asked to confirm the deletion.)
     *   **About the current time/date:** "What time is it?", "What day is it today?" (Uses its built-in time service.)
     *   **About web content:** "Can you summarize this article: [Full URL]?", "What's the main point of this webpage: [Full URL]?" (Provide the complete web address starting with `http://` or `https://`. Uses its web fetching service.)
     *   **Search Your Documents:** "Search my notes for 'plumber number'.", "Find emails about the flight booking.", "Look for documents related to 'insurance policy'." (The assistant can search through notes and other documents it has access to. If it finds relevant documents, it will list them.)
@@ -75,7 +79,7 @@ The assistant learns and gets information from a few places:
     *   This feature will use the assistant's ability to run scheduled tasks automatically.
 
 *   **(Future) Reminders:**
-    *   Setting specific timed reminders (e.g., "Remind me to call the doctor at 3 PM") is a planned feature that will likely involve adding events to a dedicated reminder calendar. You'll receive notifications when they are due.
+    *   While you can add events to your main calendar now, setting specific timed reminders that notify you (like "Remind me to call the doctor at 3 PM") might require a dedicated "Reminders" calendar configuration and is considered a future enhancement for streamlined notifications.
 
 ## 6. Using the Web Interface
 
@@ -97,6 +101,7 @@ While most interaction happens via Telegram, the web interface is useful for spe
 
 ## 8. Troubleshooting & Help
 
+*   **Calendar Modifications:** If you ask to modify or delete an event, the assistant might first ask you to clarify which event using a search ("Find the dentist appointment") and will then ask you to confirm the action via buttons in the chat.
 *   **If it doesn't understand:** Try rephrasing your request. Sometimes slightly different wording makes a big difference.
 *   **If it makes a mistake or gives wrong information:** You can often correct it by giving it the right information ("Actually, the appointment is at 3 PM") or by updating a relevant note via the Web UI or a command ("Update the note 'Plumber Number' with content '555-9876'").
 *   **If you need more help:** Contact the family member who set up and manages the assistant for your family. They can help with configuration issues or more complex problems.
