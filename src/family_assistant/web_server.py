@@ -318,6 +318,21 @@ async def view_message_history(
         raise HTTPException(status_code=500, detail="Failed to fetch message history")
 
 
+@app.get("/tools", response_class=HTMLResponse)
+async def view_tools(request: Request):
+    """Serves the page displaying available tools."""
+    try:
+        tool_definitions = getattr(request.app.state, "tool_definitions", [])
+        if not tool_definitions:
+            logger.warning("No tool definitions found in app state.")
+        return templates.TemplateResponse(
+            "tools.html", {"request": request, "tools": tool_definitions}
+        )
+    except Exception as e:
+        logger.error(f"Error fetching tool definitions: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch tool definitions")
+
+
 @app.get("/tasks", response_class=HTMLResponse)
 async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get_db)):
     """Serves the page displaying scheduled tasks."""

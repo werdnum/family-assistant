@@ -492,9 +492,12 @@ async def main_async(
         # confirmation_timeout=... # Optional: Set custom timeout if needed
     )
     # Ensure the confirming provider loads its definitions (identifies tools needing confirmation)
-    await confirming_provider.get_tool_definitions()
+    tool_definitions = await confirming_provider.get_tool_definitions()
     logger.info("ConfirmingToolsProvider initialized and definitions loaded.")
 
+    # --- Store tool definitions in app state for web server access ---
+    fastapi_app.state.tool_definitions = tool_definitions
+    logger.info(f"Stored {len(tool_definitions)} tool definitions in FastAPI app state.")
 
     # --- Instantiate Processing Service ---
     processing_service = ProcessingService(

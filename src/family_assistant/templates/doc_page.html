@@ -21,6 +21,8 @@
             <span>|</span>
             <a href="{{ server_url }}/vector-search">Vector Search</a>
             <span>|</span>
+            <a href="{{ server_url }}/tools">View Tools</a>
+            <span>|</span>
             <span>Docs:</span>
             {% for doc_file in available_docs %}
             <a href="{{ server_url }}/docs/{{ doc_file }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a>
