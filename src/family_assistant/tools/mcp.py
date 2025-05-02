@@ -90,7 +90,7 @@ class MCPToolsProvider:
                         env_var_name = value[1:]  # Remove the leading '$'
                         resolved_value = os.getenv(env_var_name)
                         if resolved_value is not None:
-                            resolved_env[key] = resolved_value
+                            resolved_env_stdio[key] = resolved_value # Fix typo: use resolved_env_stdio
                             logger.debug(
                                 f"Resolved env var '{env_var_name}' for MCP server '{server_id}'"
                             )
@@ -99,7 +99,7 @@ class MCPToolsProvider:
                                 f"Env var '{env_var_name}' for MCP server '{server_id}' not found in environment. Omitting."
                             )
                     else:
-                        resolved_env[key] = value
+                        resolved_env_stdio[key] = value # Fix typo: use resolved_env_stdio
             elif env_config is not None:
                 logger.warning(
                     f"MCP server '{server_id}' has non-dictionary 'env' configuration for stdio. Ignoring."
