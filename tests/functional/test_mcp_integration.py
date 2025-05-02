@@ -301,8 +301,8 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     # --- Debugging ---
     # Check the type and value received from the fixture
-    logger.debug(f"Type of mcp_proxy_server fixture value: {type(mcp_proxy_server)}")
-    logger.debug(f"Value of mcp_proxy_server fixture value: {mcp_proxy_server}")
+    logger.info(f"Type of mcp_proxy_server fixture value: {type(mcp_proxy_server)}")
+    logger.info(f"Value of mcp_proxy_server fixture value: {mcp_proxy_server}")
     # --- End Debugging ---
 
     # Define MCP config *inside* the test after the fixture yielded the URL
