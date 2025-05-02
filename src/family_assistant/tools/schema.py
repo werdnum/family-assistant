@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 import io # Import io for StringIO
 import tempfile # For creating temporary files
 import os # For working with file paths
-from functools import lru_cache
+# Remove lru_cache as we will cache based on tool name at the call site
 
 # Attempt to import schema generation tools, handle import error gracefully
 try:
@@ -28,7 +28,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=128)
+# Removed @lru_cache decorator
 def render_schema_as_html(schema_json_str: Optional[str]) -> str:
     """
     Renders a JSON schema (passed as a JSON string) as HTML using json-schema-for-humans.

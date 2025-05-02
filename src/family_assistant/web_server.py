@@ -50,6 +50,9 @@ from family_assistant.tools.schema import render_schema_as_html # Import the new
 
 logger = logging.getLogger(__name__)
 
+# Simple in-memory cache for rendered tool schema HTML, keyed by tool name
+_tool_html_cache: Dict[str, str] = {}
+
 # Directory to save raw webhook request bodies for debugging/replay
 MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests"  # TODO: Consider making this configurable via env var
 
@@ -322,16 +325,29 @@ async def view_message_history(
 @app.get("/tools", response_class=HTMLResponse)
 async def view_tools(request: Request):
     """Serves the page displaying available tools."""
+    global _tool_html_cache # Use the global cache
     try:
         tool_definitions = getattr(request.app.state, "tool_definitions", [])
         if not tool_definitions:
             logger.warning("No tool definitions found in app state for /tools page.")
-        # Generate HTML for each tool's parameters on demand
+        # Generate HTML for each tool's parameters on demand, using cache
         rendered_tools = []
         for tool in tool_definitions:
             tool_copy = tool.copy() # Avoid modifying the original dict in state
-            schema_dict = tool_copy.get("function", {}).get("parameters")
-            tool_copy['parameters_html'] = render_schema_as_html(schema_dict)
+            tool_name = tool_copy.get("function", {}).get("name", "UnknownTool")
+
+            # Check cache first
+            if tool_name in _tool_html_cache:
+                tool_copy['parameters_html'] = _tool_html_cache[tool_name]
+            else:
+                schema_dict = tool_copy.get("function", {}).get("parameters")
+                # Serialize the schema dict to a stable JSON string for the rendering function
+                schema_json_str = json.dumps(schema_dict, sort_keys=True) if schema_dict else None
+                # Call the rendering function (no longer cached itself)
+                generated_html = render_schema_as_html(schema_json_str)
+                tool_copy['parameters_html'] = generated_html
+                _tool_html_cache[tool_name] = generated_html # Store in cache
+
             rendered_tools.append(tool_copy)
         return templates.TemplateResponse(
             "tools.html", {"request": request, "tools": rendered_tools}
