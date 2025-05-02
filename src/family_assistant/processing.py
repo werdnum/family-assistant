@@ -1,17 +1,13 @@
 import logging
 import json
 import asyncio
+import traceback # Moved import to top level
 import uuid  # Added for unique task IDs
-from datetime import datetime, timezone  # Added timezone
+from datetime import datetime, timedelta, timezone # Added timezone, timedelta
 from typing import List, Dict, Any, Optional, Callable, Tuple, Union, Awaitable # Added Union, Awaitable
 
 from dateutil.parser import isoparse  # Added for parsing datetime strings
 
-import logging
-import json
-import asyncio
-import uuid
-from datetime import datetime, timedelta, timezone  # Added
 from typing import List, Dict, Any, Optional, Tuple
 
 import pytz  # Added
@@ -81,14 +77,6 @@ class ProcessingService:
         # Store the confirmation callback function if provided at init? No, get from context.
 
     # Removed _execute_function_call method (if it was previously here)
-        self.calendar_config = calendar_config
-        self.timezone_str = timezone_str
-        self.max_history_messages = max_history_messages
-        self.server_url = server_url or "http://localhost:8000" # Default if not provided
-        self.history_max_age_hours = history_max_age_hours
-
-    # Removed _execute_function_call method (if it was previously here)
-
     async def process_message(
         self,
         db_context: DatabaseContext,  # Added db_context
@@ -456,11 +444,7 @@ class ProcessingService:
                 f"Error during ProcessingService interaction for chat {chat_id}: {e}",
                 exc_info=True,
             )
-            # Capture traceback on error
-            import traceback
-            error_traceback = traceback.format_exc()
-            # Capture traceback on error
-            import traceback
+            # Capture traceback on error using the imported module
             error_traceback = traceback.format_exc()
             # Return None for content/tools/reasoning, but include the traceback
             return None, None, None, error_traceback # Return traceback here
