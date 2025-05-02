@@ -51,6 +51,13 @@ Nothing - just remove the function.
 *   **Test Strategy Focus:** Prioritize realistic integration and functional tests that verify the behavior of components working together. Use `testcontainers` for dependencies like databases where possible. While unit tests have their place for complex, isolated logic, the primary goal is to ensure the system works correctly end-to-end.
 *   **Testable Core Logic:** Separate core application logic (e.g., processing a user request, handling a task) from interface-specific code (e.g., Telegram API interactions, FastAPI request/response handling). Test the core logic directly, making the interface layers thin wrappers.
 
+## Type safety
+
+Strongly prefer type safety at interface boundaries. In particular:
+
+* Strongly prefer typed dictionaries or named tuples instead of Dict[str, any].
+* Create types for structures accepted by third party APIs (e.g. OpenAI API `{"role": "user", "content": ...}`).
+
 ## Naming Conventions
 
 *   Use `snake_case` for variables, functions, and methods.
