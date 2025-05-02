@@ -464,6 +464,28 @@ async def get_message_history_tool(
         return f"Error: Failed to retrieve message history. {e}"
 
 
+# --- Documentation Tool Helper ---
+
+def _scan_user_docs() -> List[str]:
+    """Scans the 'docs/user/' directory for allowed documentation files."""
+    docs_user_dir = pathlib.Path("docs") / "user"
+    allowed_extensions = {".md", ".txt"}
+    available_files = []
+    if docs_user_dir.is_dir():
+        try:
+            for item in os.listdir(docs_user_dir):
+                item_path = docs_user_dir / item
+                if item_path.is_file() and any(item.endswith(ext) for ext in allowed_extensions):
+                    available_files.append(item)
+        except OSError as e:
+            logger.error(f"Error scanning documentation directory '{docs_user_dir}': {e}", exc_info=True)
+    else:
+        logger.warning(f"User documentation directory not found: '{docs_user_dir}'")
+    logger.info(f"Found user documentation files: {available_files}")
+    return available_files
+
+# --- User Documentation Tool Implementation ---
+
 # --- Local Tool Definitions and Mappings (Moved from processing.py) ---
 
 # Map tool names to their actual implementation functions

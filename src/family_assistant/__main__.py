@@ -63,6 +63,7 @@ from family_assistant.embeddings import (
 # Import tool definitions from the new tools module
 from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
+    _scan_user_docs, # Import the scanner function
     AVAILABLE_FUNCTIONS as local_tool_implementations,
     LocalToolsProvider,
     MCPToolsProvider,
@@ -484,8 +485,21 @@ async def main_async(
     # await load_mcp_config_and_connect(config["mcp_config"]) # Pass MCP config part
 
     # --- Instantiate Tool Providers ---
+    # Scan for documentation files and update the relevant tool definition
+    available_doc_files = _scan_user_docs()
+    formatted_doc_list = ", ".join(available_doc_files) or "None"
+    updated_local_tools_definition = copy.deepcopy(local_tools_definition) # Avoid modifying original
+    for tool_def in updated_local_tools_definition:
+        if tool_def.get("function", {}).get("name") == "get_user_documentation_content":
+            try:
+                tool_def["function"]["description"] = tool_def["function"]["description"].format(
+                    available_doc_files=formatted_doc_list
+                )
+                logger.info(f"Updated 'get_user_documentation_content' description with files: {formatted_doc_list}")
+            except KeyError as e:
+                logger.error(f"Failed to format documentation tool description: {e}", exc_info=True)
     local_provider = LocalToolsProvider(
-        definitions=local_tools_definition,
+        definitions=updated_local_tools_definition, # Use the updated list
         implementations=local_tool_implementations,
         embedding_generator=embedding_generator,
         calendar_config=config["calendar_config"], # Get from config dict
