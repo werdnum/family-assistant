@@ -257,9 +257,8 @@ def _fetch_caldav_events_sync(
                 logger.info(
                     f"Searching for events between {start_date} and {end_date} in calendar {calendar_url}"
                 )
-                # Use search method (synchronous) on the identified calendar object
                 results = target_calendar.search(
-                    start=start_date, end=end_date, event=True, expand=False
+                    start=start_date, end=end_date, event=True, expand=True
                 )
                 logger.debug(
                     f"Found {len(results)} potential events in calendar {calendar_url}"
