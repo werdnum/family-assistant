@@ -38,7 +38,7 @@
             {% endif %}
             <div class="task-detail task-payload">
                 <span class="task-label">Payload:</span>
-                <pre>{{ task.payload | tojson(indent=2) if task.payload is not none else 'None' }}</pre> <!-- Check for None explicitly -->
+                <div id="payload-{{ task.id }}" class="json-editor-container">{{ 'None' if task.payload is none }}</div> <!-- Container for JSON editor -->
             </div>
              <div class="task-detail task-error">
                 <span class="task-label">Last Error:</span>
@@ -54,9 +54,53 @@
 </main>
 
 <!-- Optional Footer
-<footer>
-    <p>Family Assistant Tasks</p>
-</footer>
+<footer> ... </footer>
 -->
+
+<!-- Load vanilla-jsoneditor -->
+<script type="module">
+    import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+
+    function initializeEditor(targetId, jsonData) {
+        const target = document.getElementById(targetId);
+        if (!target || jsonData === null || jsonData === undefined) {
+            // Don't initialize if target doesn't exist or data is null/undefined
+            if(target && (jsonData === null || jsonData === undefined)) {
+                 target.textContent = 'None'; // Ensure 'None' is displayed if payload was null
+            } else if (!target) {
+                 console.error(`Element with ID ${targetId} not found.`);
+            }
+            return;
+        }
+
+        let content = { json: jsonData }; // Assume payload is always valid JSON object from DB
+
+        try {
+            new createJSONEditor({
+                target: target,
+                props: {
+                    content,
+                    readOnly: true,
+                    mainMenuBar: false,
+                    navigationBar: false,
+                    statusBar: false,
+                    mode: 'tree' // Assume tree mode is desired for payloads
+                }
+            });
+             // Clear the placeholder 'None' text if editor initializes successfully
+            target.textContent = '';
+        } catch (error) {
+             console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
+             // Fallback to preformatted text if editor fails
+             target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`;
+        }
+    }
+
+    {% for task in tasks %}
+        // Initialize editor for payload if it's not None
+        initializeEditor('payload-{{ task.id }}', {{ task.payload | tojson | safe if task.payload is not none else 'null' }});
+    {% endfor %}
+
+</script>
 </body>
 </html>
