@@ -60,7 +60,7 @@ async def wait_for_tasks_to_complete(
             # Use the provided engine to get a context
             async with await get_db_context(engine=engine) as db:
                 # First check for failed tasks
-                failed_query = select(func.count(tasks_table.c.id)).where(
+                failed_query = select(func.count(tasks_table.c.id)).where( # Pass column to count
                     tasks_table.c.status == "failed"
                 )
                 # Filter by specific task IDs if provided
@@ -82,9 +82,9 @@ async def wait_for_tasks_to_complete(
                     failed_ids = [row[0] for row in task_id_result]
                     
                     raise RuntimeError(f"Task(s) failed: {', '.join(failed_ids)}")
-                
+
                 # Build the query to count non-terminal tasks
-                query = select(func.count(tasks_table.c.id)).where(
+                query = select(func.count(tasks_table.c.id)).where( # Pass column to count
                     tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
                 )
                 # Filter by specific task IDs if provided
