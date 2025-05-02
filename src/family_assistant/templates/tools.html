@@ -41,8 +41,11 @@
                 <h3>{{ tool.function.name }}</h3>
                 <p>{{ tool.function.description }}</p>
                 <strong>Parameters:</strong>
-                {# Render the generated HTML schema (passed from web_server) using the 'safe' filter #}
-                <div>{{ tool.parameters_html | safe }}</div>
+                <details>
+                    <summary style="cursor: pointer; font-weight: bold;">Show/Hide Schema</summary>
+                    {# Render the generated HTML schema (passed from web_server) using the 'safe' filter #}
+                    <div style="margin-top: 0.5rem;">{{ tool.parameters_html | safe }}</div>
+                </details>
             </article>
         {% endfor %}
     {% else %}
