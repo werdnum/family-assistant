@@ -92,6 +92,11 @@ class ToolsProvider(Protocol):
         """
         ...
 
+    # Add the optional close method to the protocol
+    async def close(self):
+        """Optional method to clean up resources used by the provider."""
+        ...
+
 
 # --- Local Tool Implementations ---
 # Refactored to accept context: ToolExecutionContext
@@ -937,6 +942,11 @@ class LocalToolsProvider:
             # Re-raise or return formatted error string? Returning error string for now.
             return f"Error executing tool '{name}': {e}"
 
+    async def close(self):
+        """Local provider has no resources to clean up."""
+        logger.debug("Closing LocalToolsProvider (no-op).")
+        pass # Explicitly pass for clarity
+
 
 class CompositeToolsProvider:
     """Combines multiple tool providers into a single interface."""
@@ -1196,4 +1206,10 @@ class ConfirmingToolsProvider(ToolsProvider):
             # Tool does not require confirmation, execute directly
             logger.debug(f"Tool '{name}' does not require confirmation. Executing directly.")
             return await self.wrapped_provider.execute_tool(name, arguments, context)
+
+    async def close(self):
+        """Closes the wrapped provider."""
+        logger.info(f"Closing ConfirmingToolsProvider by closing wrapped provider {type(self.wrapped_provider).__name__}...")
+        await self.wrapped_provider.close()
+        logger.info("ConfirmingToolsProvider finished closing wrapped provider.")
 
