@@ -52,7 +52,12 @@ logger = logging.getLogger(__name__)
 # Directory to save raw webhook request bodies for debugging/replay
 MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests"  # TODO: Consider making this configurable via env var
 
-app = FastAPI(title="Family Assistant Web Interface")
+app = FastAPI(
+    title="Family Assistant Web Interface",
+    docs_url="/api/docs",  # URL for Swagger UI
+    redoc_url="/api/redoc"  # URL for ReDoc
+)
+
 
 # --- Determine base path for templates and static files ---
 # This assumes web_server.py is at src/family_assistant/web_server.py
