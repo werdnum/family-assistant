@@ -4,6 +4,8 @@ import asyncio
 import logging
 import json
 from typing import List, Dict, Any, Optional, Callable, Tuple
+import subprocess
+import time
 from unittest.mock import MagicMock, AsyncMock
 
 # Import necessary components from the application
@@ -42,8 +44,28 @@ EXPECTED_CONVERTED_TIME_FRAGMENT = "19:30" # Assuming a 5-hour difference
 # Assume MCP server ID 'time' maps to tool 'convert_time_zone'
 MCP_TIME_TOOL_NAME = "mcp_time_convert_time_zone"
 
+# --- Fixture to manage MCP server subprocess ---
+@pytest.fixture(scope="function") # Use function scope to ensure clean server for each test
+async def mcp_time_server():
+    """Starts mcp-server-time as a subprocess and yields its URL."""
+    host = "127.0.0.1"
+    port = 8001 # Example port, ensure it's free
+    server_url = f"http://{host}:{port}"
+    command = ["mcp-server-time", "--host", host, "--port", str(port)]
+
+    logger.info(f"Starting MCP time server: {' '.join(command)}")
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    time.sleep(2) # Give server time to start up
+
+    yield server_url # Provide the URL to the test
+
+    logger.info("Stopping MCP time server...")
+    process.terminate()
+    process.wait(timeout=5) # Wait for graceful shutdown
+    logger.info("MCP time server stopped.")
+
 @pytest.mark.asyncio
-async def test_mcp_time_conversion(test_db_engine, test_mcp_config_path):
+async def test_mcp_time_conversion(test_db_engine, mcp_time_server):
     """
     Tests the end-to-end flow involving an MCP tool call:
     1. User asks to convert time between timezones.
@@ -122,9 +144,13 @@ async def test_mcp_time_conversion(test_db_engine, test_mcp_config_path):
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition, implementations=local_tool_implementations
     )
-    # MCP Provider - Assuming test_mcp_config_path points to a valid config
-    # and the 'time' server is running.
-    mcp_provider = MCPToolsProvider(mcp_config_path=test_mcp_config_path)
+
+    # Hard-coded MCP configuration pointing to the fixture-managed server
+    mcp_config = {
+        "time": {"url": mcp_time_server}
+    }
+    # Instantiate MCP provider with the in-memory config dictionary
+    mcp_provider = MCPToolsProvider(mcp_server_configs=mcp_config)
     await mcp_provider.initialize() # Connect and fetch definitions
 
     composite_provider = CompositeToolsProvider(
@@ -193,4 +219,3 @@ async def test_mcp_time_conversion(test_db_engine, test_mcp_config_path):
     # This makes it an integration test of ProcessingService and MCPToolsProvider.
 
     logger.info(f"--- MCP Time Conversion Test ({test_run_id}) Passed ---")
-
