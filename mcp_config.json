@@ -30,6 +30,13 @@
         "jsr:@pydantic/mcp-run-python",
         "stdio"
       ]
+    },
+    "homeassistant": {
+    	"command": "mcp-proxy",
+    	"env": {
+    		"SSE_URL": "https://homeassistant.andrewgarrett.dev/mcp_server/sse",
+    		"API_ACCESS_TOKEN": "$HOMEASSISTANT_API_KEY"
+    	}
     }
   }
 }
