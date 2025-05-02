@@ -787,6 +787,11 @@ async def upload_document(
 
 # --- Documentation Route ---
 
+@app.get("/docs/")
+async def redirect_to_user_guide():
+    """Redirects the base /docs/ path to the main user guide."""
+    return RedirectResponse(url="/docs/USER_GUIDE.md", status_code=status.HTTP_302_FOUND)
+
 @app.get("/docs/{filename:path}", response_class=HTMLResponse)
 async def serve_documentation(request: Request, filename: str):
     """Serves rendered Markdown documentation files from the docs/user directory."""
