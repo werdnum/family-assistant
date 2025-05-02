@@ -383,21 +383,27 @@ async def fetch_upcoming_events(
 
     # --- Sort Combined Events ---
     def get_sort_key(event):
-        """Converts date to timezone-aware datetime for sorting."""
+        """Converts date/datetime to timezone-aware datetime in the local timezone for sorting."""
         start_val = event["start"]
+        try:
+            local_tz = ZoneInfo(timezone_str)
+        except Exception:
+            logger.warning(f"Invalid timezone '{timezone_str}' in get_sort_key, falling back to UTC.")
+            local_tz = ZoneInfo("UTC") # Fallback
+
         if isinstance(start_val, date) and not isinstance(start_val, datetime):
             # Convert date to datetime at midnight *in the local timezone*
-            try:
-                local_tz = ZoneInfo(timezone_str)
-            except Exception:
-                local_tz = ZoneInfo("UTC") # Fallback
             return datetime.combine(start_val, time.min, tzinfo=local_tz)
-        elif isinstance(start_val, datetime) and start_val.tzinfo is None:
-            # This case *should* be handled by parse_event now, but handle defensively
-            logger.warning(f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying fallback timezone.")
-            local_tz = ZoneInfo(timezone_str) # Use local_tz defined above or re-fetch
-            return start_val.replace(tzinfo=local_tz)
-        return start_val
+        elif isinstance(start_val, datetime):
+            # If it's a datetime, ensure it's timezone-aware and in the correct local timezone
+            if start_val.tzinfo is None:
+                 logger.warning(f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying local timezone {timezone_str}.")
+                 return start_val.replace(tzinfo=local_tz) # Make aware assuming local TZ
+            else:
+                 return start_val.astimezone(local_tz) # Convert to local TZ
+        # Fallback for unexpected types (shouldn't happen with proper parsing)
+        logger.error(f"Unexpected type for event start time: {type(start_val)}. Returning epoch.")
+        return datetime.fromtimestamp(0, tz=local_tz)
 
     try:
         # Ensure start times are comparable using the helper function
