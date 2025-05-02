@@ -99,7 +99,6 @@ from family_assistant.storage.context import (
 # Import items specifically from json-schema-for-humans
 from json_schema_for_humans.generation_configuration import GenerationConfiguration
 from json_schema_for_humans.generate import generate_from_schema
-)
 
 # Import calendar functions
 from family_assistant import calendar_integration
