@@ -482,8 +482,8 @@ def format_events_for_prompt(
             end_dt_aware = None # Cannot compare if end time is invalid
 
         if end_dt_aware and end_dt_aware <= now_aware:
-           logger.debug(f"Skipping past event: '{event['summary']}' ended at {end_dt_aware}")
-           continue
+            logger.info(f"Skipping past event: '{event['summary']}' ended at {end_dt_aware}")
+            continue
 
         # Format start/end times (using potentially localized datetimes) using the timezone
         start_str = format_datetime_or_date(start_dt, timezone_str, is_end=False)
