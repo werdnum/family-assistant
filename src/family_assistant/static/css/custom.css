@@ -134,11 +134,13 @@ a.button-link:hover {
 /* Adjust text color for better contrast on custom backgrounds if needed */
 .user-message, .assistant-message, .system-message {
     color: #333; /* Ensure readability */
+/* Use theme text color for better adaptability */
+/* color: var(--text); */ /* Removing fixed color */
 }
 
 .message-meta {
     font-size: 0.8em;
-    color: #666;
+    color: var(--text-light); /* Use theme light text color */
     margin-bottom: 0.4em; /* Increased margin */
 }
 .message-content {
@@ -147,22 +149,22 @@ a.button-link:hover {
 }
 .tool-info-details {
     margin-top: 0.8em; /* Increased margin */
-    background-color: #eee;
-    border: 1px solid #ddd;
+    background-color: var(--accent-bg); /* Use theme accent background */
+    border: 1px solid var(--border); /* Use theme border */
     border-radius: 4px; /* Slight increase */
     padding: 0.5em 0.8em; /* Increased padding */
 }
 .tool-info-details summary {
     cursor: pointer;
     font-size: 0.9em;
-    color: #333;
+    color: var(--text); /* Use theme text color */
     font-weight: bold; /* Make summary stand out */
 }
 .tool-info-content {
     margin-top: 0.5em; /* Increased margin */
     font-size: 0.85em;
-    color: #555;
-    background-color: #f9f9f9;
+    color: var(--text-light); /* Use theme light text color */
+    background-color: var(--bg); /* Use theme background */
     padding: 0.8em; /* Increased padding */
     border-radius: 4px; /* Slight increase */
     overflow-x: auto;
@@ -198,9 +200,11 @@ a.button-link:hover {
 .task-card.status-done { background-color: #e8f5e9; border-left-color: #a5d6a7; }
 .task-card.status-failed { background-color: #ffebee; border-left-color: #ef9a9a; }
 /* Ensure text is readable on status backgrounds */
+/* Remove fixed color, allow inheriting from theme or specific adjustments if needed */
 .task-card.status-pending, .task-card.status-processing, .task-card.status-done, .task-card.status-failed {
-    color: #333;
+/*  color: #333; */
 }
+
 
 .task-detail {
     margin-bottom: 0.6em; /* Space between details */
@@ -236,8 +240,8 @@ a.button-link:hover {
 .task-payload pre, .task-error pre {
     margin-top: 0.3em; /* Space between label and pre */
     max-height: 150px; /* Slightly more height for context */
-    overflow-y: auto;
-    background-color: rgba(0,0,0,0.05); /* Subtle background for pre */
+    /* Use theme accent background */
+    background-color: var(--accent-bg); /* Subtle background for pre */
     padding: 0.5em;
     border-radius: 3px;
 }
