@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import aiofiles  # For async file operations
+import copy # For deep copying tool definitions
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Protocol, AsyncGenerator, AsyncIterator
 
@@ -46,6 +47,49 @@ class LLMOutput:
     content: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = field(default=None) # Store raw tool call dicts
     reasoning_info: Optional[Dict[str, Any]] = field(default=None) # Store reasoning/usage data
+
+
+def _sanitize_tools_for_litellm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Removes unsupported 'format' fields from string parameters in tool definitions
+    before sending them to LiteLLM/OpenAI, which only supports 'enum' and 'date-time'.
+
+    Args:
+        tools: A list of tool definitions in OpenAI dictionary format.
+
+    Returns:
+        A new list of sanitized tool definitions.
+    """
+    # Create a deep copy to avoid modifying the original list in place
+    sanitized_tools = copy.deepcopy(tools)
+
+    for tool_dict in sanitized_tools:
+        func_def = tool_dict.get("function", {})
+        params = func_def.get("parameters", {})
+        properties = params.get("properties", {})
+        tool_name = func_def.get("name", "unknown_tool") # For logging context
+
+        if not isinstance(properties, dict):
+            logger.warning(f"Sanitizing tool '{tool_name}': Non-dict 'properties' found. Skipping property sanitization for this tool.")
+            continue
+
+        props_to_delete_format = []
+        for param_name, param_details in properties.items():
+            if isinstance(param_details, dict):
+                param_type = param_details.get("type")
+                param_format = param_details.get("format")
+
+                if param_type == "string" and param_format and param_format not in ["enum", "date-time"]:
+                    logger.warning(
+                        f"Sanitizing tool '{tool_name}': Removing unsupported format '{param_format}' from string parameter '{param_name}' for LiteLLM compatibility."
+                    )
+                    props_to_delete_format.append(param_name)
+
+        for param_name in props_to_delete_format:
+            if param_name in properties and isinstance(properties[param_name], dict) and 'format' in properties[param_name]:
+                del properties[param_name]["format"]
+
+    return sanitized_tools
 
 
 class LLMInterface(Protocol):
@@ -147,9 +191,13 @@ class LiteLLMClient:
         call_kwargs["model"] = self.model
         call_kwargs["messages"] = messages
 
+        # Sanitize tools *before* adding them to kwargs
+        sanitized_tools = None
         # Add tools and tool_choice if tools are provided
         if tools:
-            call_kwargs["tools"] = tools
+            # Sanitize a copy of the tools list for LiteLLM compatibility
+            sanitized_tools = _sanitize_tools_for_litellm(tools)
+            call_kwargs["tools"] = sanitized_tools # Pass the sanitized list
             call_kwargs["tool_choice"] = tool_choice
 
         # Add the nested 'reasoning' object specifically for OpenRouter models if configured
@@ -158,7 +206,7 @@ class LiteLLMClient:
             logger.debug(f"Adding nested 'reasoning' parameter for OpenRouter: {reasoning_params_config}")
 
         logger.debug(
-            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(tools)}. Final Kwargs: {json.dumps(call_kwargs, default=str)}" # Use json.dumps for better logging
+            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(sanitized_tools)}. Final Kwargs: {json.dumps(call_kwargs, default=str)}" # Use json.dumps for better logging
         )
         try:
             response = await acompletion(**call_kwargs)

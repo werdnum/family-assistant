@@ -180,8 +180,8 @@ class MCPToolsProvider:
                 server_tools = response.tools
                 logger.info(f"Server '{server_id}' provides {len(server_tools)} tools.")
 
-                # Sanitize and map tools
-                sanitized_tools = self._sanitize_mcp_definitions(server_tools) # Sanitize here
+                # Format MCP tools to OpenAI dict format (sanitization moved to LLM layer)
+                sanitized_tools = self._format_mcp_definitions_to_dicts(server_tools)
                 discovered_tools.extend(sanitized_tools)
 
                 for tool_def in sanitized_tools: # Iterate sanitized definitions
@@ -241,53 +241,29 @@ class MCPToolsProvider:
         )
 
 
-    def _sanitize_mcp_definitions(
+    def _format_mcp_definitions_to_dicts(
         # self, definitions: List[Dict[str, Any]] # Original signature
         self, definitions: List[Any] # MCP list_tools returns list of Tool objects
     ) -> List[Dict[str, Any]]:
         """
-        Removes unsupported 'format' fields from string parameters in tool definitions.
-        Google's API only supports 'enum' and 'date-time' for string formats.
         Accepts a list of MCP Tool objects.
+        Converts MCP Tool objects to OpenAI-like dictionary format.
+        Sanitization (removing unsupported formats) is handled by the LLM client layer.
         """
-        sanitized_defs = []
+        formatted_defs = []
         for tool in definitions: # Iterate MCP Tool objects
             try:
                 # Convert MCP Tool object to OpenAI-like dictionary format
                 tool_dict = {
                     "type": "function",
                     "function": {
-                        "name": tool.name,
-                        "description": tool.description,
+                        "name": tool.name, # Assuming these attributes exist on MCP Tool object
+                        "description": tool.description, # Assuming these attributes exist
                         "parameters": tool.inputSchema,
                     },
                 }
-
-                # Now sanitize the 'parameters' part of the dictionary
-                func_def = tool_dict.get("function", {})
-                params = func_def.get("parameters", {})
-                properties = params.get("properties", {})
-
-                if not isinstance(properties, dict):
-                    logger.warning(f"Tool '{tool.name}' has non-dict 'properties'. Skipping sanitization for this tool.")
-                    sanitized_defs.append(tool_dict) # Add unsanitized but formatted dict
-                    continue
-
-                props_to_delete_format = []
-                for param_name, param_details in properties.items():
-                    if isinstance(param_details, dict):
-                        param_type = param_details.get("type")
-                        param_format = param_details.get("format")
-
-                        if (
-                            param_type == "string"
-                            and param_format
-                            and param_format not in ["enum", "date-time"]
-                        ):
-                            logger.warning(
-                                f"Sanitizing tool '{tool.name}': Removing unsupported format '{param_format}' from string parameter '{param_name}'."
-                            )
-                            props_to_delete_format.append(param_name)
+                # --- Sanitization logic removed from here ---
+                # The 'format' field might still be present in the 'parameters' dict
 
                 # Perform deletion after iteration
                 for param_name in props_to_delete_format:
@@ -296,10 +272,10 @@ class MCPToolsProvider:
                         if 'format' in properties[param_name]:
                             del properties[param_name]["format"]
 
-                sanitized_defs.append(tool_dict) # Add the sanitized dict
+                formatted_defs.append(tool_dict) # Add the formatted dict
             except Exception as e:
                 logger.error(
-                    f"Error formatting or sanitizing MCP tool definition: {tool.name}. Error: {e}",
+                    f"Error formatting MCP tool definition to dict: {getattr(tool, 'name', 'UnknownName')}. Error: {e}",
                     exc_info=True,
                 )
                 # Optionally skip the tool or add a placeholder
@@ -307,7 +283,7 @@ class MCPToolsProvider:
 
         return sanitized_defs
 
-    async def get_tool_definitions(self) -> List[Dict[str, Any]]:
+    async def get_tool_definitions(self) -> List[Dict[str, Any]]: # Return type is still dict
         """Returns the aggregated and sanitized tool definitions from all connected servers."""
         if not self._initialized:
             await self.initialize()
