@@ -1,5 +1,5 @@
 // Import the result display editor (needs to be module type)
-// import { createJSONEditor as createVanillaEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+import { createJSONEditor as createVanillaEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
 
 // Note: JSONEditor (for input) is loaded globally via the script tag in the HTML
 
@@ -100,9 +100,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({ arguments: argsJson })
                 });
                 resultData = await response.json();
-                resultContainer.innerText = resultData; // Clear "Running..."
+                resultContainer.innerHTML = ''; // Clear "Running..."
                 // Display result using vanilla-jsoneditor
-                // new createVanillaEditor({ target: resultContainer, props: { content: { json: resultData }, readOnly: true, mainMenuBar: false, navigationBar: false, statusBar: false, mode: 'tree' }});
+                new createVanillaEditor({ target: resultContainer, props: { content: { json: resultData }, readOnly: true, mainMenuBar: false, navigationBar: false, statusBar: false, mode: 'tree' }});
                 if (!response.ok) {
                     console.error(`API Error (${response.status}):`, resultData);
                     resultContainer.insertAdjacentHTML('afterbegin', `<p class="error">API Error (${response.status}): ${resultData.detail || 'Unknown error'}</p>`);
