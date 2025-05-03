@@ -402,6 +402,7 @@ async def view_tools(request: Request):
                 schema_dict = tool_copy.get("function", {}).get("parameters")
                 # Serialize the schema dict to a stable JSON string for the rendering function
                 schema_json_str = (
+                schema_json_str = (
                     json.dumps(schema_dict, sort_keys=True) if schema_dict else None
                 )
                 # Call the rendering function (no longer cached itself)

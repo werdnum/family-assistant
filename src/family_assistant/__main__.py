@@ -71,6 +71,7 @@ from family_assistant.tools import (
     ToolExecutionContext,
     ToolsProvider,  # Import protocol for type hinting
 )
+from family_assistant.tools import _scan_user_docs # Import the scanner function from tools package
 
 # Import the FastAPI app
 from family_assistant.web_server import app as fastapi_app
