@@ -306,8 +306,13 @@ a.button-link:hover {
 /* Styles for the @json-editor/json-editor arguments container */
 .json-editor-arguments-container {
     display: block; /* Ensure it behaves as a block */
+    height: auto; /* Explicitly allow height to be determined by content */
+    width: 100%; /* Force it to take full width of its parent */
     clear: both; /* Clear any potential internal floats */
-    min-height: 100px; /* Give it some minimum space */
+    /* min-height: 100px; /* Removed fixed min-height */
+    box-sizing: border-box; /* Include padding/border in width calculation */
+    /* overflow: visible; /* Removed overflow: visible */
+    padding: 5px; /* Add slight padding around the editor */
     /* border: 1px dashed cyan; */ /* Uncomment for debugging layout */
 }
 
