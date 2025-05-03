@@ -125,9 +125,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         definitions=local_tools_definition, implementations=local_tool_implementations
     )
     # Mock MCP provider as it's not needed for this test
-    mcp_provider = MCPToolsProvider(
-        mcp_server_configs={} # Use correct argument name
-    )
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})  # Use correct argument name
     composite_provider = CompositeToolsProvider(
         providers=[local_provider, mcp_provider]
     )
@@ -149,7 +147,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
-        server_url=None, # Added missing argument
+        server_url=None,  # Added missing argument
     )
     logger.info(
         f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__} and dummy config"

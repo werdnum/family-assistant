@@ -7,25 +7,29 @@ from typing import List, Dict, Optional, Any, Literal
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .context import DatabaseContext # Import context
-from sqlalchemy.sql import text # For executing raw SQL if needed
+from .context import DatabaseContext  # Import context
+from sqlalchemy.sql import text  # For executing raw SQL if needed
 
 logger = logging.getLogger(__name__)
 
 # --- Input Schema Definition ---
 
-@dataclass(frozen=True) # Use frozen=True for immutability if desired
+
+@dataclass(frozen=True)  # Use frozen=True for immutability if desired
 class MetadataFilter:
     """Represents a simple key-value filter for JSONB metadata."""
+
     key: str
-    value: str # Keep value as string for simplicity, conversion happens in query logic
+    value: str  # Keep value as string for simplicity, conversion happens in query logic
+
 
 @dataclass
 class VectorSearchQuery:
     """
     Input schema for performing vector/keyword/hybrid searches.
     """
-    search_type: Literal['semantic', 'keyword', 'hybrid'] = 'hybrid'
+
+    search_type: Literal["semantic", "keyword", "hybrid"] = "hybrid"
 
     # Query Content
     semantic_query: Optional[str] = None
@@ -39,22 +43,28 @@ class VectorSearchQuery:
     # Filters
     embedding_types: List[str] = field(default_factory=list)
     source_types: List[str] = field(default_factory=list)
-    created_after: Optional[datetime] = None # Expect timezone-aware datetime
-    created_before: Optional[datetime] = None # Expect timezone-aware datetime
+    created_after: Optional[datetime] = None  # Expect timezone-aware datetime
+    created_before: Optional[datetime] = None  # Expect timezone-aware datetime
     title_like: Optional[str] = None
-    metadata_filters: List[MetadataFilter] = field(default_factory=list) # Changed to list
+    metadata_filters: List[MetadataFilter] = field(
+        default_factory=list
+    )  # Changed to list
 
     # Control Parameters
     limit: int = 10
-    rrf_k: int = 60 # Constant for Reciprocal Rank Fusion
+    rrf_k: int = 60  # Constant for Reciprocal Rank Fusion
 
     def __post_init__(self):
         """Basic validation."""
-        if self.search_type in ['semantic', 'hybrid'] and not self.semantic_query:
-            raise ValueError("semantic_query is required for 'semantic' or 'hybrid' search.")
-        if self.search_type in ['semantic', 'hybrid'] and not self.embedding_model:
-            raise ValueError("embedding_model is required for 'semantic' or 'hybrid' search.")
-        if self.search_type == 'keyword' and not self.keywords:
+        if self.search_type in ["semantic", "hybrid"] and not self.semantic_query:
+            raise ValueError(
+                "semantic_query is required for 'semantic' or 'hybrid' search."
+            )
+        if self.search_type in ["semantic", "hybrid"] and not self.embedding_model:
+            raise ValueError(
+                "embedding_model is required for 'semantic' or 'hybrid' search."
+            )
+        if self.search_type == "keyword" and not self.keywords:
             raise ValueError("keywords are required for 'keyword' search.")
         if self.limit <= 0:
             raise ValueError("limit must be positive.")
@@ -64,10 +74,13 @@ class VectorSearchQuery:
 
 # --- Query Function ---
 
+
 async def query_vector_store(
     db_context: DatabaseContext,
     query: VectorSearchQuery,
-    query_embedding: Optional[List[float]] = None, # Pass generated embedding separately
+    query_embedding: Optional[
+        List[float]
+    ] = None,  # Pass generated embedding separately
 ) -> List[Dict[str, Any]]:
     """
     Performs vector, keyword, or hybrid search based on the VectorSearchQuery input.
@@ -82,8 +95,10 @@ async def query_vector_store(
         A list of dictionaries representing the search results.
     """
     # --- Validation specific to embedding presence ---
-    if query.search_type in ['semantic', 'hybrid'] and not query_embedding:
-        raise ValueError("query_embedding is required for semantic/hybrid search execution.")
+    if query.search_type in ["semantic", "hybrid"] and not query_embedding:
+        raise ValueError(
+            "query_embedding is required for semantic/hybrid search execution."
+        )
 
     # --- Parameter Mapping and Query Construction (using raw SQL example) ---
     params = {"limit": query.limit, "rrf_k": query.rrf_k}
@@ -101,7 +116,7 @@ async def query_vector_store(
         params["doc_created_lte"] = query.created_before
         doc_where_clauses.append("d.created_at <= :doc_created_lte")
     if query.title_like:
-        params["doc_title_ilike"] = f"%{query.title_like}%" # Add wildcards here
+        params["doc_title_ilike"] = f"%{query.title_like}%"  # Add wildcards here
         doc_where_clauses.append("d.title ILIKE :doc_title_ilike")
     # Handle multiple metadata filters
     for i, meta_filter in enumerate(query.metadata_filters):
@@ -113,17 +128,16 @@ async def query_vector_store(
         # Ensure the key is validated/sanitized before embedding in the query string.
         # For now, assuming the key is safe or comes from a controlled source.
         # Basic sanity check: Allow alphanumeric, underscore, hyphen, period
-        if not all(c.isalnum() or c in ['_', '-', '.'] for c in meta_key):
-             logger.warning(f"Potentially unsafe metadata key used: {meta_key}")
-             # Depending on security requirements, you might raise ValueError here
-             # raise ValueError(f"Invalid metadata key format: {meta_key}")
+        if not all(c.isalnum() or c in ["_", "-", "."] for c in meta_key):
+            logger.warning(f"Potentially unsafe metadata key used: {meta_key}")
+            # Depending on security requirements, you might raise ValueError here
+            # raise ValueError(f"Invalid metadata key format: {meta_key}")
 
         # Use parameterized value, embed validated key
         params[param_name] = meta_filter.value
         # Use @> for containment check if value is JSON, ->> for text comparison
         # Assuming simple string comparison for now:
         doc_where_clauses.append(f"d.doc_metadata->>'{meta_key}' = :{param_name}")
-
 
     doc_where_sql = " AND ".join(doc_where_clauses)
 
@@ -139,22 +153,32 @@ async def query_vector_store(
     vector_cte = ""
     fts_cte = ""
     final_select_cols = [
-        "de.id AS embedding_id", "de.document_id", "d.title", "d.source_type",
-        "d.created_at", "de.embedding_type", "de.content AS embedding_source_content",
+        "de.id AS embedding_id",
+        "de.document_id",
+        "d.title",
+        "d.source_type",
+        "d.created_at",
+        "de.embedding_type",
+        "de.content AS embedding_source_content",
         # Add other desired columns from 'd' or 'de'
-        "d.source_id", "d.source_uri", "d.doc_metadata", "de.chunk_index"
+        "d.source_id",
+        "d.source_uri",
+        "d.doc_metadata",
+        "de.chunk_index",
     ]
     final_joins = []
     final_where = []
     final_order_by = ""
 
     # Vector Search CTE
-    if query.search_type in ['semantic', 'hybrid']:
-        if not query.embedding_model: # Should be caught by dataclass validation, but double-check
-             raise ValueError("embedding_model is missing for semantic search")
+    if query.search_type in ["semantic", "hybrid"]:
+        if (
+            not query.embedding_model
+        ):  # Should be caught by dataclass validation, but double-check
+            raise ValueError("embedding_model is missing for semantic search")
         params["query_embedding"] = query_embedding
         params["vector_model"] = query.embedding_model
-        distance_op = "<=>" # Assuming cosine
+        distance_op = "<=>"  # Assuming cosine
         vector_limit = query.limit * 5
 
         vector_cte = f"""
@@ -179,9 +203,9 @@ async def query_vector_store(
             final_order_by = "ORDER BY vr.distance ASC"
 
     # FTS Search CTE
-    if query.search_type in ['keyword', 'hybrid']:
-        if not query.keywords: # Should be caught by dataclass validation
-             raise ValueError("keywords are missing for keyword search")
+    if query.search_type in ["keyword", "hybrid"]:
+        if not query.keywords:  # Should be caught by dataclass validation
+            raise ValueError("keywords are missing for keyword search")
         params["query_keywords"] = query.keywords
         fts_limit = query.limit * 5
 
@@ -212,20 +236,19 @@ async def query_vector_store(
         final_select_cols.append(
             "COALESCE(1.0 / (:rrf_k + vr.vec_rank), 0.0) + COALESCE(1.0 / (:rrf_k + fr.fts_rank), 0.0) AS rrf_score"
         )
-        final_where_sql = " OR ".join(final_where) # OR for hybrid
+        final_where_sql = " OR ".join(final_where)  # OR for hybrid
         final_order_by = "ORDER BY rrf_score DESC"
     else:
-        final_where_sql = " AND ".join(final_where) # AND for single type
-
+        final_where_sql = " AND ".join(final_where)  # AND for single type
 
     # --- Construct Final Query ---
     # Ensure there's at least one CTE if we are joining/filtering based on them
     if not vector_cte and not fts_cte:
-         # This case shouldn't happen if validation passes, but handle defensively
-         logger.warning("Search query doesn't involve vector or FTS components.")
-         # Construct a simpler query based only on filters if needed, or return empty
-         # For now, return empty as the logic relies on CTEs
-         return []
+        # This case shouldn't happen if validation passes, but handle defensively
+        logger.warning("Search query doesn't involve vector or FTS components.")
+        # Construct a simpler query based only on filters if needed, or return empty
+        # For now, return empty as the logic relies on CTEs
+        return []
 
     # Convert embedding list to string format expected by pgvector for parameter binding
     if "query_embedding" in params:
@@ -249,7 +272,7 @@ async def query_vector_store(
     # --- Execute ---
     logger.debug(f"Executing vector search query: {sql_query}")
     # Avoid logging embedding vector itself
-    log_params = {k: v for k, v in params.items() if k != 'query_embedding'}
+    log_params = {k: v for k, v in params.items() if k != "query_embedding"}
     logger.debug(f"With params: {log_params}")
 
     try:
@@ -259,7 +282,7 @@ async def query_vector_store(
     except Exception as e:
         logger.error(f"Error executing vector search query: {e}", exc_info=True)
         # Depending on desired behavior, either return empty list or re-raise
-        raise # Re-raise the exception for the caller (web server) to handle
+        raise  # Re-raise the exception for the caller (web server) to handle
 
 
 __all__ = ["VectorSearchQuery", "MetadataFilter", "query_vector_store"]

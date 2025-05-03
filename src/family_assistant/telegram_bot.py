@@ -7,7 +7,7 @@ import json
 import logging
 import traceback
 import uuid
-import functools # Ensure functools is imported
+import functools  # Ensure functools is imported
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -15,7 +15,7 @@ import telegramify_markdown
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram import (
-    ForceReply, # Add ForceReply import
+    ForceReply,  # Add ForceReply import
     InlineKeyboardButton,
     Update,
     Message,
@@ -24,15 +24,16 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
     ApplicationBuilder,
-    CallbackQueryHandler, # Add CallbackQueryHandler
+    CallbackQueryHandler,  # Add CallbackQueryHandler
     CallbackContext,
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
+
 # Import necessary types for type hinting
-from telegram import InlineKeyboardMarkup # Move this import here
+from telegram import InlineKeyboardMarkup  # Move this import here
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 # Import necessary types for type hinting
@@ -55,7 +56,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
     def __init__(
         self,
-        telegram_service: "TelegramService", # Accept the service instance
+        telegram_service: "TelegramService",  # Accept the service instance
         application: Application,
         allowed_user_ids: List[int],
         developer_chat_id: Optional[int],
@@ -74,7 +75,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             processing_service: The ProcessingService instance.
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
-        self.telegram_service = telegram_service # Store the service instance
+        self.telegram_service = telegram_service  # Store the service instance
         # Imports moved to top level
 
         self.application = application
@@ -91,7 +92,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self.processing_tasks: Dict[int, asyncio.Task] = {}
         # Store pending confirmation Futures
         self.pending_confirmations: Dict[str, asyncio.Future] = {}
-        self.confirmation_timeout = 3600.0 # Default 1 hour, should match ConfirmingToolsProvider
+        self.confirmation_timeout = (
+            3600.0  # Default 1 hour, should match ConfirmingToolsProvider
+        )
 
         # Store storage functions needed directly by the handler (e.g., history)
         # These might be better accessed via the db_context passed around,
@@ -248,9 +251,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         llm_response_content: Optional[str] = None
         tool_call_info: Optional[List[Dict[str, Any]]] = None
-        reasoning_info: Optional[Dict[str, Any]] = None # Added
-        sent_assistant_message: Optional[Message] = None # To store the sent message object
-        processing_error_traceback: Optional[str] = None # Added
+        reasoning_info: Optional[Dict[str, Any]] = None  # Added
+        sent_assistant_message: Optional[Message] = (
+            None  # To store the sent message object
+        )
+        processing_error_traceback: Optional[str] = None  # Added
         logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
         try:
@@ -267,32 +272,34 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 return
 
             db_context_getter = self.get_db_context()  # Get the coroutine first
-            async with await db_context_getter as db_context:  # await to get the context manager
+            async with (
+                await db_context_getter as db_context
+            ):  # await to get the context manager
                 async with self._typing_notifications(context, chat_id):
                     # Create the partial function for the confirmation callback
                     # This binds chat_id, context, and timeout from the current scope
                     confirmation_callback_partial = functools.partial(
                         self._request_confirmation_impl,
                         chat_id=chat_id,
-                        context=context, # Pass the Telegram context
-                        timeout=self.confirmation_timeout # Pass the configured timeout
+                        context=context,  # Pass the Telegram context
+                        timeout=self.confirmation_timeout,  # Pass the configured timeout
                     )
 
                     # Call the method on the ProcessingService instance, capture all return values
                     (
                         llm_response_content,
                         tool_call_info,
-                        reasoning_info, # Capture reasoning
-                        processing_error_traceback, # Capture traceback
+                        reasoning_info,  # Capture reasoning
+                        processing_error_traceback,  # Capture traceback
                     ) = await self.processing_service.generate_llm_response_for_chat(
-                            db_context=db_context,
-                            application=self.application,
-                            chat_id=chat_id,
-                            trigger_content_parts=trigger_content_parts,
-                            user_name=user_name,
-                            # Pass the partially applied confirmation request callback
-                            request_confirmation_callback=confirmation_callback_partial,
-                        )
+                        db_context=db_context,
+                        application=self.application,
+                        chat_id=chat_id,
+                        trigger_content_parts=trigger_content_parts,
+                        user_name=user_name,
+                        # Pass the partially applied confirmation request callback
+                        request_confirmation_callback=confirmation_callback_partial,
+                    )
 
             # Create ForceReply object
             force_reply_markup = ForceReply(selective=False)
@@ -307,7 +314,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         text=converted_markdown,
                         parse_mode=ParseMode.MARKDOWN_V2,
                         reply_to_message_id=reply_target_message_id,
-                        reply_markup=force_reply_markup, # Add ForceReply
+                        reply_markup=force_reply_markup,  # Add ForceReply
                     )
                 except Exception as md_err:
                     logger.error(
@@ -318,49 +325,57 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         chat_id=chat_id,
                         text=llm_response_content,
                         reply_to_message_id=reply_target_message_id,
-                        reply_markup=force_reply_markup, # Add ForceReply
+                        reply_markup=force_reply_markup,  # Add ForceReply
                     )
             # If an error occurred during processing, check for traceback *before* handling empty response
             elif processing_error_traceback and reply_target_message_id:
-                 logger.info(f"Sending error message to chat {chat_id} due to processing error.")
-                 await context.bot.send_message(
-                     chat_id=chat_id,
-                     text="Sorry, something went wrong while processing your request.",
-                     reply_to_message_id=reply_target_message_id,
-                     reply_markup=force_reply_markup, # Add ForceReply
-                 )
+                logger.info(
+                    f"Sending error message to chat {chat_id} due to processing error."
+                )
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Sorry, something went wrong while processing your request.",
+                    reply_to_message_id=reply_target_message_id,
+                    reply_markup=force_reply_markup,  # Add ForceReply
+                )
             # Only handle empty response if there was no content AND no processing error
             else:
-                logger.warning("Received empty response from LLM (and no processing error detected).")
+                logger.warning(
+                    "Received empty response from LLM (and no processing error detected)."
+                )
                 if reply_target_message_id:
                     sent_assistant_message = await context.bot.send_message(
                         chat_id=chat_id,
-                        text="Sorry, I couldn't process that request.", # Generic message for empty response
+                        text="Sorry, I couldn't process that request.",  # Generic message for empty response
                         reply_to_message_id=reply_target_message_id,
-                        reply_markup=force_reply_markup, # Add ForceReply
+                        reply_markup=force_reply_markup,  # Add ForceReply
                     )
 
         except Exception as e:
             # This catches errors *outside* the generate_llm_response_for_chat call
             # (e.g., DB connection issues before the call, Telegram API errors sending reply)
             logger.error(
-                f"Unhandled error in process_chat_queue for chat {chat_id}: {e}", exc_info=True # noqa: F821
+                f"Unhandled error in process_chat_queue for chat {chat_id}: {e}",
+                exc_info=True,  # noqa: F821
             )
             # Capture traceback if not already captured by generate_llm_response_for_chat
             if not processing_error_traceback:
                 import traceback
+
                 processing_error_traceback = traceback.format_exc()
 
             # Attempt to notify user if possible
             if reply_target_message_id:
-                with contextlib.suppress(Exception): # Suppress errors sending the error message
+                with contextlib.suppress(
+                    Exception
+                ):  # Suppress errors sending the error message
                     sent_assistant_message = await context.bot.send_message(
                         chat_id=chat_id,
                         text="Sorry, an unexpected error occurred.",
                         reply_to_message_id=reply_target_message_id,
                     )
             # Let the main error handler notify the developer
-            raise e # Re-raise for the main error handler
+            raise e  # Re-raise for the main error handler
 
         finally:
             try:
@@ -370,12 +385,21 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # Get the last update from the batch to use its timestamp and ID
                     last_user_update: Optional[Update] = None
                     if buffered_batch:
-                        last_user_update, _ = buffered_batch[-1] # Get the last Update object
+                        last_user_update, _ = buffered_batch[
+                            -1
+                        ]  # Get the last Update object
 
                     # Ensure we have a valid message ID and timestamp from the last update
-                    if last_user_update and last_user_update.message and last_user_update.message.message_id and last_user_update.message.date:
+                    if (
+                        last_user_update
+                        and last_user_update.message
+                        and last_user_update.message.message_id
+                        and last_user_update.message.date
+                    ):
                         user_message_id = last_user_update.message.message_id
-                        user_message_timestamp = last_user_update.message.date # Use actual message timestamp
+                        user_message_timestamp = (
+                            last_user_update.message.date
+                        )  # Use actual message timestamp
                         # Use the combined text for the content for now
                         history_user_content = combined_text.strip()
                         if first_photo_bytes:
@@ -385,13 +409,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             db_context=db_context_for_history,
                             chat_id=chat_id,
                             message_id=user_message_id,
-                            timestamp=user_message_timestamp, # Use the actual timestamp
+                            timestamp=user_message_timestamp,  # Use the actual timestamp
                             role="user",
                             content=history_user_content,
                             tool_calls_info=None,
                             # Add traceback here if an error occurred during processing of this user message
                             error_traceback=processing_error_traceback,
-                            reasoning_info=None, # User messages don't have reasoning
+                            reasoning_info=None,  # User messages don't have reasoning
                         )
 
                     # Store assistant message (even if content is None/fallback, to capture reasoning/tools)
@@ -402,15 +426,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             await self.storage.add_message_to_history(
                                 db_context=db_context_for_history,
                                 chat_id=chat_id,
-                                message_id=sent_assistant_message.message_id, # Use the actual sent message ID
-                                timestamp=sent_assistant_message.date, # Use the actual sent timestamp
+                                message_id=sent_assistant_message.message_id,  # Use the actual sent message ID
+                                timestamp=sent_assistant_message.date,  # Use the actual sent timestamp
                                 role="assistant",
-                                content=llm_response_content, # Could be None or fallback text
+                                content=llm_response_content,  # Could be None or fallback text
                                 tool_calls_info=tool_call_info,
-                                reasoning_info=reasoning_info, # Store reasoning
-                                error_traceback=None, # Error is stored with user message
+                                reasoning_info=reasoning_info,  # Store reasoning
+                                error_traceback=None,  # Error is stored with user message
                             )
-                            logger.debug(f"Saved assistant response {sent_assistant_message.message_id} to history for chat {chat_id}")
+                            logger.debug(
+                                f"Saved assistant response {sent_assistant_message.message_id} to history for chat {chat_id}"
+                            )
                         elif llm_response_content or tool_call_info or reasoning_info:
                             # LLM generated something, but we didn't send a message (or failed to)
                             # We should still log this state, potentially linking it to the user message
@@ -421,7 +447,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             )
                             # TODO: Consider saving this state associated differently (e.g., user message ID + offset/flag)?
                     elif processing_error_traceback:
-                         logger.info(f"Skipping storage of assistant message for chat {chat_id} due to processing error.")
+                        logger.info(
+                            f"Skipping storage of assistant message for chat {chat_id} due to processing error."
+                        )
             except Exception as db_err:
 
                 logger.error(
@@ -494,7 +522,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 # Use lambda to capture chat_id correctly
                 task.add_done_callback(
                     # Ensure the callback function exists
-                    lambda t, c=chat_id: self._remove_task_callback(t, c) if hasattr(self, '_remove_task_callback') else None
+                    lambda t, c=chat_id: (
+                        self._remove_task_callback(t, c)
+                        if hasattr(self, "_remove_task_callback")
+                        else None
+                    )
                 )
             else:
                 logger.info(
@@ -522,12 +554,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         # Using a lock here might be overkill/problematic if the callback isn't async.
         # Let's simplify: just pop it. The lock in message_handler prevents starting a new one while popping.
         # Ensure the dict exists before popping
-        if hasattr(self, 'processing_tasks'):
+        if hasattr(self, "processing_tasks"):
             self.processing_tasks.pop(chat_id, None)
             logger.debug(f"Task entry removed for chat {chat_id} via callback.")
         else:
-            logger.warning(f"Cannot remove task entry for chat {chat_id}: processing_tasks dict not found.")
-
+            logger.warning(
+                f"Cannot remove task entry for chat {chat_id}: processing_tasks dict not found."
+            )
 
     # --- Confirmation Handling Logic ---
 
@@ -542,13 +575,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     ) -> bool:
         """Internal implementation to send confirmation and wait."""
         confirm_uuid = str(uuid.uuid4())
-        logger.info(f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}")
+        logger.info(
+            f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}"
+        )
 
         keyboard = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton("✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"),
-                    InlineKeyboardButton("❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"),
+                    InlineKeyboardButton(
+                        "✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"
+                    ),
+                    InlineKeyboardButton(
+                        "❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"
+                    ),
                 ]
             ]
         )
@@ -557,15 +596,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             # Send the confirmation message
             sent_message = await context.bot.send_message(
                 chat_id=chat_id,
-                text=prompt_text, # Assumes already MarkdownV2 formatted/escaped
+                text=prompt_text,  # Assumes already MarkdownV2 formatted/escaped
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=keyboard,
             )
-            logger.debug(f"Confirmation message sent (Message ID: {sent_message.message_id})")
+            logger.debug(
+                f"Confirmation message sent (Message ID: {sent_message.message_id})"
+            )
         except Exception as send_err:
-            logger.error(f"Failed to send confirmation message to chat {chat_id}: {send_err}", exc_info=True)
+            logger.error(
+                f"Failed to send confirmation message to chat {chat_id}: {send_err}",
+                exc_info=True,
+            )
             # Cannot proceed without sending the message
-            raise RuntimeError(f"Failed to send confirmation message: {send_err}") from send_err
+            raise RuntimeError(
+                f"Failed to send confirmation message: {send_err}"
+            ) from send_err
 
         # Create and store the Future
         confirmation_future = asyncio.get_running_loop().create_future()
@@ -573,9 +619,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         try:
             # Wait for the future to be set by the callback handler, with timeout
-            logger.debug(f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {timeout}s)")
-            user_confirmed = await asyncio.wait_for(confirmation_future, timeout=timeout)
-            logger.info(f"Confirmation response received for {confirm_uuid}: {user_confirmed}")
+            logger.debug(
+                f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {timeout}s)"
+            )
+            user_confirmed = await asyncio.wait_for(
+                confirmation_future, timeout=timeout
+            )
+            logger.info(
+                f"Confirmation response received for {confirm_uuid}: {user_confirmed}"
+            )
             return user_confirmed
         except asyncio.TimeoutError:
             logger.warning(f"Confirmation {confirm_uuid} timed out after {timeout}s.")
@@ -584,28 +636,32 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 await context.bot.edit_message_reply_markup(
                     chat_id=chat_id,
                     message_id=sent_message.message_id,
-                    reply_markup=None # Remove keyboard
+                    reply_markup=None,  # Remove keyboard
                 )
                 await context.bot.edit_message_text(
-                     chat_id=chat_id,
-                     message_id=sent_message.message_id,
-                     text=prompt_text + "\n\n\\(Confirmation timed out\\)", # Append timeout message
-                     parse_mode=ParseMode.MARKDOWN_V2,
+                    chat_id=chat_id,
+                    message_id=sent_message.message_id,
+                    text=prompt_text
+                    + "\n\n\\(Confirmation timed out\\)",  # Append timeout message
+                    parse_mode=ParseMode.MARKDOWN_V2,
                 )
             except Exception as edit_err:
-                logger.warning(f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}")
+                logger.warning(
+                    f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}"
+                )
             # Future is automatically cancelled by wait_for on timeout, but remove from dict
             self.pending_confirmations.pop(confirm_uuid, None)
-            raise # Re-raise TimeoutError for the caller (ConfirmingToolsProvider)
+            raise  # Re-raise TimeoutError for the caller (ConfirmingToolsProvider)
         finally:
             # Ensure future is removed from dict if it's still there (e.g., cancellation)
             self.pending_confirmations.pop(confirm_uuid, None)
 
-
-    async def confirmation_callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def confirmation_callback_handler(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handles button presses for tool confirmations."""
         query = update.callback_query
-        await query.answer() # Answer immediately to remove loading indicator
+        await query.answer()  # Answer immediately to remove loading indicator
 
         callback_data = query.data
         logger.info(f"Received confirmation callback: {callback_data}")
@@ -621,7 +677,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         confirmation_future = self.pending_confirmations.pop(confirm_uuid, None)
 
         if confirmation_future and not confirmation_future.done():
-            original_text = query.message.text_markdown_v2 # Get original text with markdown
+            original_text = (
+                query.message.text_markdown_v2
+            )  # Get original text with markdown
 
             if action == "yes":
                 logger.debug(f"Setting confirmation result for {confirm_uuid} to True")
@@ -632,30 +690,45 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 confirmation_future.set_result(False)
                 status_text = "\n\n*Cancelled* ❌"
             else:
-                 logger.warning(f"Unknown action '{action}' in confirmation callback {confirm_uuid}")
-                 # Don't set future result, edit message to show error?
-                 status_text = "\n\n*Error: Unknown action*"
-                 # Keep future in dict? Or cancel it? Let's cancel.
-                 confirmation_future.cancel()
+                logger.warning(
+                    f"Unknown action '{action}' in confirmation callback {confirm_uuid}"
+                )
+                # Don't set future result, edit message to show error?
+                status_text = "\n\n*Error: Unknown action*"
+                # Keep future in dict? Or cancel it? Let's cancel.
+                confirmation_future.cancel()
             # The noqa was here previously, likely unnecessary if edit_message_text is defined
             # Edit the original message to remove keyboard and show status
-            try: # noqa: F821
+            try:  # noqa: F821
                 await query.edit_message_text(
                     text=original_text + status_text,
                     parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_markup=None # Remove keyboard
+                    reply_markup=None,  # Remove keyboard
                 )
             except Exception as edit_err:
-                 logger.error(f"Failed to edit confirmation message {query.message.message_id} after callback: {edit_err}")
+                logger.error(
+                    f"Failed to edit confirmation message {query.message.message_id} after callback: {edit_err}"
+                )
 
         elif confirmation_future and confirmation_future.done():
-            logger.warning(f"Confirmation callback {confirm_uuid} received, but future was already done (likely timed out or duplicate callback).")
+            logger.warning(
+                f"Confirmation callback {confirm_uuid} received, but future was already done (likely timed out or duplicate callback)."
+            )
             # Optionally edit message to indicate it expired?
-            await query.edit_message_text(text=query.message.text_markdown_v2 + "\n\n\\(Request already handled or expired\\)", parse_mode=ParseMode.MARKDOWN_V2, reply_markup=None)
+            await query.edit_message_text(
+                text=query.message.text_markdown_v2
+                + "\n\n\\(Request already handled or expired\\)",
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=None,
+            )
         else:
-            logger.warning(f"Confirmation callback {confirm_uuid} received, but no pending confirmation found.")
-            await query.edit_message_text(text="This confirmation request is no longer valid or has expired.", reply_markup=None)
-
+            logger.warning(
+                f"Confirmation callback {confirm_uuid} received, but no pending confirmation found."
+            )
+            await query.edit_message_text(
+                text="This confirmation request is no longer valid or has expired.",
+                reply_markup=None,
+            )
 
     async def error_handler(self, update: object, context: CallbackContext) -> None:
         """Log the error, store it in the service, and notify the developer."""
@@ -667,10 +740,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             self.telegram_service._last_error = error
             # Log if polling might stop due to this error
             if isinstance(error, Conflict):
-                 logger.critical(f"Telegram Conflict error detected: {error}. Polling will likely stop.")
-            elif isinstance(error, Exception): # Catch other potential fatal errors if needed
-                 # You might add checks for other specific errors that stop polling
-                 pass
+                logger.critical(
+                    f"Telegram Conflict error detected: {error}. Polling will likely stop."
+                )
+            elif isinstance(
+                error, Exception
+            ):  # Catch other potential fatal errors if needed
+                # You might add checks for other specific errors that stop polling
+                pass
 
         tb_list = traceback.format_exception(None, error, error.__traceback__)
         tb_string = "".join(tb_list)
@@ -711,7 +788,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )
 
         # Callback query handler for confirmations
-        self.application.add_handler(CallbackQueryHandler(self.confirmation_callback_handler, pattern=r"^confirm:"))
+        self.application.add_handler(
+            CallbackQueryHandler(
+                self.confirmation_callback_handler, pattern=r"^confirm:"
+            )
+        )
 
         # Error handler (add last)
         self.application.add_error_handler(self.error_handler)
@@ -754,7 +835,7 @@ class TelegramService:
 
         # Instantiate the handler class, passing self (the service instance)
         self.update_handler = TelegramUpdateHandler(
-            telegram_service=self, # Pass self
+            telegram_service=self,  # Pass self
             application=self.application,
             allowed_user_ids=allowed_user_ids,
             developer_chat_id=developer_chat_id,
@@ -779,7 +860,7 @@ class TelegramService:
         timeout: float,
     ) -> bool:
         """Public method to request confirmation, called by ConfirmingToolsProvider."""
-        if hasattr(self.update_handler, '_request_confirmation_impl'):
+        if hasattr(self.update_handler, "_request_confirmation_impl"):
             return await self.update_handler._request_confirmation_impl(
                 chat_id=chat_id,
                 context=context,
@@ -789,8 +870,12 @@ class TelegramService:
                 timeout=timeout,
             )
         else:
-            logger.error("TelegramUpdateHandler does not have the _request_confirmation_impl method.")
-            raise RuntimeError("Confirmation mechanism not properly initialized in handler.")
+            logger.error(
+                "TelegramUpdateHandler does not have the _request_confirmation_impl method."
+            )
+            raise RuntimeError(
+                "Confirmation mechanism not properly initialized in handler."
+            )
 
     async def start_polling(self):
         """Initializes the application and starts polling for updates."""
@@ -799,8 +884,8 @@ class TelegramService:
         await self.application.start()
         # Use Update.ALL_TYPES to ensure all relevant updates are received
         await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        self._was_started = True # Mark as started
-        self._last_error = None # Clear last error on successful start
+        self._was_started = True  # Mark as started
+        self._last_error = None  # Clear last error on successful start
         logger.info("Telegram polling started successfully.")
 
     @property
@@ -810,7 +895,7 @@ class TelegramService:
 
     async def stop_polling(self):
         """Stops the polling and shuts down the application gracefully."""
-        self._was_started = False # Mark as stopped (or stopping)
+        self._was_started = False  # Mark as stopped (or stopping)
         if self.application and self.application.updater:
             logger.info("Stopping Telegram polling...")
             try:

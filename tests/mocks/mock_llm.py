@@ -17,6 +17,7 @@ except ImportError:
 
     class LLMOutput:
         """Mock version of LLMOutput for when the real one can't be imported"""
+
         def __init__(
             self,
             content: Optional[str] = None,
@@ -27,6 +28,7 @@ except ImportError:
 
     class LLMInterface(Protocol):
         """Mock version of LLMInterface for when the real one can't be imported"""
+
         async def generate_response(
             self,
             messages: List[Dict[str, Any]],
@@ -105,7 +107,10 @@ class RuleBasedMockLLMClient(LLMInterface):
                 continue  # Skip to the next rule
 
         # If no rules matched
-        logger.warning(f"No rules matched the input. Returning default response. Input: %r", messages)
+        logger.warning(
+            f"No rules matched the input. Returning default response. Input: %r",
+            messages,
+        )
         return self.default_response
 
 

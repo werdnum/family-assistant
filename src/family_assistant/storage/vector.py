@@ -166,8 +166,10 @@ class DocumentEmbeddingRecord(Base):
             # Define the exact expression including the operator class using sa.text
             sa.text("(embedding::vector(1536)) vector_cosine_ops"),
             postgresql_using="hnsw",
-            postgresql_where=sa.text("embedding_model = 'gemini-exp-03-07'"), # Example filter
-            postgresql_with={"m": 16, "ef_construction": 64}, # Example HNSW parameters
+            postgresql_where=sa.text(
+                "embedding_model = 'gemini-exp-03-07'"
+            ),  # Example filter
+            postgresql_with={"m": 16, "ef_construction": 64},  # Example HNSW parameters
             # postgresql_ops is not needed here as the opclass is part of the text expression
         ),
     )

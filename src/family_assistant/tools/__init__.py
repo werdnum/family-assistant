@@ -11,8 +11,17 @@ import pathlib
 import inspect
 import zoneinfo
 from dataclasses import dataclass
-from datetime import datetime, timezone, date, time # Added date, time
-from typing import List, Dict, Any, Optional, Protocol, Callable, Awaitable, Set # Added Awaitable, Set
+from datetime import datetime, timezone, date, time  # Added date, time
+from typing import (
+    List,
+    Dict,
+    Any,
+    Optional,
+    Protocol,
+    Callable,
+    Awaitable,
+    Set,
+)  # Added Awaitable, Set
 from zoneinfo import ZoneInfo
 
 import aiofiles
@@ -53,7 +62,10 @@ class ToolConfirmationRequired(Exception):
     Special exception raised by ConfirmingToolsProvider to signal that
     confirmation is needed before proceeding. Contains info for the UI layer.
     """
-    def __init__(self, confirmation_prompt: str, tool_name: str, tool_args: Dict[str, Any]):
+
+    def __init__(
+        self, confirmation_prompt: str, tool_name: str, tool_args: Dict[str, Any]
+    ):
         self.confirmation_prompt = confirmation_prompt
         self.tool_name = tool_name
         self.tool_args = tool_args
@@ -62,6 +74,7 @@ class ToolConfirmationRequired(Exception):
 
 class ToolConfirmationFailed(Exception):
     """Raised when user denies confirmation or it times out."""
+
     pass
 
 
@@ -106,6 +119,7 @@ class ToolsProvider(Protocol):
 
 # Calendar tool implementations (add, search, modify, delete) moved to calendar_integration.py
 
+
 async def schedule_recurring_task_tool(
     exec_context: ToolExecutionContext,  # Renamed to avoid conflict
     task_type: str,
@@ -127,8 +141,10 @@ async def schedule_recurring_task_tool(
         max_retries: Maximum number of retries for each instance (default 3).
         description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief').
     """
-    logger.info(f"Executing schedule_recurring_task_tool: type='{task_type}', initial='{initial_schedule_time}', rule='{recurrence_rule}'")
-    db_context = exec_context.db_context # Get db_context from execution context
+    logger.info(
+        f"Executing schedule_recurring_task_tool: type='{task_type}', initial='{initial_schedule_time}', rule='{recurrence_rule}'"
+    )
+    db_context = exec_context.db_context  # Get db_context from execution context
 
     try:
         # Validate recurrence rule format (basic validation)
@@ -149,7 +165,9 @@ async def schedule_recurring_task_tool(
         # Ensure it's in the future (optional, but good practice)
         # Comparing offset-aware with offset-naive will raise TypeError if initial_dt is naive
         # Ensure comparison is done with aware datetime
-        now_aware = datetime.now(initial_dt.tzinfo or timezone.utc) # Use parsed timezone or UTC
+        now_aware = datetime.now(
+            initial_dt.tzinfo or timezone.utc
+        )  # Use parsed timezone or UTC
         if initial_dt <= now_aware:
             raise ValueError("Initial schedule time must be in the future.")
 
@@ -221,7 +239,9 @@ async def schedule_future_callback_tool(
             logger.warning(
                 f"Callback time '{callback_time}' lacks timezone. Assuming {exec_context.timezone_str}."
             )
-            scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
+            scheduled_dt = scheduled_dt.replace(
+                tzinfo=ZoneInfo(exec_context.timezone_str)
+            )
 
         # Ensure it's in the future (optional, but good practice)
         if scheduled_dt <= datetime.now(timezone.utc):
@@ -259,11 +279,11 @@ async def schedule_future_callback_tool(
 
 async def search_documents_tool(
     exec_context: ToolExecutionContext,
-    embedding_generator: EmbeddingGenerator, # Injected by LocalToolsProvider
+    embedding_generator: EmbeddingGenerator,  # Injected by LocalToolsProvider
     query_text: str,
     source_types: Optional[List[str]] = None,
     embedding_types: Optional[List[str]] = None,
-    limit: int = 5, # Default limit for LLM tool
+    limit: int = 5,  # Default limit for LLM tool
 ) -> str:
     """
     Searches stored documents using hybrid vector and keyword search.
@@ -295,12 +315,12 @@ async def search_documents_tool(
 
         # 2. Construct the search query object
         search_query = VectorSearchQuery(
-            search_type='hybrid',
+            search_type="hybrid",
             semantic_query=query_text,
-            keywords=query_text, # Use same text for keywords in this simplified tool
+            keywords=query_text,  # Use same text for keywords in this simplified tool
             embedding_model=embedding_model,
-            source_types=source_types or [], # Use empty list if None
-            embedding_types=embedding_types or [], # Use empty list if None
+            source_types=source_types or [],  # Use empty list if None
+            embedding_types=embedding_types or [],  # Use empty list if None
             limit=limit,
             # Use default rrf_k, metadata_filters, etc.
         )
@@ -318,12 +338,12 @@ async def search_documents_tool(
 
         formatted_results = ["Found relevant documents:"]
         for i, res in enumerate(results):
-            title = res.get('title') or 'Untitled Document'
-            source = res.get('source_type', 'Unknown Source')
+            title = res.get("title") or "Untitled Document"
+            source = res.get("source_type", "Unknown Source")
             # Truncate snippet for brevity
-            snippet = res.get('embedding_source_content', '')
+            snippet = res.get("embedding_source_content", "")
             if snippet:
-                snippet = (snippet[:10000] + '...') if len(snippet) > 10000 else snippet
+                snippet = (snippet[:10000] + "...") if len(snippet) > 10000 else snippet
                 snippet_text = f"\n  Snippet: {snippet}"
             else:
                 snippet_text = ""
@@ -355,7 +375,9 @@ async def get_full_document_content_tool(
         A string containing the full concatenated text content of the document,
         or an error message if not found or content is unavailable.
     """
-    logger.info(f"Executing get_full_document_content_tool for document ID: {document_id}")
+    logger.info(
+        f"Executing get_full_document_content_tool for document ID: {document_id}"
+    )
     db_context = exec_context.db_context
 
     try:
@@ -363,22 +385,28 @@ async def get_full_document_content_tool(
         # Prioritize 'content_chunk' type, but could potentially fetch others if needed.
         # Using raw SQL for potential performance and direct access to embedding content.
         # Ensure table/column names match your schema.
-        stmt = text("""
+        stmt = text(
+            """
             SELECT content
             FROM document_embeddings
             WHERE document_id = :doc_id
               AND embedding_type = 'content_chunk' -- Assuming this type holds the main content
               AND content IS NOT NULL
             ORDER BY chunk_index ASC;
-        """)
+        """
+        )
         results = await db_context.fetch_all(stmt, {"doc_id": document_id})
 
         if not results:
             # Check if the document exists at all, maybe it has no content embeddings?
             doc_check_stmt = text("SELECT id FROM documents WHERE id = :doc_id")
-            doc_exists = await db_context.fetch_one(doc_check_stmt, {"doc_id": document_id})
+            doc_exists = await db_context.fetch_one(
+                doc_check_stmt, {"doc_id": document_id}
+            )
             if doc_exists:
-                logger.warning(f"Document ID {document_id} exists, but no 'content_chunk' embeddings with text content found.")
+                logger.warning(
+                    f"Document ID {document_id} exists, but no 'content_chunk' embeddings with text content found."
+                )
                 # TODO: Future enhancement: Check document source_type and potentially fetch content
                 # from original source (e.g., received_emails table) if no embedding content exists.
                 return f"Error: Document {document_id} found, but no text content is available for retrieval via this tool."
@@ -387,18 +415,25 @@ async def get_full_document_content_tool(
                 return f"Error: Document with ID {document_id} not found."
 
         # Concatenate content from all chunks
-        full_content = "".join([row['content'] for row in results])
+        full_content = "".join([row["content"] for row in results])
 
         if not full_content.strip():
-             logger.warning(f"Document ID {document_id} content chunks were empty or whitespace.")
-             return f"Error: Document {document_id} found, but its text content appears to be empty."
+            logger.warning(
+                f"Document ID {document_id} content chunks were empty or whitespace."
+            )
+            return f"Error: Document {document_id} found, but its text content appears to be empty."
 
-        logger.info(f"Retrieved full content for document ID {document_id} (Length: {len(full_content)}).")
+        logger.info(
+            f"Retrieved full content for document ID {document_id} (Length: {len(full_content)})."
+        )
         # Return only the content for now. Future versions could return a dict with content_type.
         return full_content
 
     except Exception as e:
-        logger.error(f"Error executing get_full_document_content_tool for ID {document_id}: {e}", exc_info=True)
+        logger.error(
+            f"Error executing get_full_document_content_tool for ID {document_id}: {e}",
+            exc_info=True,
+        )
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
 
 
@@ -420,7 +455,9 @@ async def get_message_history_tool(
     """
     chat_id = exec_context.chat_id
     db_context = exec_context.db_context
-    logger.info(f"Executing get_message_history_tool for chat {chat_id} (limit={limit}, max_age_hours={max_age_hours})")
+    logger.info(
+        f"Executing get_message_history_tool for chat {chat_id} (limit={limit}, max_age_hours={max_age_hours})"
+    )
 
     try:
         max_age_delta = timedelta(hours=max_age_hours)
@@ -440,7 +477,11 @@ async def get_message_history_tool(
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             timestamp = msg.get("timestamp")
-            time_str = timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if timestamp else "Unknown Time"
+            time_str = (
+                timestamp.strftime("%Y-%m-%d %H:%M:%S %Z")
+                if timestamp
+                else "Unknown Time"
+            )
 
             # Basic formatting, include full content
             formatted_history.append(f"[{time_str}] {role.capitalize()}: {content}")
@@ -450,21 +491,27 @@ async def get_message_history_tool(
                 tool_calls = msg.get("tool_calls_info_raw", [])
                 if isinstance(tool_calls, list):
                     for call in tool_calls:
-                         if isinstance(call, dict):
-                            func_name = call.get('function_name', 'unknown_tool')
-                            args = call.get('arguments', {})
-                            resp = call.get('response_content', '')
-                            formatted_history.append(f"  -> Called Tool: {func_name}({json.dumps(args)}) -> Response: {resp}") # Include full response
+                        if isinstance(call, dict):
+                            func_name = call.get("function_name", "unknown_tool")
+                            args = call.get("arguments", {})
+                            resp = call.get("response_content", "")
+                            formatted_history.append(
+                                f"  -> Called Tool: {func_name}({json.dumps(args)}) -> Response: {resp}"
+                            )  # Include full response
 
         return "\n".join(formatted_history)
 
     except Exception as e:
-        logger.error(f"Error executing get_message_history_tool for chat {chat_id}: {e}", exc_info=True)
+        logger.error(
+            f"Error executing get_message_history_tool for chat {chat_id}: {e}",
+            exc_info=True,
+        )
         return f"Error: Failed to retrieve message history. {e}"
 
 
 # --- Documentation Tool Helper ---
 
+
 def _scan_user_docs() -> List[str]:
     """Scans the 'docs/user/' directory for allowed documentation files."""
     docs_user_dir = pathlib.Path("docs") / "user"
@@ -474,19 +521,26 @@ def _scan_user_docs() -> List[str]:
         try:
             for item in os.listdir(docs_user_dir):
                 item_path = docs_user_dir / item
-                if item_path.is_file() and any(item.endswith(ext) for ext in allowed_extensions):
+                if item_path.is_file() and any(
+                    item.endswith(ext) for ext in allowed_extensions
+                ):
                     available_files.append(item)
         except OSError as e:
-            logger.error(f"Error scanning documentation directory '{docs_user_dir}': {e}", exc_info=True)
+            logger.error(
+                f"Error scanning documentation directory '{docs_user_dir}': {e}",
+                exc_info=True,
+            )
     else:
         logger.warning(f"User documentation directory not found: '{docs_user_dir}'")
     logger.info(f"Found user documentation files: {available_files}")
     return available_files
+
 
 # --- User Documentation Tool Implementation ---
 
 # --- Documentation Tool Helper ---
 
+
 def _scan_user_docs() -> List[str]:
     """Scans the 'docs/user/' directory for allowed documentation files."""
     docs_user_dir = pathlib.Path("docs") / "user"
@@ -496,16 +550,23 @@ def _scan_user_docs() -> List[str]:
         try:
             for item in os.listdir(docs_user_dir):
                 item_path = docs_user_dir / item
-                if item_path.is_file() and any(item.endswith(ext) for ext in allowed_extensions):
+                if item_path.is_file() and any(
+                    item.endswith(ext) for ext in allowed_extensions
+                ):
                     available_files.append(item)
         except OSError as e:
-            logger.error(f"Error scanning documentation directory '{docs_user_dir}': {e}", exc_info=True)
+            logger.error(
+                f"Error scanning documentation directory '{docs_user_dir}': {e}",
+                exc_info=True,
+            )
     else:
         logger.warning(f"User documentation directory not found: '{docs_user_dir}'")
     logger.info(f"Found user documentation files: {available_files}")
     return available_files
 
+
 # --- User Documentation Tool Implementation ---
+
 
 async def get_user_documentation_content_tool(
     exec_context: ToolExecutionContext,
@@ -522,11 +583,15 @@ async def get_user_documentation_content_tool(
         The content of the file as a string, or an error message if the file is
         not found, not allowed, or cannot be read.
     """
-    logger.info(f"Executing get_user_documentation_content_tool for filename: '{filename}'")
+    logger.info(
+        f"Executing get_user_documentation_content_tool for filename: '{filename}'"
+    )
 
     # Basic security: Prevent directory traversal and limit to allowed extensions
     allowed_extensions = {".md", ".txt"}
-    if ".." in filename or not any(filename.endswith(ext) for ext in allowed_extensions):
+    if ".." in filename or not any(
+        filename.endswith(ext) for ext in allowed_extensions
+    ):
         logger.warning(f"Attempted access to disallowed filename: '{filename}'")
         return f"Error: Access denied. Invalid filename or extension '{filename}'."
 
@@ -537,11 +602,13 @@ async def get_user_documentation_content_tool(
 
     # Security Check: Ensure the resolved path is still within the intended directory
     if docs_user_dir.resolve() not in file_path.parents:
-         logger.error(f"Resolved path '{file_path}' is outside the allowed directory '{docs_user_dir.resolve()}'.")
-         return f"Error: Access denied. Invalid path for filename '{filename}'."
+        logger.error(
+            f"Resolved path '{file_path}' is outside the allowed directory '{docs_user_dir.resolve()}'."
+        )
+        return f"Error: Access denied. Invalid path for filename '{filename}'."
 
     try:
-        async with aiofiles.open(file_path, mode='r', encoding='utf-8') as f:
+        async with aiofiles.open(file_path, mode="r", encoding="utf-8") as f:
             content = await f.read()
         logger.info(f"Successfully read content from '{filename}'.")
         return content
@@ -549,8 +616,11 @@ async def get_user_documentation_content_tool(
         logger.warning(f"User documentation file not found: '{file_path}'")
         return f"Error: Documentation file '{filename}' not found."
     except Exception as e:
-        logger.error(f"Error reading user documentation file '{filename}': {e}", exc_info=True)
+        logger.error(
+            f"Error reading user documentation file '{filename}': {e}", exc_info=True
+        )
         return f"Error: Failed to read documentation file '{filename}'. {e}"
+
 
 # --- Local Tool Definitions and Mappings (Moved from processing.py) ---
 
@@ -573,15 +643,22 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
 
 # --- Tool Confirmation Renderers ---
 
-def _format_event_details_for_confirmation(details: Optional[Dict[str, Any]], timezone_str: str) -> str:
+
+def _format_event_details_for_confirmation(
+    details: Optional[Dict[str, Any]], timezone_str: str
+) -> str:
     """Formats fetched event details for inclusion in confirmation prompts."""
     if not details:
         return "Event details not found."
-    summary = details.get('summary', 'No Title')
+    summary = details.get("summary", "No Title")
     # Pass timezone_str to the formatting function
-    start_str = calendar_integration.format_datetime_or_date(details.get('start'), timezone_str, is_end=False)
-    end_str = calendar_integration.format_datetime_or_date(details.get('end'), timezone_str, is_end=True)
-    all_day = details.get('all_day', False)
+    start_str = calendar_integration.format_datetime_or_date(
+        details.get("start"), timezone_str, is_end=False
+    )
+    end_str = calendar_integration.format_datetime_or_date(
+        details.get("end"), timezone_str, is_end=True
+    )
+    all_day = details.get("all_day", False)
     if all_day:
         # All-day events typically don't need timezone formatting, but pass it anyway for consistency
         # Or adjust format_datetime_or_date to handle date objects without requiring timezone_str
@@ -590,10 +667,15 @@ def _format_event_details_for_confirmation(details: Optional[Dict[str, Any]], ti
     else:
         return f"'{summary}' ({start_str} - {end_str})"
 
-def render_delete_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str) -> str:
+
+def render_delete_calendar_event_confirmation(
+    args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str
+) -> str:
     """Renders the confirmation message for deleting a calendar event."""
-    event_desc = _format_event_details_for_confirmation(event_details, timezone_str) # Pass timezone
-    cal_url = args.get('calendar_url', 'Unknown Calendar')
+    event_desc = _format_event_details_for_confirmation(
+        event_details, timezone_str
+    )  # Pass timezone
+    cal_url = args.get("calendar_url", "Unknown Calendar")
     # Use MarkdownV2 compatible formatting
     return (
         f"Please confirm you want to *delete* the event:\n"
@@ -601,17 +683,35 @@ def render_delete_calendar_event_confirmation(args: Dict[str, Any], event_detail
         # Removed calendar URL line: f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`"
     )
 
-def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str) -> str:
+
+def render_modify_calendar_event_confirmation(
+    args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str
+) -> str:
     """Renders the confirmation message for modifying a calendar event."""
-    event_desc = _format_event_details_for_confirmation(event_details, timezone_str) # Pass timezone
-    cal_url = args.get('calendar_url', 'Unknown Calendar')
+    event_desc = _format_event_details_for_confirmation(
+        event_details, timezone_str
+    )  # Pass timezone
+    cal_url = args.get("calendar_url", "Unknown Calendar")
     changes = []
     # Use MarkdownV2 compatible formatting for code blocks/inline code
-    if args.get('new_summary'): changes.append(f"\\- Set summary to: `{telegramify_markdown.escape_markdown(args['new_summary'])}`")
-    if args.get('new_start_time'): changes.append(f"\\- Set start time to: `{telegramify_markdown.escape_markdown(args['new_start_time'])}`")
-    if args.get('new_end_time'): changes.append(f"\\- Set end time to: `{telegramify_markdown.escape_markdown(args['new_end_time'])}`")
-    if args.get('new_description'): changes.append(f"\\- Set description to: `{telegramify_markdown.escape_markdown(args['new_description'])}`")
-    if args.get('new_all_day') is not None: changes.append(f"\\- Set all\\-day status to: `{args['new_all_day']}`")
+    if args.get("new_summary"):
+        changes.append(
+            f"\\- Set summary to: `{telegramify_markdown.escape_markdown(args['new_summary'])}`"
+        )
+    if args.get("new_start_time"):
+        changes.append(
+            f"\\- Set start time to: `{telegramify_markdown.escape_markdown(args['new_start_time'])}`"
+        )
+    if args.get("new_end_time"):
+        changes.append(
+            f"\\- Set end time to: `{telegramify_markdown.escape_markdown(args['new_end_time'])}`"
+        )
+    if args.get("new_description"):
+        changes.append(
+            f"\\- Set description to: `{telegramify_markdown.escape_markdown(args['new_description'])}`"
+        )
+    if args.get("new_all_day") is not None:
+        changes.append(f"\\- Set all\\-day status to: `{args['new_all_day']}`")
 
     return (
         f"Please confirm you want to *modify* the event:\n"
@@ -620,8 +720,11 @@ def render_modify_calendar_event_confirmation(args: Dict[str, Any], event_detail
         f"With the following changes:\n" + "\n".join(changes)
     )
 
+
 # Update the Callable signature to include timezone_str
-TOOL_CONFIRMATION_RENDERERS: Dict[str, Callable[[Dict[str, Any], Optional[Dict[str, Any]], str], str]] = {
+TOOL_CONFIRMATION_RENDERERS: Dict[
+    str, Callable[[Dict[str, Any], Optional[Dict[str, Any]], str], str]
+] = {
     "delete_calendar_event": render_delete_calendar_event_confirmation,
     "modify_calendar_event": render_modify_calendar_event_confirmation,
 }
@@ -824,16 +927,16 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                         "default": 24,
                     },
                 },
-                "required": [], # No parameters are strictly required, defaults will be used
+                "required": [],  # No parameters are strictly required, defaults will be used
             },
         },
     },
     # --- Add New Calendar Tools Here ---
-        {
+    {
         "type": "function",
         "function": {
             "name": "get_user_documentation_content",
-            "description": "Retrieves the content of a specific user documentation file. Use this to answer questions about how the assistant works or what features it has, based on the official documentation.\nAvailable files: {available_doc_files}", # Placeholder added
+            "description": "Retrieves the content of a specific user documentation file. Use this to answer questions about how the assistant works or what features it has, based on the official documentation.\nAvailable files: {available_doc_files}",  # Placeholder added
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -870,7 +973,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                         "type": "integer",
                         "description": "Optional. Maximum number of events to return (default: 5).",
                         "default": 5,
-                    }
+                    },
                 },
                 "required": ["query_text"],
             },
@@ -914,7 +1017,10 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                         "description": "Optional. Set to true if the event should become an all-day event, false if it should become timed. Requires appropriate new_start/end_time.",
                     },
                 },
-                "required": ["uid", "calendar_url"], # Require UID and URL, at least one 'new_' field should be provided logically
+                "required": [
+                    "uid",
+                    "calendar_url",
+                ],  # Require UID and URL, at least one 'new_' field should be provided logically
             },
             "requires_confirmation": True,
         },
@@ -931,7 +1037,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "The unique ID (UID) of the event to delete, obtained from search_calendar_events.",
                     },
-                     "calendar_url": {
+                    "calendar_url": {
                         "type": "string",
                         "format": "uri",
                         "description": "The URL of the calendar containing the event, obtained from search_calendar_events.",
@@ -948,9 +1054,10 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
 # --- Tool Provider Implementations ---
 
 
-import inspect # Needed for signature inspection
-import uuid # For confirmation IDs
-import telegramify_markdown # For escaping confirmation prompts
+import inspect  # Needed for signature inspection
+import uuid  # For confirmation IDs
+import telegramify_markdown  # For escaping confirmation prompts
+
 
 class LocalToolsProvider:
     """Provides and executes locally defined Python functions as tools."""
@@ -959,18 +1066,20 @@ class LocalToolsProvider:
         self,
         definitions: List[Dict[str, Any]],
         implementations: Dict[str, Callable],
-        embedding_generator: Optional[EmbeddingGenerator] = None, # Accept generator
-        calendar_config: Optional[Dict[str, Any]] = None, # Accept calendar config
+        embedding_generator: Optional[EmbeddingGenerator] = None,  # Accept generator
+        calendar_config: Optional[Dict[str, Any]] = None,  # Accept calendar config
     ):
         self._definitions = definitions
         self._implementations = implementations
-        self._embedding_generator = embedding_generator # Store generator
-        self._calendar_config = calendar_config # Store calendar config
+        self._embedding_generator = embedding_generator  # Store generator
+        self._calendar_config = calendar_config  # Store calendar config
         logger.info(
             f"LocalToolsProvider initialized with {len(self._definitions)} tools: {list(self._implementations.keys())}"
         )
         if self._embedding_generator:
-             logger.info(f"LocalToolsProvider configured with embedding generator: {type(self._embedding_generator).__name__}")
+            logger.info(
+                f"LocalToolsProvider configured with embedding generator: {type(self._embedding_generator).__name__}"
+            )
 
     async def get_tool_definitions(self) -> List[Dict[str, Any]]:
         return self._definitions
@@ -997,24 +1106,29 @@ class LocalToolsProvider:
                     needs_exec_context = True
                 if param.annotation is DatabaseContext and param_name == "db_context":
                     needs_db_context = True
-                elif param.annotation is EmbeddingGenerator and param_name == "embedding_generator":
+                elif (
+                    param.annotation is EmbeddingGenerator
+                    and param_name == "embedding_generator"
+                ):
                     needs_embedding_generator = True
 
             # Inject dependencies based on flags
             # Always check for exec_context first
             if needs_exec_context:
-                call_args['exec_context'] = context
+                call_args["exec_context"] = context
 
             # Check for and inject other specific dependencies.
             if needs_db_context:
-                 # Only inject if not already covered by exec_context (though harmless if redundant)
-                 if 'db_context' not in call_args:
-                     call_args['db_context'] = context.db_context
+                # Only inject if not already covered by exec_context (though harmless if redundant)
+                if "db_context" not in call_args:
+                    call_args["db_context"] = context.db_context
             if needs_embedding_generator:
                 if self._embedding_generator:
-                    call_args['embedding_generator'] = self._embedding_generator
+                    call_args["embedding_generator"] = self._embedding_generator
                 else:
-                    logger.error(f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider.")
+                    logger.error(
+                        f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider."
+                    )
                     return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
 
             # Clean up arguments not expected by the function signature
@@ -1025,7 +1139,6 @@ class LocalToolsProvider:
                 # Only remove if it wasn't part of the original LLM arguments
                 if arg_name not in arguments:
                     del call_args[arg_name]
-
 
             # Execute the function with prepared arguments
             result = await callable_func(**call_args)
@@ -1055,7 +1168,7 @@ class LocalToolsProvider:
     async def close(self):
         """Local provider has no resources to clean up."""
         logger.debug("Closing LocalToolsProvider (no-op).")
-        pass # Explicitly pass for clarity
+        pass  # Explicitly pass for clarity
 
 
 class CompositeToolsProvider:
@@ -1065,7 +1178,7 @@ class CompositeToolsProvider:
         self._providers = providers
         self._providers = providers
         self._tool_definitions: Optional[List[Dict[str, Any]]] = None
-        self._tool_map: Dict[str, ToolsProvider] = {} # Map tool name to provider
+        self._tool_map: Dict[str, ToolsProvider] = {}  # Map tool name to provider
         self._validated = False  # Flag to track if validation has run
         logger.info(
             f"CompositeToolsProvider initialized with {len(providers)} providers. Validation and mapping will occur on first use."
@@ -1078,7 +1191,7 @@ class CompositeToolsProvider:
         if self._tool_definitions is None:
             all_definitions = []
             all_names = set()
-            self._tool_map = {} # Reset map on re-fetch
+            self._tool_map = {}  # Reset map on re-fetch
             logger.info(
                 "Fetching tool definitions and building tool map from providers for the first time..."
             )
@@ -1111,7 +1224,9 @@ class CompositeToolsProvider:
                                     logger.error(error_msg)
                                     raise ValueError(error_msg)
                                 all_names.add(name)
-                                self._tool_map[name] = provider # Map name to provider instance
+                                self._tool_map[name] = (
+                                    provider  # Map name to provider instance
+                                )
 
                 except Exception as e:
                     logger.error(
@@ -1140,13 +1255,15 @@ class CompositeToolsProvider:
     ) -> str:
         # Ensure definitions are loaded and map is built
         if not self._validated:
-            await self.get_tool_definitions() # This also builds the map
+            await self.get_tool_definitions()  # This also builds the map
 
         logger.debug(f"Composite provider attempting to execute tool '{name}'...")
         provider = self._tool_map.get(name)
 
         if not provider:
-            logger.error(f"Tool '{name}' not found in any registered provider via tool map.")
+            logger.error(
+                f"Tool '{name}' not found in any registered provider via tool map."
+            )
             raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
 
         try:
@@ -1155,13 +1272,13 @@ class CompositeToolsProvider:
             logger.debug(
                 f"Tool '{name}' executed successfully by mapped provider {type(provider).__name__}."
             )
-            return result # Return immediately on success
+            return result  # Return immediately on success
         except ToolNotFoundError:
             # This shouldn't happen if the map is correct, but handle defensively
             logger.error(
                 f"Tool '{name}' mapped to {type(provider).__name__}, but provider raised ToolNotFoundError. This indicates an internal inconsistency."
             )
-            raise # Re-raise the unexpected ToolNotFoundError
+            raise  # Re-raise the unexpected ToolNotFoundError
         except Exception as e:
             # Handle unexpected errors during execution attempt
             logger.error(
@@ -1177,13 +1294,17 @@ class CompositeToolsProvider:
 
     async def close(self):
         """Closes all contained providers concurrently."""
-        logger.info(f"Closing CompositeToolsProvider and its {len(self._providers)} providers...")
+        logger.info(
+            f"Closing CompositeToolsProvider and its {len(self._providers)} providers..."
+        )
         close_tasks = [provider.close() for provider in self._providers]
         results = await asyncio.gather(*close_tasks, return_exceptions=True)
         for i, result in enumerate(results):
             provider_type = type(self._providers[i]).__name__
             if isinstance(result, Exception):
-                logger.error(f"Error closing provider {provider_type}: {result}", exc_info=result)
+                logger.error(
+                    f"Error closing provider {provider_type}: {result}", exc_info=result
+                )
             else:
                 logger.debug(f"Provider {provider_type} closed successfully.")
         logger.info("CompositeToolsProvider finished closing providers.")
@@ -1191,23 +1312,25 @@ class CompositeToolsProvider:
 
 # --- Confirming Tools Provider Wrapper ---
 
+
 class ConfirmingToolsProvider(ToolsProvider):
     """
     A wrapper provider that intercepts calls to specific tools,
     requests user confirmation via a callback, and then either executes
     the tool with the wrapped provider or returns a cancellation message.
     """
-    DEFAULT_CONFIRMATION_TIMEOUT = 3600.0 # 1 hour
+
+    DEFAULT_CONFIRMATION_TIMEOUT = 3600.0  # 1 hour
 
     def __init__(
         self,
         wrapped_provider: ToolsProvider,
         confirmation_timeout: float = DEFAULT_CONFIRMATION_TIMEOUT,
-        calendar_config: Optional[Dict[str, Any]] = None, # Needed for fetching details
+        calendar_config: Optional[Dict[str, Any]] = None,  # Needed for fetching details
     ):
         self.wrapped_provider = wrapped_provider
         self.confirmation_timeout = confirmation_timeout
-        self.calendar_config = calendar_config # Store calendar config
+        self.calendar_config = calendar_config  # Store calendar config
         self._tool_definitions: Optional[List[Dict[str, Any]]] = None
         self._tools_requiring_confirmation: Set[str] = set()
         logger.info(
@@ -1231,33 +1354,43 @@ class ConfirmingToolsProvider(ToolsProvider):
             )
         return self._tool_definitions
 
-    async def _get_event_details_for_confirmation(self, tool_name: str, arguments: Dict[str, Any], context: ToolExecutionContext) -> Optional[Dict[str, Any]]:
+    async def _get_event_details_for_confirmation(
+        self, tool_name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+    ) -> Optional[Dict[str, Any]]:
         """
         Fetches event details if the tool is calendar-related and requires it.
         Requires the execution context to get the timezone.
         """
         if tool_name not in ["modify_calendar_event", "delete_calendar_event"]:
-            return None # Only fetch for relevant tools
+            return None  # Only fetch for relevant tools
 
         uid = arguments.get("uid")
         calendar_url = arguments.get("calendar_url")
         if not uid or not calendar_url:
-            logger.warning(f"Cannot fetch event details for {tool_name}: Missing uid or calendar_url in arguments.")
+            logger.warning(
+                f"Cannot fetch event details for {tool_name}: Missing uid or calendar_url in arguments."
+            )
             return None
 
         if not self.calendar_config:
-            logger.warning(f"Cannot fetch event details for {tool_name}: Calendar config not provided to ConfirmingToolsProvider.")
+            logger.warning(
+                f"Cannot fetch event details for {tool_name}: Calendar config not provided to ConfirmingToolsProvider."
+            )
             return None
 
         caldav_config = self.calendar_config.get("caldav")
         if not caldav_config:
-            logger.warning(f"Cannot fetch event details for {tool_name}: CalDAV config missing.")
+            logger.warning(
+                f"Cannot fetch event details for {tool_name}: CalDAV config missing."
+            )
             return None
 
         username = caldav_config.get("username")
         password = caldav_config.get("password")
         if not username or not password:
-            logger.warning(f"Cannot fetch event details for {tool_name}: CalDAV user/pass missing.")
+            logger.warning(
+                f"Cannot fetch event details for {tool_name}: CalDAV user/pass missing."
+            )
             return None
 
         try:
@@ -1265,13 +1398,21 @@ class ConfirmingToolsProvider(ToolsProvider):
             # Pass the timezone string from the context to the sync helper (now in calendar_integration)
             details = await loop.run_in_executor(
                 None,
-                calendar_integration._fetch_event_details_sync, # Call the moved function
-                username, password, calendar_url, uid, context.timezone_str # Pass timezone
+                calendar_integration._fetch_event_details_sync,  # Call the moved function
+                username,
+                password,
+                calendar_url,
+                uid,
+                context.timezone_str,  # Pass timezone
             )
             return details
         except Exception as e:
-            logger.error(f"Error fetching event details for confirmation: {e}", exc_info=True)
-            return None # Return None on error, confirmation prompt will show basic info
+            logger.error(
+                f"Error fetching event details for confirmation: {e}", exc_info=True
+            )
+            return (
+                None  # Return None on error, confirmation prompt will show basic info
+            )
 
     async def execute_tool(
         self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
@@ -1283,22 +1424,30 @@ class ConfirmingToolsProvider(ToolsProvider):
         if name in self._tools_requiring_confirmation:
             logger.info(f"Tool '{name}' requires user confirmation.")
             if not context.request_confirmation_callback:
-                logger.error(f"Cannot request confirmation for tool '{name}': No callback provided in ToolExecutionContext.")
+                logger.error(
+                    f"Cannot request confirmation for tool '{name}': No callback provided in ToolExecutionContext."
+                )
                 return f"Error: Tool '{name}' requires confirmation, but the system is not configured to ask for it."
 
             # 1. Fetch event details if needed for rendering, passing the context
-            event_details = await self._get_event_details_for_confirmation(name, arguments, context)
+            event_details = await self._get_event_details_for_confirmation(
+                name, arguments, context
+            )
 
             # 2. Get the renderer
             renderer = TOOL_CONFIRMATION_RENDERERS.get(name)
             if not renderer:
-                logger.error(f"No confirmation renderer found for tool '{name}'. Using default prompt.")
+                logger.error(
+                    f"No confirmation renderer found for tool '{name}'. Using default prompt."
+                )
                 # Fallback prompt - escape user-provided args carefully
                 args_str = json.dumps(arguments, indent=2, default=str)
                 confirmation_prompt = f"Please confirm executing tool `{telegramify_markdown.escape_markdown(name)}` with arguments:\n```json\n{telegramify_markdown.escape_markdown(args_str)}\n```"
             else:
                 # Pass timezone_str from context to the renderer
-                confirmation_prompt = renderer(arguments, event_details, context.timezone_str)
+                confirmation_prompt = renderer(
+                    arguments, event_details, context.timezone_str
+                )
 
             # 3. Request confirmation via callback (which handles Future creation/waiting)
             try:
@@ -1306,32 +1455,45 @@ class ConfirmingToolsProvider(ToolsProvider):
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
                 user_confirmed = await context.request_confirmation_callback(
                     prompt_text=confirmation_prompt,
-                    tool_name=name, # Pass tool name for context if needed by callback
-                    tool_args=arguments, # Pass args for context if needed by callback
+                    tool_name=name,  # Pass tool name for context if needed by callback
+                    tool_args=arguments,  # Pass args for context if needed by callback
                     # Timeout is handled by the callback implementation now
                 )
 
                 if user_confirmed:
-                    logger.info(f"User confirmed execution for tool '{name}'. Proceeding.")
+                    logger.info(
+                        f"User confirmed execution for tool '{name}'. Proceeding."
+                    )
                     # Execute the tool using the wrapped provider
-                    return await self.wrapped_provider.execute_tool(name, arguments, context)
+                    return await self.wrapped_provider.execute_tool(
+                        name, arguments, context
+                    )
                 else:
                     logger.info(f"User cancelled execution for tool '{name}'.")
                     return f"OK. Action cancelled by user for tool '{name}'."
 
             except asyncio.TimeoutError:
-                 logger.warning(f"Confirmation request for tool '{name}' timed out.")
-                 return f"Action cancelled: Confirmation request for tool '{name}' timed out."
+                logger.warning(f"Confirmation request for tool '{name}' timed out.")
+                return f"Action cancelled: Confirmation request for tool '{name}' timed out."
             except Exception as conf_err:
-                 logger.error(f"Error during confirmation request for tool '{name}': {conf_err}", exc_info=True)
-                 return f"Error during confirmation process for tool '{name}': {conf_err}"
+                logger.error(
+                    f"Error during confirmation request for tool '{name}': {conf_err}",
+                    exc_info=True,
+                )
+                return (
+                    f"Error during confirmation process for tool '{name}': {conf_err}"
+                )
         else:
             # Tool does not require confirmation, execute directly
-            logger.debug(f"Tool '{name}' does not require confirmation. Executing directly.")
+            logger.debug(
+                f"Tool '{name}' does not require confirmation. Executing directly."
+            )
             return await self.wrapped_provider.execute_tool(name, arguments, context)
 
     async def close(self):
         """Closes the wrapped provider."""
-        logger.info(f"Closing ConfirmingToolsProvider by closing wrapped provider {type(self.wrapped_provider).__name__}...")
+        logger.info(
+            f"Closing ConfirmingToolsProvider by closing wrapped provider {type(self.wrapped_provider).__name__}..."
+        )
         await self.wrapped_provider.close()
         logger.info("ConfirmingToolsProvider finished closing wrapped provider.")

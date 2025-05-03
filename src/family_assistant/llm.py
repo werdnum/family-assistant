@@ -2,12 +2,12 @@
 Module defining the interface and implementations for interacting with Large Language Models (LLMs).
 """
 
-import litellm # Import litellm
+import litellm  # Import litellm
 import json
 import logging
 import os
 import aiofiles  # For async file operations
-import copy # For deep copying tool definitions
+import copy  # For deep copying tool definitions
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Protocol, AsyncGenerator, AsyncIterator
 
@@ -28,15 +28,23 @@ logger = logging.getLogger(__name__)
 
 
 # --- Conditionally Enable LiteLLM Debug Logging ---
-LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in ("true", "1", "yes")
+LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 if LITELLM_DEBUG_ENABLED:
     try:
-        litellm._turn_on_debug() # Use the suggested internal function
-        logger.info("Enabled LiteLLM internal debug logging via _turn_on_debug() because LITELLM_DEBUG is set.")
+        litellm._turn_on_debug()  # Use the suggested internal function
+        logger.info(
+            "Enabled LiteLLM internal debug logging via _turn_on_debug() because LITELLM_DEBUG is set."
+        )
     except Exception as e:
         logger.error(f"Failed to enable LiteLLM debug logging: {e}", exc_info=True)
 else:
-    logger.info("LiteLLM internal debug logging is disabled (LITELLM_DEBUG not set or false).")
+    logger.info(
+        "LiteLLM internal debug logging is disabled (LITELLM_DEBUG not set or false)."
+    )
 # --- End Debug Logging Control ---
 
 
@@ -45,8 +53,12 @@ class LLMOutput:
     """Standardized output structure from an LLM call."""
 
     content: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = field(default=None) # Store raw tool call dicts
-    reasoning_info: Optional[Dict[str, Any]] = field(default=None) # Store reasoning/usage data
+    tool_calls: Optional[List[Dict[str, Any]]] = field(
+        default=None
+    )  # Store raw tool call dicts
+    reasoning_info: Optional[Dict[str, Any]] = field(
+        default=None
+    )  # Store reasoning/usage data
 
 
 def _sanitize_tools_for_litellm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -67,10 +79,12 @@ def _sanitize_tools_for_litellm(tools: List[Dict[str, Any]]) -> List[Dict[str, A
         func_def = tool_dict.get("function", {})
         params = func_def.get("parameters", {})
         properties = params.get("properties", {})
-        tool_name = func_def.get("name", "unknown_tool") # For logging context
+        tool_name = func_def.get("name", "unknown_tool")  # For logging context
 
         if not isinstance(properties, dict):
-            logger.warning(f"Sanitizing tool '{tool_name}': Non-dict 'properties' found. Skipping property sanitization for this tool.")
+            logger.warning(
+                f"Sanitizing tool '{tool_name}': Non-dict 'properties' found. Skipping property sanitization for this tool."
+            )
             continue
 
         props_to_delete_format = []
@@ -79,14 +93,22 @@ def _sanitize_tools_for_litellm(tools: List[Dict[str, Any]]) -> List[Dict[str, A
                 param_type = param_details.get("type")
                 param_format = param_details.get("format")
 
-                if param_type == "string" and param_format and param_format not in ["enum", "date-time"]:
+                if (
+                    param_type == "string"
+                    and param_format
+                    and param_format not in ["enum", "date-time"]
+                ):
                     logger.warning(
                         f"Sanitizing tool '{tool_name}': Removing unsupported format '{param_format}' from string parameter '{param_name}' for LiteLLM compatibility."
                     )
                     props_to_delete_format.append(param_name)
 
         for param_name in props_to_delete_format:
-            if param_name in properties and isinstance(properties[param_name], dict) and 'format' in properties[param_name]:
+            if (
+                param_name in properties
+                and isinstance(properties[param_name], dict)
+                and "format" in properties[param_name]
+            ):
                 del properties[param_name]["format"]
 
     return sanitized_tools
@@ -127,7 +149,7 @@ class LiteLLMClient:
         self,
         model: str,
         model_parameters: Optional[Dict[str, Any]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """
         Initializes the LiteLLM client.
@@ -143,8 +165,8 @@ class LiteLLMClient:
         if not model:
             raise ValueError("LLM model identifier cannot be empty.")
         self.model = model
-        self.default_kwargs = kwargs # Store base kwargs
-        self.model_parameters = model_parameters or {} # Store model-specific params
+        self.default_kwargs = kwargs  # Store base kwargs
+        self.model_parameters = model_parameters or {}  # Store model-specific params
         logger.info(
             f"LiteLLMClient initialized for model: {self.model} "
             f"with default kwargs: {self.default_kwargs} "
@@ -165,10 +187,10 @@ class LiteLLMClient:
         reasoning_params_config = None
         for pattern, params in self.model_parameters.items():
             matched = False
-            if pattern.endswith("-"): # Prefix match
+            if pattern.endswith("-"):  # Prefix match
                 if self.model.startswith(pattern[:-1]):
                     matched = True
-            elif self.model == pattern: # Exact match
+            elif self.model == pattern:  # Exact match
                 matched = True
 
             if matched:
@@ -179,13 +201,13 @@ class LiteLLMClient:
                     # Remove reasoning from top-level params to avoid duplication
                     params_copy = params.copy()
                     del params_copy["reasoning"]
-                    call_kwargs.update(params_copy) # Merge non-reasoning params
+                    call_kwargs.update(params_copy)  # Merge non-reasoning params
                 else:
                     # Merge all params if no 'reasoning' key
                     call_kwargs.update(params)
                 # Assuming only one pattern should match, break after first match?
                 # Or allow multiple patterns to contribute/override? Let's assume first match wins for now.
-                break # Stop after first matching pattern
+                break  # Stop after first matching pattern
 
         # Add model and messages (always required)
         call_kwargs["model"] = self.model
@@ -197,16 +219,18 @@ class LiteLLMClient:
         if tools:
             # Sanitize a copy of the tools list for LiteLLM compatibility
             sanitized_tools = _sanitize_tools_for_litellm(tools)
-            call_kwargs["tools"] = sanitized_tools # Pass the sanitized list
+            call_kwargs["tools"] = sanitized_tools  # Pass the sanitized list
             call_kwargs["tool_choice"] = tool_choice
 
         # Add the nested 'reasoning' object specifically for OpenRouter models if configured
         if self.model.startswith("openrouter/") and reasoning_params_config:
             call_kwargs["reasoning"] = reasoning_params_config
-            logger.debug(f"Adding nested 'reasoning' parameter for OpenRouter: {reasoning_params_config}")
+            logger.debug(
+                f"Adding nested 'reasoning' parameter for OpenRouter: {reasoning_params_config}"
+            )
 
         logger.debug(
-            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(sanitized_tools)}. Final Kwargs: {json.dumps(call_kwargs, default=str)}" # Use json.dumps for better logging
+            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(sanitized_tools)}. Final Kwargs: {json.dumps(call_kwargs, default=str)}"  # Use json.dumps for better logging
         )
         try:
             response = await acompletion(**call_kwargs)
@@ -233,11 +257,13 @@ class LiteLLMClient:
             raw_tool_calls = response_message.tool_calls
             reasoning_info = None
             # Example: Extract usage data if available (common place for token counts)
-            if hasattr(response, 'usage') and response.usage:
+            if hasattr(response, "usage") and response.usage:
                 try:
                     # Convert Pydantic usage object to dict
                     reasoning_info = response.usage.model_dump(mode="json")
-                    logger.debug(f"Extracted usage data as reasoning_info: {reasoning_info}")
+                    logger.debug(
+                        f"Extracted usage data as reasoning_info: {reasoning_info}"
+                    )
                 except Exception as usage_err:
                     logger.warning(f"Could not serialize response.usage: {usage_err}")
 
@@ -262,7 +288,7 @@ class LiteLLMClient:
             return LLMOutput(
                 content=content,
                 tool_calls=tool_calls_list if tool_calls_list else None,
-                reasoning_info=reasoning_info # Pass extracted reasoning info
+                reasoning_info=reasoning_info,  # Pass extracted reasoning info
             )
 
         except (

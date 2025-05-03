@@ -36,12 +36,24 @@ message_history_table = Table(
     Column("chat_id", BigInteger, primary_key=True),
     Column("message_id", BigInteger, primary_key=True),
     Column("timestamp", DateTime(timezone=True), nullable=False, index=True),
-    Column("role", String, nullable=False),  # 'user', 'assistant', 'system', 'tool', 'error'
-    Column("content", Text, nullable=True), # Allow null content for tool/error messages potentially
-    Column("tool_calls_info", JSON().with_variant(JSONB, "postgresql"), nullable=True), # For assistant messages requesting calls
-    Column("reasoning_info", JSON().with_variant(JSONB, "postgresql"), nullable=True), # For assistant messages, LLM reasoning/usage
-    Column("tool_call_id", String, nullable=True, index=True), # For tool role messages, linking to assistant request
-    Column("error_traceback", Text, nullable=True), # For error messages or messages causing errors
+    Column(
+        "role", String, nullable=False
+    ),  # 'user', 'assistant', 'system', 'tool', 'error'
+    Column(
+        "content", Text, nullable=True
+    ),  # Allow null content for tool/error messages potentially
+    Column(
+        "tool_calls_info", JSON().with_variant(JSONB, "postgresql"), nullable=True
+    ),  # For assistant messages requesting calls
+    Column(
+        "reasoning_info", JSON().with_variant(JSONB, "postgresql"), nullable=True
+    ),  # For assistant messages, LLM reasoning/usage
+    Column(
+        "tool_call_id", String, nullable=True, index=True
+    ),  # For tool role messages, linking to assistant request
+    Column(
+        "error_traceback", Text, nullable=True
+    ),  # For error messages or messages causing errors
 )
 
 
@@ -50,12 +62,14 @@ async def add_message_to_history(
     chat_id: int,
     message_id: int,
     timestamp: datetime,
-    role: str, # 'user', 'assistant', 'system', 'tool', 'error'
-    content: Optional[str], # Content can be optional now
+    role: str,  # 'user', 'assistant', 'system', 'tool', 'error'
+    content: Optional[str],  # Content can be optional now
     tool_calls_info: Optional[List[Dict[str, Any]]] = None,
-    reasoning_info: Optional[Dict[str, Any]] = None, # Added
-    error_traceback: Optional[str] = None, # Added
-    tool_call_id: Optional[str] = None, # Added: ID linking tool response to assistant request
+    reasoning_info: Optional[Dict[str, Any]] = None,  # Added
+    error_traceback: Optional[str] = None,  # Added
+    tool_call_id: Optional[
+        str
+    ] = None,  # Added: ID linking tool response to assistant request
 ):
     """Adds a message to the history table, including optional tool call info, reasoning, error, and tool_call_id."""
     # Note: tool_calls_info is for assistant messages requesting calls. tool_call_id is for tool role responses.
@@ -67,9 +81,9 @@ async def add_message_to_history(
             role=role,
             content=content,
             tool_calls_info=tool_calls_info,
-            reasoning_info=reasoning_info, # Added
-            error_traceback=error_traceback, # Added
-            tool_call_id=tool_call_id, # Added
+            reasoning_info=reasoning_info,  # Added
+            error_traceback=error_traceback,  # Added
+            tool_call_id=tool_call_id,  # Added
         )
         # Use execute_with_retry as commit is handled by context manager
         await db_context.execute_with_retry(stmt)
@@ -96,9 +110,9 @@ async def get_recent_history(
                 message_history_table.c.role,
                 message_history_table.c.content,
                 message_history_table.c.tool_calls_info,
-                message_history_table.c.reasoning_info, # Added
-                message_history_table.c.error_traceback, # Added
-                message_history_table.c.tool_call_id, # Added
+                message_history_table.c.reasoning_info,  # Added
+                message_history_table.c.error_traceback,  # Added
+                message_history_table.c.tool_call_id,  # Added
             )
             .where(message_history_table.c.chat_id == chat_id)
             .where(message_history_table.c.timestamp >= cutoff_time)
@@ -111,10 +125,10 @@ async def get_recent_history(
             msg = {
                 "role": row["role"],
                 "content": row["content"],
-                "tool_calls_info_raw": row["tool_calls_info"], # Keep raw for now
-                "reasoning_info": row["reasoning_info"], # Add reasoning
-                "error_traceback": row["error_traceback"], # Add traceback
-                "tool_call_id": row["tool_call_id"], # Add tool_call_id
+                "tool_calls_info_raw": row["tool_calls_info"],  # Keep raw for now
+                "reasoning_info": row["reasoning_info"],  # Add reasoning
+                "error_traceback": row["error_traceback"],  # Add traceback
+                "tool_call_id": row["tool_call_id"],  # Add tool_call_id
             }
             # Clean up None values if desired, or handle in processing layer
             # msg = {k: v for k, v in msg.items() if v is not None}
@@ -134,12 +148,12 @@ async def get_message_by_id(
     """Retrieves a specific message by its chat and message ID, including all fields."""
     try:
         stmt = (
-            select(message_history_table) # Select all columns
+            select(message_history_table)  # Select all columns
             .where(message_history_table.c.chat_id == chat_id)
             .where(message_history_table.c.message_id == message_id)
         )
         row = await db_context.fetch_one(stmt)
-        return dict(row) if row else None # Return full row as dict
+        return dict(row) if row else None  # Return full row as dict
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in get_message_by_id({chat_id}, {message_id}): {e}",

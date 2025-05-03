@@ -6,16 +6,26 @@ import inspect
 import zoneinfo
 from dataclasses import dataclass
 from datetime import datetime, timezone, date, time
-from typing import List, Dict, Any, Optional, Protocol, Callable, Awaitable, Set, Tuple # Added Tuple
+from typing import (
+    List,
+    Dict,
+    Any,
+    Optional,
+    Protocol,
+    Callable,
+    Awaitable,
+    Set,
+    Tuple,
+)  # Added Tuple
 from zoneinfo import ZoneInfo
 
-from contextlib import AsyncExitStack # Import AsyncExitStack
-import os # Import os for environment variable resolution
+from contextlib import AsyncExitStack  # Import AsyncExitStack
+import os  # Import os for environment variable resolution
 from dateutil import rrule
 from dateutil.parser import isoparse
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.sse import sse_client # Import the correct context manager
+from mcp.client.sse import sse_client  # Import the correct context manager
 from telegram.ext import Application
 from sqlalchemy.sql import text
 
@@ -32,6 +42,7 @@ from .types import ToolExecutionContext, ToolNotFoundError
 
 logger = logging.getLogger(__name__)
 
+
 class MCPToolsProvider:
     """
     Provides and executes tools hosted on MCP servers.
@@ -40,16 +51,18 @@ class MCPToolsProvider:
 
     def __init__(
         self,
-        mcp_server_configs: Dict[str, Dict[str, Any]], # Expects dict {server_id: config}
+        mcp_server_configs: Dict[
+            str, Dict[str, Any]
+        ],  # Expects dict {server_id: config}
         # mcp_client: Optional[Client] = None, # Removed unused parameter and type hint
     ):
         self._mcp_server_configs = mcp_server_configs
         # self._mcp_client = None # Client not directly used for stdio connections
         self._sessions: Dict[str, ClientSession] = {}
-        self._tool_map: Dict[str, str] = {} # Map tool name -> server_id
+        self._tool_map: Dict[str, str] = {}  # Map tool name -> server_id
         self._definitions: List[Dict[str, Any]] = []
         self._initialized = False
-        self._exit_stack = AsyncExitStack() # Manage stdio process lifecycles
+        self._exit_stack = AsyncExitStack()  # Manage stdio process lifecycles
         logger.info(
             f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. Initialization pending."
         )
@@ -59,11 +72,13 @@ class MCPToolsProvider:
         if self._initialized:
             return
 
-        logger.info(f"Initializing MCPToolsProvider: Connecting to {len(self._mcp_server_configs)} servers...")
+        logger.info(
+            f"Initializing MCPToolsProvider: Connecting to {len(self._mcp_server_configs)} servers..."
+        )
         self._sessions = {}
         self._tool_map = {}
         self._definitions = []
-        all_tool_names = set() # To detect duplicates across servers
+        all_tool_names = set()  # To detect duplicates across servers
 
         async def _connect_and_discover_mcp(
             server_id: str, server_conf: Dict[str, Any]
@@ -75,14 +90,16 @@ class MCPToolsProvider:
             # transport = None # Removed unused transport variable
 
             transport_type = server_conf.get("transport", "stdio").lower()
-            url = server_conf.get("url") # Needed for SSE
-            token_config = server_conf.get("token") # New dedicated token field for SSE/HTTP
-            command = server_conf.get("command") # Needed for STDIO
-            args = server_conf.get("args", []) # Needed for STDIO
+            url = server_conf.get("url")  # Needed for SSE
+            token_config = server_conf.get(
+                "token"
+            )  # New dedicated token field for SSE/HTTP
+            command = server_conf.get("command")  # Needed for STDIO
+            args = server_conf.get("args", [])  # Needed for STDIO
             env_config = server_conf.get("env")  # Env config primarily for STDIO now
 
             # --- Resolve environment variable placeholders for STDIO ---
-            resolved_env_stdio = None # Renamed for clarity
+            resolved_env_stdio = None  # Renamed for clarity
             if isinstance(env_config, dict):
                 resolved_env_stdio = {}
                 for key, value in env_config.items():
@@ -90,7 +107,9 @@ class MCPToolsProvider:
                         env_var_name = value[1:]  # Remove the leading '$'
                         resolved_value = os.getenv(env_var_name)
                         if resolved_value is not None:
-                            resolved_env_stdio[key] = resolved_value # Fix typo: use resolved_env_stdio
+                            resolved_env_stdio[key] = (
+                                resolved_value  # Fix typo: use resolved_env_stdio
+                            )
                             logger.debug(
                                 f"Resolved env var '{env_var_name}' for MCP server '{server_id}'"
                             )
@@ -99,7 +118,9 @@ class MCPToolsProvider:
                                 f"Env var '{env_var_name}' for MCP server '{server_id}' not found in environment. Omitting."
                             )
                     else:
-                        resolved_env_stdio[key] = value # Fix typo: use resolved_env_stdio
+                        resolved_env_stdio[key] = (
+                            value  # Fix typo: use resolved_env_stdio
+                        )
             elif env_config is not None:
                 logger.warning(
                     f"MCP server '{server_id}' has non-dictionary 'env' configuration for stdio. Ignoring."
@@ -113,16 +134,21 @@ class MCPToolsProvider:
                     token_env_var_name = token_config[1:]
                     resolved_token_sse = os.getenv(token_env_var_name)
                     if resolved_token_sse:
-                        logger.debug(f"Resolved token env var '{token_env_var_name}' for MCP server '{server_id}'")
+                        logger.debug(
+                            f"Resolved token env var '{token_env_var_name}' for MCP server '{server_id}'"
+                        )
                     else:
-                        logger.warning(f"Token env var '{token_env_var_name}' for MCP server '{server_id}' not found in environment.")
+                        logger.warning(
+                            f"Token env var '{token_env_var_name}' for MCP server '{server_id}' not found in environment."
+                        )
                 else:
                     # Assume the token value is provided directly in the config
                     resolved_token_sse = token_config
             elif token_config:
-                logger.warning(f"MCP server '{server_id}' has non-string 'token' configuration. Ignoring.")
+                logger.warning(
+                    f"MCP server '{server_id}' has non-string 'token' configuration. Ignoring."
+                )
             # --- End token resolution ---
-
 
             logger.info(
                 f"Attempting connection and discovery for MCP server '{server_id}' using '{transport_type}' transport..."
@@ -131,14 +157,20 @@ class MCPToolsProvider:
                 # --- Transport and Session Creation ---
                 if transport_type == "stdio":
                     if not command:
-                        logger.error(f"MCP server '{server_id}' (stdio): 'command' is missing.")
+                        logger.error(
+                            f"MCP server '{server_id}' (stdio): 'command' is missing."
+                        )
                         return None, [], {}
                     server_params = StdioServerParameters(
-                        command=command, args=args, env=resolved_env_stdio # Use stdio-specific env vars
+                        command=command,
+                        args=args,
+                        env=resolved_env_stdio,  # Use stdio-specific env vars
                     )
                     # Use the provider's exit stack to manage stdio process context
-                    read_stream, write_stream = await self._exit_stack.enter_async_context(
-                        stdio_client(server_params)
+                    read_stream, write_stream = (
+                        await self._exit_stack.enter_async_context(
+                            stdio_client(server_params)
+                        )
                     )
                     # Create session with streams, manage session lifecycle with exit stack
                     session = await self._exit_stack.enter_async_context(
@@ -146,35 +178,47 @@ class MCPToolsProvider:
                     )
                 elif transport_type == "sse":
                     if not url:
-                        logger.error(f"MCP server '{server_id}' (sse): 'url' is missing.")
+                        logger.error(
+                            f"MCP server '{server_id}' (sse): 'url' is missing."
+                        )
                         return None, [], {}
 
                     # Construct headers using the resolved token
                     headers = {}
                     if resolved_token_sse:
                         headers["Authorization"] = f"Bearer {resolved_token_sse}"
-                        logger.debug(f"Using Authorization header for SSE server '{server_id}'.")
+                        logger.debug(
+                            f"Using Authorization header for SSE server '{server_id}'."
+                        )
                     else:
-                        logger.warning(f"No token resolved for SSE server '{server_id}'. Connecting without Authorization header.")
+                        logger.warning(
+                            f"No token resolved for SSE server '{server_id}'. Connecting without Authorization header."
+                        )
                         # Add other potential header mappings here if needed
 
                     # Use the sse_client context manager via the exit stack
                     # to get the streams and manage the connection lifecycle.
                     # Pass url and headers. Use default timeouts for now.
-                    read_stream, write_stream = await self._exit_stack.enter_async_context(
-                        sse_client(url=url, headers=headers)
+                    read_stream, write_stream = (
+                        await self._exit_stack.enter_async_context(
+                            sse_client(url=url, headers=headers)
+                        )
                     )
                     # Create session with the streams obtained from the sse_client context
                     session = await self._exit_stack.enter_async_context(
                         ClientSession(read_stream, write_stream)
                     )
                 else:
-                    logger.error(f"Unsupported transport type '{transport_type}' for MCP server '{server_id}'.")
+                    logger.error(
+                        f"Unsupported transport type '{transport_type}' for MCP server '{server_id}'."
+                    )
                     return None, [], {}
 
                 # --- Initialize Session and Discover Tools (Common Logic) ---
                 await session.initialize()
-                logger.info(f"Initialized session with MCP server '{server_id}' ({transport_type}).")
+                logger.info(
+                    f"Initialized session with MCP server '{server_id}' ({transport_type})."
+                )
 
                 response = await session.list_tools()
                 server_tools = response.tools
@@ -184,22 +228,33 @@ class MCPToolsProvider:
                 sanitized_tools = self._format_mcp_definitions_to_dicts(server_tools)
                 discovered_tools.extend(sanitized_tools)
 
-                for tool_def in sanitized_tools: # Iterate sanitized definitions
+                for tool_def in sanitized_tools:  # Iterate sanitized definitions
                     func_def = tool_def.get("function", {})
                     tool_name = func_def.get("name")
                     if tool_name:
                         if tool_name in all_tool_names:
-                            logger.warning(f"Duplicate tool name '{tool_name}' found on server '{server_id}'. It will be ignored from this server. Previous source: '{self._tool_map.get(tool_name)}'.")
+                            logger.warning(
+                                f"Duplicate tool name '{tool_name}' found on server '{server_id}'. It will be ignored from this server. Previous source: '{self._tool_map.get(tool_name)}'."
+                            )
                         else:
-                            tool_map[tool_name] = server_id # Map name to server_id for this task's result
-                            all_tool_names.add(tool_name) # Add to overall set for duplicate check
+                            tool_map[tool_name] = (
+                                server_id  # Map name to server_id for this task's result
+                            )
+                            all_tool_names.add(
+                                tool_name
+                            )  # Add to overall set for duplicate check
                     else:
-                         logger.warning(f"Found tool definition without a name on server '{server_id}': {tool_def}")
+                        logger.warning(
+                            f"Found tool definition without a name on server '{server_id}': {tool_def}"
+                        )
 
                 return session, discovered_tools, tool_map
 
             except Exception as e:
-                logger.error(f"Failed connection/discovery for MCP server '{server_id}': {e}", exc_info=True)
+                logger.error(
+                    f"Failed connection/discovery for MCP server '{server_id}': {e}",
+                    exc_info=True,
+                )
                 return None, [], {}  # Return empty on failure
 
         # --- Create connection tasks ---
@@ -217,15 +272,19 @@ class MCPToolsProvider:
 
         # --- Process results ---
         for i, result in enumerate(results):
-            server_id = list(self._mcp_server_configs.keys())[i] # Get corresponding server_id
+            server_id = list(self._mcp_server_configs.keys())[
+                i
+            ]  # Get corresponding server_id
             if isinstance(result, Exception):
-                logger.error(f"Gather caught exception for server '{server_id}': {result}")
+                logger.error(
+                    f"Gather caught exception for server '{server_id}': {result}"
+                )
             elif result:
                 session, discovered, tool_map = result
                 if session:
                     self._sessions[server_id] = session  # Store successful session
-                    self._definitions.extend(discovered) # Add sanitized tools
-                    self._tool_map.update(tool_map) # Add mappings for this server
+                    self._definitions.extend(discovered)  # Add sanitized tools
+                    self._tool_map.update(tool_map)  # Add mappings for this server
                 else:
                     logger.warning(
                         f"Connection/discovery seems to have failed silently for server '{server_id}' (result: {result})."
@@ -240,10 +299,10 @@ class MCPToolsProvider:
             f"MCPToolsProvider initialization complete. Active sessions: {len(self._sessions)}. Mapped {len(self._tool_map)} unique tools from {len(self._definitions)} total definitions."
         )
 
-
     def _format_mcp_definitions_to_dicts(
         # self, definitions: List[Dict[str, Any]] # Original signature
-        self, definitions: List[Any] # MCP list_tools returns list of Tool objects
+        self,
+        definitions: List[Any],  # MCP list_tools returns list of Tool objects
     ) -> List[Dict[str, Any]]:
         """
         Accepts a list of MCP Tool objects.
@@ -251,21 +310,21 @@ class MCPToolsProvider:
         Sanitization (removing unsupported formats) is handled by the LLM client layer.
         """
         formatted_defs = []
-        for tool in definitions: # Iterate MCP Tool objects
+        for tool in definitions:  # Iterate MCP Tool objects
             try:
                 # Convert MCP Tool object to OpenAI-like dictionary format
                 tool_dict = {
                     "type": "function",
                     "function": {
-                        "name": tool.name, # Assuming these attributes exist on MCP Tool object
-                        "description": tool.description, # Assuming these attributes exist
+                        "name": tool.name,  # Assuming these attributes exist on MCP Tool object
+                        "description": tool.description,  # Assuming these attributes exist
                         "parameters": tool.inputSchema,
                     },
                 }
                 # --- Sanitization logic removed from here ---
                 # The 'format' field might still be present in the 'parameters' dict
 
-                formatted_defs.append(tool_dict) # Add the formatted dict
+                formatted_defs.append(tool_dict)  # Add the formatted dict
             except Exception as e:
                 logger.error(
                     f"Error formatting MCP tool definition to dict: {getattr(tool, 'name', 'UnknownName')}. Error: {e}",
@@ -276,7 +335,9 @@ class MCPToolsProvider:
 
         return formatted_defs
 
-    async def get_tool_definitions(self) -> List[Dict[str, Any]]: # Return type is still dict
+    async def get_tool_definitions(
+        self,
+    ) -> List[Dict[str, Any]]:  # Return type is still dict
         """Returns the aggregated and sanitized tool definitions from all connected servers."""
         if not self._initialized:
             await self.initialize()
@@ -287,7 +348,7 @@ class MCPToolsProvider:
     ) -> str:
         """Executes an MCP tool on the appropriate server."""
         if not self._initialized:
-            await self.initialize() # Ensure connections and mapping are ready
+            await self.initialize()  # Ensure connections and mapping are ready
 
         server_id = self._tool_map.get(name)
         if not server_id:
@@ -340,7 +401,9 @@ class MCPToolsProvider:
 
     async def close(self):
         """Closes all managed MCP connections and cleans up resources."""
-        logger.info(f"Closing MCPToolsProvider: Shutting down {len(self._sessions)} sessions...")
+        logger.info(
+            f"Closing MCPToolsProvider: Shutting down {len(self._sessions)} sessions..."
+        )
         await self._exit_stack.aclose()
         self._sessions.clear()
         self._tool_map.clear()

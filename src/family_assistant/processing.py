@@ -3,7 +3,16 @@ import json
 import asyncio
 import uuid  # Added for unique task IDs
 from datetime import datetime, timezone  # Added timezone
-from typing import List, Dict, Any, Optional, Callable, Tuple, Union, Awaitable # Added Union, Awaitable
+from typing import (
+    List,
+    Dict,
+    Any,
+    Optional,
+    Callable,
+    Tuple,
+    Union,
+    Awaitable,
+)  # Added Union, Awaitable
 
 from dateutil.parser import isoparse  # Added for parsing datetime strings
 
@@ -54,8 +63,8 @@ class ProcessingService:
         calendar_config: Dict[str, Any],
         timezone_str: str,
         max_history_messages: int,
-        server_url: Optional[str], # Added server_url
-        history_max_age_hours: int, # Recommended value is now 1
+        server_url: Optional[str],  # Added server_url
+        history_max_age_hours: int,  # Recommended value is now 1
     ):
         """
         Initializes the ProcessingService.
@@ -76,15 +85,19 @@ class ProcessingService:
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.max_history_messages = max_history_messages
-        self.server_url = server_url or "http://localhost:8000" # Default if not provided
+        self.server_url = (
+            server_url or "http://localhost:8000"
+        )  # Default if not provided
         self.history_max_age_hours = history_max_age_hours
         # Store the confirmation callback function if provided at init? No, get from context.
 
-    # Removed _execute_function_call method (if it was previously here)
+        # Removed _execute_function_call method (if it was previously here)
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.max_history_messages = max_history_messages
-        self.server_url = server_url or "http://localhost:8000" # Default if not provided
+        self.server_url = (
+            server_url or "http://localhost:8000"
+        )  # Default if not provided
         self.history_max_age_hours = history_max_age_hours
 
     # Removed _execute_function_call method (if it was previously here)
@@ -118,8 +131,8 @@ class ProcessingService:
         """
         executed_tool_info: List[Dict[str, Any]] = []
         final_reasoning_info: Optional[Dict[str, Any]] = None
-        final_content: Optional[str] = None # Store final text response from LLM
-        max_iterations = 5 # Safety limit for tool call loops
+        final_content: Optional[str] = None  # Store final text response from LLM
+        max_iterations = 5  # Safety limit for tool call loops
         current_iteration = 1
 
         logger.info(
@@ -136,13 +149,19 @@ class ProcessingService:
 
             # --- Tool Call Loop ---
             while current_iteration <= max_iterations:
-                logger.debug(f"Starting LLM interaction loop iteration {current_iteration}/{max_iterations}")
+                logger.debug(
+                    f"Starting LLM interaction loop iteration {current_iteration}/{max_iterations}"
+                )
 
                 # --- Log messages being sent to LLM at INFO level ---
                 try:
-                    logger.info(f"Sending {len(messages)} messages to LLM (iteration {current_iteration}):\n{json.dumps(messages, indent=2, default=str)}") # Use default=str for non-serializable types
+                    logger.info(
+                        f"Sending {len(messages)} messages to LLM (iteration {current_iteration}):\n{json.dumps(messages, indent=2, default=str)}"
+                    )  # Use default=str for non-serializable types
                 except Exception as json_err:
-                    logger.info(f"Sending {len(messages)} messages to LLM (iteration {current_iteration}) - JSON dump failed: {json_err}. Raw list snippet: {str(messages)[:1000]}...") # Log snippet on failure
+                    logger.info(
+                        f"Sending {len(messages)} messages to LLM (iteration {current_iteration}) - JSON dump failed: {json_err}. Raw list snippet: {str(messages)[:1000]}..."
+                    )  # Log snippet on failure
 
                 # --- LLM Call ---
                 llm_output: LLMOutput = await self.llm_client.generate_response(
@@ -151,18 +170,28 @@ class ProcessingService:
                     # Allow tools on all iterations except the last forced one?
                     # Or force 'none' if the previous call didn't request tools?
                     # Let's allow 'auto' for now, unless we hit max iterations.
-                    tool_choice="auto" if all_tools and current_iteration < max_iterations else "none",
+                    tool_choice=(
+                        "auto"
+                        if all_tools and current_iteration < max_iterations
+                        else "none"
+                    ),
                 )
 
                 # Store content and reasoning from the latest call
                 # Content will be overwritten in the next iteration if there are tool calls,
                 # so only the final iteration's content persists.
-                final_content = llm_output.content.strip() if llm_output.content else None
+                final_content = (
+                    llm_output.content.strip() if llm_output.content else None
+                )
                 final_reasoning_info = llm_output.reasoning_info
                 if final_content:
-                    logger.debug(f"LLM provided text content in iteration {current_iteration}: {final_content[:100]}...")
+                    logger.debug(
+                        f"LLM provided text content in iteration {current_iteration}: {final_content[:100]}..."
+                    )
                 else:
-                    logger.debug(f"LLM provided no text content in iteration {current_iteration}.")
+                    logger.debug(
+                        f"LLM provided no text content in iteration {current_iteration}."
+                    )
 
                 tool_calls = llm_output.tool_calls
 
@@ -170,15 +199,17 @@ class ProcessingService:
                 if not tool_calls:
                     logger.info("LLM response received with no further tool calls.")
                     # Final content is built after the loop
-                    break # Exit the loop
+                    break  # Exit the loop
 
                 # --- Handle Tool Calls ---
-                logger.info(f"LLM requested {len(tool_calls)} tool call(s) in iteration {current_iteration}.")
+                logger.info(
+                    f"LLM requested {len(tool_calls)} tool call(s) in iteration {current_iteration}."
+                )
 
                 # Append the assistant's response message (containing the tool calls)
                 assistant_message_with_calls = {
                     "role": "assistant",
-                    "content": llm_output.content, # Include any text content LLM provided along with calls
+                    "content": llm_output.content,  # Include any text content LLM provided along with calls
                     "tool_calls": tool_calls,
                 }
                 messages.append(assistant_message_with_calls)
@@ -202,33 +233,70 @@ class ProcessingService:
                     function_args_str = function_info.get("arguments", "{}")
 
                     if not call_id or not function_name:
-                        logger.error(f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}")
-                        tool_response_messages.append({"tool_call_id": call_id or f"missing_id_{uuid.uuid4()}", "role": "tool", "name": function_name or "unknown_function", "content": "Error: Invalid tool call structure."})
+                        logger.error(
+                            f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}"
+                        )
+                        tool_response_messages.append(
+                            {
+                                "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                                "role": "tool",
+                                "name": function_name or "unknown_function",
+                                "content": "Error: Invalid tool call structure.",
+                            }
+                        )
                         continue
 
-                    try: arguments = json.loads(function_args_str)
+                    try:
+                        arguments = json.loads(function_args_str)
                     except json.JSONDecodeError:
-                        logger.error(f"Failed to parse arguments for tool call {function_name} (iteration {current_iteration}): {function_args_str}")
+                        logger.error(
+                            f"Failed to parse arguments for tool call {function_name} (iteration {current_iteration}): {function_args_str}"
+                        )
                         arguments = {"error": "Failed to parse arguments"}
-                        tool_response_content = f"Error: Invalid arguments format for {function_name}."
+                        tool_response_content = (
+                            f"Error: Invalid arguments format for {function_name}."
+                        )
                     else:
                         try:
-                            tool_response_content = await self.tools_provider.execute_tool(
-                                name=function_name,
-                                arguments=arguments,
-                                context=tool_execution_context,
+                            tool_response_content = (
+                                await self.tools_provider.execute_tool(
+                                    name=function_name,
+                                    arguments=arguments,
+                                    context=tool_execution_context,
+                                )
                             )
                         except ToolNotFoundError as tnfe:
-                            logger.error(f"Tool execution failed (iteration {current_iteration}): {tnfe}")
+                            logger.error(
+                                f"Tool execution failed (iteration {current_iteration}): {tnfe}"
+                            )
                             tool_response_content = f"Error: {tnfe}"
                         except Exception as exec_err:
-                            logger.error(f"Unexpected error executing tool {function_name} (iteration {current_iteration}): {exec_err}", exc_info=True)
-                            tool_response_content = f"Error: Unexpected error executing {function_name}."
+                            logger.error(
+                                f"Unexpected error executing tool {function_name} (iteration {current_iteration}): {exec_err}",
+                                exc_info=True,
+                            )
+                            tool_response_content = (
+                                f"Error: Unexpected error executing {function_name}."
+                            )
 
                     # Store details for history across all iterations
-                    executed_tool_info.append({"tool_call_id": call_id, "function_name": function_name, "arguments": arguments, "response_content": tool_response_content})
+                    executed_tool_info.append(
+                        {
+                            "tool_call_id": call_id,
+                            "function_name": function_name,
+                            "arguments": arguments,
+                            "response_content": tool_response_content,
+                        }
+                    )
                     # Append the response message for the LLM for the *next* iteration
-                    tool_response_messages.append({"tool_call_id": call_id, "role": "tool", "name": function_name, "content": tool_response_content})
+                    tool_response_messages.append(
+                        {
+                            "tool_call_id": call_id,
+                            "role": "tool",
+                            "name": function_name,
+                            "content": tool_response_content,
+                        }
+                    )
 
                 # Append all tool response messages for this iteration
                 messages.extend(tool_response_messages)
@@ -239,7 +307,9 @@ class ProcessingService:
 
             # --- After Loop ---
             if current_iteration > max_iterations:
-                logger.warning(f"Reached maximum tool call iterations ({max_iterations}). Returning current state.")
+                logger.warning(
+                    f"Reached maximum tool call iterations ({max_iterations}). Returning current state."
+                )
                 # If we hit the limit, the last LLM call was forced with tool_choice='none',
                 # so final_content should hold its response. We might add a note.
                 if final_content:
@@ -249,12 +319,16 @@ class ProcessingService:
 
             # final_content now holds the content from the *last* LLM call
             if not final_content:
-                 logger.warning("Final LLM response content was empty.")
-                 # Optionally set a fallback message, or leave as None
-                 # final_content = "Processing complete."
+                logger.warning("Final LLM response content was empty.")
+                # Optionally set a fallback message, or leave as None
+                # final_content = "Processing complete."
 
             # Return the final content, accumulated tool info, and reasoning from the last LLM call
-            return final_content, executed_tool_info if executed_tool_info else None, final_reasoning_info
+            return (
+                final_content,
+                executed_tool_info if executed_tool_info else None,
+                final_reasoning_info,
+            )
 
         except Exception as e:
             logger.error(
@@ -263,6 +337,7 @@ class ProcessingService:
             )
             # Ensure tuple is returned even on error
             return None, None, None
+
     def _format_history_for_llm(
         self, history_messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -281,9 +356,15 @@ class ProcessingService:
         for msg in history_messages:
             # Use .get for safer access to potentially missing keys
             role = msg.get("role")
-            content = msg.get("content") or '' # Content can be None for assistant messages with tool calls
-            tool_calls_info = msg.get("tool_calls_info_raw") # Raw tool calls from LLM output (list of dicts)
-            tool_call_id = msg.get("tool_call_id") # tool_call_id for role 'tool' messages
+            content = (
+                msg.get("content") or ""
+            )  # Content can be None for assistant messages with tool calls
+            tool_calls_info = msg.get(
+                "tool_calls_info_raw"
+            )  # Raw tool calls from LLM output (list of dicts)
+            tool_call_id = msg.get(
+                "tool_call_id"
+            )  # tool_call_id for role 'tool' messages
             # reasoning_info = msg.get("reasoning_info") # Reasoning info not needed for LLM history format
             # error_traceback = msg.get("error_traceback") # Error info not needed for LLM history format
 
@@ -298,47 +379,63 @@ class ProcessingService:
                         if isinstance(raw_call, dict):
                             # Extract the parts needed for the LLM format
                             # Ensure the ID from the LLM ('id') is used.
-                            call_id = raw_call.get("id") # Use 'id' from the original LLM response
+                            call_id = raw_call.get(
+                                "id"
+                            )  # Use 'id' from the original LLM response
                             function_info = raw_call.get("function")
                             if call_id and isinstance(function_info, dict):
                                 # Append in the standard OpenAI/LiteLLM format
                                 reformatted_tool_calls.append(
                                     {
                                         "id": call_id,
-                                        "type": "function", # Assuming only function calls for now
-                                        "function": function_info, # Pass the whole function dict (name, arguments str)
+                                        "type": "function",  # Assuming only function calls for now
+                                        "function": function_info,  # Pass the whole function dict (name, arguments str)
                                     }
                                 )
                             else:
-                                logger.warning(f"Skipping malformed raw tool call info in history: {raw_call}")
+                                logger.warning(
+                                    f"Skipping malformed raw tool call info in history: {raw_call}"
+                                )
                         else:
-                            logger.warning(f"Skipping non-dict item in raw_tool_calls_info: {raw_call}")
+                            logger.warning(
+                                f"Skipping non-dict item in raw_tool_calls_info: {raw_call}"
+                            )
 
                     if reformatted_tool_calls:
                         # Content might be None or empty string for assistant messages that only contain tool calls
                         messages.append(
-                            {"role": "assistant", "content": content, "tool_calls": reformatted_tool_calls}
+                            {
+                                "role": "assistant",
+                                "content": content,
+                                "tool_calls": reformatted_tool_calls,
+                            }
                         )
-                    else: # If no valid tool calls found in the raw data, treat as regular message
+                    else:  # If no valid tool calls found in the raw data, treat as regular message
                         messages.append({"role": "assistant", "content": content})
                 else:
                     # --- This block handles assistant messages WITHOUT tool calls ---
                     messages.append({"role": "assistant", "content": content})
             elif role == "tool":
                 # --- Format tool response messages ---
-                if tool_call_id: # Only include if tool_call_id is present (retrieved from DB)
+                if (
+                    tool_call_id
+                ):  # Only include if tool_call_id is present (retrieved from DB)
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tool_call_id,
-                            "content": content, # Content is the tool's response string
+                            "content": content,  # Content is the tool's response string
                         }
                     )
                 else:
                     # Log a warning if a tool message is found without an ID (indicates logging issue)
-                    logger.warning(f"Found 'tool' role message in history without a tool_call_id: {msg}")
+                    logger.warning(
+                        f"Found 'tool' role message in history without a tool_call_id: {msg}"
+                    )
                     # Skip adding malformed tool message to history to avoid LLM errors
-            elif role != "error": # Don't include previous error messages in history sent to LLM
+            elif (
+                role != "error"
+            ):  # Don't include previous error messages in history sent to LLM
                 # Append other non-error messages directly
                 messages.append({"role": role, "content": content})
 
@@ -358,7 +455,12 @@ class ProcessingService:
         request_confirmation_callback: Optional[
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
         ] = None,
-    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], Optional[str]]:
+    ) -> Tuple[
+        Optional[str],
+        Optional[List[Dict[str, Any]]],
+        Optional[Dict[str, Any]],
+        Optional[str],
+    ]:
         """
         Prepares context, message history, calls the LLM processing logic,
         and returns the response, tool info, reasoning info, and any processing error traceback.
@@ -373,7 +475,7 @@ class ProcessingService:
         Returns:
             A tuple: (LLM response string or None, List of tool call info dicts or None, Reasoning info dict or None, Error traceback string or None).
         """
-        error_traceback: Optional[str] = None # Initialize traceback
+        error_traceback: Optional[str] = None  # Initialize traceback
         logger.debug(
             f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
         )
@@ -422,15 +524,15 @@ class ProcessingService:
             try:
                 # Pass timezone string to fetch_upcoming_events
                 upcoming_events = await calendar_integration.fetch_upcoming_events(
-                    calendar_config=self.calendar_config, # Use self.calendar_config
-                    timezone_str=self.timezone_str # Pass timezone
+                    calendar_config=self.calendar_config,  # Use self.calendar_config
+                    timezone_str=self.timezone_str,  # Pass timezone
                 )
                 # Pass timezone string to format_events_for_prompt
                 today_events_str, future_events_str = (
                     calendar_integration.format_events_for_prompt(
                         events=upcoming_events,
-                        prompts=self.prompts, # Use self.prompts
-                        timezone_str=self.timezone_str # Pass timezone
+                        prompts=self.prompts,  # Use self.prompts
+                        timezone_str=self.timezone_str,  # Pass timezone
                     )
                 )
                 calendar_header_template = self.prompts.get(  # Use self.prompts
@@ -488,7 +590,7 @@ class ProcessingService:
             current_time=current_time_str,
             calendar_context=calendar_context_str,
             notes_context=notes_context_str,
-            server_url=self.server_url, # Add server URL
+            server_url=self.server_url,  # Add server URL
         ).strip()
 
         if final_system_prompt:
@@ -513,7 +615,9 @@ class ProcessingService:
             trigger_content = trigger_content_parts[0]["text"]
             logger.debug("Simplified single text part content to string.")
         else:
-            trigger_content = trigger_content_parts # Keep as list for multi-part/non-text
+            trigger_content = (
+                trigger_content_parts  # Keep as list for multi-part/non-text
+            )
             logger.debug("Keeping trigger content as list (multi-part or non-text).")
 
         trigger_message = {
@@ -528,16 +632,23 @@ class ProcessingService:
         try:
             # Call the process_message method of the *same* instance (self)
             # Unpack all three return values: content, tool_info, reasoning_info
-            llm_response_content, tool_info, reasoning_info = await self.process_message(
-                db_context=db_context,  # Pass context
-                messages=messages,
-                chat_id=chat_id,
-                application=application,
-                # Pass the confirmation callback down
-                request_confirmation_callback=request_confirmation_callback,
+            llm_response_content, tool_info, reasoning_info = (
+                await self.process_message(
+                    db_context=db_context,  # Pass context
+                    messages=messages,
+                    chat_id=chat_id,
+                    application=application,
+                    # Pass the confirmation callback down
+                    request_confirmation_callback=request_confirmation_callback,
+                )
             )
             # Return content, tool info, and reasoning info
-            return llm_response_content, tool_info, reasoning_info, None # No error traceback
+            return (
+                llm_response_content,
+                tool_info,
+                reasoning_info,
+                None,
+            )  # No error traceback
         except Exception as e:
             logger.error(
                 f"Error during ProcessingService interaction for chat {chat_id}: {e}",
@@ -545,9 +656,11 @@ class ProcessingService:
             )
             # Capture traceback on error
             import traceback
+
             error_traceback = traceback.format_exc()
             # Capture traceback on error
             import traceback
+
             error_traceback = traceback.format_exc()
             # Return None for content/tools/reasoning, but include the traceback
-            return None, None, None, error_traceback # Return traceback here
+            return None, None, None, error_traceback  # Return traceback here

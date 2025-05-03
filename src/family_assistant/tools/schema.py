@@ -1,25 +1,29 @@
 import html
 import logging
-import json # Add json import
+import json  # Add json import
 from typing import Dict, Any, Optional
-import io # Import io for StringIO
-import tempfile # For creating temporary files
-import os # For working with file paths
+import io  # Import io for StringIO
+import tempfile  # For creating temporary files
+import os  # For working with file paths
+
 # Remove lru_cache as we will cache based on tool name at the call site
 
 # Attempt to import schema generation tools, handle import error gracefully
 try:
     from json_schema_for_humans.generation_configuration import GenerationConfiguration
+
     # Import generate_from_filename which works with file paths
     from json_schema_for_humans.generate import generate_from_filename
 
     _SCHEMA_GENERATION_AVAILABLE = True
     # Configure once
-    _SCHEMA_GEN_CONFIG = GenerationConfiguration(template_name="flat", with_footer=False)
+    _SCHEMA_GEN_CONFIG = GenerationConfiguration(
+        template_name="flat", with_footer=False
+    )
 except ImportError:
     _SCHEMA_GENERATION_AVAILABLE = False
-    _SCHEMA_GEN_CONFIG = None # Type: ignore
-    generate_from_filename = None # Type: ignore
+    _SCHEMA_GEN_CONFIG = None  # Type: ignore
+    generate_from_filename = None  # Type: ignore
     logging.warning(
         "json-schema-for-humans library not found. "
         "Tool schema rendering will fall back to raw JSON."
@@ -46,15 +50,25 @@ def render_schema_as_html(schema_json_str: Optional[str]) -> str:
     except json.JSONDecodeError:
         return "<p>Error: Invalid JSON schema provided.</p>"
 
-    if not _SCHEMA_GENERATION_AVAILABLE or generate_from_filename is None or _SCHEMA_GEN_CONFIG is None:
+    if (
+        not _SCHEMA_GENERATION_AVAILABLE
+        or generate_from_filename is None
+        or _SCHEMA_GEN_CONFIG is None
+    ):
         # Fallback to preformatted JSON if library is unavailable
         return f"<pre>{html.escape(json.dumps(schema_dict, indent=2))}</pre>"
 
     # Use temporary files
     try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as infile, \
-             tempfile.NamedTemporaryFile(mode="r", suffix=".html", delete=False, encoding="utf-8") as outfile:
-            infile.write(schema_json_str) # Write the original JSON string
+        with (
+            tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
+            ) as infile,
+            tempfile.NamedTemporaryFile(
+                mode="r", suffix=".html", delete=False, encoding="utf-8"
+            ) as outfile,
+        ):
+            infile.write(schema_json_str)  # Write the original JSON string
             infile_path = infile.name
             outfile_path = outfile.name
 
@@ -68,7 +82,7 @@ def render_schema_as_html(schema_json_str: Optional[str]) -> str:
         return f"<pre>Error generating schema HTML: {html.escape(str(e))}</pre>"
     finally:
         # Clean up temporary files
-        if 'infile_path' in locals() and os.path.exists(infile_path):
+        if "infile_path" in locals() and os.path.exists(infile_path):
             os.remove(infile_path)
-        if 'outfile_path' in locals() and os.path.exists(outfile_path):
+        if "outfile_path" in locals() and os.path.exists(outfile_path):
             os.remove(outfile_path)
