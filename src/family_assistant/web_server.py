@@ -72,8 +72,8 @@ from family_assistant.embeddings import (
 from pydantic import BaseModel, Field  # For structuring results if needed, added Field
 
 # Import the user docs scanner
-from family_assistant.tools import _scan_user_docs  # Import the scanner
-from family_assistant.tools.schema import (
+from family_assistant.tools.local import _scan_user_docs  # Import the scanner from local
+from family_assistant.tools.schema import ( # Correct import path
     render_schema_as_html,
 )  # Import the new rendering function
 

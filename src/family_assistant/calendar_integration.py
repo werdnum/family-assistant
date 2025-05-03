@@ -12,7 +12,7 @@ import httpx  # Import httpx
 import uuid  # For generating event UIDs
 from dateutil.parser import isoparse  # For parsing ISO strings in tools
 
-# Import types needed by tools (from the new types file)
+# Import types needed by tools
 from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
