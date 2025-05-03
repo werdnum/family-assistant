@@ -21,9 +21,15 @@ from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
     ToolExecutionContext,
 )
+
 # Import TaskWorker, events, and the specific handler needed for registration
-from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event, handle_llm_callback
-from family_assistant import storage # For direct task checking
+from family_assistant.task_worker import (
+    TaskWorker,
+    shutdown_event,
+    new_task_event,
+    handle_llm_callback,
+)
+from family_assistant import storage  # For direct task checking
 
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (
@@ -38,8 +44,8 @@ logger = logging.getLogger(__name__)
 # --- Test Configuration ---
 TEST_CHAT_ID = 54321
 TEST_USER_NAME = "CallbackTester"
-CALLBACK_DELAY_SECONDS = 3 # Schedule callback this many seconds into the future
-WAIT_BUFFER_SECONDS = 10 # Wait this much longer than the delay for processing
+CALLBACK_DELAY_SECONDS = 3  # Schedule callback this many seconds into the future
+WAIT_BUFFER_SECONDS = 10  # Wait this much longer than the delay for processing
 CALLBACK_CONTEXT = "Remind me to check the test results"
 
 
@@ -103,22 +109,26 @@ async def test_schedule_and_execute_callback(test_db_engine):
         user_message = next((m for m in messages if m.get("role") == "user"), None)
 
         return (
-            system_message is not None and "processing a scheduled callback" in system_message.get("content", "")
-            and user_message is not None and "System Callback Trigger:" in user_message.get("content", "")
+            system_message is not None
+            and "processing a scheduled callback" in system_message.get("content", "")
+            and user_message is not None
+            and "System Callback Trigger:" in user_message.get("content", "")
             and CALLBACK_CONTEXT in user_message.get("content", "")
         )
 
-    callback_final_response_text = f"Rule-based mock: OK, executing callback. Reminder: {CALLBACK_CONTEXT}"
+    callback_final_response_text = (
+        f"Rule-based mock: OK, executing callback. Reminder: {CALLBACK_CONTEXT}"
+    )
     callback_response = LLMOutput(
         content=callback_final_response_text,
-        tool_calls=None, # No tool call expected for the callback response itself
+        tool_calls=None,  # No tool call expected for the callback response itself
     )
     callback_rule: Rule = (callback_trigger_matcher, callback_response)
 
     # --- Instantiate Mock LLM ---
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[schedule_rule, callback_rule],
-        default_response=LLMOutput(content="Default mock response for callback test.")
+        default_response=LLMOutput(content="Default mock response for callback test."),
     )
     logger.info(f"Using RuleBasedMockLLMClient for callback test.")
 
@@ -127,13 +137,13 @@ async def test_schedule_and_execute_callback(test_db_engine):
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition, implementations=local_tool_implementations
     )
-    mcp_provider = MCPToolsProvider( # Mock MCP
-        mcp_server_configs={} # Use correct argument name
+    mcp_provider = MCPToolsProvider(  # Mock MCP
+        mcp_server_configs={}  # Use correct argument name
     )
     composite_provider = CompositeToolsProvider(
         providers=[local_provider, mcp_provider]
     )
-    await composite_provider.get_tool_definitions() # Eagerly fetch
+    await composite_provider.get_tool_definitions()  # Eagerly fetch
 
     # Processing Service
     dummy_prompts = {"system_prompt": "Test system prompt for callback."}
@@ -150,12 +160,14 @@ async def test_schedule_and_execute_callback(test_db_engine):
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
-        server_url=None, # Added missing argument
+        server_url=None,  # Added missing argument
     )
 
     # Mock Telegram Application and Bot
     mock_bot = AsyncMock()
-    mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=9999)) # Mock sent message ID
+    mock_bot.send_message = AsyncMock(
+        return_value=MagicMock(message_id=9999)
+    )  # Mock sent message ID
 
     mock_application = MagicMock()
     mock_application.bot = mock_bot
@@ -176,13 +188,15 @@ async def test_schedule_and_execute_callback(test_db_engine):
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
 
     worker_task = asyncio.create_task(
-        task_worker_instance.run(test_new_task_event), # Pass the test event
-        name=f"TaskWorker-{test_run_id}"
+        task_worker_instance.run(test_new_task_event),  # Pass the test event
+        name=f"TaskWorker-{test_run_id}",
     )
 
     # --- Part 1: Schedule the callback ---
     logger.info("--- Part 1: Scheduling Callback ---")
-    schedule_request_text = f"Please schedule a reminder with context: {CALLBACK_CONTEXT}"
+    schedule_request_text = (
+        f"Please schedule a reminder with context: {CALLBACK_CONTEXT}"
+    )
     schedule_request_trigger = [{"type": "text", "text": schedule_request_text}]
 
     scheduled_task_id = None
@@ -190,13 +204,13 @@ async def test_schedule_and_execute_callback(test_db_engine):
     async with DatabaseContext(engine=test_db_engine) as db_context:
         schedule_response_content, schedule_tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
-                    db_context=db_context,
-                    application=mock_application, # Pass mock application
-                    chat_id=TEST_CHAT_ID,
-                    trigger_content_parts=schedule_request_trigger,
-                    user_name=TEST_USER_NAME,
-                )
+                db_context=db_context,
+                application=mock_application,  # Pass mock application
+                chat_id=TEST_CHAT_ID,
+                trigger_content_parts=schedule_request_trigger,
+                user_name=TEST_USER_NAME,
             )
+        )
 
     logger.info(f"Schedule Request - Mock LLM Response: {schedule_response_content}")
 
@@ -204,7 +218,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
     logger.info("--- Part 2: Waiting for task completion ---")
 
     wait_time = CALLBACK_DELAY_SECONDS + WAIT_BUFFER_SECONDS
-    await wait_for_tasks_to_complete(engine=test_db_engine, timeout_seconds = wait_time)
+    await wait_for_tasks_to_complete(engine=test_db_engine, timeout_seconds=wait_time)
 
     # --- Part 3: Verify Callback Execution ---
     logger.info("--- Part 3: Verifying Callback Execution ---")
@@ -218,20 +232,23 @@ async def test_schedule_and_execute_callback(test_db_engine):
     assert sent_text is not None
     # Check if the *mock's* expected response content is in the sent text
     # Note: handle_llm_callback formats the response, so we check the raw content from the mock rule
-    assert CALLBACK_CONTEXT in sent_text, \
-        f"Final message sent by bot did not contain expected mock response. Sent: '{sent_text}' Expected fragment: '{CALLBACK_CONTEXT}'"
-    logger.info("Verified mock_bot.send_message was called with the expected final response.")
+    assert (
+        CALLBACK_CONTEXT in sent_text
+    ), f"Final message sent by bot did not contain expected mock response. Sent: '{sent_text}' Expected fragment: '{CALLBACK_CONTEXT}'"
+    logger.info(
+        "Verified mock_bot.send_message was called with the expected final response."
+    )
 
     # --- Cleanup ---
     logger.info("--- Cleanup ---")
     logger.info("Signalling TaskWorker to shut down...")
-    test_shutdown_event.set() # Signal worker loop to stop
+    test_shutdown_event.set()  # Signal worker loop to stop
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
         logger.info("TaskWorker task finished.")
     except asyncio.TimeoutError:
         logger.warning("TaskWorker task did not finish within timeout during cleanup.")
-        worker_task.cancel() # Force cancel if it didn't stop
-        await asyncio.sleep(0.1) # Allow cancellation to process
+        worker_task.cancel()  # Force cancel if it didn't stop
+        await asyncio.sleep(0.1)  # Allow cancellation to process
 
     logger.info(f"--- Callback Test ({test_run_id}) Passed ---")

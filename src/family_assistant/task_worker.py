@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 import uuid
-import zoneinfo # Add this import
+import zoneinfo  # Add this import
 from dateutil import rrule
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Callable, Awaitable
@@ -15,18 +15,23 @@ from typing import Dict, List, Any, Optional, Callable, Awaitable
 from family_assistant import storage  # Import for task queue operations
 from family_assistant.processing import ProcessingService  # Import the service
 from family_assistant.storage.context import DatabaseContext, get_db_context
-from family_assistant.indexing.email_indexer import handle_index_email # Import email indexer
+from family_assistant.indexing.email_indexer import (
+    handle_index_email,
+)  # Import email indexer
+
 # Import the new document indexer CLASS
 from family_assistant.indexing.document_indexer import DocumentIndexer
+
 # Import functools for partial application
 import functools
+
 # Import Application for type hinting
 from telegram.ext import Application
 
 # Import tool definitions and context from the tools module
 from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
-    ToolExecutionContext, # Import the context class
+    ToolExecutionContext,  # Import the context class
 )
 from telegramify_markdown import markdownify
 from telegram.helpers import escape_markdown
@@ -45,6 +50,7 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 # --- Task Handler Functions (remain module-level for now) ---
 # These functions will be registered with the TaskWorker instance.
+
 
 # Example Task Handler (no external dependencies)
 async def handle_log_message(db_context: DatabaseContext, payload: Any):
@@ -86,31 +92,41 @@ def format_llm_response_for_telegram(response_text: str) -> str:
 
 
 async def handle_llm_callback(
-    exec_context: ToolExecutionContext, # Accept execution context
-    payload: Any # Payload from the task queue
+    exec_context: ToolExecutionContext,  # Accept execution context
+    payload: Any,  # Payload from the task queue
 ):
     """
     Task handler for LLM scheduled callbacks.
     Dependencies are accessed via the ToolExecutionContext.
     """
     # Access dependencies from the execution context
-    processing_service = exec_context.processing_service # TaskWorker passes its own instance
+    processing_service = (
+        exec_context.processing_service
+    )  # TaskWorker passes its own instance
     application = exec_context.application
     db_context = exec_context.db_context
-    chat_id = exec_context.chat_id # Get chat_id from context
+    chat_id = exec_context.chat_id  # Get chat_id from context
 
     # Basic validation of dependencies from context
     if not processing_service:
-        logger.error("ProcessingService not found in ToolExecutionContext for handle_llm_callback.")
+        logger.error(
+            "ProcessingService not found in ToolExecutionContext for handle_llm_callback."
+        )
         raise ValueError("Missing ProcessingService dependency in context.")
     if not application:
-        logger.error("Application not found in ToolExecutionContext for handle_llm_callback.")
+        logger.error(
+            "Application not found in ToolExecutionContext for handle_llm_callback."
+        )
         raise ValueError("Missing Application dependency in context.")
     if not db_context:
-        logger.error("DatabaseContext not found in ToolExecutionContext for handle_llm_callback.")
+        logger.error(
+            "DatabaseContext not found in ToolExecutionContext for handle_llm_callback."
+        )
         raise ValueError("Missing DatabaseContext dependency in context.")
-    if not chat_id: # chat_id should be set by _process_task
-        logger.error("Chat ID not found in ToolExecutionContext for handle_llm_callback.")
+    if not chat_id:  # chat_id should be set by _process_task
+        logger.error(
+            "Chat ID not found in ToolExecutionContext for handle_llm_callback."
+        )
         raise ValueError("Missing Chat ID in context.")
 
     # Extract necessary info from payload
@@ -119,11 +135,17 @@ async def handle_llm_callback(
 
     # Validate payload content
     if not callback_context:
-        logger.error(f"Invalid payload for llm_callback task (missing callback_context): {payload}")
+        logger.error(
+            f"Invalid payload for llm_callback task (missing callback_context): {payload}"
+        )
         raise ValueError("Missing required field in payload: callback_context")
 
     logger.info(f"Handling LLM callback for chat_id {chat_id}")
-    current_time_str = datetime.now(zoneinfo.ZoneInfo(exec_context.timezone_str)).strftime("%Y-%m-%d %H:%M:%S %Z") # Use timezone from context
+    current_time_str = datetime.now(
+        zoneinfo.ZoneInfo(exec_context.timezone_str)
+    ).strftime(
+        "%Y-%m-%d %H:%M:%S %Z"
+    )  # Use timezone from context
 
     try:
         # Construct the trigger message content for the LLM
@@ -145,7 +167,7 @@ async def handle_llm_callback(
         # Call the ProcessingService directly, using dependencies from context
         # Unpack all expected return values (content, tool_info, reasoning, error)
         llm_response_content, tool_call_info, _ = (
-            await processing_service.process_message( # Use service from context
+            await processing_service.process_message(  # Use service from context
                 db_context=db_context,
                 messages=messages_for_llm,
                 chat_id=chat_id,
@@ -155,9 +177,7 @@ async def handle_llm_callback(
 
         if llm_response_content:
             # Send the LLM's response back to the chat
-            formatted_response = format_llm_response_for_telegram(
-                llm_response_content
-            )
+            formatted_response = format_llm_response_for_telegram(llm_response_content)
             sent_message = await application.bot.send_message(
                 chat_id=chat_id,
                 text=formatted_response,
@@ -169,9 +189,7 @@ async def handle_llm_callback(
             # Store the callback trigger and response in history
             try:
                 # Pseudo-ID for the trigger message (timestamp based?)
-                trigger_msg_id = int(
-                    datetime.now(timezone.utc).timestamp() * 1000
-                )
+                trigger_msg_id = int(datetime.now(timezone.utc).timestamp() * 1000)
                 await storage.add_message_to_history(
                     db_context=db_context,
                     chat_id=chat_id,
@@ -225,24 +243,27 @@ async def handle_llm_callback(
 
 # --- Task Worker Class ---
 
+
 class TaskWorker:
     """Manages the task processing loop and handler registry."""
 
     def __init__(
         self,
         processing_service: ProcessingService,
-        application: Application, # Add application dependency
-        calendar_config: Dict[str, Any], # Add calendar config
-        timezone_str: str, # Add timezone string
+        application: Application,  # Add application dependency
+        calendar_config: Dict[str, Any],  # Add calendar config
+        timezone_str: str,  # Add timezone string
     ):
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
-        self.application = application # Store application instance
-        self.calendar_config = calendar_config # Store calendar config
-        self.timezone_str = timezone_str # Store timezone string
+        self.application = application  # Store application instance
+        self.calendar_config = calendar_config  # Store calendar config
+        self.timezone_str = timezone_str  # Store timezone string
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
-        self.task_handlers: Dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]] = {}
+        self.task_handlers: Dict[
+            str, Callable[[ToolExecutionContext, Any], Awaitable[None]]
+        ] = {}
         self.worker_id = f"worker-{uuid.uuid4()}"
         logger.info(f"TaskWorker instance {self.worker_id} created.")
 
@@ -250,18 +271,27 @@ class TaskWorker:
         self,
         task_type: str,
         # Update handler signature type hint
-        handler: Callable[[ToolExecutionContext, Any], Awaitable[None]]
+        handler: Callable[[ToolExecutionContext, Any], Awaitable[None]],
     ):
         """Register a task handler function for a specific task type."""
         self.task_handlers[task_type] = handler
-        logger.info(f"Worker {self.worker_id}: Registered handler for task type: {task_type}")
+        logger.info(
+            f"Worker {self.worker_id}: Registered handler for task type: {task_type}"
+        )
 
     # Update return type hint
-    def get_task_handlers(self) -> Dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]]:
-         """Return the current task handlers dictionary for this worker."""
-         return self.task_handlers
+    def get_task_handlers(
+        self,
+    ) -> Dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]]:
+        """Return the current task handlers dictionary for this worker."""
+        return self.task_handlers
 
-    async def _process_task(self, db_context: DatabaseContext, task: Dict[str, Any], wake_up_event: asyncio.Event):
+    async def _process_task(
+        self,
+        db_context: DatabaseContext,
+        task: Dict[str, Any],
+        wake_up_event: asyncio.Event,
+    ):
         """Handles the execution, completion marking, and recurrence logic for a dequeued task."""
         logger.info(
             f"Worker {self.worker_id} processing task {task['task_id']} (type: {task['task_type']})"
@@ -279,31 +309,35 @@ class TaskWorker:
                 status="failed",
                 error=f"No handler registered for type {task['task_type']}",
             )
-            return # Stop processing this task
+            return  # Stop processing this task
 
         try:
             # --- Create Execution Context ---
             # Extract chat_id from payload if available (needed for context)
             # Default to 0 or None if not applicable for the task type?
             # For llm_callback, it should be present.
-            chat_id = task.get("payload", {}).get("chat_id", 0) # Default to 0 if missing
+            chat_id = task.get("payload", {}).get(
+                "chat_id", 0
+            )  # Default to 0 if missing
             if not chat_id and task["task_type"] == "llm_callback":
-                 logger.error(f"Task {task['task_id']} (llm_callback) missing chat_id in payload. Cannot create context.")
-                 # Mark task as failed? Or raise error?
-                 await storage.update_task_status(
-                     db_context=db_context,
-                     task_id=task["task_id"],
-                     status="failed",
-                     error="Missing chat_id in payload for llm_callback",
-                 )
-                 return # Stop processing
+                logger.error(
+                    f"Task {task['task_id']} (llm_callback) missing chat_id in payload. Cannot create context."
+                )
+                # Mark task as failed? Or raise error?
+                await storage.update_task_status(
+                    db_context=db_context,
+                    task_id=task["task_id"],
+                    status="failed",
+                    error="Missing chat_id in payload for llm_callback",
+                )
+                return  # Stop processing
 
             exec_context = ToolExecutionContext(
                 chat_id=chat_id,
                 db_context=db_context,
                 calendar_config=self.calendar_config,
                 application=self.application,
-                processing_service=self.processing_service, # Pass processing service
+                processing_service=self.processing_service,  # Pass processing service
                 timezone_str=self.timezone_str,
             )
             # --- Execute Handler with Context ---
@@ -316,7 +350,7 @@ class TaskWorker:
             # Task details for logging and recurrence
             task_id = task["task_id"]
             task_type = task["task_type"]
-            payload = task["payload"] # Keep payload for recurrence
+            payload = task["payload"]  # Keep payload for recurrence
             recurrence_rule_str = task.get("recurrence_rule")
             original_task_id = task.get(
                 "original_task_id", task_id
@@ -351,10 +385,8 @@ class TaskWorker:
                         )
                     # Ensure the base time is timezone-aware for rrule
                     if last_scheduled_at.tzinfo is None:
-                        last_scheduled_at = (
-                            last_scheduled_at.replace(
-                                tzinfo=timezone.utc
-                            )
+                        last_scheduled_at = last_scheduled_at.replace(
+                            tzinfo=timezone.utc
                         )
                         logger.warning(
                             f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
@@ -365,14 +397,14 @@ class TaskWorker:
                         recurrence_rule_str,
                         dtstart=last_scheduled_at,
                     )
-                    next_scheduled_dt = rule.after(
-                        last_scheduled_at
-                    )
+                    next_scheduled_dt = rule.after(last_scheduled_at)
 
                     if next_scheduled_dt:
                         # Generate a new unique task ID for the next instance
                         # Format: <original_task_id>_recur_<next_iso_timestamp>
-                        next_task_id = f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
+                        next_task_id = (
+                            f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
+                        )
 
                         logger.info(
                             f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
@@ -408,8 +440,9 @@ class TaskWorker:
         except Exception as handler_exc:
             await self._handle_task_failure(db_context, task, handler_exc)
 
-
-    async def _handle_task_failure(self, db_context: DatabaseContext, task: Dict[str, Any], handler_exc: Exception):
+    async def _handle_task_failure(
+        self, db_context: DatabaseContext, task: Dict[str, Any], handler_exc: Exception
+    ):
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
         max_retries = task.get(
@@ -425,7 +458,9 @@ class TaskWorker:
         if current_retry < max_retries:
             # Calculate exponential backoff with jitter
             backoff_delay = (5 * (2**current_retry)) + random.uniform(0, 2)
-            next_attempt_time = datetime.now(timezone.utc) + timedelta(seconds=backoff_delay)
+            next_attempt_time = datetime.now(timezone.utc) + timedelta(
+                seconds=backoff_delay
+            )
             logger.info(
                 f"Scheduling retry {current_retry + 1} for task {task['task_id']} at {next_attempt_time} (delay: {backoff_delay:.2f}s)"
             )
@@ -467,13 +502,13 @@ class TaskWorker:
                 f"Worker {self.worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
             )
 
-            await asyncio.wait_for(
-                wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL
-            )
+            await asyncio.wait_for(wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL)
             # If wait_for completes without timeout, the event was set
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
             wake_up_event.clear()  # Reset the event for the next notification
-            await asyncio.sleep(0.1) # Sometimes there is a slight delay before the task is actually visible.
+            await asyncio.sleep(
+                0.1
+            )  # Sometimes there is a slight delay before the task is actually visible.
         except asyncio.TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
             logger.debug(
@@ -487,21 +522,25 @@ class TaskWorker:
         # Get task types handled by *this specific instance*
         task_types_handled = list(self.task_handlers.keys())
         if not task_types_handled:
-            logger.warning(f"Task worker {self.worker_id} has no registered handlers. Exiting loop.")
+            logger.warning(
+                f"Task worker {self.worker_id} has no registered handlers. Exiting loop."
+            )
             return
 
         while not shutdown_event.is_set():
             try:
-                task = None # Initialize task variable for the outer scope
+                task = None  # Initialize task variable for the outer scope
                 # Database context per iteration (starts a transaction)
                 async with await get_db_context() as db_context:
-                    logger.debug("Polling for tasks on DB context: %s", db_context.engine.url)
+                    logger.debug(
+                        "Polling for tasks on DB context: %s", db_context.engine.url
+                    )
                     try:  # Inner try for dequeue, task processing, and waiting logic
                         task = await storage.dequeue_task(
-                        db_context=db_context,
-                        worker_id=self.worker_id,
-                        task_types=task_types_handled,
-                    )
+                            db_context=db_context,
+                            worker_id=self.worker_id,
+                            task_types=task_types_handled,
+                        )
 
                         if task:
                             logger.debug("Dequeued task: %s", task["task_id"])
@@ -519,13 +558,13 @@ class TaskWorker:
                         # If an error occurs *within* the db_context block (e.g., during dequeue, handler execution, or waiting),
                         # the context manager will handle rollback/commit based on the exception.
                         # We might still want a delay before the next iteration's context attempt.
-                        await asyncio.sleep(
-                            TASK_POLLING_INTERVAL
-                        )
+                        await asyncio.sleep(TASK_POLLING_INTERVAL)
 
             # --- Exception handling for the outer try block (whole loop iteration) ---
             except asyncio.CancelledError:
-                logger.info(f"Task worker {self.worker_id} received cancellation signal.")
+                logger.info(
+                    f"Task worker {self.worker_id} received cancellation signal."
+                )
                 # If a task was being processed when cancelled, it might remain locked.
                 # Rely on lock expiry/manual intervention for now.
                 # For simplicity, we just exit.
@@ -536,9 +575,16 @@ class TaskWorker:
                     exc_info=True,
                 )
                 # If an error occurs outside the db_context (e.g., getting context itself), wait before retrying
-                await asyncio.sleep(TASK_POLLING_INTERVAL * 2)  # Longer sleep after error
+                await asyncio.sleep(
+                    TASK_POLLING_INTERVAL * 2
+                )  # Longer sleep after error
 
         logger.info(f"Task worker {self.worker_id} stopped.")
 
 
-__all__ = ["TaskWorker", "handle_log_message", "handle_llm_callback", "handle_index_email"] # Export class and handlers
+__all__ = [
+    "TaskWorker",
+    "handle_log_message",
+    "handle_llm_callback",
+    "handle_index_email",
+]  # Export class and handlers

@@ -4,25 +4,30 @@ Handles the indexing process for emails stored in the database.
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional, List # Added List
+from typing import Any, Dict, Optional, List  # Added List
 from datetime import datetime
 from dataclasses import dataclass, field
 
 # Import RowMapping for type hinting in from_row
 from sqlalchemy.engine import RowMapping
-from sqlalchemy import select, update # Import select and update
+from sqlalchemy import select, update  # Import select and update
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
-from family_assistant import storage # For DB operations (add_document, add_embedding)
+from family_assistant import storage  # For DB operations (add_document, add_embedding)
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.email import received_emails_table # Import table definition
-from family_assistant.embeddings import EmbeddingGenerator, EmbeddingResult # Protocol for embedding
-from family_assistant.llm import LLMInterface # Protocol for LLM (optional enrichment)
+from family_assistant.storage.email import (
+    received_emails_table,
+)  # Import table definition
+from family_assistant.embeddings import (
+    EmbeddingGenerator,
+    EmbeddingResult,
+)  # Protocol for embedding
+from family_assistant.llm import LLMInterface  # Protocol for LLM (optional enrichment)
 
 # Import the Document protocol from the correct location
 from family_assistant.storage.vector import Document
-from family_assistant.tools import ToolExecutionContext # Import the context class
+from family_assistant.tools import ToolExecutionContext  # Import the context class
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +145,13 @@ class EmailDocument(Document):
 
 # --- Dependencies (Set via set_indexing_dependencies) ---
 embedding_generator_instance: Optional[EmbeddingGenerator] = None
-llm_client_instance: Optional[LLMInterface] = None # Optional for enrichment
+llm_client_instance: Optional[LLMInterface] = None  # Optional for enrichment
 
 
 # --- Task Handler Implementation ---
-async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[str, Any]):
+async def handle_index_email(
+    exec_context: ToolExecutionContext, payload: Dict[str, Any]
+):
     """
     Task handler to index a specific email from the received_emails table.
     Receives ToolExecutionContext from the TaskWorker.
@@ -152,22 +159,26 @@ async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[s
     # Extract db_context from the execution context
     db_context = exec_context.db_context
     if not db_context:
-         logger.error("DatabaseContext not found in ToolExecutionContext for handle_index_email.")
-         raise ValueError("Missing DatabaseContext dependency in context.")
+        logger.error(
+            "DatabaseContext not found in ToolExecutionContext for handle_index_email."
+        )
+        raise ValueError("Missing DatabaseContext dependency in context.")
 
     email_db_id = payload.get("email_db_id")
     if not email_db_id:
         raise ValueError("Missing 'email_db_id' in index_email task payload.")
 
     if not embedding_generator_instance:
-         raise RuntimeError("EmbeddingGenerator dependency not set for indexing.")
-         # Optionally check for llm_client_instance if enrichment is mandatory
+        raise RuntimeError("EmbeddingGenerator dependency not set for indexing.")
+        # Optionally check for llm_client_instance if enrichment is mandatory
 
     logger.info(f"Starting indexing for email DB ID: {email_db_id}")
 
     # --- 1. Fetch Email Data ---
     # No need to update status here, task status handles it
-    select_stmt = select(received_emails_table).where(received_emails_table.c.id == email_db_id)
+    select_stmt = select(received_emails_table).where(
+        received_emails_table.c.id == email_db_id
+    )
     email_row = await db_context.fetch_one(select_stmt)
 
     if not email_row:
@@ -181,7 +192,7 @@ async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[s
         email_doc = EmailDocument.from_row(email_row)
     except ValueError as e:
         logger.error(f"Failed to create EmailDocument for DB ID {email_db_id}: {e}")
-        raise # Re-raise to mark task as failed
+        raise  # Re-raise to mark task as failed
 
     # --- 3. (Skipped) Enrich Metadata ---
     enriched_metadata = None
@@ -189,15 +200,15 @@ async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[s
 
     # --- 4. Add/Update Document Record in Vector DB ---
     vector_doc_id = await storage.add_document(
-        db_context=db_context,
-        doc=email_doc,
-        enriched_doc_metadata=enriched_metadata
+        db_context=db_context, doc=email_doc, enriched_doc_metadata=enriched_metadata
     )
-    logger.info(f"Added/Updated document record for email {email_db_id}, vector DB doc ID: {vector_doc_id}")
+    logger.info(
+        f"Added/Updated document record for email {email_db_id}, vector DB doc ID: {vector_doc_id}"
+    )
 
     # --- 5. Prepare Texts for Embedding ---
     texts_to_embed: Dict[str, Optional[str]] = {}
-    embedding_types: Dict[str, str] = {} # Map text key to embedding type
+    embedding_types: Dict[str, str] = {}  # Map text key to embedding type
 
     if email_doc.title:
         texts_to_embed["title"] = email_doc.title
@@ -207,28 +218,44 @@ async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[s
         # TODO: Add chunking logic here if needed for long emails
         # For now, embed the whole (stripped) plain text content
         # Consider generating a summary via LLM instead/as well for large content
-        texts_to_embed["content_chunk_0"] = email_doc.content_plain # Key includes chunk index
+        texts_to_embed["content_chunk_0"] = (
+            email_doc.content_plain
+        )  # Key includes chunk index
         embedding_types["content_chunk_0"] = "content_chunk"
 
     if not texts_to_embed:
-        logger.warning(f"No text content (title or body) found to embed for email {email_db_id}. Skipping embedding generation.")
+        logger.warning(
+            f"No text content (title or body) found to embed for email {email_db_id}. Skipping embedding generation."
+        )
         # Task is considered done as the document record was created/updated.
         return
 
     # --- 6. Generate Embeddings ---
     text_keys = list(texts_to_embed.keys())
-    text_values = [texts_to_embed[key] for key in text_keys if texts_to_embed[key] is not None] # Filter out None values just in case
+    text_values = [
+        texts_to_embed[key] for key in text_keys if texts_to_embed[key] is not None
+    ]  # Filter out None values just in case
 
     if not text_values:
-         logger.warning(f"All potential texts to embed were None for email {email_db_id}. Skipping embedding generation.")
-         return
+        logger.warning(
+            f"All potential texts to embed were None for email {email_db_id}. Skipping embedding generation."
+        )
+        return
 
-    logger.info(f"Generating embeddings for {len(text_values)} text part(s) for email {email_db_id} using model {embedding_generator_instance.model_name}...")
-    embedding_result: EmbeddingResult = await embedding_generator_instance.generate_embeddings(text_values)
+    logger.info(
+        f"Generating embeddings for {len(text_values)} text part(s) for email {email_db_id} using model {embedding_generator_instance.model_name}..."
+    )
+    embedding_result: EmbeddingResult = (
+        await embedding_generator_instance.generate_embeddings(text_values)
+    )
 
     if len(embedding_result.embeddings) != len(text_values):
-        logger.error(f"Mismatch between number of texts ({len(text_values)}) and generated embeddings ({len(embedding_result.embeddings)}) for email {email_db_id}.")
-        raise RuntimeError("Embedding generation returned unexpected number of results.")
+        logger.error(
+            f"Mismatch between number of texts ({len(text_values)}) and generated embeddings ({len(embedding_result.embeddings)}) for email {email_db_id}."
+        )
+        raise RuntimeError(
+            "Embedding generation returned unexpected number of results."
+        )
 
     # --- 7. Store Embeddings ---
     embedding_model_name = embedding_result.model_name
@@ -243,12 +270,16 @@ async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[s
                 # Extract index from key like "content_chunk_0" -> 0, adjust to be 1-based?
                 # Let's keep 0-based for simplicity matching the key, but design doc uses 1+
                 # Sticking to 0 for now based on key "content_chunk_0"
-                chunk_index = int(text_key.split('_')[-1])
+                chunk_index = int(text_key.split("_")[-1])
             except (IndexError, ValueError):
-                 logger.warning(f"Could not parse chunk index from key '{text_key}', defaulting to 0.")
-                 chunk_index = 0 # Fallback
+                logger.warning(
+                    f"Could not parse chunk index from key '{text_key}', defaulting to 0."
+                )
+                chunk_index = 0  # Fallback
 
-        logger.debug(f"Adding embedding: doc={vector_doc_id}, chunk={chunk_index}, type={embedding_type}, model={embedding_model_name}")
+        logger.debug(
+            f"Adding embedding: doc={vector_doc_id}, chunk={chunk_index}, type={embedding_type}, model={embedding_model_name}"
+        )
         await storage.add_embedding(
             db_context=db_context,
             document_id=vector_doc_id,
@@ -260,14 +291,15 @@ async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[s
             # content_hash=None # Optional: calculate hash if needed
         )
 
-    logger.info(f"Successfully stored {len(embedding_result.embeddings)} embeddings for email {email_db_id} (Vector Doc ID: {vector_doc_id}).")
+    logger.info(
+        f"Successfully stored {len(embedding_result.embeddings)} embeddings for email {email_db_id} (Vector Doc ID: {vector_doc_id})."
+    )
     # Task completion is handled by the worker loop
 
 
 # --- Dependency Injection ---
 def set_indexing_dependencies(
-    embedding_generator: EmbeddingGenerator,
-    llm_client: Optional[LLMInterface] = None
+    embedding_generator: EmbeddingGenerator, llm_client: Optional[LLMInterface] = None
 ):
     """Sets the necessary dependencies for the email indexer."""
     global embedding_generator_instance, llm_client_instance

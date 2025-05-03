@@ -4,8 +4,8 @@ import asyncio
 import logging
 import json
 from typing import List, Dict, Any, Optional, Callable, Tuple
-import signal # Import the signal module
-import pytest_asyncio # Import pytest_asyncio
+import signal  # Import the signal module
+import pytest_asyncio  # Import pytest_asyncio
 import subprocess
 import time
 
@@ -21,10 +21,10 @@ from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
     ToolExecutionContext,
 )
-from family_assistant import storage # For direct task checking
+from family_assistant import storage  # For direct task checking
 
 import socket
-from unittest.mock import MagicMock, AsyncMock # Keep mocks for LLM
+from unittest.mock import MagicMock, AsyncMock  # Keep mocks for LLM
 from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     Rule,
@@ -45,16 +45,20 @@ TARGET_TZ = "America/Los_Angeles"
 EXPECTED_CONVERTED_TIME_FRAGMENT = "11:30"
 
 # Assume MCP server ID 'time' maps to tool 'convert_time_zone'
-MCP_TIME_TOOL_NAME = "convert_time" # Use the actual tool name provided by mcp-server-time
+MCP_TIME_TOOL_NAME = (
+    "convert_time"  # Use the actual tool name provided by mcp-server-time
+)
+
 
 def find_free_port():
     """Finds an available TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('127.0.0.1', 0))
+        s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
+
 # --- Fixture to manage mcp-proxy subprocess for SSE tests ---
-@pytest_asyncio.fixture(scope="function") # Use pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="function")  # Use pytest_asyncio.fixture
 async def mcp_proxy_server():
     """
     Starts mcp-proxy listening for SSE and forwarding to mcp-server-time via stdio.
@@ -66,28 +70,31 @@ async def mcp_proxy_server():
     # Command: mcp-proxy --sse-port <port> --sse-host <host> mcp-server-time
     command = [
         "mcp-proxy",
-        "--sse-port", str(port),
-        "--sse-host", host,
-        "mcp-server-time" # The stdio command mcp-proxy should run
+        "--sse-port",
+        str(port),
+        "--sse-host",
+        host,
+        "mcp-server-time",  # The stdio command mcp-proxy should run
     ]
 
     logger.info(f"Starting MCP proxy server: {' '.join(command)}")
     # Let subprocess stdout/stderr go to parent (test runner) to avoid pipe buffers filling up
     process = subprocess.Popen(command)
-    time.sleep(3) # Give server and proxy time to start up
+    time.sleep(3)  # Give server and proxy time to start up
 
-    yield sse_url # Provide the SSE URL to the test
+    yield sse_url  # Provide the SSE URL to the test
 
     logger.info("Stopping MCP proxy server...")
     try:
         # Try sending SIGINT (Ctrl+C) for a potentially more graceful shutdown
         process.send_signal(signal.SIGINT)
-        process.wait(timeout=5) # Wait for graceful shutdown
+        process.wait(timeout=5)  # Wait for graceful shutdown
     except subprocess.TimeoutExpired:
         logger.warning("MCP proxy did not terminate after SIGINT, sending SIGKILL.")
-        process.kill() # Force kill if SIGINT failed
-        process.wait() # Wait for kill to complete
+        process.kill()  # Force kill if SIGINT failed
+        process.wait()  # Wait for kill to complete
     logger.info("MCP proxy server stopped.")
+
 
 @pytest.mark.asyncio
 async def test_mcp_time_conversion_stdio(test_db_engine):
@@ -109,16 +116,23 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     def time_conversion_matcher(messages, tools, tool_choice):
         last_text = get_last_message_text(messages).lower()
         match_convert = "convert" in last_text
-        match_source_time = SOURCE_TIME in last_text # e.g., "14:30"
+        match_source_time = SOURCE_TIME in last_text  # e.g., "14:30"
         match_source_tz = "new york" in last_text
         match_target_tz = "los angeles" in last_text
         match_tools_exist = tools is not None
         tool_names = [t.get("function", {}).get("name") for t in tools or []]
         match_tool_name = any(name == MCP_TIME_TOOL_NAME for name in tool_names)
-        logger.debug(f"Matcher Checks: convert={match_convert}, source_time={match_source_time}, source_tz={match_source_tz}, target_tz={match_target_tz}, tools_exist={match_tools_exist}, tool_name_found={match_tool_name} (looking for '{MCP_TIME_TOOL_NAME}' in {tool_names})")
+        logger.debug(
+            f"Matcher Checks: convert={match_convert}, source_time={match_source_time}, source_tz={match_source_tz}, target_tz={match_target_tz}, tools_exist={match_tools_exist}, tool_name_found={match_tool_name} (looking for '{MCP_TIME_TOOL_NAME}' in {tool_names})"
+        )
         # Ensure all conditions are met
         return (
-            match_convert and match_source_time and match_source_tz and match_target_tz and match_tools_exist and match_tool_name
+            match_convert
+            and match_source_time
+            and match_source_tz
+            and match_target_tz
+            and match_tools_exist
+            and match_tool_name
         )
 
     tool_call_response = LLMOutput(
@@ -131,7 +145,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
                         {
-                            "time": SOURCE_TIME, # Argument name from mcp-server-time docs
+                            "time": SOURCE_TIME,  # Argument name from mcp-server-time docs
                             "source_timezone": SOURCE_TZ,
                             "target_timezone": TARGET_TZ,
                         }
@@ -145,7 +159,14 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     # Rule 2: Match the context after the MCP tool returns its result
     def tool_result_matcher(messages, tools, tool_choice):
         # Check for the tool result message associated with the tool call ID
-        tool_message = next((m for m in messages if m.get("role") == "tool" and m.get("tool_call_id") == mcp_tool_call_id), None)
+        tool_message = next(
+            (
+                m
+                for m in messages
+                if m.get("role") == "tool" and m.get("tool_call_id") == mcp_tool_call_id
+            ),
+            None,
+        )
         # Check if the result contains the expected converted time (flexible check)
         return (
             tool_message is not None
@@ -155,7 +176,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     final_response_text = f"Rule-based mock: {SOURCE_TIME} in {SOURCE_TZ} is approximately {EXPECTED_CONVERTED_TIME_FRAGMENT} in {TARGET_TZ}."
     final_response = LLMOutput(
         content=final_response_text,
-        tool_calls=None, # Final response should not involve more tool calls here
+        tool_calls=None,  # Final response should not involve more tool calls here
     )
     tool_result_rule: Rule = (tool_result_matcher, final_response)
 
@@ -163,7 +184,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     # Use default response for unexpected calls during the flow
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[tool_call_rule, tool_result_rule],
-        default_response=LLMOutput(content="Default mock response for MCP test.")
+        default_response=LLMOutput(content="Default mock response for MCP test."),
     )
     logger.info(f"Using RuleBasedMockLLMClient for MCP test.")
 
@@ -176,13 +197,11 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     # Hard-coded MCP configuration using stdio transport.
     # Assumes 'mcp-server-time' command is available via dev dependencies.
     mcp_config = {
-        "time": {
-            "command": "mcp-server-time" # Command to execute for stdio
-        }
+        "time": {"command": "mcp-server-time"}  # Command to execute for stdio
     }
     # Instantiate MCP provider with the in-memory config dictionary
     mcp_provider = MCPToolsProvider(mcp_server_configs=mcp_config)
-    await mcp_provider.initialize() # Connect and fetch definitions
+    await mcp_provider.initialize()  # Connect and fetch definitions
 
     composite_provider = CompositeToolsProvider(
         providers=[local_provider, mcp_provider]
@@ -203,24 +222,24 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
-        server_url=None, # Added missing argument
+        server_url=None,  # Added missing argument
     )
 
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ})"
-    user_request_trigger = [
-        {"type": "text", "text": user_request_text}
-    ]
+    user_request_trigger = [{"type": "text", "text": user_request_text}]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call generate_llm_response_for_chat directly
-        final_response_content, tool_info, _, _ = await processing_service.generate_llm_response_for_chat(
-            db_context=db_context,
-            application=MagicMock(), # Provide a basic mock Application
-            chat_id=TEST_CHAT_ID,
-            trigger_content_parts=user_request_trigger,
-            user_name=TEST_USER_NAME,
+        final_response_content, tool_info, _, _ = (
+            await processing_service.generate_llm_response_for_chat(
+                db_context=db_context,
+                application=MagicMock(),  # Provide a basic mock Application
+                chat_id=TEST_CHAT_ID,
+                trigger_content_parts=user_request_trigger,
+                user_name=TEST_USER_NAME,
+            )
         )
 
     # --- Verification (Assert on final response content) ---
@@ -229,13 +248,17 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
 
     # Assert directly on the returned content from generate_llm_response_for_chat
     assert final_response_content is not None
-    sent_text = final_response_content # Use the returned content for checks
-    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, \
-        f"Final response did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
-    assert final_response_text in sent_text, \
-        f"Final response did not match the mock LLM's final rule output. Sent: '{sent_text}' Expected: '{final_response_text}'"
+    sent_text = final_response_content  # Use the returned content for checks
+    assert (
+        EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
+    ), f"Final response did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert (
+        final_response_text in sent_text
+    ), f"Final response did not match the mock LLM's final rule output. Sent: '{sent_text}' Expected: '{final_response_text}'"
 
-    logger.info(f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called and result contained expected fragment.")
+    logger.info(
+        f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called and result contained expected fragment."
+    )
     logger.info(f"--- MCP Time Conversion Test ({test_run_id}) Passed ---")
 
 
@@ -267,10 +290,13 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
         return (
             "convert" in last_text
             and SOURCE_TIME in last_text
-            and "new york" in last_text # Keep simple checks
+            and "new york" in last_text  # Keep simple checks
             and "london" in last_text
             and tools is not None
-            and any(tool.get("function", {}).get("name") == MCP_TIME_TOOL_NAME for tool in tools)
+            and any(
+                tool.get("function", {}).get("name") == MCP_TIME_TOOL_NAME
+                for tool in tools
+            )
         )
 
     tool_call_response = LLMOutput(
@@ -282,7 +308,11 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
                 "function": {
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
-                        {"time": SOURCE_TIME, "source_timezone": SOURCE_TZ, "target_timezone": TARGET_TZ} # Use correct arg names
+                        {
+                            "time": SOURCE_TIME,
+                            "source_timezone": SOURCE_TZ,
+                            "target_timezone": TARGET_TZ,
+                        }  # Use correct arg names
                     ),
                 },
             }
@@ -292,8 +322,18 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     # Rule 2: Match the context after the MCP tool returns its result
     def tool_result_matcher(messages, tools, tool_choice):
-        tool_message = next((m for m in messages if m.get("role") == "tool" and m.get("tool_call_id") == mcp_tool_call_id), None)
-        return tool_message is not None and EXPECTED_CONVERTED_TIME_FRAGMENT in tool_message.get("content", "")
+        tool_message = next(
+            (
+                m
+                for m in messages
+                if m.get("role") == "tool" and m.get("tool_call_id") == mcp_tool_call_id
+            ),
+            None,
+        )
+        return (
+            tool_message is not None
+            and EXPECTED_CONVERTED_TIME_FRAGMENT in tool_message.get("content", "")
+        )
 
     final_response_text = f"Rule-based mock: {SOURCE_TIME} in {SOURCE_TZ} is approximately {EXPECTED_CONVERTED_TIME_FRAGMENT} in {TARGET_TZ} (via SSE)."
     final_response = LLMOutput(content=final_response_text, tool_calls=None)
@@ -302,12 +342,14 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     # --- Instantiate Mock LLM ---
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[tool_call_rule, tool_result_rule],
-        default_response=LLMOutput(content="Default mock response for MCP SSE test.")
+        default_response=LLMOutput(content="Default mock response for MCP SSE test."),
     )
     logger.info(f"Using RuleBasedMockLLMClient for MCP SSE test.")
 
     # --- Instantiate Dependencies ---
-    local_provider = LocalToolsProvider(definitions=local_tools_definition, implementations=local_tool_implementations)
+    local_provider = LocalToolsProvider(
+        definitions=local_tools_definition, implementations=local_tool_implementations
+    )
 
     # --- Debugging ---
     # Check the type and value received from the fixture
@@ -317,39 +359,52 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     # Define MCP config *inside* the test after the fixture yielded the URL
     mcp_config = {
-        "time_sse": { # Use a different server ID to avoid clashes if needed
+        "time_sse": {  # Use a different server ID to avoid clashes if needed
             "transport": "sse",
-            "url": mcp_proxy_server # URL is now a string from the fixture
+            "url": mcp_proxy_server,  # URL is now a string from the fixture
         }
     }
     mcp_provider = MCPToolsProvider(mcp_server_configs=mcp_config)
-    await mcp_provider.initialize() # Connect and fetch definitions
+    await mcp_provider.initialize()  # Connect and fetch definitions
 
-    composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
 
     # Processing Service (reuse settings)
     dummy_prompts = {"system_prompt": "Test system prompt for MCP SSE."}
     dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
-    dummy_history_age = 24 # Added missing argument
-    processing_service = ProcessingService(llm_client=llm_client, tools_provider=composite_provider, prompts=dummy_prompts, calendar_config=dummy_calendar_config, timezone_str=dummy_timezone_str, max_history_messages=dummy_max_history, history_max_age_hours=dummy_history_age, server_url=None)
+    dummy_history_age = 24  # Added missing argument
+    processing_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=composite_provider,
+        prompts=dummy_prompts,
+        calendar_config=dummy_calendar_config,
+        timezone_str=dummy_timezone_str,
+        max_history_messages=dummy_max_history,
+        history_max_age_hours=dummy_history_age,
+        server_url=None,
+    )
 
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call (SSE) ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to London time ({TARGET_TZ}) using SSE"
     # Revert to trigger_content_parts for generate_llm_response_for_chat
     user_request_trigger = [
-        {"type": "text", "text": user_request_text} # Correct input format
+        {"type": "text", "text": user_request_text}  # Correct input format
     ]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        final_response_content, tool_info, _, _ = await processing_service.generate_llm_response_for_chat(
-            db_context=db_context,
-            application=MagicMock(), # Provide a basic mock Application
-            chat_id=TEST_CHAT_ID,
-            trigger_content_parts=user_request_trigger,
-            user_name=TEST_USER_NAME,
+        final_response_content, tool_info, _, _ = (
+            await processing_service.generate_llm_response_for_chat(
+                db_context=db_context,
+                application=MagicMock(),  # Provide a basic mock Application
+                chat_id=TEST_CHAT_ID,
+                trigger_content_parts=user_request_trigger,
+                user_name=TEST_USER_NAME,
+            )
         )
 
     # --- Verification (Assert on final response content) ---
@@ -358,10 +413,14 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     # Assert directly on the returned content
     assert final_response_content is not None
-    sent_text = final_response_content # Use the returned content for checks
-    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, \
-        f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
-    assert final_response_text in sent_text, \
-        f"Final response did not match the mock LLM's final rule output (SSE). Sent: '{sent_text}' Expected: '{final_response_text}'"
-    logger.info(f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and final response contained expected fragment.")
+    sent_text = final_response_content  # Use the returned content for checks
+    assert (
+        EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
+    ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert (
+        final_response_text in sent_text
+    ), f"Final response did not match the mock LLM's final rule output (SSE). Sent: '{sent_text}' Expected: '{final_response_text}'"
+    logger.info(
+        f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and final response contained expected fragment."
+    )
     logger.info(f"--- MCP Time Conversion SSE Test ({test_run_id}) Passed ---")

@@ -178,9 +178,7 @@ class DatabaseContext:
         row = result.fetchone()
         return row._mapping if row else None
 
-    def on_commit(
-        self, callback: Callable[[], Any]
-    ) -> Callable[[], Any]:
+    def on_commit(self, callback: Callable[[], Any]) -> Callable[[], Any]:
         """
         Register a callback to be called on transaction commit.
 

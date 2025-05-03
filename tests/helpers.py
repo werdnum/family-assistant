@@ -6,9 +6,11 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Set
-import sqlalchemy as sa # Import sqlalchemy
+import sqlalchemy as sa  # Import sqlalchemy
 from sqlalchemy import select
-from sqlalchemy.sql.functions import count as sql_count # Alias to avoid confusion with len()
+from sqlalchemy.sql.functions import (
+    count as sql_count,
+)  # Alias to avoid confusion with len()
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Use absolute imports if DatabaseContext is defined elsewhere,
@@ -60,31 +62,39 @@ async def wait_for_tasks_to_complete(
             # Use the provided engine to get a context
             async with await get_db_context(engine=engine) as db:
                 # First check for failed tasks
-                failed_query = select(sql_count(tasks_table.c.id)).where( # Pass column to count
+                failed_query = select(
+                    sql_count(tasks_table.c.id)
+                ).where(  # Pass column to count
                     tasks_table.c.status == "failed"
                 )
                 # Filter by specific task IDs if provided
                 if task_ids:
-                    failed_query = failed_query.where(tasks_table.c.task_id.in_(task_ids))
-                
+                    failed_query = failed_query.where(
+                        tasks_table.c.task_id.in_(task_ids)
+                    )
+
                 failed_result = await db.execute_with_retry(failed_query)
                 failed_count = failed_result.scalar_one_or_none()
-                
+
                 if failed_count and failed_count > 0:
                     # Get the failed task IDs for better error reporting
                     task_id_query = select(tasks_table.c.task_id).where(
                         tasks_table.c.status == "failed"
                     )
                     if task_ids:
-                        task_id_query = task_id_query.where(tasks_table.c.task_id.in_(task_ids))
-                    
+                        task_id_query = task_id_query.where(
+                            tasks_table.c.task_id.in_(task_ids)
+                        )
+
                     task_id_result = await db.execute_with_retry(task_id_query)
                     failed_ids = [row[0] for row in task_id_result]
-                    
+
                     raise RuntimeError(f"Task(s) failed: {', '.join(failed_ids)}")
 
                 # Build the query to count non-terminal tasks
-                query = select(sql_count(tasks_table.c.id)).where( # Pass column to count
+                query = select(
+                    sql_count(tasks_table.c.id)
+                ).where(  # Pass column to count
                     tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
                 )
                 # Filter by specific task IDs if provided
@@ -96,27 +106,23 @@ async def wait_for_tasks_to_complete(
 
                 if pending_count == 0:
                     elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
-                    logger.info(
-                        f"All relevant tasks completed after {elapsed:.2f}s."
-                    )
+                    logger.info(f"All relevant tasks completed after {elapsed:.2f}s.")
                     return  # Success!
                 elif pending_count is None:
                     # This might happen if the table is empty or due to an issue
                     # If task_ids were specified, this means none of them are pending (or exist)
                     if task_ids:
-                         logger.info(
+                        logger.info(
                             f"Task count query returned None for specific task IDs {task_ids}. Assuming completion."
-                         )
-                         return # Assume completed if specific tasks were requested and count is None
+                        )
+                        return  # Assume completed if specific tasks were requested and count is None
                     else:
                         logger.warning(
                             "Task count query returned None when checking all tasks. Assuming completion or empty table."
                         )
-                        return # Assume completion if checking all and count is None
+                        return  # Assume completion if checking all and count is None
                 else:
-                    logger.debug(
-                        f"Waiting for {pending_count} tasks to complete..."
-                    )
+                    logger.debug(f"Waiting for {pending_count} tasks to complete...")
 
         except Exception as e:
             logger.error(f"Error polling task status: {e}", exc_info=True)
@@ -138,10 +144,12 @@ async def wait_for_tasks_to_complete(
                 sa.column("status"),
                 sa.column("scheduled_at"),
                 sa.column("retry_count"),
-                #sa.column("last_error"),
+                # sa.column("last_error"),
             ]
-            pending_query = select(*cols_to_select).select_from(tasks_table).where(
-                tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
+            pending_query = (
+                select(*cols_to_select)
+                .select_from(tasks_table)
+                .where(tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES))
             )
             if task_ids:
                 pending_query = pending_query.where(tasks_table.c.task_id.in_(task_ids))
@@ -156,7 +164,10 @@ async def wait_for_tasks_to_complete(
             else:
                 pending_tasks_details = "No pending tasks found matching criteria."
     except Exception as fetch_err:
-        logger.error(f"Failed to fetch pending task details on timeout: {fetch_err}", exc_info=True)
+        logger.error(
+            f"Failed to fetch pending task details on timeout: {fetch_err}",
+            exc_info=True,
+        )
         pending_tasks_details = f"Error fetching pending task details: {fetch_err}"
     # --- End fetching details ---
 

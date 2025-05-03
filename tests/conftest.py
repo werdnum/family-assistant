@@ -11,6 +11,7 @@ from testcontainers.postgres import PostgresContainer
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage.base import metadata, engine as original_engine
 from family_assistant.storage import init_db  # Import init_db
+
 # Explicitly import the module defining the tasks table to ensure metadata registration
 import family_assistant.storage.tasks
 

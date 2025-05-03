@@ -9,8 +9,8 @@ import vobject
 import caldav
 from caldav.lib.error import DAVError, NotFoundError
 import httpx  # Import httpx
-import uuid # For generating event UIDs
-from dateutil.parser import isoparse # For parsing ISO strings in tools
+import uuid  # For generating event UIDs
+from dateutil.parser import isoparse  # For parsing ISO strings in tools
 
 # Import types needed by tools (from the new types file)
 from family_assistant.tools.types import ToolExecutionContext
@@ -20,17 +20,21 @@ logger = logging.getLogger(__name__)
 # --- Configuration (Now passed via function arguments) ---
 # Environment variables are still read here for the standalone test section (__main__)
 
-from zoneinfo import ZoneInfo # Import ZoneInfo
+from zoneinfo import ZoneInfo  # Import ZoneInfo
 
 # --- Helper Functions ---
 
 
-def format_datetime_or_date(dt_obj: datetime | date, timezone_str: str, is_end: bool = False) -> str:
+def format_datetime_or_date(
+    dt_obj: datetime | date, timezone_str: str, is_end: bool = False
+) -> str:
     """Formats datetime or date object into a user-friendly string, relative to the specified timezone."""
     try:
         local_tz = ZoneInfo(timezone_str)
     except Exception:
-        logger.warning(f"Invalid timezone string '{timezone_str}' in format_datetime_or_date. Falling back to UTC.")
+        logger.warning(
+            f"Invalid timezone string '{timezone_str}' in format_datetime_or_date. Falling back to UTC."
+        )
         local_tz = ZoneInfo("UTC")
 
     now_local = datetime.now(local_tz)
@@ -54,7 +58,7 @@ def format_datetime_or_date(dt_obj: datetime | date, timezone_str: str, is_end: 
             # Check if it's the day after the start date (common for multi-day events ending at midnight)
             # This logic might need refinement based on how start_date is passed or stored
             # For simplicity now, just format as is.
-            pass # No specific end-of-day adjustment needed here currently
+            pass  # No specific end-of-day adjustment needed here currently
 
         return f"{day_str} {dt_local.strftime('%H:%M')}"
 
@@ -78,7 +82,9 @@ def format_datetime_or_date(dt_obj: datetime | date, timezone_str: str, is_end: 
         return str(dt_obj)  # Fallback
 
 
-def parse_event(event_data: str, timezone_str: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def parse_event(
+    event_data: str, timezone_str: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """
     Parses VCALENDAR data into a dictionary, including the UID.
     If timezone_str is provided, naive datetimes will be localized to that timezone.
@@ -88,7 +94,9 @@ def parse_event(event_data: str, timezone_str: Optional[str] = None) -> Optional
         try:
             local_tz = ZoneInfo(timezone_str)
         except Exception:
-            logger.warning(f"Invalid timezone string '{timezone_str}' provided to parse_event. Naive datetimes will not be localized.")
+            logger.warning(
+                f"Invalid timezone string '{timezone_str}' provided to parse_event. Naive datetimes will not be localized."
+            )
 
     try:
         cal = vobject.readComponents(event_data)
@@ -97,11 +105,13 @@ def parse_event(event_data: str, timezone_str: Optional[str] = None) -> Optional
         summary = vevent.summary.value if hasattr(vevent, "summary") else "No Title"
         dtstart = vevent.dtstart.value if hasattr(vevent, "dtstart") else None
         dtend = vevent.dtend.value if hasattr(vevent, "dtend") else None
-        uid = vevent.uid.value if hasattr(vevent, "uid") else None # Extract UID
+        uid = vevent.uid.value if hasattr(vevent, "uid") else None  # Extract UID
 
         # Basic check for valid event data (UID is mandatory in iCal standard)
         if not summary or not dtstart or not uid:
-            logger.warning(f"Parsed event missing essential fields (summary, dtstart, or uid). Summary='{summary}', Start='{dtstart}', UID='{uid}'")
+            logger.warning(
+                f"Parsed event missing essential fields (summary, dtstart, or uid). Summary='{summary}', Start='{dtstart}', UID='{uid}'"
+            )
             return None
 
         is_all_day = not isinstance(dtstart, datetime)
@@ -112,36 +122,46 @@ def parse_event(event_data: str, timezone_str: Optional[str] = None) -> Optional
                 if dtstart.tzinfo is None:
                     # Naive datetime: Assume it's in the target local timezone
                     dtstart = dtstart.replace(tzinfo=local_tz)
-                    logger.debug(f"Applied local timezone {timezone_str} to naive dtstart")
+                    logger.debug(
+                        f"Applied local timezone {timezone_str} to naive dtstart"
+                    )
                 else:
                     # Aware datetime: Convert it to the target local timezone
                     dtstart = dtstart.astimezone(local_tz)
-                    logger.debug(f"Converted aware dtstart to target timezone {timezone_str}")
+                    logger.debug(
+                        f"Converted aware dtstart to target timezone {timezone_str}"
+                    )
             # Repeat for dtend, checking if it exists first
             if isinstance(dtend, datetime):
-                 if dtend.tzinfo is None:
+                if dtend.tzinfo is None:
                     dtend = dtend.replace(tzinfo=local_tz)
-                    logger.debug(f"Applied local timezone {timezone_str} to naive dtend")
-                 else:
+                    logger.debug(
+                        f"Applied local timezone {timezone_str} to naive dtend"
+                    )
+                else:
                     dtend = dtend.astimezone(local_tz)
-                    logger.debug(f"Converted aware dtend to target timezone {timezone_str}")
+                    logger.debug(
+                        f"Converted aware dtend to target timezone {timezone_str}"
+                    )
 
         # If dtend is missing, calculate it *after* ensuring dtstart is localized/converted
-        if dtend is None and dtstart is not None: # Check dtstart is not None
+        if dtend is None and dtstart is not None:  # Check dtstart is not None
             if is_all_day:
                 dtend = dtstart + timedelta(days=1)
             else:
                 dtend = dtstart + timedelta(hours=1)  # Default duration assumption
 
         return {
-            "uid": uid, # Include UID in the returned dict
+            "uid": uid,  # Include UID in the returned dict
             "summary": summary,
             "start": dtstart,
             "end": dtend,
             "all_day": is_all_day,
         }
     except StopIteration:
-        logger.error(f"Failed to find VEVENT component in VCALENDAR data: {event_data[:200]}...")
+        logger.error(
+            f"Failed to find VEVENT component in VCALENDAR data: {event_data[:200]}..."
+        )
         return None
     except Exception as e:
         logger.error(
@@ -155,8 +175,7 @@ def parse_event(event_data: str, timezone_str: Optional[str] = None) -> Optional
 
 
 async def _fetch_ical_events_async(
-    ical_urls: List[str],
-    timezone_str: str # Added timezone string
+    ical_urls: List[str], timezone_str: str  # Added timezone string
 ) -> List[Dict[str, Any]]:
     """Asynchronously fetches and parses events from a list of iCal URLs."""
     all_events = []
@@ -193,7 +212,7 @@ async def _fetch_ical_events_async(
                     if component.name.upper() == "VEVENT":
                         parsed = parse_event(
                             component.serialize(),
-                            timezone_str=timezone_str # Pass timezone here
+                            timezone_str=timezone_str,  # Pass timezone here
                         )  # Reuse existing parser
                         if parsed:
                             all_events.append(parsed)
@@ -212,7 +231,7 @@ def _fetch_caldav_events_sync(
     username: str,
     password: str,
     calendar_urls: List[str],
-    timezone_str: str, # Added timezone string
+    timezone_str: str,  # Added timezone string
 ) -> List[Dict[str, Any]]:
     """Synchronous function to connect to CalDAV servers using specific calendar URLs and fetch events."""
     logger.debug("Executing synchronous CalDAV fetch using direct calendar URLs.")
@@ -226,10 +245,14 @@ def _fetch_caldav_events_sync(
     try:
         local_tz = ZoneInfo(timezone_str)
     except Exception:
-        logger.warning(f"Invalid timezone string '{timezone_str}' in _fetch_caldav_events_sync. Falling back to UTC.")
+        logger.warning(
+            f"Invalid timezone string '{timezone_str}' in _fetch_caldav_events_sync. Falling back to UTC."
+        )
         local_tz = ZoneInfo("UTC")
     start_date = datetime.now(local_tz).date()
-    end_date = start_date + timedelta(days=16)  # Search up to 16 days out (exclusive end)
+    end_date = start_date + timedelta(
+        days=16
+    )  # Search up to 16 days out (exclusive end)
 
     # Iterate through each specific calendar URL
     for calendar_url in calendar_urls:
@@ -313,7 +336,7 @@ def _fetch_caldav_events_sync(
 
 async def fetch_upcoming_events(
     calendar_config: Dict[str, Any],
-    timezone_str: str, # Added timezone string
+    timezone_str: str,  # Added timezone string
 ) -> List[Dict[str, Any]]:
     """Fetches events from configured CalDAV and iCal sources and merges them."""
     logger.debug("Entering fetch_upcoming_events orchestrator.")
@@ -340,7 +363,8 @@ async def fetch_upcoming_events(
             tasks.append(caldav_task)
         else:
             logger.warning(
-                "CalDAV config present (%r) but incomplete (missing user/pass/urls). Skipping CalDAV fetch.", caldav_config
+                "CalDAV config present (%r) but incomplete (missing user/pass/urls). Skipping CalDAV fetch.",
+                caldav_config,
             )
 
     # --- Schedule iCal Fetch (if configured) ---
@@ -350,7 +374,9 @@ async def fetch_upcoming_events(
         if ical_urls:
             logger.debug("Scheduling asynchronous iCal fetch.")
             # Pass timezone_str to the iCal fetcher
-            ical_task = asyncio.create_task(_fetch_ical_events_async(ical_urls, timezone_str))
+            ical_task = asyncio.create_task(
+                _fetch_ical_events_async(ical_urls, timezone_str)
+            )
             tasks.append(ical_task)
         else:
             logger.warning(
@@ -388,8 +414,10 @@ async def fetch_upcoming_events(
         try:
             local_tz = ZoneInfo(timezone_str)
         except Exception:
-            logger.warning(f"Invalid timezone '{timezone_str}' in get_sort_key, falling back to UTC.")
-            local_tz = ZoneInfo("UTC") # Fallback
+            logger.warning(
+                f"Invalid timezone '{timezone_str}' in get_sort_key, falling back to UTC."
+            )
+            local_tz = ZoneInfo("UTC")  # Fallback
 
         if isinstance(start_val, date) and not isinstance(start_val, datetime):
             # Convert date to datetime at midnight *in the local timezone*
@@ -397,12 +425,18 @@ async def fetch_upcoming_events(
         elif isinstance(start_val, datetime):
             # If it's a datetime, ensure it's timezone-aware and in the correct local timezone
             if start_val.tzinfo is None:
-                 logger.warning(f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying local timezone {timezone_str}.")
-                 return start_val.replace(tzinfo=local_tz) # Make aware assuming local TZ
+                logger.warning(
+                    f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying local timezone {timezone_str}."
+                )
+                return start_val.replace(
+                    tzinfo=local_tz
+                )  # Make aware assuming local TZ
             else:
-                 return start_val.astimezone(local_tz) # Convert to local TZ
+                return start_val.astimezone(local_tz)  # Convert to local TZ
         # Fallback for unexpected types (shouldn't happen with proper parsing)
-        logger.error(f"Unexpected type for event start time: {type(start_val)}. Returning epoch.")
+        logger.error(
+            f"Unexpected type for event start time: {type(start_val)}. Returning epoch."
+        )
         return datetime.fromtimestamp(0, tz=local_tz)
 
     try:
@@ -425,13 +459,17 @@ async def fetch_upcoming_events(
 
 
 def format_events_for_prompt(
-    events: List[Dict[str, Any]], prompts: Dict[str, str], timezone_str: str # Added timezone string
+    events: List[Dict[str, Any]],
+    prompts: Dict[str, str],
+    timezone_str: str,  # Added timezone string
 ) -> Tuple[str, str]:
     """Formats the fetched events into strings suitable for the prompt."""
     try:
         local_tz = ZoneInfo(timezone_str)
     except Exception:
-        logger.warning(f"Invalid timezone string '{timezone_str}' in format_events_for_prompt. Falling back to UTC.")
+        logger.warning(
+            f"Invalid timezone string '{timezone_str}' in format_events_for_prompt. Falling back to UTC."
+        )
         local_tz = ZoneInfo("UTC")
 
     today_local = datetime.now(local_tz).date()
@@ -458,18 +496,23 @@ def format_events_for_prompt(
         # Apply local_tz to any naive datetime objects (likely from iCal)
         start_dt = start_dt_orig
         if isinstance(start_dt, datetime) and start_dt.tzinfo is None:
-            logger.debug(f"Applying timezone {timezone_str} to naive start_dt {start_dt} in format_events_for_prompt")
+            logger.debug(
+                f"Applying timezone {timezone_str} to naive start_dt {start_dt} in format_events_for_prompt"
+            )
             start_dt = start_dt.replace(tzinfo=local_tz)
 
         end_dt = end_dt_orig
         if isinstance(end_dt, datetime) and end_dt.tzinfo is None:
-             logger.debug(f"Applying timezone {timezone_str} to naive end_dt {end_dt} in format_events_for_prompt")
-             end_dt = end_dt.replace(tzinfo=local_tz)
+            logger.debug(
+                f"Applying timezone {timezone_str} to naive end_dt {end_dt} in format_events_for_prompt"
+            )
+            end_dt = end_dt.replace(tzinfo=local_tz)
         # --- End timezone awareness check ---
 
-
         start_date_only = (
-            start_dt.date() if isinstance(start_dt, datetime) else start_dt_orig # Use original if it was a date
+            start_dt.date()
+            if isinstance(start_dt, datetime)
+            else start_dt_orig  # Use original if it was a date
         )
 
         # Skip events that have already ended (useful if fetch range includes past)
@@ -482,12 +525,16 @@ def format_events_for_prompt(
             end_dt_aware = datetime.combine(end_dt, time.min, tzinfo=local_tz)
         elif isinstance(end_dt, datetime):
             # It's already aware (either originally or localized above)
-            end_dt_aware = end_dt.astimezone(local_tz) # Ensure it's in the *local* tz for comparison
+            end_dt_aware = end_dt.astimezone(
+                local_tz
+            )  # Ensure it's in the *local* tz for comparison
         else:
-            end_dt_aware = None # Cannot compare if end time is invalid
+            end_dt_aware = None  # Cannot compare if end time is invalid
 
         if end_dt_aware and end_dt_aware <= now_aware:
-            logger.info(f"Skipping past event: '{event['summary']}' ended at {end_dt_aware}")
+            logger.info(
+                f"Skipping past event: '{event['summary']}' ended at {end_dt_aware}"
+            )
             continue
 
         # Format start/end times (using potentially localized datetimes) using the timezone
@@ -524,6 +571,7 @@ def format_events_for_prompt(
 
 # --- Tool Implementations (Moved from tools.py) ---
 
+
 async def add_calendar_event_tool(
     exec_context: ToolExecutionContext,
     summary: str,
@@ -549,7 +597,7 @@ async def add_calendar_event_tool(
     if not username or not password or not calendar_urls:
         return "Error: CalDAV configuration is incomplete (missing user, pass, or URL). Cannot add event."
 
-    target_calendar_url = calendar_urls[0] # Use the first configured URL
+    target_calendar_url = calendar_urls[0]  # Use the first configured URL
     logger.info(f"Targeting CalDAV calendar: {target_calendar_url}")
 
     try:
@@ -560,7 +608,9 @@ async def add_calendar_event_tool(
             dtend = isoparse(end_time).date()
             # Basic validation: end date must be after start date for all-day
             if dtend <= dtstart:
-                 raise ValueError("End date must be after start date for all-day events.")
+                raise ValueError(
+                    "End date must be after start date for all-day events."
+                )
         else:
             # For timed events, parse as datetime objects, require timezone
             # For timed events, parse as datetime objects
@@ -569,10 +619,14 @@ async def add_calendar_event_tool(
             # Assume configured timezone if none is provided in the input string
             local_tz = ZoneInfo(exec_context.timezone_str)
             if dtstart.tzinfo is None:
-                logger.warning(f"Start time '{start_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
+                logger.warning(
+                    f"Start time '{start_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                )
                 dtstart = dtstart.replace(tzinfo=local_tz)
             if dtend.tzinfo is None:
-                logger.warning(f"End time '{end_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
+                logger.warning(
+                    f"End time '{end_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                )
                 dtend = dtend.replace(tzinfo=local_tz)
 
             # Basic validation: end time must be after start time
@@ -581,15 +635,17 @@ async def add_calendar_event_tool(
 
         # Create VEVENT component using vobject
         cal = vobject.iCalendar()
-        cal.add('vevent')
+        cal.add("vevent")
         vevent = cal.vevent
-        vevent.add('uid').value = str(uuid.uuid4())
-        vevent.add('summary').value = summary
-        vevent.add('dtstart').value = dtstart # vobject handles date vs datetime
-        vevent.add('dtend').value = dtend     # vobject handles date vs datetime
-        vevent.add('dtstamp').value = datetime.now(ZoneInfo("UTC")) # Use ZoneInfo for UTC
+        vevent.add("uid").value = str(uuid.uuid4())
+        vevent.add("summary").value = summary
+        vevent.add("dtstart").value = dtstart  # vobject handles date vs datetime
+        vevent.add("dtend").value = dtend  # vobject handles date vs datetime
+        vevent.add("dtstamp").value = datetime.now(
+            ZoneInfo("UTC")
+        )  # Use ZoneInfo for UTC
         if description:
-            vevent.add('description').value = description
+            vevent.add("description").value = description
 
         event_data = cal.serialize()
         logger.debug(f"Generated VEVENT data:\n{event_data}")
@@ -605,14 +661,18 @@ async def add_calendar_event_tool(
                 # This assumes target_calendar_url is the *direct* URL to the calendar collection
                 target_calendar = client.calendar(url=target_calendar_url)
                 if not target_calendar:
-                     # This error handling might be tricky inside the sync function
-                     # Let's rely on exceptions for now.
-                     raise ConnectionError(f"Failed to obtain calendar object for URL: {target_calendar_url}")
+                    # This error handling might be tricky inside the sync function
+                    # Let's rely on exceptions for now.
+                    raise ConnectionError(
+                        f"Failed to obtain calendar object for URL: {target_calendar_url}"
+                    )
 
                 logger.info(f"Saving event to calendar: {target_calendar.url}")
                 # Use the save_event method which takes the VCALENDAR string
                 new_event = target_calendar.save_event(event_data)
-                logger.info(f"Event saved successfully. URL: {getattr(new_event, 'url', 'N/A')}")
+                logger.info(
+                    f"Event saved successfully. URL: {getattr(new_event, 'url', 'N/A')}"
+                )
                 return f"OK. Event '{summary}' added to the calendar."
 
         try:
@@ -620,12 +680,17 @@ async def add_calendar_event_tool(
             result = await loop.run_in_executor(None, save_event_sync)
             return result
         except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:
-            logger.error(f"Error during synchronous CalDAV save operation: {sync_err}", exc_info=True)
+            logger.error(
+                f"Error during synchronous CalDAV save operation: {sync_err}",
+                exc_info=True,
+            )
             # Provide a more specific error if possible
             if "authentication" in str(sync_err).lower():
-                return "Error: Failed to add event due to CalDAV authentication failure."
+                return (
+                    "Error: Failed to add event due to CalDAV authentication failure."
+                )
             elif "not found" in str(sync_err).lower():
-                 return f"Error: Failed to add event. Calendar not found at URL: {target_calendar_url}"
+                return f"Error: Failed to add event. Calendar not found at URL: {target_calendar_url}"
             else:
                 return f"Error: Failed to add event to CalDAV calendar. {sync_err}"
 
@@ -645,7 +710,9 @@ async def search_calendar_events_tool(
     limit: int = 5,
 ) -> str:
     """Searches CalDAV events based on query text and date range."""
-    logger.info(f"Executing search_calendar_events_tool: query='{query_text}', start='{start_date_str}', end='{end_date_str}'")
+    logger.info(
+        f"Executing search_calendar_events_tool: query='{query_text}', start='{start_date_str}', end='{end_date_str}'"
+    )
     calendar_config = exec_context.calendar_config
     caldav_config = calendar_config.get("caldav")
 
@@ -663,13 +730,17 @@ async def search_calendar_events_tool(
         local_tz = ZoneInfo(exec_context.timezone_str)
         today_local = datetime.now(local_tz).date()
 
-        start_date_obj = isoparse(start_date_str).date() if start_date_str else today_local
+        start_date_obj = (
+            isoparse(start_date_str).date() if start_date_str else today_local
+        )
         if end_date_str:
             end_date_obj = isoparse(end_date_str).date()
         else:
             # Default end date: start_date + 3 days (inclusive start, exclusive end for search)
             # Default end date: start_date + 2 days to cover common requests like "tomorrow" or "day after"
-            end_date_obj = start_date_obj + timedelta(days=3) # Search up to end of day 2 days after start
+            end_date_obj = start_date_obj + timedelta(
+                days=3
+            )  # Search up to end of day 2 days after start
 
         if end_date_obj <= start_date_obj:
             return "Error: End date must be after start date."
@@ -688,9 +759,13 @@ async def search_calendar_events_tool(
         events_matched = 0
 
         for cal_url in calendar_urls:
-            logger.debug(f"Searching calendar: {cal_url} from {start_date_obj} to {end_date_obj}")
+            logger.debug(
+                f"Searching calendar: {cal_url} from {start_date_obj} to {end_date_obj}"
+            )
             try:
-                with caldav.DAVClient(url=cal_url, username=username, password=password) as client:
+                with caldav.DAVClient(
+                    url=cal_url, username=username, password=password
+                ) as client:
                     target_calendar = client.calendar(url=cal_url)
                     if not target_calendar:
                         logger.warning(f"Could not get calendar object for {cal_url}")
@@ -699,64 +774,96 @@ async def search_calendar_events_tool(
                     # Fetch events in the range
                     # Note: This fetches *all* events in the range first.
                     # More advanced filtering might be possible with specific CalDAV servers/queries.
-                    results = target_calendar.search(start=start_date_obj, end=end_date_obj, event=True, expand=False)
+                    results = target_calendar.search(
+                        start=start_date_obj, end=end_date_obj, event=True, expand=False
+                    )
 
                     for event in results:
                         events_checked += 1
-                        event_url_attr = getattr(event, 'url', 'N/A') # Get URL for logging
-                        logger.info(f"Processing event: URL={event_url_attr}") # Log first
+                        event_url_attr = getattr(
+                            event, "url", "N/A"
+                        )  # Get URL for logging
+                        logger.info(
+                            f"Processing event: URL={event_url_attr}"
+                        )  # Log first
 
-                        parsed = None # Initialize parsed to None
+                        parsed = None  # Initialize parsed to None
                         try:
                             # --- Access and parse event data ---
                             logger.debug(f"  -> Accessing and parsing event.data...")
                             event_data = event.data
                             # Pass timezone_str when parsing within the tool context
                             # Use the parse_event function defined within this module
-                            parsed = parse_event(event_data, timezone_str=exec_context.timezone_str)
+                            parsed = parse_event(
+                                event_data, timezone_str=exec_context.timezone_str
+                            )
 
                             if not parsed:
                                 # parse_event logs details if it fails or lacks essential fields
-                                logger.info(f"  -> Excluded: Failed to parse event data or missing essential fields. URL={event_url_attr}")
-                                continue # Skip to next event
+                                logger.info(
+                                    f"  -> Excluded: Failed to parse event data or missing essential fields. URL={event_url_attr}"
+                                )
+                                continue  # Skip to next event
 
                             # --- We now have parsed data including the UID ---
-                            parsed_uid = parsed.get("uid") # Get UID from parsed data
+                            parsed_uid = parsed.get("uid")  # Get UID from parsed data
                             summary = parsed.get("summary", "")
                             summary_lower = summary.lower()
-                            logger.info(f"  -> Parsed event details (UID: {parsed_uid}): {repr(parsed)}") # Log parsed details with UID
+                            logger.info(
+                                f"  -> Parsed event details (UID: {parsed_uid}): {repr(parsed)}"
+                            )  # Log parsed details with UID
 
                             # --- Basic substring matching ---
                             if query_lower in summary_lower:
                                 events_matched += 1
-                                logger.info(f"  -> Matched: Query '{query_lower}' found in summary '{summary}'. UID={parsed_uid}") # Use parsed_uid
-                                found_details.append({
-                                    "uid": str(parsed_uid), # Use UID from parsed data
-                                    "summary": summary,
-                                    "start": parsed.get("start"),
-                                    "end": parsed.get("end"),
-                                    "all_day": parsed.get("all_day"),
-                                    "calendar_url": cal_url # Include the source calendar URL
-                                })
+                                logger.info(
+                                    f"  -> Matched: Query '{query_lower}' found in summary '{summary}'. UID={parsed_uid}"
+                                )  # Use parsed_uid
+                                found_details.append(
+                                    {
+                                        "uid": str(
+                                            parsed_uid
+                                        ),  # Use UID from parsed data
+                                        "summary": summary,
+                                        "start": parsed.get("start"),
+                                        "end": parsed.get("end"),
+                                        "all_day": parsed.get("all_day"),
+                                        "calendar_url": cal_url,  # Include the source calendar URL
+                                    }
+                                )
                                 if len(found_details) >= limit:
-                                    logger.info(f"Reached search limit ({limit}). Stopping search in calendar {cal_url}.")
-                                    break # Stop searching this calendar if limit reached
+                                    logger.info(
+                                        f"Reached search limit ({limit}). Stopping search in calendar {cal_url}."
+                                    )
+                                    break  # Stop searching this calendar if limit reached
                             else:
                                 # Log why it didn't match
-                                logger.info(f"  -> Excluded: Query text '{query_lower}' not found in summary '{summary}'. UID={parsed_uid}") # Use parsed_uid
+                                logger.info(
+                                    f"  -> Excluded: Query text '{query_lower}' not found in summary '{summary}'. UID={parsed_uid}"
+                                )  # Use parsed_uid
 
                         except Exception as process_err:
-                            logger.warning(f"Error processing event {event_url_attr} in {cal_url}: {process_err}", exc_info=True)
+                            logger.warning(
+                                f"Error processing event {event_url_attr} in {cal_url}: {process_err}",
+                                exc_info=True,
+                            )
                     if len(found_details) >= limit:
-                         logger.info(f"Reached search limit ({limit}). Stopping search across remaining calendars.")
-                         break # Stop searching other calendars if limit reached
+                        logger.info(
+                            f"Reached search limit ({limit}). Stopping search across remaining calendars."
+                        )
+                        break  # Stop searching other calendars if limit reached
 
             except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:
-                 logger.error(f"Error searching calendar {cal_url}: {sync_err}", exc_info=True)
-                 # Continue to next calendar
+                logger.error(
+                    f"Error searching calendar {cal_url}: {sync_err}", exc_info=True
+                )
+                # Continue to next calendar
 
-        logger.info(f"Checked {events_checked} events, found {events_matched} potential matches via text filter.")
+        logger.info(
+            f"Checked {events_checked} events, found {events_matched} potential matches via text filter."
+        )
         return found_details
+
     # --- End Synchronous Logic ---
 
     try:
@@ -770,7 +877,9 @@ async def search_calendar_events_tool(
         response_lines = ["Found potential matches:"]
         for i, details in enumerate(matching_events_details):
             # Format start/end for display here, passing the timezone
-            start_str = format_datetime_or_date(details.get("start"), exec_context.timezone_str, is_end=False)
+            start_str = format_datetime_or_date(
+                details.get("start"), exec_context.timezone_str, is_end=False
+            )
             response_lines.append(
                 f"{i+1}. Summary: '{details['summary']}', Start: {start_str}, UID: {details['uid']}, Calendar: {details['calendar_url']}"
             )
@@ -784,7 +893,7 @@ async def search_calendar_events_tool(
 async def modify_calendar_event_tool(
     exec_context: ToolExecutionContext,
     uid: str,
-    calendar_url: str, # Added calendar_url
+    calendar_url: str,  # Added calendar_url
     new_summary: Optional[str] = None,
     new_start_time: Optional[str] = None,
     new_end_time: Optional[str] = None,
@@ -792,7 +901,9 @@ async def modify_calendar_event_tool(
     new_all_day: Optional[bool] = None,
 ) -> str:
     """Modifies a specific CalDAV event by UID."""
-    logger.info(f"Executing modify_calendar_event_tool for UID: {uid} in calendar: {calendar_url}")
+    logger.info(
+        f"Executing modify_calendar_event_tool for UID: {uid} in calendar: {calendar_url}"
+    )
     calendar_config = exec_context.calendar_config
     caldav_config = calendar_config.get("caldav")
 
@@ -801,23 +912,36 @@ async def modify_calendar_event_tool(
     username = caldav_config.get("username")
     password = caldav_config.get("password")
     if not username or not password:
-         return "Error: CalDAV user/pass missing. Cannot modify event."
+        return "Error: CalDAV user/pass missing. Cannot modify event."
 
     # Check if any modification was actually requested
-    if all(arg is None for arg in [new_summary, new_start_time, new_end_time, new_description, new_all_day]):
+    if all(
+        arg is None
+        for arg in [
+            new_summary,
+            new_start_time,
+            new_end_time,
+            new_description,
+            new_all_day,
+        ]
+    ):
         return "Error: No changes specified. Please provide at least one field to modify (e.g., new_summary, new_start_time)."
 
     # --- Synchronous CalDAV Modify Logic ---
     def modify_sync():
         try:
-            with caldav.DAVClient(url=calendar_url, username=username, password=password) as client:
+            with caldav.DAVClient(
+                url=calendar_url, username=username, password=password
+            ) as client:
                 target_calendar = client.calendar(url=calendar_url)
                 if not target_calendar:
-                    raise ValueError(f"Could not get calendar object for {calendar_url}")
+                    raise ValueError(
+                        f"Could not get calendar object for {calendar_url}"
+                    )
 
                 logger.debug(f"Fetching event with UID {uid} from {calendar_url}")
                 event = target_calendar.event_by_uid(uid)
-                logger.debug(f"Found event.") # Removed ETag logging
+                logger.debug(f"Found event.")  # Removed ETag logging
 
                 # Parse existing event data
                 # readComponents yields components; we expect one top-level iCalendar component
@@ -827,8 +951,11 @@ async def modify_calendar_event_tool(
                     # Assuming the main component contains a single VEVENT
                     vevent = ical_component.vevent
                 except (StopIteration, AttributeError) as parse_err:
-                     logger.error(f"Failed to parse VEVENT from event data for UID {uid}: {parse_err}", exc_info=True)
-                     return f"Error: Could not parse existing event data for UID {uid}."
+                    logger.error(
+                        f"Failed to parse VEVENT from event data for UID {uid}: {parse_err}",
+                        exc_info=True,
+                    )
+                    return f"Error: Could not parse existing event data for UID {uid}."
 
                 # Apply modifications
                 modified = False
@@ -837,15 +964,17 @@ async def modify_calendar_event_tool(
                     modified = True
                 if new_description is not None:
                     # Add or update description
-                    if hasattr(vevent, 'description'):
+                    if hasattr(vevent, "description"):
                         vevent.description.value = new_description
                     else:
-                        vevent.add('description').value = new_description
+                        vevent.add("description").value = new_description
                     modified = True
 
                 # Handle time changes (more complex)
                 current_is_all_day = not isinstance(vevent.dtstart.value, datetime)
-                target_all_day = new_all_day if new_all_day is not None else current_is_all_day
+                target_all_day = (
+                    new_all_day if new_all_day is not None else current_is_all_day
+                )
 
                 if new_start_time:
                     try:
@@ -855,41 +984,58 @@ async def modify_calendar_event_tool(
                             dtstart = isoparse(new_start_time)
                             local_tz = ZoneInfo(exec_context.timezone_str)
                             if dtstart.tzinfo is None:
-                                logger.warning(f"New start time '{new_start_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
+                                logger.warning(
+                                    f"New start time '{new_start_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                                )
                                 dtstart = dtstart.replace(tzinfo=local_tz)
                             vevent.dtstart.value = dtstart
                         modified = True
-                    except ValueError as ve: return f"Error parsing new_start_time: {ve}"
+                    except ValueError as ve:
+                        return f"Error parsing new_start_time: {ve}"
                 if new_end_time:
-                     try:
+                    try:
                         if target_all_day:
                             vevent.dtend.value = isoparse(new_end_time).date()
                         else:
                             dtend = isoparse(new_end_time)
                             local_tz = ZoneInfo(exec_context.timezone_str)
                             if dtend.tzinfo is None:
-                                logger.warning(f"New end time '{new_end_time}' lacks timezone. Assuming {exec_context.timezone_str}.")
+                                logger.warning(
+                                    f"New end time '{new_end_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                                )
                                 dtend = dtend.replace(tzinfo=local_tz)
                             vevent.dtend.value = dtend
                         modified = True
-                     except ValueError as ve: return f"Error parsing new_end_time: {ve}"
+                    except ValueError as ve:
+                        return f"Error parsing new_end_time: {ve}"
 
                 # Basic validation after potential time changes
-                if hasattr(vevent, 'dtend') and vevent.dtend.value <= vevent.dtstart.value:
-                     return "Error: Event end time cannot be before or same as start time."
+                if (
+                    hasattr(vevent, "dtend")
+                    and vevent.dtend.value <= vevent.dtstart.value
+                ):
+                    return (
+                        "Error: Event end time cannot be before or same as start time."
+                    )
 
                 if modified:
                     # Update timestamp on the vevent itself
-                    vevent.dtstamp.value = datetime.now(ZoneInfo("UTC")) # Use ZoneInfo for UTC
+                    vevent.dtstamp.value = datetime.now(
+                        ZoneInfo("UTC")
+                    )  # Use ZoneInfo for UTC
                     # Serialize the modified iCalendar component
                     updated_ical_data = ical_component.serialize()
-                    logger.debug(f"Attempting to save modified event.") # Removed ETag logging
+                    logger.debug(
+                        f"Attempting to save modified event."
+                    )  # Removed ETag logging
                     # Set the updated data on the event object first
                     event.data = updated_ical_data
                     # Save the event, allowing overwrite since we are modifying an existing event
                     event.save(no_overwrite=False)
                     logger.info(f"Successfully saved modified event UID {uid}")
-                    return f"OK. Event '{getattr(vevent, 'summary', {}).value}' updated."
+                    return (
+                        f"OK. Event '{getattr(vevent, 'summary', {}).value}' updated."
+                    )
                 else:
                     # This case should be caught earlier, but handle defensively
                     return "No changes applied."
@@ -898,9 +1044,15 @@ async def modify_calendar_event_tool(
             logger.error(f"Event with UID {uid} not found in calendar {calendar_url}.")
             return f"Error: Event with UID {uid} not found."
         # Removed PreconditionFailed handler as ETag is not used
-        except (caldav.lib.error.DAVError, ConnectionError, ValueError, Exception) as sync_err:
+        except (
+            caldav.lib.error.DAVError,
+            ConnectionError,
+            ValueError,
+            Exception,
+        ) as sync_err:
             logger.error(f"Error modifying event UID {uid}: {sync_err}", exc_info=True)
             return f"Error: Failed to modify event. {sync_err}"
+
     # --- End Synchronous Logic ---
 
     try:
@@ -915,10 +1067,12 @@ async def modify_calendar_event_tool(
 async def delete_calendar_event_tool(
     exec_context: ToolExecutionContext,
     uid: str,
-    calendar_url: str, # Added calendar_url
+    calendar_url: str,  # Added calendar_url
 ) -> str:
     """Deletes a specific CalDAV event by UID."""
-    logger.info(f"Executing delete_calendar_event_tool for UID: {uid} in calendar: {calendar_url}")
+    logger.info(
+        f"Executing delete_calendar_event_tool for UID: {uid} in calendar: {calendar_url}"
+    )
     calendar_config = exec_context.calendar_config
     caldav_config = calendar_config.get("caldav")
 
@@ -927,27 +1081,37 @@ async def delete_calendar_event_tool(
     username = caldav_config.get("username")
     password = caldav_config.get("password")
     if not username or not password:
-         return "Error: CalDAV user/pass missing. Cannot delete event."
+        return "Error: CalDAV user/pass missing. Cannot delete event."
 
     # --- Synchronous CalDAV Delete Logic ---
     def delete_sync():
         try:
-            with caldav.DAVClient(url=calendar_url, username=username, password=password) as client:
+            with caldav.DAVClient(
+                url=calendar_url, username=username, password=password
+            ) as client:
                 target_calendar = client.calendar(url=calendar_url)
                 if not target_calendar:
-                    raise ValueError(f"Could not get calendar object for {calendar_url}")
+                    raise ValueError(
+                        f"Could not get calendar object for {calendar_url}"
+                    )
 
-                logger.debug(f"Fetching event with UID {uid} for deletion from {calendar_url}")
+                logger.debug(
+                    f"Fetching event with UID {uid} for deletion from {calendar_url}"
+                )
                 event = target_calendar.event_by_uid(uid)
                 # Attempt to parse summary before deleting for better confirmation message
                 summary = "Unknown Summary"
                 try:
                     # Use the parse_event function defined within this module
-                    parsed = parse_event(event.data, timezone_str=exec_context.timezone_str) # Pass timezone for consistency
+                    parsed = parse_event(
+                        event.data, timezone_str=exec_context.timezone_str
+                    )  # Pass timezone for consistency
                     if parsed and parsed.get("summary"):
                         summary = parsed["summary"]
                 except Exception:
-                    logger.warning(f"Could not parse event {uid} summary before deletion.")
+                    logger.warning(
+                        f"Could not parse event {uid} summary before deletion."
+                    )
 
                 logger.info(f"Found event '{summary}'. Deleting...")
                 event.delete()
@@ -955,11 +1119,19 @@ async def delete_calendar_event_tool(
                 return f"OK. Event '{summary}' deleted."
 
         except caldav.lib.error.NotFoundError:
-            logger.error(f"Event with UID {uid} not found in calendar {calendar_url} for deletion.")
+            logger.error(
+                f"Event with UID {uid} not found in calendar {calendar_url} for deletion."
+            )
             return f"Error: Event with UID {uid} not found."
-        except (caldav.lib.error.DAVError, ConnectionError, ValueError, Exception) as sync_err:
+        except (
+            caldav.lib.error.DAVError,
+            ConnectionError,
+            ValueError,
+            Exception,
+        ) as sync_err:
             logger.error(f"Error deleting event UID {uid}: {sync_err}", exc_info=True)
             return f"Error: Failed to delete event. {sync_err}"
+
     # --- End Synchronous Logic ---
 
     try:
@@ -973,14 +1145,19 @@ async def delete_calendar_event_tool(
 
 # --- Helper to Fetch Event Details by UID (used by Confirming Provider) ---
 
-def _fetch_event_details_sync(username: str, password: str, calendar_url: str, uid: str, timezone_str: str) -> Optional[Dict[str, Any]]:
+
+def _fetch_event_details_sync(
+    username: str, password: str, calendar_url: str, uid: str, timezone_str: str
+) -> Optional[Dict[str, Any]]:
     """
     Synchronously fetches details for a single event by UID.
     Requires timezone_str to correctly parse naive datetimes.
     """
     logger.debug(f"Fetching details for event UID {uid} from {calendar_url}")
     try:
-        with caldav.DAVClient(url=calendar_url, username=username, password=password) as client:
+        with caldav.DAVClient(
+            url=calendar_url, username=username, password=password
+        ) as client:
             target_calendar = client.calendar(url=calendar_url)
             if not target_calendar:
                 logger.error(f"Could not get calendar object for {calendar_url}")
@@ -988,18 +1165,23 @@ def _fetch_event_details_sync(username: str, password: str, calendar_url: str, u
             event = target_calendar.event_by_uid(uid)
             # Pass timezone_str when parsing event details for confirmation
             # Note: timezone_str needs to be passed into _fetch_event_details_sync
-            parsed = parse_event(event.data, timezone_str=timezone_str) # Pass timezone
+            parsed = parse_event(event.data, timezone_str=timezone_str)  # Pass timezone
             if parsed:
                 # Add UID and calendar URL for completeness
-                parsed['uid'] = uid
-                parsed['calendar_url'] = calendar_url
+                parsed["uid"] = uid
+                parsed["calendar_url"] = calendar_url
                 return parsed
             else:
-                logger.warning(f"Failed to parse event data for UID {uid} in {calendar_url}")
+                logger.warning(
+                    f"Failed to parse event data for UID {uid} in {calendar_url}"
+                )
                 return None
     except caldav.lib.error.NotFoundError:
         logger.warning(f"Event UID {uid} not found in {calendar_url}")
         return None
     except (caldav.lib.error.DAVError, ConnectionError, Exception) as e:
-        logger.error(f"Error fetching event details for UID {uid} from {calendar_url}: {e}", exc_info=True)
+        logger.error(
+            f"Error fetching event details for UID {uid} from {calendar_url}: {e}",
+            exc_info=True,
+        )
         return None
