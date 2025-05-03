@@ -10,12 +10,8 @@ def load_config(config_file_path: str=CONFIG_FILE_PATH) -> Dict[(str, Any)]:
     Returns:
         A dictionary containing the resolved configuration."""
 
-# from .__main__ import load_mcp_config_and_connect
-async def load_mcp_config_and_connect(mcp_config: Dict[(str, Any)]):
-    "Connects to MCP servers defined in the config and discovers tools."
-
 # from .__main__ import shutdown_handler
-async def shutdown_handler(signal_name: str, telegram_service: Optional[TelegramService]):
+async def shutdown_handler(signal_name: str, telegram_service: Optional[TelegramService], tools_provider: Optional[ToolsProvider]):
     "Initiates graceful shutdown."
 
 # from .__main__ import reload_config_handler
@@ -23,7 +19,7 @@ def reload_config_handler(signum, frame):
     "Handles SIGHUP for config reloading (placeholder)."
 
 # from .__main__ import main_async
-async def main_async(config: Dict[(str, Any)]) -> Optional[TelegramService]:
+async def main_async(config: Dict[(str, Any)]) -> Tuple[(Optional[TelegramService], Optional[ToolsProvider])]:
     "Initializes and runs the bot application using the provided configuration."
 
 # from .__main__ import main
@@ -31,28 +27,50 @@ def main() -> int:
     "Loads config, parses args, sets up event loop, and runs the application."
 
 # from .calendar_integration import format_datetime_or_date
-def format_datetime_or_date(dt_obj: ?, is_end: bool) -> str:
-    "Formats datetime or date object into a user-friendly string."
+def format_datetime_or_date(dt_obj: ?, timezone_str: str, is_end: bool) -> str:
+    "Formats datetime or date object into a user-friendly string, relative to the specified timezone."
 
 # from .calendar_integration import parse_event
-def parse_event(event_data: str) -> Optional[Dict[(str, Any)]]:
-    "Parses VCALENDAR data into a dictionary."
+def parse_event(event_data: str, timezone_str: Optional[str]) -> Optional[Dict[(str, Any)]]:
+    """Parses VCALENDAR data into a dictionary, including the UID.
+    If timezone_str is provided, naive datetimes will be localized to that timezone."""
 
 # from .calendar_integration import _fetch_ical_events_async
-async def _fetch_ical_events_async(ical_urls: List[str]) -> List[Dict[(str, Any)]]:
+async def _fetch_ical_events_async(ical_urls: List[str], timezone_str: str) -> List[Dict[(str, Any)]]:
     "Asynchronously fetches and parses events from a list of iCal URLs."
 
 # from .calendar_integration import _fetch_caldav_events_sync
-def _fetch_caldav_events_sync(username: str, password: str, calendar_urls: List[str]) -> List[Dict[(str, Any)]]:
+def _fetch_caldav_events_sync(username: str, password: str, calendar_urls: List[str], timezone_str: str) -> List[Dict[(str, Any)]]:
     "Synchronous function to connect to CalDAV servers using specific calendar URLs and fetch events."
 
 # from .calendar_integration import fetch_upcoming_events
-async def fetch_upcoming_events(calendar_config: Dict[(str, Any)]) -> List[Dict[(str, Any)]]:
+async def fetch_upcoming_events(calendar_config: Dict[(str, Any)], timezone_str: str) -> List[Dict[(str, Any)]]:
     "Fetches events from configured CalDAV and iCal sources and merges them."
 
 # from .calendar_integration import format_events_for_prompt
-def format_events_for_prompt(events: List[Dict[(str, Any)]], prompts: Dict[(str, str)]) -> Tuple[(str, str)]:
+def format_events_for_prompt(events: List[Dict[(str, Any)]], prompts: Dict[(str, str)], timezone_str: str) -> Tuple[(str, str)]:
     "Formats the fetched events into strings suitable for the prompt."
+
+# from .calendar_integration import add_calendar_event_tool
+async def add_calendar_event_tool(exec_context: ToolExecutionContext, summary: str, start_time: str, end_time: str, description: Optional[str], all_day: bool) -> str:
+    "Adds an event to the first configured CalDAV calendar."
+
+# from .calendar_integration import search_calendar_events_tool
+async def search_calendar_events_tool(exec_context: ToolExecutionContext, query_text: str, start_date_str: Optional[str], end_date_str: Optional[str], limit: int=5) -> str:
+    "Searches CalDAV events based on query text and date range."
+
+# from .calendar_integration import modify_calendar_event_tool
+async def modify_calendar_event_tool(exec_context: ToolExecutionContext, uid: str, calendar_url: str, new_summary: Optional[str], new_start_time: Optional[str], new_end_time: Optional[str], new_description: Optional[str], new_all_day: Optional[bool]) -> str:
+    "Modifies a specific CalDAV event by UID."
+
+# from .calendar_integration import delete_calendar_event_tool
+async def delete_calendar_event_tool(exec_context: ToolExecutionContext, uid: str, calendar_url: str) -> str:
+    "Deletes a specific CalDAV event by UID."
+
+# from .calendar_integration import _fetch_event_details_sync
+def _fetch_event_details_sync(username: str, password: str, calendar_url: str, uid: str, timezone_str: str) -> Optional[Dict[(str, Any)]]:
+    """Synchronously fetches details for a single event by UID.
+    Requires timezone_str to correctly parse naive datetimes."""
 
 # from .processing import ProcessingService
 class ProcessingService:
@@ -62,6 +80,17 @@ class ProcessingService:
 # from .llm import LLMOutput
 class LLMOutput:
     "Standardized output structure from an LLM call."
+
+# from .llm import _sanitize_tools_for_litellm
+def _sanitize_tools_for_litellm(tools: List[Dict[(str, Any)]]) -> List[Dict[(str, Any)]]:
+    """Removes unsupported 'format' fields from string parameters in tool definitions
+    before sending them to LiteLLM/OpenAI, which only supports 'enum' and 'date-time'.
+
+    Args:
+        tools: A list of tool definitions in OpenAI dictionary format.
+
+    Returns:
+        A new list of sanitized tool definitions."""
 
 # from .llm import LLMInterface
 class LLMInterface(Protocol):
@@ -80,62 +109,6 @@ class RecordingLLMClient:
 class PlaybackLLMClient:
     """An LLM client that plays back previously recorded interactions from a file.
     Plays back recorded interactions by matching the input arguments."""
-
-# from .main import load_config
-def load_config():
-    "Loads configuration from environment variables and prompts.yaml."
-
-# from .main import load_mcp_config_and_connect
-async def load_mcp_config_and_connect():
-    "Loads MCP server config, connects to servers, and discovers tools."
-
-# from .main import typing_notifications
-async def typing_notifications(context: ?, chat_id: int, action: str=...):
-    "Context manager to send typing notifications periodically."
-
-# from .main import _generate_llm_response_for_chat
-async def _generate_llm_response_for_chat(processing_service: ProcessingService, chat_id: int, trigger_content_parts: List[Dict[(str, Any)]], user_name: str) -> Tuple[(Optional[str], Optional[List[Dict[(str, Any)]]])]:
-    """Prepares context, message history, calls the ProcessingService, and returns the response.
-
-    Args:
-        chat_id: The target chat ID.
-        trigger_content_parts: List of content parts (text, image_url) for the triggering message.
-        user_name: The user name to format into the system prompt.
-
-    Returns:
-        A tuple: (LLM response string or None, List of tool call info dicts or None)."""
-
-# from .main import start
-async def start(update: Update, context: ?) -> ?:
-    "Sends a welcome message when the /start command is issued."
-
-# from .main import process_chat_queue
-async def process_chat_queue(chat_id: int, context: ?) -> ?:
-    "Processes the message buffer for a given chat."
-
-# from .main import message_handler
-async def message_handler(update: Update, context: ?) -> ?:
-    "Buffers incoming messages and triggers processing if not already running."
-
-# from .main import error_handler
-async def error_handler(update: object, context: CallbackContext) -> ?:
-    "Log the error and send a telegram message to notify the developer."
-
-# from .main import shutdown_handler
-async def shutdown_handler(signal_name: str):
-    "Initiates graceful shutdown."
-
-# from .main import reload_config_handler
-def reload_config_handler(signum, frame):
-    "Handles SIGHUP for config reloading (placeholder)."
-
-# from .main import main_async
-async def main_async(cli_args: ?) -> ?:
-    "Initializes and runs the bot application."
-
-# from .main import main
-def main() -> int:
-    "Sets up argument parsing, event loop, and signal handlers."
 
 # from .embeddings import EmbeddingResult
 class EmbeddingResult:
@@ -162,7 +135,7 @@ class TelegramUpdateHandler:
 class TelegramService:
     "Manages the Telegram bot application lifecycle and update handling."
 
-# from .tools import ToolExecutionContext
+# from .tool_types import ToolExecutionContext
 class ToolExecutionContext:
     "Context passed to tool execution functions."
 
@@ -170,19 +143,25 @@ class ToolExecutionContext:
 class ToolNotFoundError(LookupError):
     "Custom exception raised when a tool cannot be found by any provider."
 
+# from .tools import ToolConfirmationRequired
+class ToolConfirmationRequired(Exception):
+    """Special exception raised by ConfirmingToolsProvider to signal that
+    confirmation is needed before proceeding. Contains info for the UI layer."""
+
+# from .tools import ToolConfirmationFailed
+class ToolConfirmationFailed(Exception):
+    "Raised when user denies confirmation or it times out."
+
 # from .tools import ToolsProvider
 class ToolsProvider(Protocol):
     "Protocol defining the interface for a tool provider."
-
-# from .tools import add_calendar_event_tool
-async def add_calendar_event_tool(exec_context: ToolExecutionContext, summary: str, start_time: str, end_time: str, description: Optional[str], all_day: bool) -> str:
-    "Adds an event to the first configured CalDAV calendar."
 
 # from .tools import schedule_recurring_task_tool
 async def schedule_recurring_task_tool(exec_context: ToolExecutionContext, task_type: str, initial_schedule_time: str, recurrence_rule: str, payload: Dict[(str, Any)], max_retries: Optional[int]=3, description: Optional[str]):
     """Schedules a new recurring task.
 
     Args:
+        exec_context: The execution context containing db_context and timezone_str.
         task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
         initial_schedule_time: ISO 8601 datetime string for the *first* run.
         recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
@@ -227,6 +206,30 @@ async def get_full_document_content_tool(exec_context: ToolExecutionContext, doc
         A string containing the full concatenated text content of the document,
         or an error message if not found or content is unavailable."""
 
+# from .tools import get_message_history_tool
+async def get_message_history_tool(exec_context: ToolExecutionContext, limit: int=10, max_age_hours: int=24) -> str:
+    """Retrieves recent message history for the current chat, with optional filters.
+
+    Args:
+        exec_context: The execution context containing chat_id and db_context.
+        limit: Maximum number of messages to retrieve (default: 10).
+        max_age_hours: Maximum age of messages in hours (default: 24).
+
+    Returns:
+        A formatted string containing the message history or an error message."""
+
+# from .tools import _format_event_details_for_confirmation
+def _format_event_details_for_confirmation(details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
+    "Formats fetched event details for inclusion in confirmation prompts."
+
+# from .tools import render_delete_calendar_event_confirmation
+def render_delete_calendar_event_confirmation(args: Dict[(str, Any)], event_details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
+    "Renders the confirmation message for deleting a calendar event."
+
+# from .tools import render_modify_calendar_event_confirmation
+def render_modify_calendar_event_confirmation(args: Dict[(str, Any)], event_details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
+    "Renders the confirmation message for modifying a calendar event."
+
 # from .tools import LocalToolsProvider
 class LocalToolsProvider:
     "Provides and executes locally defined Python functions as tools."
@@ -239,6 +242,12 @@ class MCPToolsProvider:
 class CompositeToolsProvider:
     "Combines multiple tool providers into a single interface."
 
+# from .tools import ConfirmingToolsProvider
+class ConfirmingToolsProvider(ToolsProvider):
+    """A wrapper provider that intercepts calls to specific tools,
+    requests user confirmation via a callback, and then either executes
+    the tool with the wrapped provider or returns a cancellation message."""
+
 # from .web_server import get_db
 async def get_db() -> DatabaseContext:
     "FastAPI dependency to get a DatabaseContext."
@@ -246,6 +255,10 @@ async def get_db() -> DatabaseContext:
 # from .web_server import get_embedding_generator_dependency
 async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
     "Retrieves the configured EmbeddingGenerator instance from app state."
+
+# from .web_server import get_tools_provider_dependency
+async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
+    "Retrieves the configured ToolsProvider instance from app state."
 
 # from .web_server import SearchResultItem
 class SearchResultItem(BaseModel):
@@ -282,6 +295,10 @@ async def handle_mail_webhook(request: Request, db_context: DatabaseContext=...)
 async def view_message_history(request: Request, db_context: DatabaseContext=...):
     "Serves the page displaying message history."
 
+# from .web_server import view_tools
+async def view_tools(request: Request):
+    "Serves the page displaying available tools."
+
 # from .web_server import view_tasks
 async def view_tasks(request: Request, db_context: DatabaseContext=...):
     "Serves the page displaying scheduled tasks."
@@ -298,9 +315,24 @@ async def vector_search_form(request: Request, db_context: DatabaseContext=...):
 async def handle_vector_search(request: Request, semantic_query: Optional[str]=..., keywords: Optional[str]=..., search_type: str=..., embedding_model: Optional[str]=..., embedding_types: List[str]=..., source_types: List[str]=..., created_after: Optional[str]=..., created_before: Optional[str]=..., title_like: Optional[str]=..., metadata_keys: List[str]=..., metadata_values: List[str]=..., limit: int=..., rrf_k: int=..., db_context: DatabaseContext=..., embedding_generator: EmbeddingGenerator=...):
     "Handles the vector search form submission."
 
+# from .web_server import ToolExecutionRequest
+class ToolExecutionRequest(BaseModel):
+
+# from .web_server import execute_tool_api
+async def execute_tool_api(tool_name: str, request: Request, payload: ToolExecutionRequest, tools_provider: ToolsProvider=..., db_context: DatabaseContext=...):
+    "Executes a specified tool with the given arguments."
+
 # from .web_server import upload_document
 async def upload_document(source_type: str=..., source_id: str=..., content_parts_json: str=..., source_uri: Optional[str]=..., title: Optional[str]=..., created_at_str: Optional[str]=..., metadata_json: Optional[str]=..., db_context: DatabaseContext=...):
     "API endpoint to upload document metadata and content parts for indexing."
+
+# from .web_server import redirect_to_user_guide
+async def redirect_to_user_guide():
+    "Redirects the base /docs/ path to the main user guide."
+
+# from .web_server import serve_documentation
+async def serve_documentation(request: Request, filename: str):
+    "Serves rendered Markdown documentation files from the docs/user directory."
 
 # from .task_worker import handle_log_message
 async def handle_log_message(db_context: DatabaseContext, payload: Any):
@@ -339,6 +371,145 @@ async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[(
 def set_indexing_dependencies(embedding_generator: EmbeddingGenerator, llm_client: Optional[LLMInterface]):
     "Sets the necessary dependencies for the email indexer."
 
+# from .__init__ import ToolConfirmationRequired
+class ToolConfirmationRequired(Exception):
+    """Special exception raised by ConfirmingToolsProvider to signal that
+    confirmation is needed before proceeding. Contains info for the UI layer."""
+
+# from .__init__ import ToolConfirmationFailed
+class ToolConfirmationFailed(Exception):
+    "Raised when user denies confirmation or it times out."
+
+# from .__init__ import ToolsProvider
+class ToolsProvider(Protocol):
+    "Protocol defining the interface for a tool provider."
+
+# from .__init__ import schedule_recurring_task_tool
+async def schedule_recurring_task_tool(exec_context: ToolExecutionContext, task_type: str, initial_schedule_time: str, recurrence_rule: str, payload: Dict[(str, Any)], max_retries: Optional[int]=3, description: Optional[str]):
+    """Schedules a new recurring task.
+
+    Args:
+        exec_context: The execution context containing db_context and timezone_str.
+        task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
+        initial_schedule_time: ISO 8601 datetime string for the *first* run.
+        recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
+        payload: JSON object containing data needed by the task handler.
+        max_retries: Maximum number of retries for each instance (default 3).
+        description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief')."""
+
+# from .__init__ import schedule_future_callback_tool
+async def schedule_future_callback_tool(exec_context: ToolExecutionContext, callback_time: str, context: str):
+    """Schedules a task to trigger an LLM callback in a specific chat at a future time.
+
+    Args:
+        exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
+        callback_time: ISO 8601 formatted datetime string (including timezone).
+        context: The context/prompt for the future LLM callback."""
+
+# from .__init__ import search_documents_tool
+async def search_documents_tool(exec_context: ToolExecutionContext, embedding_generator: EmbeddingGenerator, query_text: str, source_types: Optional[List[str]], embedding_types: Optional[List[str]], limit: int=5) -> str:
+    """Searches stored documents using hybrid vector and keyword search.
+
+    Args:
+        exec_context: The execution context containing the database context.
+        embedding_generator: The embedding generator instance.
+        query_text: The natural language query to search for.
+        source_types: Optional list of source types to filter by (e.g., ['email', 'note']).
+        embedding_types: Optional list of embedding types to filter by (e.g., ['content_chunk', 'summary']).
+        limit: Maximum number of results to return.
+
+    Returns:
+        A formatted string containing the search results or an error message."""
+
+# from .__init__ import get_full_document_content_tool
+async def get_full_document_content_tool(exec_context: ToolExecutionContext, document_id: int) -> str:
+    """Retrieves the full text content associated with a specific document ID.
+    This is typically used after finding a relevant document via search_documents.
+
+    Args:
+        exec_context: The execution context containing the database context.
+        document_id: The unique ID of the document (obtained from search results).
+
+    Returns:
+        A string containing the full concatenated text content of the document,
+        or an error message if not found or content is unavailable."""
+
+# from .__init__ import get_message_history_tool
+async def get_message_history_tool(exec_context: ToolExecutionContext, limit: int=10, max_age_hours: int=24) -> str:
+    """Retrieves recent message history for the current chat, with optional filters.
+
+    Args:
+        exec_context: The execution context containing chat_id and db_context.
+        limit: Maximum number of messages to retrieve (default: 10).
+        max_age_hours: Maximum age of messages in hours (default: 24).
+
+    Returns:
+        A formatted string containing the message history or an error message."""
+
+# from .__init__ import _scan_user_docs
+def _scan_user_docs() -> List[str]:
+    "Scans the 'docs/user/' directory for allowed documentation files."
+
+def _scan_user_docs() -> List[str]:
+    "Scans the 'docs/user/' directory for allowed documentation files."
+
+# from .__init__ import get_user_documentation_content_tool
+async def get_user_documentation_content_tool(exec_context: ToolExecutionContext, filename: str) -> str:
+    """Retrieves the content of a specified file from the user documentation directory ('docs/user/').
+
+    Args:
+        exec_context: The execution context (not directly used here, but available).
+        filename: The name of the file within the 'docs/user/' directory (e.g., 'USER_GUIDE.md').
+
+    Returns:
+        The content of the file as a string, or an error message if the file is
+        not found, not allowed, or cannot be read."""
+
+# from .__init__ import _format_event_details_for_confirmation
+def _format_event_details_for_confirmation(details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
+    "Formats fetched event details for inclusion in confirmation prompts."
+
+# from .__init__ import render_delete_calendar_event_confirmation
+def render_delete_calendar_event_confirmation(args: Dict[(str, Any)], event_details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
+    "Renders the confirmation message for deleting a calendar event."
+
+# from .__init__ import render_modify_calendar_event_confirmation
+def render_modify_calendar_event_confirmation(args: Dict[(str, Any)], event_details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
+    "Renders the confirmation message for modifying a calendar event."
+
+# from .__init__ import LocalToolsProvider
+class LocalToolsProvider:
+    "Provides and executes locally defined Python functions as tools."
+
+# from .__init__ import CompositeToolsProvider
+class CompositeToolsProvider:
+    "Combines multiple tool providers into a single interface."
+
+# from .__init__ import ConfirmingToolsProvider
+class ConfirmingToolsProvider(ToolsProvider):
+    """A wrapper provider that intercepts calls to specific tools,
+    requests user confirmation via a callback, and then either executes
+    the tool with the wrapped provider or returns a cancellation message."""
+
+# from .types import ToolExecutionContext
+class ToolExecutionContext:
+    "Context passed to tool execution functions."
+
+# from .types import ToolNotFoundError
+class ToolNotFoundError(LookupError):
+    "Custom exception raised when a tool cannot be found by any provider."
+
+# from .mcp import MCPToolsProvider
+class MCPToolsProvider:
+    """Provides and executes tools hosted on MCP servers.
+    Handles connection, fetching definitions, and execution."""
+
+# from .schema import render_schema_as_html
+def render_schema_as_html(schema_json_str: Optional[str]) -> str:
+    """Renders a JSON schema (passed as a JSON string) as HTML using json-schema-for-humans.
+    Uses temporary files for input and output.
+    The JSON string input makes the function cacheable."""
+
 # from .notes import get_all_notes
 async def get_all_notes(db_context: DatabaseContext) -> List[Dict[(str, str)]]:
     "Retrieves all notes."
@@ -364,47 +535,6 @@ async def store_incoming_email(db_context: DatabaseContext, form_data: Dict[(str
     Args:
         db_context: The DatabaseContext to use for the operation.
         form_data: A dictionary representing the form data received from the webhook."""
-
-# from .testing import test_engine
-async def test_engine() -> AsyncGenerator[(AsyncEngine, ?)]:
-    """Create an in-memory SQLite database engine for testing.
-
-    This fixture creates an isolated in-memory SQLite database for testing.
-    It yields an AsyncEngine that can be used to create connections and
-    execute queries. When the test is complete, the engine is disposed of.
-
-    Yields:
-        An AsyncEngine connected to an in-memory SQLite database."""
-
-# from .testing import test_db_context
-async def test_db_context(test_engine: AsyncEngine) -> AsyncGenerator[(DatabaseContext, ?)]:
-    """Create a DatabaseContext with a test engine.
-
-    This fixture creates a DatabaseContext using the test_engine fixture.
-    It yields the context for use in tests.
-
-    Args:
-        test_engine: The test engine fixture.
-
-    Yields:
-        A DatabaseContext connected to the test engine."""
-
-# from .testing import run_with_test_db
-async def run_with_test_db(test_func: Callable[(?, T)], *args, **kwargs) -> T:
-    """Run a test function with a test database.
-
-    This function creates an in-memory SQLite database, initializes it with
-    the application's schema, and then runs the provided test function with
-    a DatabaseContext connected to the test database.
-
-    Args:
-        test_func: An async function that takes a DatabaseContext as its first
-                 argument, followed by any additional arguments.
-        *args: Positional arguments to pass to the test function.
-        **kwargs: Keyword arguments to pass to the test function.
-
-    Returns:
-        The return value of the test function."""
 
 # from .vector_search import MetadataFilter
 class MetadataFilter:
@@ -547,80 +677,13 @@ async def get_all_tasks(db_context: DatabaseContext, limit: int=100) -> List[Dic
 async def init_db():
     "Initializes the database by creating all tables defined in the metadata."
 
-# from .vector. import Document
-class Document(Protocol):
-    "Defines the interface for documents that can be ingested into vector storage.Defines the interface for document objects that can be ingested into vector storage."
-
-# from .vector. import Base
-class Base(DeclarativeBase):
-
-# from .vector. import DocumentRecord
-class DocumentRecord(Base):
-    "SQLAlchemy model for the 'documents' table, representing stored document metadata."
-
-# from .vector. import DocumentEmbeddingRecord
-class DocumentEmbeddingRecord(Base):
-    "SQLAlchemy model for the 'document_embeddings' table, representing stored embeddings."
-
-# from .vector. import init_vector_db
-async def init_vector_db(db_context: DatabaseContext):
-    """Initializes the vector database components (extension, indexes) using the provided context.
-    Tables should be created separately via storage.init_db or metadata.create_all.
-
-    Args:
-        db_context: The DatabaseContext to use for executing initialization commands."""
-
-# from .vector. import add_document
-async def add_document(db_context: DatabaseContext, doc: Document, enriched_doc_metadata: Optional[Dict[(str, Any)]]) -> int:
-    """Adds a document record to the database or updates it based on source_id.
-
-    Args:
-        db_context: The DatabaseContext to use for the operation.
-        doc: An object conforming to the Document protocol.
-        enriched_doc_metadata: Optional dictionary containing enriched metadata.
-
-    Returns:
-        The database ID of the added or existing document."""
-
-# from .vector. import get_document_by_source_id
-async def get_document_by_source_id(db_context: DatabaseContext, source_id: str) -> Optional[DocumentRecord]:
-    "Retrieves a document ORM object by its source ID."
-
-# from .vector. import add_embedding
-async def add_embedding(db_context: DatabaseContext, document_id: int, chunk_index: int, embedding_type: str, embedding: List[float], embedding_model: str, content: Optional[str], content_hash: Optional[str]) -> ?:
-    "Adds an embedding record linked to a document, updating if it already exists."
-
-# from .vector. import delete_document
-async def delete_document(db_context: DatabaseContext, document_id: int) -> bool:
-    """Deletes a document and its associated embeddings (via CASCADE constraint).
-
-    Returns:
-        True if a document was deleted, False otherwise."""
-
-# from .vector. import query_vectors
-async def query_vectors(db_context: DatabaseContext, query_embedding: List[float], embedding_model: str, keywords: Optional[str], filters: Optional[Dict[(str, Any)]], embedding_type_filter: Optional[List[str]], limit: int=10) -> List[Dict[(str, Any)]]:
-    """Performs a hybrid search combining vector similarity and keyword search
-    with metadata filtering using the provided DatabaseContext.
-
-    Args:
-        db_context: The DatabaseContext to use for the query.
-        query_embedding: The vector representation of the search query.
-        embedding_model: Identifier of the model used for the query vector.
-        keywords: Keywords for full-text search.
-        filters: Dictionary of filters for the 'documents' table.
-        embedding_type_filter: List of allowed embedding types.
-        limit: The maximum number of results.
-
-    Returns:
-        A list of dictionaries representing relevant document embeddings."""
-
 # from .base import get_engine
 def get_engine():
     "Returns the initialized SQLAlchemy async engine."
 
 # from .message_history import add_message_to_history
-async def add_message_to_history(db_context: DatabaseContext, chat_id: int, message_id: int, timestamp: datetime, role: str, content: Optional[str], tool_calls_info: Optional[List[Dict[(str, Any)]]], reasoning_info: Optional[Dict[(str, Any)]], error_traceback: Optional[str]):
-    "Adds a message to the history table, including optional tool call, reasoning, and error info."
+async def add_message_to_history(db_context: DatabaseContext, chat_id: int, message_id: int, timestamp: datetime, role: str, content: Optional[str], tool_calls_info: Optional[List[Dict[(str, Any)]]], reasoning_info: Optional[Dict[(str, Any)]], error_traceback: Optional[str], tool_call_id: Optional[str]):
+    "Adds a message to the history table, including optional tool call info, reasoning, error, and tool_call_id."
 
 # from .message_history import get_recent_history
 async def get_recent_history(db_context: DatabaseContext, chat_id: int, limit: int, max_age: timedelta) -> List[Dict[(str, Any)]]:
