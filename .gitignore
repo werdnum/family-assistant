@@ -4,3 +4,4 @@ __pycache__
 *.egg-info
 family_assistant.db
 node_modules
+scratch
