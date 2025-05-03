@@ -265,13 +265,6 @@ class MCPToolsProvider:
                 # --- Sanitization logic removed from here ---
                 # The 'format' field might still be present in the 'parameters' dict
 
-                # Perform deletion after iteration
-                for param_name in props_to_delete_format:
-                    if param_name in properties and isinstance(properties[param_name], dict):
-                        # Ensure 'format' key exists before deleting
-                        if 'format' in properties[param_name]:
-                            del properties[param_name]["format"]
-
                 formatted_defs.append(tool_dict) # Add the formatted dict
             except Exception as e:
                 logger.error(
@@ -281,7 +274,7 @@ class MCPToolsProvider:
                 # Optionally skip the tool or add a placeholder
                 # sanitized_defs.append({...}) # Add placeholder if needed
 
-        return sanitized_defs
+        return formatted_defs
 
     async def get_tool_definitions(self) -> List[Dict[str, Any]]: # Return type is still dict
         """Returns the aggregated and sanitized tool definitions from all connected servers."""
