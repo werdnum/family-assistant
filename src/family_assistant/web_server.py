@@ -73,8 +73,7 @@ from pydantic import BaseModel, Field  # For structuring results if needed, adde
 
 # Import tool functions directly from the tools package
 from family_assistant.tools import (
-    _scan_user_docs,  # Import the scanner function
-    render_schema_as_html,
+    _scan_user_docs,  # Import the scanner function # Removed incorrect import of render_schema_as_html
 )
 from family_assistant.tools.schema import render_schema_as_html  # Correct import path
 
