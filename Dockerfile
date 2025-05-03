@@ -103,6 +103,8 @@ RUN --mount=type=cache,target=${UV_CACHE_DIR} \
     uv pip install . --no-deps
 
 
+COPY contrib /app/contrib
+
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
 EXPOSE 8000
