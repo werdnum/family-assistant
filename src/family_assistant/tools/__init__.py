@@ -187,10 +187,6 @@ async def schedule_recurring_task_tool(
         return "Error: Failed to schedule the recurring task."
 
 
-# Removed duplicated/incorrect tool implementations above this line.
-# The correct schedule_future_callback_tool follows.
-
-
 async def schedule_future_callback_tool(
     exec_context: ToolExecutionContext,  # Use execution context
     callback_time: str,
@@ -669,6 +665,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                 "properties": {
                     "callback_time": {
                         "type": "string",
+                        "format": "date-time",
                         "description": "The exact date and time (ISO 8601 format, including timezone, e.g., '2025-05-10T14:30:00+02:00') when the callback should be triggered.",
                     },
                     "context": {
@@ -694,6 +691,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                     },
                     "initial_schedule_time": {
                         "type": "string",
+                        "format": "date-time",
                         "description": "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the task should run.",
                     },
                     "recurrence_rule": {
@@ -892,6 +890,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                     },
                     "calendar_url": {
                         "type": "string",
+                        "format": "uri",
                         "description": "The URL of the calendar containing the event, obtained from search_calendar_events.",
                     },
                     "new_summary": {
@@ -934,6 +933,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                     },
                      "calendar_url": {
                         "type": "string",
+                        "format": "uri",
                         "description": "The URL of the calendar containing the event, obtained from search_calendar_events.",
                     },
                 },
