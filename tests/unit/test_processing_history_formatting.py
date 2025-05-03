@@ -76,7 +76,7 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
             "content": None,  # Assistant might not provide text when calling tools
             "tool_calls_info_raw": [  # List containing info for each call
                 {
-                    "call_id": tool_call_id,
+                    "id": tool_call_id, # Use 'id' matching the key expected by formatter
                     "function_name": tool_name,
                     "arguments": tool_args,
                     "response_content": tool_response,
