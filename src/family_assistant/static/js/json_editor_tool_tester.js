@@ -1,5 +1,5 @@
 // Import the result display editor (needs to be module type)
-import { createJSONEditor as createVanillaEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+// import { createJSONEditor as createVanillaEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
 
 // Note: JSONEditor (for input) is loaded globally via the script tag in the HTML
 
@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Use html theme as it requires no external CSS framework
         const argsEditorInstance = new JSONEditor(editorContainer, {
             schema: schema,
-            theme: 'html', // Use basic HTML theme
+            theme: 'bootstrap4', // Use basic HTML theme
             iconlib: null, // No icons needed
             disable_edit_json: true,
             disable_properties: true,
@@ -100,9 +100,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({ arguments: argsJson })
                 });
                 resultData = await response.json();
-                resultContainer.innerHTML = ''; // Clear "Running..."
+                resultContainer.innerText = resultData; // Clear "Running..."
                 // Display result using vanilla-jsoneditor
-                new createVanillaEditor({ target: resultContainer, props: { content: { json: resultData }, readOnly: true, mainMenuBar: false, navigationBar: false, statusBar: false, mode: 'tree' }});
+                // new createVanillaEditor({ target: resultContainer, props: { content: { json: resultData }, readOnly: true, mainMenuBar: false, navigationBar: false, statusBar: false, mode: 'tree' }});
                 if (!response.ok) {
                     console.error(`API Error (${response.status}):`, resultData);
                     resultContainer.insertAdjacentHTML('afterbegin', `<p class="error">API Error (${response.status}): ${resultData.detail || 'Unknown error'}</p>`);
