@@ -281,36 +281,63 @@ class ProcessingService:
         for msg in history_messages:
             # Use .get for safer access to potentially missing keys
             role = msg.get("role")
-            content = msg.get("content") or ''
-            tool_calls_info = msg.get("tool_calls_info_raw") # This could be None or a list
+            content = msg.get("content") or '' # Content can be None for assistant messages with tool calls
+            tool_calls_info = msg.get("tool_calls_info_raw") # Raw tool calls from LLM output (list of dicts)
+            tool_call_id = msg.get("tool_call_id") # tool_call_id for role 'tool' messages
             # reasoning_info = msg.get("reasoning_info") # Reasoning info not needed for LLM history format
             # error_traceback = msg.get("error_traceback") # Error info not needed for LLM history format
 
             if role == "assistant":
                 # Check if there's actual tool call data (not None, not empty list)
                 if tool_calls_info and isinstance(tool_calls_info, list):
-                    # --- This block handles assistant messages WITH tool calls ---
-                    # (Logic remains the same as before)
+                    # --- Format assistant message WITH tool calls ---
+                    # The tool_calls_info stored in DB is expected to be the list of dicts
+                    # originally returned by the LLM, including the 'id'.
                     reformatted_tool_calls = []
-                    valid_raw_calls = []
                     for raw_call in tool_calls_info:
                         if isinstance(raw_call, dict):
-                            call_id = raw_call.get("call_id", f"call_{uuid.uuid4()}")
-                            function_name = raw_call.get("function_name", "unknown_tool")
-                            arguments = raw_call.get("arguments", {})
-                            arguments_str = json.dumps(arguments) if isinstance(arguments, dict) else arguments if isinstance(arguments, str) else "{}"
-                            reformatted_tool_calls.append(
-                                { "id": call_id, "type": "function", "function": { "name": function_name, "arguments": arguments_str, }, }
-                            )
-                            valid_raw_calls.append(raw_call)
+                            # Extract the parts needed for the LLM format
+                            # Ensure the ID from the LLM ('id') is used.
+                            call_id = raw_call.get("id") # Use 'id' from the original LLM response
+                            function_info = raw_call.get("function")
+                            if call_id and isinstance(function_info, dict):
+                                # Append in the standard OpenAI/LiteLLM format
+                                reformatted_tool_calls.append(
+                                    {
+                                        "id": call_id,
+                                        "type": "function", # Assuming only function calls for now
+                                        "function": function_info, # Pass the whole function dict (name, arguments str)
+                                    }
+                                )
+                            else:
+                                logger.warning(f"Skipping malformed raw tool call info in history: {raw_call}")
                         else:
                             logger.warning(f"Skipping non-dict item in raw_tool_calls_info: {raw_call}")
-                    messages.append({ "role": "assistant", "content": content, "tool_calls": reformatted_tool_calls, })
-                    for valid_call in valid_raw_calls:
-                        messages.append({ "role": "tool", "tool_call_id": valid_call.get("call_id", "missing_id"), "content": str(valid_call.get("response_content", "Error: Missing tool response content",)), })
+
+                    if reformatted_tool_calls:
+                        # Content might be None or empty string for assistant messages that only contain tool calls
+                        messages.append(
+                            {"role": "assistant", "content": content, "tool_calls": reformatted_tool_calls}
+                        )
+                    else: # If no valid tool calls found in the raw data, treat as regular message
+                        messages.append({"role": "assistant", "content": content})
                 else:
                     # --- This block handles assistant messages WITHOUT tool calls ---
                     messages.append({"role": "assistant", "content": content})
+            elif role == "tool":
+                # --- Format tool response messages ---
+                if tool_call_id: # Only include if tool_call_id is present (retrieved from DB)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": content, # Content is the tool's response string
+                        }
+                    )
+                else:
+                    # Log a warning if a tool message is found without an ID (indicates logging issue)
+                    logger.warning(f"Found 'tool' role message in history without a tool_call_id: {msg}")
+                    # Skip adding malformed tool message to history to avoid LLM errors
             elif role != "error": # Don't include previous error messages in history sent to LLM
                 # Append other non-error messages directly
                 messages.append({"role": role, "content": content})
