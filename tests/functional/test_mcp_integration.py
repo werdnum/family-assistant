@@ -323,7 +323,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
             "convert" in last_text
             and SOURCE_TIME in last_text
             and "new york" in last_text  # Keep simple checks
-            and "london" in last_text
+            and "london" in last_text # Add logical operator
             and tools is not None
             and any(
                 tool.get("function", {}).get("name") == MCP_TIME_TOOL_NAME
