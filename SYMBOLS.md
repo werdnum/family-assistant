@@ -135,119 +135,6 @@ class TelegramUpdateHandler:
 class TelegramService:
     "Manages the Telegram bot application lifecycle and update handling."
 
-# from .tool_types import ToolExecutionContext
-class ToolExecutionContext:
-    "Context passed to tool execution functions."
-
-# from .tools import ToolNotFoundError
-class ToolNotFoundError(LookupError):
-    "Custom exception raised when a tool cannot be found by any provider."
-
-# from .tools import ToolConfirmationRequired
-class ToolConfirmationRequired(Exception):
-    """Special exception raised by ConfirmingToolsProvider to signal that
-    confirmation is needed before proceeding. Contains info for the UI layer."""
-
-# from .tools import ToolConfirmationFailed
-class ToolConfirmationFailed(Exception):
-    "Raised when user denies confirmation or it times out."
-
-# from .tools import ToolsProvider
-class ToolsProvider(Protocol):
-    "Protocol defining the interface for a tool provider."
-
-# from .tools import schedule_recurring_task_tool
-async def schedule_recurring_task_tool(exec_context: ToolExecutionContext, task_type: str, initial_schedule_time: str, recurrence_rule: str, payload: Dict[(str, Any)], max_retries: Optional[int]=3, description: Optional[str]):
-    """Schedules a new recurring task.
-
-    Args:
-        exec_context: The execution context containing db_context and timezone_str.
-        task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
-        initial_schedule_time: ISO 8601 datetime string for the *first* run.
-        recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
-        payload: JSON object containing data needed by the task handler.
-        max_retries: Maximum number of retries for each instance (default 3).
-        description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief')."""
-
-# from .tools import schedule_future_callback_tool
-async def schedule_future_callback_tool(exec_context: ToolExecutionContext, callback_time: str, context: str):
-    """Schedules a task to trigger an LLM callback in a specific chat at a future time.
-
-    Args:
-        exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
-        callback_time: ISO 8601 formatted datetime string (including timezone).
-        context: The context/prompt for the future LLM callback."""
-
-# from .tools import search_documents_tool
-async def search_documents_tool(exec_context: ToolExecutionContext, embedding_generator: EmbeddingGenerator, query_text: str, source_types: Optional[List[str]], embedding_types: Optional[List[str]], limit: int=5) -> str:
-    """Searches stored documents using hybrid vector and keyword search.
-
-    Args:
-        exec_context: The execution context containing the database context.
-        embedding_generator: The embedding generator instance.
-        query_text: The natural language query to search for.
-        source_types: Optional list of source types to filter by (e.g., ['email', 'note']).
-        embedding_types: Optional list of embedding types to filter by (e.g., ['content_chunk', 'summary']).
-        limit: Maximum number of results to return.
-
-    Returns:
-        A formatted string containing the search results or an error message."""
-
-# from .tools import get_full_document_content_tool
-async def get_full_document_content_tool(exec_context: ToolExecutionContext, document_id: int) -> str:
-    """Retrieves the full text content associated with a specific document ID.
-    This is typically used after finding a relevant document via search_documents.
-
-    Args:
-        exec_context: The execution context containing the database context.
-        document_id: The unique ID of the document (obtained from search results).
-
-    Returns:
-        A string containing the full concatenated text content of the document,
-        or an error message if not found or content is unavailable."""
-
-# from .tools import get_message_history_tool
-async def get_message_history_tool(exec_context: ToolExecutionContext, limit: int=10, max_age_hours: int=24) -> str:
-    """Retrieves recent message history for the current chat, with optional filters.
-
-    Args:
-        exec_context: The execution context containing chat_id and db_context.
-        limit: Maximum number of messages to retrieve (default: 10).
-        max_age_hours: Maximum age of messages in hours (default: 24).
-
-    Returns:
-        A formatted string containing the message history or an error message."""
-
-# from .tools import _format_event_details_for_confirmation
-def _format_event_details_for_confirmation(details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
-    "Formats fetched event details for inclusion in confirmation prompts."
-
-# from .tools import render_delete_calendar_event_confirmation
-def render_delete_calendar_event_confirmation(args: Dict[(str, Any)], event_details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
-    "Renders the confirmation message for deleting a calendar event."
-
-# from .tools import render_modify_calendar_event_confirmation
-def render_modify_calendar_event_confirmation(args: Dict[(str, Any)], event_details: Optional[Dict[(str, Any)]], timezone_str: str) -> str:
-    "Renders the confirmation message for modifying a calendar event."
-
-# from .tools import LocalToolsProvider
-class LocalToolsProvider:
-    "Provides and executes locally defined Python functions as tools."
-
-# from .tools import MCPToolsProvider
-class MCPToolsProvider:
-    "Provides and executes tools hosted on MCP servers."
-
-# from .tools import CompositeToolsProvider
-class CompositeToolsProvider:
-    "Combines multiple tool providers into a single interface."
-
-# from .tools import ConfirmingToolsProvider
-class ConfirmingToolsProvider(ToolsProvider):
-    """A wrapper provider that intercepts calls to specific tools,
-    requests user confirmation via a callback, and then either executes
-    the tool with the wrapped provider or returns a cancellation message."""
-
 # from .web_server import get_db
 async def get_db() -> DatabaseContext:
     "FastAPI dependency to get a DatabaseContext."
@@ -682,18 +569,30 @@ def get_engine():
     "Returns the initialized SQLAlchemy async engine."
 
 # from .message_history import add_message_to_history
-async def add_message_to_history(db_context: DatabaseContext, chat_id: int, message_id: int, timestamp: datetime, role: str, content: Optional[str], tool_calls_info: Optional[List[Dict[(str, Any)]]], reasoning_info: Optional[Dict[(str, Any)]], error_traceback: Optional[str], tool_call_id: Optional[str]):
+async def add_message_to_history(db_context: DatabaseContext, interface_type: str, conversation_id: str, interface_message_id: Optional[str], turn_id: Optional[str], thread_root_id: Optional[int], timestamp: datetime, role: str, content: Optional[str], tool_calls: Optional[List[Dict[(str, Any)]]], reasoning_info: Optional[Dict[(str, Any)]], error_traceback: Optional[str], tool_call_id: Optional[str]):
     "Adds a message to the history table, including optional tool call info, reasoning, error, and tool_call_id."
 
-# from .message_history import get_recent_history
-async def get_recent_history(db_context: DatabaseContext, chat_id: int, limit: int, max_age: timedelta) -> List[Dict[(str, Any)]]:
-    "Retrieves recent messages for a chat, including tool call info."
+# from .message_history import update_message_interface_id
+async def update_message_interface_id(db_context: DatabaseContext, internal_id: int, interface_message_id: str) -> bool:
+    "Updates the interface_message_id for a message identified by its internal_id."
 
-# from .message_history import get_message_by_id
-async def get_message_by_id(db_context: DatabaseContext, chat_id: int, message_id: int) -> Optional[Dict[(str, Any)]]:
+# from .message_history import get_recent_history
+async def get_recent_history(db_context: DatabaseContext, interface_type: str, conversation_id: str, limit: int, max_age: timedelta) -> List[Dict[(str, Any)]]:
+    "Retrieves recent messages for a conversation, including tool call info."
+
+# from .message_history import get_message_by_interface_id
+async def get_message_by_interface_id(db_context: DatabaseContext, interface_type: str, conversation_id: str, interface_message_id: str) -> Optional[Dict[(str, Any)]]:
     "Retrieves a specific message by its chat and message ID, including all fields."
 
+# from .message_history import get_messages_by_turn_id
+async def get_messages_by_turn_id(db_context: DatabaseContext, turn_id: str) -> List[Dict[(str, Any)]]:
+    "Retrieves all messages associated with a specific turn ID."
+
+# from .message_history import get_messages_by_thread_id
+async def get_messages_by_thread_id(db_context: DatabaseContext, thread_root_id: int) -> List[Dict[(str, Any)]]:
+    "Retrieves all messages belonging to a specific conversation thread."
+
 # from .message_history import get_grouped_message_history
-async def get_grouped_message_history(db_context: DatabaseContext) -> Dict[(int, List[Dict[(str, Any)]])]:
-    "Retrieves all message history, grouped by chat_id and ordered by timestamp."
+async def get_grouped_message_history(db_context: DatabaseContext) -> Dict[(Tuple[(str, str)], List[Dict[(str, Any)]])]:
+    "Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp."
 
