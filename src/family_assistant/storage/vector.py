@@ -1,8 +1,8 @@
 """
 API for interacting with the vector storage database (PostgreSQL with pgvector).
-
 Handles storing document metadata, text chunks, and their corresponding vector embeddings.
 Provides functions for adding, retrieving, deleting, and querying documents and embeddings.
+
 """
 
 import logging
