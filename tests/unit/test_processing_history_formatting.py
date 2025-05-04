@@ -54,7 +54,7 @@ def test_format_simple_history(processing_service: ProcessingService):
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi there!"},
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = processing_service._format_history_for_llm(history_messages) # Marked line 120
     assert actual_output == expected_output
 
 
@@ -97,7 +97,7 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         {
             "role": "assistant",
             "content": "", # Formatter converts None to empty string
-            "tool_calls": [
+            "tool_calls": [ # This should be passed through directly
                 {
                     "id": tool_call_id,
                     "type": "function",
@@ -116,7 +116,7 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         },
     ]
 
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = processing_service._format_history_for_llm(history_messages) # Marked line 120
     assert actual_output == expected_output
 
 
@@ -136,7 +136,7 @@ def test_format_history_filters_errors(processing_service: ProcessingService):
         {"role": "user", "content": "Try something"},
         {"role": "assistant", "content": "Okay"},
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = processing_service._format_history_for_llm(history_messages) # Marked line 120
     assert actual_output == expected_output
 
 
