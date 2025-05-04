@@ -376,16 +376,17 @@ class ProcessingService:
                     # originally returned by the LLM, including the 'id'.
                     reformatted_tool_calls = []
                     for raw_call in tool_calls_info:
-                        if isinstance(raw_call, dict):
+                        if isinstance(raw_call, dict): # raw_call is from the stored executed_tool_info list
                             # Extract the parts needed for the LLM format
-                            # Ensure the ID from the LLM ('id') is used.
+                            # Read the stored execution details
                             call_id = raw_call.get(
-                                "id"
-                            )  # Use 'id' from the original LLM response
-                            function_info = raw_call.get("function")
-                            if call_id and isinstance(function_info, dict):
+                                "tool_call_id" # Use the stored key
+                            )
+                            function_name = raw_call.get("function_name") # Use the stored key
+                            arguments_dict = raw_call.get("arguments") # Use the stored key (already a dict)
+                            if call_id and function_name and isinstance(arguments_dict, dict):
                                 # Append in the standard OpenAI/LiteLLM format
-                                reformatted_tool_calls.append(
+                                reformatted_tool_calls.append( # type: ignore
                                     {
                                         "id": call_id,
                                         "type": "function",  # Assuming only function calls for now
