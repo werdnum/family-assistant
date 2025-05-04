@@ -6,7 +6,7 @@ import logging
 import random
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional, Tuple # Added Tuple
+from typing import List, Dict, Any, Optional, Tuple, cast # Added Tuple, cast
 
 from sqlalchemy import (
     Table,
@@ -183,7 +183,7 @@ async def get_recent_history(
             .order_by(message_history_table.c.timestamp.desc())
             .limit(limit)
         )
-        rows = await db_context.fetch_all(cast(Select, stmt)) # Cast for type checker
+        rows = await db_context.fetch_all(cast(Select[Any], stmt)) # Cast for type checker
         # Convert rows to dicts and reverse to get chronological order
         formatted_rows = [dict(row) for row in reversed(rows)]
         return formatted_rows
@@ -213,7 +213,7 @@ async def get_message_by_interface_id(
             .where(message_history_table.c.conversation_id == conversation_id)
             .where(message_history_table.c.interface_message_id == interface_message_id)
         )
-        row = await db_context.fetch_one(cast(Select, stmt)) # Cast for type checker
+        row = await db_context.fetch_one(cast(Select[Any], stmt)) # Cast for type checker
         return dict(row) if row else None  # Return full row as dict
     except SQLAlchemyError as e:
         logger.error(
@@ -234,7 +234,7 @@ async def get_messages_by_turn_id(
             .where(message_history_table.c.turn_id == turn_id)
             .order_by(message_history_table.c.internal_id)  # Order by insertion sequence
         )
-        rows = await db_context.fetch_all(cast(Select, stmt)) # Cast for type checker
+        rows = await db_context.fetch_all(cast(Select[Any], stmt)) # Cast for type checker
         return [dict(row) for row in rows]
     except SQLAlchemyError as e:
         logger.error(
@@ -254,7 +254,7 @@ async def get_messages_by_thread_id(
             .where(message_history_table.c.thread_root_id == thread_root_id)
             .order_by(message_history_table.c.internal_id)  # Order by insertion sequence
         )
-        rows = await db_context.fetch_all(cast(Select, stmt)) # Cast for type checker
+        rows = await db_context.fetch_all(cast(Select[Any], stmt)) # Cast for type checker
         return [dict(row) for row in rows]
     except SQLAlchemyError as e:
         logger.error(
@@ -274,7 +274,7 @@ async def get_grouped_message_history(
             message_history_table.c.conversation_id,
             message_history_table.c.timestamp, # Order chronologically within group
         )
-        rows = await db_context.fetch_all(cast(Select, stmt)) # Cast for type checker
+        rows = await db_context.fetch_all(cast(Select[Any], stmt)) # Cast for type checker
         # Convert RowMapping to dicts for easier handling
         dict_rows = [dict(row) for row in rows]
         grouped_history = {}
