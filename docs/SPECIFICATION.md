@@ -195,7 +195,20 @@ graph TD
 *   Implemented Tables:
     *   `notes`: Stores user-created notes (id, title, content, created\_at, updated\_at). Title is unique.
     *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info).
-*   Implemented Tables:
+*   **Proposed `message_history` Schema:**
+    *   `internal_id`: BigInteger, primary key, auto-incrementing. A unique internal ID for every recorded message fragment.
+    *   `interface_type`: String(50), non-nullable, indexed. Identifies the source interface (e.g., 'telegram', 'web', 'email').
+    *   `conversation_id`: String(255), non-nullable, indexed. A generic identifier for the chat session (e.g., Telegram chat ID as string, web session UUID).
+    *   `interface_message_id`: String(255), nullable, indexed. The message ID specific to the external interface (e.g., Telegram message ID, email Message-ID header). Null for intermediate agent messages.
+    *   `turn_id`: String(36), nullable, indexed. A UUID linking all agent-generated messages (assistant requests, tool responses, final answer) within a single processing turn initiated by a user/system trigger. The trigger message itself would likely have `turn_id = NULL`.
+    *   `timestamp`: DateTime(timezone=True), non-nullable, indexed. Time the message was recorded.
+    *   `role`: String(50), non-nullable. 'user', 'assistant', 'system', 'tool'.
+    *   `content`: Text, nullable. Message content.
+    *   `tool_calls`: JSONB, nullable. For 'assistant' role messages requesting tool execution (structured list of calls).
+    *   `tool_call_id`: String(255), nullable, indexed. For 'tool' role messages, linking the response back to the specific `tool_calls` entry ID requested by the assistant.
+    *   `reasoning_info`: JSONB, nullable. For 'assistant' role messages, storing LLM reasoning/usage data.
+    *   `error_traceback`: Text, nullable. Stores error details if processing this message caused an error, or if this message represents an error itself.
+*   **Current Implementation:**
     *   `received_emails`: Stores details of emails received via webhook. Columns include:
         *   `id`: Internal auto-incrementing ID.
         *   `message_id_header`: Unique identifier from the email's `Message-ID` header (indexed).
@@ -264,7 +277,7 @@ The following features from the specification are currently implemented:
     *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info JSON).
     *   `tasks` table for the background task queue (see Section 10).    *   `tasks` table for the background task queue (see Section 10).
     *   `received_emails` table for storing incoming email details (schema defined, basic webhook processing in place, no DB insertion yet).
-*   **LLM Context:**
+*   **LLM Context:** (Note: History context needs update based on proposed schema changes)
     *   System prompt includes:
         *   Current time (timezone-aware via `TIMEZONE` env var).
         *   Upcoming calendar events fetched from configured CalDAV and iCal sources (today, tomorrow, next 14 days).
@@ -272,7 +285,7 @@ The following features from the specification are currently implemented:
     *   Recent message history (from `message_history`, including basic tool call info if available) is included.
     *   Replied-to messages (fetched from `message_history`) are included if the current message is a reply.
 *   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
-    *   An interface to view message history grouped by chat (`/history`).
+    *   An interface to view message history grouped by conversation (`/history`).
     *   An interface to view recent tasks from the database task queue (`/tasks`).
 *   **Tools:**
     *   Local Tools:
