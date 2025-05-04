@@ -204,6 +204,32 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     note_in_db = None
     logger.info("Checking database for the new note...")
     async with test_db_engine.connect() as connection:
+         # model_name argument removed from _generate_llm_response_for_chat call
+    assert add_error is None, f"Error during add note: {add_error}"
+    assert add_turn_messages, "No messages generated during add note turn"
+
+-        # model_name argument removed from _generate_llm_response_for_chat call
+-
+-    logger.info(f"Add Note - Mock LLM Response Content: {add_response_content}")
+-    logger.info(f"Add Note - Tool Info from Processing: {add_tool_info}")
+-
+-    # Assertion 1: Check the database directly to confirm the note was added
+-    # Use the test_db_engine yielded by the fixture
+-    note_in_db = None
+-    logger.info("Checking database for the new note...")
+-    async with test_db_engine.connect() as connection:
++    # Find the assistant message requesting the tool call
++    assistant_add_request = next((msg for msg in add_turn_messages if msg.get("role") == "assistant" and msg.get("tool_calls")), None)
++    assert assistant_add_request is not None, "Assistant did not request tool call"
++    assert assistant_add_request["tool_calls"], "Tool calls list is empty"
++    assert assistant_add_request["tool_calls"][0]["id"] == test_tool_call_id
++    assert assistant_add_request["tool_calls"][0]["function"]["name"] == "add_or_update_note"
+
+     # Assertion 1: Check the database directly to confirm the note was added
+     # Use the test_db_engine yielded by the fixture
+     note_in_db = None
+     logger.info("Checking database for the new note...")
+     async with test_db_engine.connect() as connection:
         result = await connection.execute(
             text("SELECT title, content FROM notes WHERE title = :title"),
             {"title": test_note_title},
@@ -250,27 +276,42 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     )
     logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
 
+                 # model_name argument removed
+             )
+         )
+         # model_name argument removed from _generate_llm_response_for_chat call
+    assert retrieve_error is None, f"Error during retrieve note: {retrieve_error}"
+    assert retrieve_turn_messages, "No messages generated during retrieve note turn"
+
+-        # model_name argument removed from _generate_llm_response_for_chat call
+-
+-    logger.info(
+-        f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}"
+-    )
+-    logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
+-    logger.info(f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}")
+-    logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
++    # Find the final assistant message
++    final_assistant_message = next((msg for msg in reversed(retrieve_turn_messages) if msg.get("role") == "assistant"), None)
++    assert final_assistant_message is not None, "No final assistant message found"
++    assert final_assistant_message.get("tool_calls") is None, "LLM made an unexpected tool call for retrieval"
++    assert final_assistant_message.get("content") is not None
+
     # Assertion 3: Check the final response content from the mock rule
+    # Use lower() for case-insensitive comparison # Marked line 244
     assert (
-        retrieve_response_content is not None
-    ), "Mock LLM response for retrieval was None."
+         TEST_NOTE_CONTENT.lower() in final_assistant_message["content"].lower()
+     ), f"Mock LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {final_assistant_message['content']}"
     # Use lower() for case-insensitive comparison
     assert (
-        TEST_NOTE_CONTENT.lower() in retrieve_response_content.lower()
-    ), f"Mock LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {retrieve_response_content}"
+         test_note_title.lower() in final_assistant_message["content"].lower()
+     ), f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {final_assistant_message['content']}"
     assert (
-        test_note_title.lower() in retrieve_response_content.lower()
-    ), f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {retrieve_response_content}"
-    assert (
-        "Rule-based mock says:" in retrieve_response_content
+         "Rule-based mock says:" in final_assistant_message["content"]
     )  # Check it used our specific response
-
-    # Assertion 4: Ensure no tool was called for retrieval
-    assert (
-        retrieve_tool_info is None
-    ), f"Expected no tool call for mock retrieval rule, but got: {retrieve_tool_info}"
 
     logger.info(
         "Verified rule-based mock response contains note content and no tool was called."
+
     )
     logger.info("--- Rule-Based Mock Test Passed ---")
