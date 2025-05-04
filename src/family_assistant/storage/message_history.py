@@ -6,7 +6,7 @@ import logging
 import random
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple # Added Tuple
 
 from sqlalchemy import (
     Table,
@@ -107,8 +107,6 @@ async def add_message_to_history(
         )
         # Use execute_with_retry as commit is handled by context manager
         await db_context.execute_with_retry(stmt)
-        logger.debug(f"Added message {message_id} from chat {chat_id} to history.")
-        # Use execute_with_retry as commit is handled by context manager
         await db_context.execute_with_retry(stmt)
         logger.debug(
             f"Added message (interface_id={interface_message_id}) for conversation "
@@ -227,12 +225,6 @@ async def get_recent_history(
         # for row in formatted_rows:
         #     row["tool_calls_info_raw"] = row.pop("tool_calls", None)
         return formatted_rows
-        # Use execute_with_retry as commit is handled by context manager
-        await db_context.execute_with_retry(stmt)
-        logger.debug(
-            f"Added message (interface_id={interface_message_id}) for conversation "
-            f"{interface_type}:{conversation_id} (turn={turn_id}, thread={thread_root_id}) to history."
-        )
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in get_recent_history({interface_type}, {conversation_id}): {e}",
@@ -313,8 +305,6 @@ async def get_message_by_interface_id(
     try:
         stmt = (
             select(message_history_table)  # Select all columns
-            .where(message_history_table.c.chat_id == chat_id)
-            .where(message_history_table.c.message_id == message_id)
             # Filter by new identifiers
             .where(message_history_table.c.interface_type == interface_type)
             .where(message_history_table.c.conversation_id == conversation_id)
@@ -322,12 +312,6 @@ async def get_message_by_interface_id(
         )
         row = await db_context.fetch_one(stmt)
         return dict(row) if row else None  # Return full row as dict
-        # Use execute_with_retry as commit is handled by context manager
-        await db_context.execute_with_retry(stmt)
-        logger.debug(
-            f"Added message (interface_id={interface_message_id}) for conversation "
-            f"{interface_type}:{conversation_id} (turn={turn_id}, thread={thread_root_id}) to history."
-        )
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in get_message_by_interface_id({interface_type}, {conversation_id}, {interface_message_id}): {e}",
@@ -403,27 +387,18 @@ async def get_grouped_message_history(
     """Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp."""
     try:
         stmt = select(message_history_table).order_by(  # Select all columns
-            # Order by new conversation identifiers and timestamp
             message_history_table.c.interface_type,
             message_history_table.c.conversation_id,
             message_history_table.c.timestamp.desc(),
         )
         rows = await db_context.fetch_all(stmt)
         grouped_history = {}
-        for row in rows:
-            # Group by tuple key
-            group_key = (row["interface_type"], row["conversation_id"])
-            if group_key not in grouped_history:
-                grouped_history[group_key] = []
-            # row is already a dict-like mapping from fetch_all
-            grouped_history[chat_id].append(row)
+        for row in rows: # Group by tuple key
+            group_key = (row["interface_type"], row["conversation_id"]) # row is already a dict-like mapping from fetch_all
+            if group_key not in grouped_history: # grouped_history[chat_id].append(row)
+                grouped_history[group_key] = [] #     grouped_history[chat_id].append(row)
+            grouped_history[group_key].append(row) # grouped_history[chat_id].append(row)
         return grouped_history
-        # Use execute_with_retry as commit is handled by context manager
-        await db_context.execute_with_retry(stmt)
-        logger.debug(
-            f"Added message (interface_id={interface_message_id}) for conversation "
-            f"{interface_type}:{conversation_id} (turn={turn_id}, thread={thread_root_id}) to history."
-        )
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in get_grouped_message_history: {e}",
