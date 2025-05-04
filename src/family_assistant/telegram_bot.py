@@ -370,11 +370,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         msg_dict["turn_id"] = turn_id_for_saving # Ensure turn_id is set
                         msg_dict["thread_root_id"] = thread_root_id_for_turn # Ensure thread_root is set
                         msg_dict["interface_type"] = interface_type # Add identifiers
+                        # Assuming add_message_to_history accepts the dict via ** and returns something usable
                         msg_dict["conversation_id"] = conversation_id # Add identifiers
                         saved_msg = await self.storage.add_message_to_history(
                             db_context=db_context,
                             **msg_dict # Pass the dict directly
                         )
+                        # Capture the internal ID if the role is assistant
                         if msg_dict.get("role") == "assistant":
                             last_assistant_internal_id = saved_msg.internal_id # Assuming add_message returns the object or ID
 
@@ -416,15 +418,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
                 # --- Update Interface ID for the Sent Message ---
                 # Ensure this runs only if the message was actually sent
-                if sent_assistant_message:
-                    if last_assistant_internal_id:
+                if sent_assistant_message and last_assistant_internal_id is not None:
+                    try: # Wrap DB update in try/except
                         await self.storage.update_message_interface_id(
                             db_context=db_context,
                             internal_id=last_assistant_internal_id,
                             interface_message_id=str(sent_assistant_message.message_id)
                         )
                         logger.info(f"Updated interface_message_id for internal_id {last_assistant_internal_id}")
-                    else:
+                    except Exception as update_err:
+                         logger.error(f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}", exc_info=True)
+                elif sent_assistant_message: # Only log warning if message was sent but ID wasn't tracked
                         logger.warning(f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id to update.")
             # If an error occurred during processing, check for traceback *before* handling empty response
             elif processing_error_traceback and reply_target_message_id:

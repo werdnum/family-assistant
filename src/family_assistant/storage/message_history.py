@@ -15,7 +15,7 @@ from sqlalchemy import (
     String,
     BigInteger,
     DateTime,
-    Text,
+    Text, Select, # Add Select
     update, # Add update import
     JSON,
     select,
@@ -23,6 +23,7 @@ from sqlalchemy import (
     desc,
 )
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.engine import Result # Import Result for type hint
 from sqlalchemy.dialects.postgresql import JSONB
 
 from family_assistant.storage.base import metadata
@@ -90,7 +91,7 @@ async def add_message_to_history(
     tool_call_id: Optional[
         str
     ] = None,  # Added: ID linking tool response to assistant request
-):
+) -> Optional[Dict[str, Any]]: # Changed to return Optional[Dict]
     """Adds a message to the history table, including optional tool call info, reasoning, error, and tool_call_id."""
     try:
         stmt = insert(message_history_table).values(
@@ -107,13 +108,17 @@ async def add_message_to_history(
             reasoning_info=reasoning_info,  # Added
             error_traceback=error_traceback,  # Added
             tool_call_id=tool_call_id,  # Added
-        )
+        ).returning(message_history_table.c.internal_id) # Return internal_id
         # Use execute_with_retry as commit is handled by context manager
-        await db_context.execute_with_retry(stmt)
+        result: Result = await db_context.execute_with_retry(stmt)
+        internal_id = result.scalar_one_or_none()
         logger.debug(
             f"Added message (interface_id={interface_message_id}) for conversation "
             f"{interface_type}:{conversation_id} (turn={turn_id}, thread={thread_root_id}) to history."
         )
+        # Return a dict containing the ID, or None
+        # Ideally return the full row, but returning just the ID for now
+        return {"internal_id": internal_id} if internal_id else None
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in add_message_to_history({interface_type}, {conversation_id}, {interface_message_id}): {e}",
@@ -132,7 +137,7 @@ async def update_message_interface_id(
             .where(message_history_table.c.internal_id == internal_id)
             .values(interface_message_id=interface_message_id)
         )
-        result = await db_context.execute_with_retry(stmt)
+        result: Result = await db_context.execute_with_retry(stmt)
         return result.rowcount > 0
     except SQLAlchemyError as e:
         logger.error(
@@ -178,7 +183,7 @@ async def get_recent_history(
             .order_by(message_history_table.c.timestamp.desc())
             .limit(limit)
         )
-        rows = await db_context.fetch_all(stmt)
+        rows = await db_context.fetch_all(cast(Select, stmt)) # Cast for type checker
         # Convert rows to dicts and reverse to get chronological order
         formatted_rows = [dict(row) for row in reversed(rows)]
         return formatted_rows
@@ -191,7 +196,6 @@ async def get_recent_history(
 
 
 # --- New Functions ---
-        raise
 
 async def get_message_by_interface_id(
     db_context: DatabaseContext,  # Added context
@@ -209,7 +213,7 @@ async def get_message_by_interface_id(
             .where(message_history_table.c.conversation_id == conversation_id)
             .where(message_history_table.c.interface_message_id == interface_message_id)
         )
-        row = await db_context.fetch_one(stmt)
+        row = await db_context.fetch_one(cast(Select, stmt)) # Cast for type checker
         return dict(row) if row else None  # Return full row as dict
     except SQLAlchemyError as e:
         logger.error(
@@ -230,7 +234,7 @@ async def get_messages_by_turn_id(
             .where(message_history_table.c.turn_id == turn_id)
             .order_by(message_history_table.c.internal_id)  # Order by insertion sequence
         )
-        rows = await db_context.fetch_all(stmt)
+        rows = await db_context.fetch_all(cast(Select, stmt)) # Cast for type checker
         return [dict(row) for row in rows]
     except SQLAlchemyError as e:
         logger.error(
@@ -250,7 +254,7 @@ async def get_messages_by_thread_id(
             .where(message_history_table.c.thread_root_id == thread_root_id)
             .order_by(message_history_table.c.internal_id)  # Order by insertion sequence
         )
-        rows = await db_context.fetch_all(stmt)
+        rows = await db_context.fetch_all(cast(Select, stmt)) # Cast for type checker
         return [dict(row) for row in rows]
     except SQLAlchemyError as e:
         logger.error(
@@ -270,7 +274,7 @@ async def get_grouped_message_history(
             message_history_table.c.conversation_id,
             message_history_table.c.timestamp, # Order chronologically within group
         )
-        rows = await db_context.fetch_all(stmt)
+        rows = await db_context.fetch_all(cast(Select, stmt)) # Cast for type checker
         # Convert RowMapping to dicts for easier handling
         dict_rows = [dict(row) for row in rows]
         grouped_history = {}
