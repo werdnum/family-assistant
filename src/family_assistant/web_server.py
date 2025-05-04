@@ -822,7 +822,11 @@ async def execute_tool_api(
 
     # --- Create Execution Context ---
     # We need some context, minimum placeholders for now
+    # Generate a unique ID for this specific API call context
+    # This isn't a persistent conversation like Telegram
     execution_context = ToolExecutionContext(
+        interface_type="api", # Identify interface
+        conversation_id=f"api_call_{uuid.uuid4()}",
         interface_type="api", # Identify interface
         # Generate a unique ID for this specific API call context
         # This isn't a persistent conversation like Telegram
@@ -830,8 +834,7 @@ async def execute_tool_api(
         db_context=db_context,
         calendar_config=calendar_config,  # Pass fetched calendar config
         timezone_str=timezone_str,  # Pass fetched timezone string
-        # application=None, # Pass if needed
-        chat_id=0,  # Placeholder chat_id
+        application=None, # No Telegram app here
         request_confirmation_callback=None,  # No confirmation from API for now
     )
 
