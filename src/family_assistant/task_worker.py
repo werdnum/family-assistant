@@ -175,11 +175,10 @@ async def handle_llm_callback(
 
         # Call the ProcessingService directly, using dependencies from context
         # Unpack all expected return values (content, tool_info, reasoning, error)
-        # TODO: Update call signature when ProcessingService is fully refactored
+        # process_message returns (final_content, final_tool_info)
         (
             llm_response_content,
             tool_call_info,
-            reasoning_info,
         ) = await processing_service.process_message(  # Assuming old return for now  # Use service from context
             db_context=db_context,
             messages=messages_for_llm,
@@ -241,7 +240,7 @@ async def handle_llm_callback(
                     role="assistant",
                     content=llm_response_content,
                     tool_calls=tool_call_info,  # Use correct key
-                    reasoning_info=reasoning_info,  # Store reasoning
+                    reasoning_info=None,  # process_message doesn't return reasoning_info
                 )
             except Exception as db_err:
                 logger.error(
