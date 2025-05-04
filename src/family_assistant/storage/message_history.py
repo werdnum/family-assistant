@@ -96,11 +96,12 @@ async def add_message_to_history(
     ] = None,  # Added: ID linking tool response to assistant request
 ) -> Optional[Dict[str, Any]]:  # Changed to return Optional[Dict]
     """Adds a message to the history table, including optional tool call info, reasoning, error, and tool_call_id."""
+    stmt = (
+        insert(message_history_table)
+        .values(
     try:
         stmt = (
             insert(message_history_table)
-            .values(
-                interface_type=interface_type,
                 conversation_id=conversation_id,
                 interface_message_id=interface_message_id,
                 turn_id=turn_id,
@@ -120,15 +121,13 @@ async def add_message_to_history(
         result: Result = await db_context.execute_with_retry(stmt)
         internal_id = result.scalar_one_or_none()
         logger.debug(
-            f"Added message (interface_id={interface_message_id}) for conversation "
-            f"{interface_type}:{conversation_id} (turn={turn_id}, thread={thread_root_id}) to history."
         )
         # Return a dict containing the ID, or None
         # Ideally return the full row, but returning just the ID for now
         return {"internal_id": internal_id} if internal_id else None
     except SQLAlchemyError as e:
         logger.error(
-            f"Database error in add_message_to_history({interface_type}, {conversation_id}, {interface_message_id}): {e}",
+            f"Database error in add_message_to_history for conv {interface_type}:{conversation_id}: {e}",
             exc_info=True,
         )
         raise
