@@ -429,18 +429,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     for msg in reversed(generated_turn_messages):
                         if msg.get("content") and msg.get("role") == "assistant":
                             final_llm_content_to_send = msg["content"]
-                            break
-                    # If no assistant content, take the last content regardless of role (e.g., tool error)
-                    if not final_llm_content_to_send and generated_turn_messages[-1].get(
-                        "content"
-                    ):
+                            break  # Exit the loop once found
+
+                    # If no assistant content was found after the loop,
+                    # take the content of the very last message in the turn, regardless of role.
+                    if not final_llm_content_to_send and generated_turn_messages[-1].get("content"):
                         final_llm_content_to_send = generated_turn_messages[-1]["content"]
-                        break
-                # If no assistant content, take the last content regardless of role (e.g., tool error)
-                if not final_llm_content_to_send and generated_turn_messages[-1].get(
-                    "content"
-                ):
-                    final_llm_content_to_send = generated_turn_messages[-1]["content"]
 
             if final_llm_content_to_send:  # Check if there's content to send
                 try:

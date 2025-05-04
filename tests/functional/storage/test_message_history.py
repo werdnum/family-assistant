@@ -322,6 +322,7 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(db_context: 
     # Act
     thread_1_messages = await get_messages_by_thread_id(db_context, thread_1_root)
 
+
     # Assert
     assert len(thread_1_messages) == 3
     assert [m["internal_id"] for m in thread_1_messages] == [msg1_id, msg2_id, msg3_id] # Check order
