@@ -166,8 +166,8 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     # Note: test_db_engine fixture comes from the root conftest.py
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance
-        # Unpack all 4 return values, assign unused ones to _
-        add_response_content, add_tool_info, _, _ = (
+        # Unpack the 3 return values correctly
+        add_turn_messages, add_reasoning_info, add_error = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,  # Pass the context
                 application=mock_application,
@@ -178,18 +178,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 # model_name argument removed
             )
         )
-    # Unpack correctly, using the correct variable names from ProcessingService return
-    add_turn_messages, add_reasoning_info, add_error = (  # Unpack correctly
-        await processing_service.generate_llm_response_for_chat(
-            db_context=db_context,  # Pass the context
-            application=mock_application,
-            interface_type="test",  # Added interface type
-            conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
-            trigger_content_parts=add_note_trigger,
-            user_name=TEST_USER_NAME,
-            # model_name argument removed
-        )
-    )  # Add missing closing parenthesis for the tuple assignment
+    # Assertions remain outside the context manager
     assert (
         add_error is None
     ), f"Error during add note: {add_error}"  # Use correct error variable
