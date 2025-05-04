@@ -201,7 +201,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
 
      # Assertion 1: Check the database directly to confirm the note was added
      # Use the test_db_engine yielded by the fixture
-     note_in_db = None
+    note_in_db = None
     # Find the assistant message requesting the tool call
     assistant_add_request = next((msg for msg in add_turn_messages if msg.get("role") == "assistant" and msg.get("tool_calls")), None)
     assert assistant_add_request is not None, "Assistant did not request tool call"
