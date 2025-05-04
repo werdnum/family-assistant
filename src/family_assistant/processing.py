@@ -2,6 +2,7 @@ import logging
 import json
 import asyncio
 import uuid  # Added for unique task IDs
+import traceback # Added for error traceback
 from datetime import datetime, timezone  # Added timezone
 from typing import (
     List,
@@ -114,7 +115,6 @@ class ProcessingService:
         request_confirmation_callback: Optional[
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
         ] = None, # Removed comma
-    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
     ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """
         Sends the conversation history to the LLM via the injected client,
@@ -236,7 +236,6 @@ class ProcessingService:
                     if not call_id or not function_name:
                         logger.error(
                             f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}"
-                        )
                         )
                         # Also add to context for next LLM call
                         turn_messages.append(tool_response_message_for_turn)
@@ -618,22 +617,18 @@ class ProcessingService:
 
         # --- Call Processing Logic ---
         # Tool definitions are now fetched inside process_message
-        try: # Added try block around process_message call # Marked line 625
-            # Prepare a list to store all messages generated in this turn
-
-            # Add the turn_id, interface_type, conversation_id here
-            # Modify process_message to return the list of turn messages and reasoning info
-            # TODO: Adjust the call signature and return value handling based on the final signature of process_message
-                await self.process_message( # Call the other method in this class
-                    db_context=db_context,  # Pass context
-                    messages=messages,
-                    # Removed chat_id, added interface_type/conversation_id
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,  # Pass conversation_id
-                    application=application,
-                    request_confirmation_callback=request_confirmation_callback,
-                )
-            # Add context info (turn_id, etc.) to each generated message *before* returning
+        try: # Marked line 625
+            generated_turn_messages: List[Dict[str, Any]] = []
+            final_reasoning_info: Optional[Dict[str, Any]] = None
+            generated_turn_messages, final_reasoning_info = await self.process_message( # Call the other method in this class
+                db_context=db_context,  # Pass context
+                messages=messages,
+                interface_type=interface_type,
+                conversation_id=conversation_id,  # Pass conversation_id
+                application=application,
+                request_confirmation_callback=request_confirmation_callback,
+            )
+            # Add context info (turn_id, etc.) to each generated message *before* returning # Marked line 641
             timestamp_now = datetime.now(timezone.utc) # Marked line 642
             for msg_dict in generated_turn_messages:
                 msg_dict["turn_id"] = turn_id
@@ -647,6 +642,7 @@ class ProcessingService:
             # Return the list of fully populated turn messages, reasoning info, and None for error
             return generated_turn_messages, final_reasoning_info, None
         # Moved exception handling outside the process_message call
-        except Exception as e:
+        except Exception as e: # Marked line 650
             # Return None for content/tools/reasoning, but include the traceback
+            error_traceback = traceback.format_exc()
             return [], None, error_traceback  # Return empty list, None reasoning, traceback
