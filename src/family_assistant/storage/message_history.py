@@ -98,23 +98,25 @@ async def add_message_to_history(
     """Adds a message to the history table, including optional fields."""
     # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
     try:
-        stmt = (
-            insert(message_history_table)
+        stmt = ( # Start statement assignment
+            insert(message_history_table) # Call insert
+            .values( # Specify values to insert
+                interface_type=interface_type, # Added missing interface_type
                 conversation_id=conversation_id,
                 interface_message_id=interface_message_id,
                 turn_id=turn_id,
-                thread_root_id=thread_root_id,  # Added
+                thread_root_id=thread_root_id,
                 timestamp=timestamp,
                 role=role,
                 content=content,
                 # Renamed tool_calls_info to tool_calls
-                tool_calls=tool_calls,  # Renamed
-                reasoning_info=reasoning_info,  # Added
-                error_traceback=error_traceback,  # Added
-                tool_call_id=tool_call_id,  # Added
-            )
-            .returning(message_history_table.c.internal_id)
-        )  # Return internal_id
+                tool_calls=tool_calls,
+                reasoning_info=reasoning_info,
+                error_traceback=error_traceback,
+                tool_call_id=tool_call_id,
+            ) # Close .values()
+            .returning(message_history_table.c.internal_id) # Specify returning clause
+        ) # Close statement assignment parenthesis
         # Use execute_with_retry as commit is handled by context manager
         result: Result = await db_context.execute_with_retry(stmt)
         internal_id = result.scalar_one_or_none()
@@ -262,6 +264,7 @@ async def get_messages_by_thread_id(
     # A thread is defined by the `internal_id` of its first message.
     # Messages in the thread either have `thread_root_id` pointing to that first message,
     # or *are* the first message (where `internal_id == thread_root_id` would be true,
+    try:
     # although the first message itself has `thread_root_id` as NULL).
         stmt = (
             select(message_history_table)
