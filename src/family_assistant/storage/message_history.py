@@ -243,7 +243,6 @@ async def get_messages_by_turn_id(
             .where(message_history_table.c.turn_id == turn_id)
             .order_by(
                 message_history_table.c.internal_id
-                message_history_table.c.internal_id
             )  # Order by insertion sequence first
             .where(
                 (message_history_table.c.thread_root_id == thread_root_id) |
@@ -276,7 +275,6 @@ async def get_messages_by_thread_id(
         stmt = (
             select(message_history_table)
             .order_by(
-                message_history_table.c.internal_id
                 message_history_table.c.internal_id
             )  # Order by insertion sequence first
             .where(
