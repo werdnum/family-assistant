@@ -238,7 +238,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         # Call generate_llm_response_for_chat directly
         # Unpack the correct return values: generated_turn_messages, final_reasoning_info, processing_error_traceback
         generated_turn_messages, final_reasoning_info, processing_error_traceback = (
-            await processing_service.generate_llm_response_for_chat( # Call updated method
+            await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,
                 application=MagicMock(),
                 interface_type="test", # Added interface type
