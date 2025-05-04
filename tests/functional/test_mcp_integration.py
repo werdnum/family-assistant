@@ -310,7 +310,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
             and any(
                 tool.get("function", {}).get("name") == MCP_TIME_TOOL_NAME
                 for tool in tools
-            )
+            ) # Add missing closing parenthesis for the return statement
 
     # --- Verification (Assert on final response content) --- # Renamed variable
     logger.info("--- Verifying final response content (SSE) ---") # Log message adjustment
