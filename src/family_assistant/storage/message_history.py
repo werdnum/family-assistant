@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional, Tuple # Added Tuple
 from sqlalchemy import (
     Table,
     Column,
+    Integer, # Import Integer
     String,
     BigInteger,
     DateTime,
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 message_history_table = Table(
     "message_history",
     metadata,
-    Column("internal_id", BigInteger, primary_key=True, autoincrement=True),
+    Column("internal_id", Integer, primary_key=True, autoincrement=True), # Changed to Integer for SQLite compatibility
     Column(
         "interface_type", String(50), nullable=False, index=True
     ),  # e.g., 'telegram', 'web', 'email'
