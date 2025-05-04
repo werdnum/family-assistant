@@ -237,10 +237,17 @@ class ProcessingService:
                         logger.error(
                             f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}"
                         )
-                        # Also add to context for next LLM call
+                        # Create the error message for the turn history
+                        tool_response_message_for_turn = {
+                            "role": "tool",
+                            "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                            "content": "Error: Invalid tool call structure.",
+                            "error_traceback": "Invalid tool call structure received from LLM.",
+                            # Other fields like timestamp, etc., added by caller
+                        }
                         turn_messages.append(tool_response_message_for_turn)
-                        # Also add to context for next LLM call
-                        tool_response_messages_for_llm.append({
+                        # Create the error message for the *next* LLM call context
+                        llm_context_error_message = {
                              "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
                              "role": "tool",
                              "name": function_name or "unknown_function", # name not strictly needed here
