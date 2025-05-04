@@ -243,9 +243,15 @@ async def get_messages_by_turn_id(
             .where(message_history_table.c.turn_id == turn_id)
             .order_by(
                 message_history_table.c.internal_id
+                message_history_table.c.internal_id
+            )  # Order by insertion sequence first
+            .where(
+                (message_history_table.c.thread_root_id == thread_root_id) |
+                (message_history_table.c.internal_id == thread_root_id)
             )  # Order by insertion sequence
         )
         rows = await db_context.fetch_all(
+
             cast(Select[Any], stmt)
         )  # Cast for type checker
         return [dict(row) for row in rows]
@@ -266,14 +272,20 @@ async def get_messages_by_thread_id(
     # or *are* the first message (where `internal_id == thread_root_id` would be true,
     try:
     # although the first message itself has `thread_root_id` as NULL).
+        # Corrected query to include the root message itself
         stmt = (
             select(message_history_table)
-            .where(message_history_table.c.thread_root_id == thread_root_id)
             .order_by(
                 message_history_table.c.internal_id
+                message_history_table.c.internal_id
+            )  # Order by insertion sequence first
+            .where(
+                (message_history_table.c.thread_root_id == thread_root_id) |
+                (message_history_table.c.internal_id == thread_root_id)
             )  # Order by insertion sequence
         )
         rows = await db_context.fetch_all(
+
             cast(Select[Any], stmt)
         )  # Cast for type checker
         return [dict(row) for row in rows]
