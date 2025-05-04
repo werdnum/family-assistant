@@ -201,6 +201,38 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext):
 
 
 @pytest.mark.asyncio
+async def test_get_messages_by_thread_id_retrieves_correct_sequence(db_context: DatabaseContext):
+    """Verify retrieving all messages for a specific thread_root_id in order."""
+    # Arrange
+    interface = "thread_test"
+    conv_id_1 = str(uuid.uuid4())
+    conv_id_2 = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+
+    # Thread 1 messages (Assume thread_root_id = 1 starts here)
+    msg1_id = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id="msg1", turn_id=None, thread_root_id=None, timestamp=now, role="user", content="Thread 1 Start")
+    thread_1_root = msg1_id # Use the internal_id of the first message as the root
+    msg2_id = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id=None, turn_id="t1", thread_root_id=thread_1_root, timestamp=now + timedelta(seconds=1), role="assistant", content="Thread 1 Reply 1")
+    msg3_id = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id="msg3", turn_id=None, thread_root_id=thread_1_root, timestamp=now + timedelta(seconds=2), role="user", content="Thread 1 Reply 2")
+
+    # Thread 2 message (Different conversation, different thread)
+    msg4_id = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_2, interface_message_id="msg4", turn_id=None, thread_root_id=None, timestamp=now + timedelta(seconds=3), role="user", content="Thread 2 Start")
+
+    # Act
+    thread_1_messages = await get_messages_by_thread_id(db_context, thread_1_root)
+
+    # Assert
+    assert len(thread_1_messages) == 3
+    assert [m["internal_id"] for m in thread_1_messages] == [msg1_id, msg2_id, msg3_id] # Check order
+    assert all(m["thread_root_id"] == thread_1_root or m["internal_id"] == thread_1_root for m in thread_1_messages) # Root msg has NULL thread_root_id
+
+    # Act: Get messages for a thread_root_id that doesn't exist (use msg4_id which isn't a root)
+    empty_thread_messages = await get_messages_by_thread_id(db_context, msg4_id)
+    # Assert
+    assert len(empty_thread_messages) == 0
+
+
+@pytest.mark.asyncio
 async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     """Verify storing messages with optional fields populated."""
     # Arrange
