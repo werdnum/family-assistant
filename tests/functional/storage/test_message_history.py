@@ -92,10 +92,10 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
         error_traceback=error_trace, # Can store traceback even for non-error roles if needed
     )
 
-        assert assistant_msg_result is not None and assistant_msg_result.get("internal_id") is not None
-        assistant_msg_internal_id = assistant_msg_result["internal_id"]
-        assert tool_msg_id is not None and tool_msg_id.get("internal_id") is not None
-        tool_msg_internal_id = tool_msg_id["internal_id"]
+    assert assistant_msg_result is not None and assistant_msg_result.get("internal_id") is not None
+    assistant_msg_internal_id = assistant_msg_result["internal_id"]
+    assert tool_msg_id is not None and tool_msg_id.get("internal_id") is not None
+    tool_msg_internal_id = tool_msg_id["internal_id"]
 
     # Assert Assistant Message
     async with db_context as ctx: # Use the fixture
