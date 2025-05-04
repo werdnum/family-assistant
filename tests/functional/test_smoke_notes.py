@@ -189,7 +189,6 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
             user_name=TEST_USER_NAME,
             # model_name argument removed
         )
-    )
     assert add_error is None, f"Error during add note: {add_error}" # Use correct error variable
     assert add_turn_messages, "No messages generated during add note turn"
 +    # Find the assistant message requesting the tool call

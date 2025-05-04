@@ -237,8 +237,8 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call generate_llm_response_for_chat directly
         # Unpack the correct return values: generated_turn_messages, final_reasoning_info, processing_error_traceback
-        generated_turn_messages, final_reasoning_info, processing_error_traceback = (
-            await processing_service.generate_llm_response_for_chat(
+        generated_turn_messages, final_reasoning_info, processing_error_traceback = await processing_service.generate_llm_response_for_chat(
+
                 db_context=db_context,
                 application=MagicMock(),
                 interface_type="test", # Added interface type
@@ -249,6 +249,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
 
     # --- Verification (Assert on final response content) --- # Corrected variable name
     logger.info("--- Verifying final response content (stdio) ---")
+
     logger.info(f"Final response content received (stdio): {generated_turn_messages}") # Log the structure
 +    # Verify success and extract final message content
 +    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
@@ -438,8 +439,8 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Correct unpacking based on function signature
-        generated_turn_messages, final_reasoning_info, processing_error_traceback = ( # Correct unpacking
-            await processing_service.generate_llm_response_for_chat( # Call updated method
+        generated_turn_messages, final_reasoning_info, processing_error_traceback = await processing_service.generate_llm_response_for_chat(
+
                 db_context=db_context,
                 application=MagicMock(),
                 interface_type="test", # Added interface type
@@ -450,6 +451,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     # --- Verification (Assert on final response content) --- # Corrected variable name
     logger.info("--- Verifying final response content (stdio) ---")
+
     logger.info(f"Final response content received (stdio): {generated_turn_messages}") # Log the structure
 +    # Verify success and extract final message content
 +    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
