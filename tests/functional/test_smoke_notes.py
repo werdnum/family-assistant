@@ -211,8 +211,8 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
 
     note_in_db = None # Correct indentation
 
-     logger.info("Checking database for the new note...")
-     async with test_db_engine.connect() as connection:
+    logger.info("Checking database for the new note...") # Correct indentation
+    async with test_db_engine.connect() as connection: # Correct indentation
         result = await connection.execute(
             text("SELECT title, content FROM notes WHERE title = :title"),
             {"title": test_note_title},
