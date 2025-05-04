@@ -157,5 +157,5 @@ def test_format_history_handles_empty_tool_calls(processing_service: ProcessingS
             "content": "Assistant message",
         },  # Should be treated as simple message
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = processing_service._format_history_for_llm(history_messages) # Marked line 120
     assert actual_output == expected_output
