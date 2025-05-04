@@ -116,9 +116,12 @@ class ProcessingService:
         ] = None, # Removed comma
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
     ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """
         Sends the conversation history to the LLM via the injected client,
         handles potential tool calls using the injected tools provider,
+        and returns the list of all messages generated during the turn,
+        along with the reasoning info from the final LLM call.
         and returns the list of all messages generated during the turn,
         along with the reasoning info from the final LLM call.
 
@@ -135,6 +138,8 @@ class ProcessingService:
             A tuple containing:
             - A list of all message dictionaries generated during this turn
               (assistant requests, tool responses, final answer).
+            - A list of all message dictionaries generated during this turn
+              (assistant requests, tool responses, final answer).
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
         """
         final_reasoning_info: Optional[Dict[str, Any]] = None
@@ -144,6 +149,8 @@ class ProcessingService:
 
         try:
             # --- Get Tool Definitions ---
+            # List to store all messages generated *within this turn*
+            turn_messages: List[Dict[str, Any]] = []
             # List to store all messages generated *within this turn*
             turn_messages: List[Dict[str, Any]] = []
             all_tools = await self.tools_provider.get_tool_definitions()
@@ -188,6 +195,7 @@ class ProcessingService:
                 final_content = (
                     llm_output.content.strip() if llm_output.content else None
                 )
+                final_reasoning_info = llm_output.reasoning_info # This will hold the reasoning of the *last* LLM call
                 final_reasoning_info = llm_output.reasoning_info # This will hold the reasoning of the *last* LLM call
                 if final_content:
                     logger.debug(
@@ -244,6 +252,8 @@ class ProcessingService:
 
                 # --- Execute Tool Calls and Prepare Responses ---
                 tool_response_messages_for_llm = [] # For next LLM call context
+                # --- Execute Tool Calls and Prepare Responses ---
+                tool_response_messages_for_llm = [] # For next LLM call context
                 for tool_call_dict in tool_calls:
                     call_id = tool_call_dict.get("id")
                     function_info = tool_call_dict.get("function", {})
@@ -255,6 +265,7 @@ class ProcessingService:
                             f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}"
                         )
                         tool_response_message_for_turn = {
+                        tool_response_message_for_turn = {
                             {
                                 "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
                                 "role": "tool",
@@ -262,6 +273,15 @@ class ProcessingService:
                                 "content": "Error: Invalid tool call structure.",
                             }
                         )
+                        # Also add to context for next LLM call
+                        tool_response_messages_for_llm.append({
+                             "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                             "role": "tool",
+                             "name": function_name or "unknown_function", # name not strictly needed here
+                             "content": "Error: Invalid tool call structure."
+                        })
+                        # Add error message to turn history
+                        turn_messages.append(tool_response_message_for_turn)
                         # Also add to context for next LLM call
                         tool_response_messages_for_llm.append({
                              "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
@@ -363,6 +383,7 @@ class ProcessingService:
             )
             # Ensure tuple is returned even on error
             return [], None # Return empty list, no reasoning info
+            return [], None # Return empty list, no reasoning info
 
     def _format_history_for_llm(
         self, history_messages: List[Dict[str, Any]]
@@ -454,6 +475,7 @@ class ProcessingService:
                     messages.append(
                         {
                             "role": "tool",
+                            "tool_call_id": tool_call_id, # The ID linking to the assistant request
                             "tool_call_id": tool_call_id, # The ID linking to the assistant request
                             "content": content,  # Content is the tool's response string
                         }
@@ -703,6 +725,7 @@ class ProcessingService:
         }
         messages.append(trigger_message)
         # logger.debug(f"Appended trigger message to LLM history: {trigger_message}") # Removed to avoid logging potentially large content
+        # logger.debug(f"Appended trigger message to LLM history: {trigger_message}") # Removed to avoid logging potentially large content
         turn_id = str(uuid.uuid4()) # Generate turn ID here
 
         # --- Call Processing Logic ---
@@ -715,6 +738,7 @@ class ProcessingService:
             # Add the turn_id, interface_type, conversation_id here
             # Modify process_message to return the list of turn messages and reasoning info
             # TODO: Adjust the call signature and return value handling based on the final signature of process_message
+            generated_turn_messages, final_reasoning_info = ( # Use updated return signature
             generated_turn_messages, final_reasoning_info = ( # Use updated return signature
                 await self.process_message( # Call the other method in this class
                     db_context=db_context,  # Pass context
