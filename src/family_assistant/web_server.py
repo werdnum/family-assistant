@@ -822,12 +822,12 @@ async def execute_tool_api(
 
     # --- Create Execution Context ---
     # We need some context, minimum placeholders for now
-    # Ideally, we'd get relevant chat_id/user_id if needed by the tool,
-    # but that's complex for a simple test UI.
     execution_context = ToolExecutionContext(
+        interface_type="api", # Identify interface
+        # Generate a unique ID for this specific API call context
+        # This isn't a persistent conversation like Telegram
+        conversation_id=f"api_call_{uuid.uuid4()}",
         db_context=db_context,
-        # embedding_generator=embedding_generator,
-        # llm_client=None, # Pass if needed
         calendar_config=calendar_config,  # Pass fetched calendar config
         timezone_str=timezone_str,  # Pass fetched timezone string
         # application=None, # Pass if needed

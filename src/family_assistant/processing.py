@@ -219,7 +219,8 @@ class ProcessingService:
                 # Create execution context with updated parameters
                 tool_execution_context = ToolExecutionContext( # Updated context
                 tool_execution_context = ToolExecutionContext(
-                    chat_id=chat_id,
+                    interface_type=interface_type,      # Pass interface_type
+                    conversation_id=conversation_id,  # Pass conversation_id
                     db_context=db_context,
                     calendar_config=self.calendar_config,
                     application=application,
@@ -642,7 +643,8 @@ class ProcessingService:
                 await self.process_message(
                     db_context=db_context,  # Pass context
                     messages=messages,
-                    chat_id=chat_id,
+                    interface_type=interface_type,      # Pass interface_type
+                    conversation_id=conversation_id,  # Pass conversation_id
                     application=application,
                     # Pass the confirmation callback down
                     request_confirmation_callback=request_confirmation_callback,
