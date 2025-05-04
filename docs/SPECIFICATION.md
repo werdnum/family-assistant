@@ -195,7 +195,7 @@ graph TD
 *   Implemented Tables:
     *   `notes`: Stores user-created notes (id, title, content, created\_at, updated\_at). Title is unique.
     *   `message_history`: Logs user and assistant messages per chat (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info).
-*   **Proposed `message_history` Schema:**
+*   **Current `message_history` Schema (Post-Refactoring):**
     *   `internal_id`: BigInteger, primary key, auto-incrementing. A unique internal ID for every recorded message fragment.
     *   `interface_type`: String(50), non-nullable, indexed. Identifies the source interface (e.g., 'telegram', 'web', 'email').
     *   `conversation_id`: String(255), non-nullable, indexed. A generic identifier for the chat session (e.g., Telegram chat ID as string, web session UUID).
@@ -208,8 +208,8 @@ graph TD
     *   `tool_call_id`: String(255), nullable, indexed. For 'tool' role messages, linking the response back to the specific `tool_calls` entry ID requested by the assistant.
     *   `reasoning_info`: JSONB, nullable. For 'assistant' role messages, storing LLM reasoning/usage data.
     *   `error_traceback`: Text, nullable. Stores error details if processing this message caused an error, or if this message represents an error itself.
-*   **Current Implementation:**
-    *   `received_emails`: Stores details of emails received via webhook. Columns include:
+*   **Other Implemented Tables:**
+    *   `received_emails`: Stores details of emails received via webhook. Columns include (unchanged by history refactoring):
         *   `id`: Internal auto-incrementing ID.
         *   `message_id_header`: Unique identifier from the email's `Message-ID` header (indexed).
         *   `sender_address`: Envelope sender address (e.g., from Mailgun's `sender` field, indexed).
@@ -223,8 +223,7 @@ graph TD
         *   `email_date`: Timestamp from the email's `Date` header (parsed, timezone-aware, nullable, indexed).
         *   `headers_json`: Raw headers stored as JSONB (nullable).
         *   `attachment_info`: Placeholder for JSONB array containing metadata about attachments (filename, content_type, size, storage_path) (nullable).
-    *   Calendar events are fetched live via CalDAV/iCal and are *not* stored in the local database.
-*   (Future) Potential Tables:
+*   **(Future) Potential Tables:**
     *   `events`: Could potentially cache calendar items or store locally managed events/deadlines.
     *   `users`: Family member details, preferences.
     *   `tasks`: Status of scheduled/background tasks.

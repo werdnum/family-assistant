@@ -33,8 +33,19 @@ logger = logging.getLogger(__name__)
 message_history_table = Table(
     "message_history",
     metadata,
-    Column("chat_id", BigInteger, primary_key=True),
-    Column("message_id", BigInteger, primary_key=True),
+    Column("internal_id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "interface_type", String(50), nullable=False, index=True
+    ),  # e.g., 'telegram', 'web', 'email'
+    Column(
+        "conversation_id", String(255), nullable=False, index=True
+    ),  # e.g., Telegram chat ID string, web session UUID
+    Column(
+        "interface_message_id", String(255), nullable=True, index=True
+    ),  # e.g., Telegram message ID string
+    Column(
+        "turn_id", String(36), nullable=True, index=True
+    ),  # UUID linking messages within a turn
     Column("timestamp", DateTime(timezone=True), nullable=False, index=True),
     Column(
         "role", String, nullable=False
@@ -42,9 +53,7 @@ message_history_table = Table(
     Column(
         "content", Text, nullable=True
     ),  # Allow null content for tool/error messages potentially
-    Column(
-        "tool_calls_info", JSON().with_variant(JSONB, "postgresql"), nullable=True
-    ),  # For assistant messages requesting calls
+    Column("tool_calls", JSON().with_variant(JSONB, "postgresql"), nullable=True),
     Column(
         "reasoning_info", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),  # For assistant messages, LLM reasoning/usage
