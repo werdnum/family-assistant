@@ -115,10 +115,12 @@ class ProcessingService:
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
         ] = None, # Removed comma
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """
         Sends the conversation history to the LLM via the injected client,
         handles potential tool calls using the injected tools provider,
-        and returns the final response content along with details of any tool calls made.
+        and returns the list of all messages generated during the turn,
+        along with the reasoning info from the final LLM call.
 
         Args:
             db_context: The database context.
@@ -131,11 +133,10 @@ class ProcessingService:
 
         Returns:
             A tuple containing:
-            - The final response content string from the LLM (or None).
-            - A list of dictionaries detailing executed tool calls (or None).
+            - A list of all message dictionaries generated during this turn
+              (assistant requests, tool responses, final answer).
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
         """
-        executed_tool_info: List[Dict[str, Any]] = []
         final_reasoning_info: Optional[Dict[str, Any]] = None
         final_content: Optional[str] = None  # Store final text response from LLM
         max_iterations = 5  # Safety limit for tool call loops
@@ -143,6 +144,8 @@ class ProcessingService:
 
         try:
             # --- Get Tool Definitions ---
+            # List to store all messages generated *within this turn*
+            turn_messages: List[Dict[str, Any]] = []
             all_tools = await self.tools_provider.get_tool_definitions()
             if all_tools:
                 logger.info(f"Providing {len(all_tools)} tools to LLM.")
@@ -185,7 +188,7 @@ class ProcessingService:
                 final_content = (
                     llm_output.content.strip() if llm_output.content else None
                 )
-                final_reasoning_info = llm_output.reasoning_info
+                final_reasoning_info = llm_output.reasoning_info # This will hold the reasoning of the *last* LLM call
                 if final_content:
                     logger.debug(
                         f"LLM provided text content in iteration {current_iteration}: {final_content[:100]}..."
@@ -195,29 +198,37 @@ class ProcessingService:
                         f"LLM provided no text content in iteration {current_iteration}."
                     )
 
+                # --- Add Assistant Message to Turn History ---
+                # This includes the LLM's text response AND any tool calls it requested
+                # This message will be saved to the DB by the caller.
                 tool_calls = llm_output.tool_calls
+                assistant_message_for_turn = {
+                    # Note: turn_id, interface_type, conversation_id, timestamp, thread_root_id added by caller
+                    "role": "assistant",
+                    "content": final_content, # May be None if only tool calls
+                    "tool_calls": tool_calls, # LLM's requested calls (OpenAI format)
+                    "reasoning_info": final_reasoning_info, # Include reasoning for this step
+                    "tool_call_id": None, # Not applicable for assistant role
+                    "error_traceback": None, # Not applicable for assistant role
+                }
+                turn_messages.append(assistant_message_for_turn)
+
+                # --- Add Assistant Message to Context for *Next* LLM Call ---
+                # Format for the LLM API (content + tool_calls list)
+                llm_context_assistant_message = {"role": "assistant", "content": final_content, "tool_calls": tool_calls}
+                # If content is None, OpenAI API might ignore it or require empty string depending on version/model.
+                # LiteLLM generally handles None content correctly for tool_calls messages.
+                messages.append(llm_context_assistant_message)
 
                 # --- Loop Condition: Break if no tool calls requested ---
                 if not tool_calls:
                     logger.info("LLM response received with no further tool calls.")
-                    # Final content is built after the loop
                     break  # Exit the loop
 
                 # --- Handle Tool Calls ---
                 logger.info(
                     f"LLM requested {len(tool_calls)} tool call(s) in iteration {current_iteration}."
                 )
-
-                # Append the assistant's response message (containing the tool calls)
-                assistant_message_with_calls = {
-                    "role": "assistant",
-                    "content": llm_output.content,  # Include any text content LLM provided along with calls
-                    "tool_calls": tool_calls,
-                }
-                messages.append(assistant_message_with_calls)
-
-                # --- Execute Tool Calls using ToolsProvider ---
-                tool_response_messages = []
                 # Create execution context with updated parameters
                 tool_execution_context = ToolExecutionContext(
                     # Note: Use interface_type and conversation_id passed into _process_turn
@@ -231,6 +242,8 @@ class ProcessingService:
                     processing_service=self, # Pass self
                 )
 
+                # --- Execute Tool Calls and Prepare Responses ---
+                tool_response_messages_for_llm = [] # For next LLM call context
                 for tool_call_dict in tool_calls:
                     call_id = tool_call_dict.get("id")
                     function_info = tool_call_dict.get("function", {})
@@ -241,7 +254,7 @@ class ProcessingService:
                         logger.error(
                             f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}"
                         )
-                        tool_response_messages.append(
+                        tool_response_message_for_turn = {
                             {
                                 "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
                                 "role": "tool",
@@ -249,6 +262,15 @@ class ProcessingService:
                                 "content": "Error: Invalid tool call structure.",
                             }
                         )
+                        # Also add to context for next LLM call
+                        tool_response_messages_for_llm.append({
+                             "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                             "role": "tool",
+                             "name": function_name or "unknown_function", # name not strictly needed here
+                             "content": "Error: Invalid tool call structure."
+                        })
+                        # Add error message to turn history
+                        turn_messages.append(tool_response_message_for_turn)
                         continue
 
                     try:
@@ -315,25 +337,24 @@ class ProcessingService:
                 logger.warning(
                     f"Reached maximum tool call iterations ({max_iterations}). Returning current state."
                 )
-                # If we hit the limit, the last LLM call was forced with tool_choice='none',
-                # so final_content should hold its response. We might add a note.
-                if final_content:
-                    final_content += "\n\n(Note: Reached maximum processing depth.)"
-                else:
-                    final_content = "(Note: Reached maximum processing depth.)"
+                # The last message in turn_messages should be the final assistant response
+                # (which was forced with tool_choice='none'). We can optionally add a note to its content.
+                if turn_messages and turn_messages[-1]["role"] == "assistant":
+                    note = "\n\n(Note: Reached maximum processing depth.)"
+                    if turn_messages[-1]["content"]:
+                         turn_messages[-1]["content"] += note
+                    else:
+                         turn_messages[-1]["content"] = note.strip()
 
-            # final_content now holds the content from the *last* LLM call
-            if not final_content:
+            # Check if the *last* message generated was an assistant message with no content
+            # (This might happen if the final LLM call produced nothing, e.g., after tool errors)
+            if turn_messages and turn_messages[-1]["role"] == "assistant" and not turn_messages[-1].get("content"):
                 logger.warning("Final LLM response content was empty.")
                 # Optionally set a fallback message, or leave as None
-                # final_content = "Processing complete."
+                # turn_messages[-1]["content"] = "Processing complete."
 
-            # Return the final content, accumulated tool info, and reasoning from the last LLM call
-            return (
-                final_content,
-                executed_tool_info if executed_tool_info else None,
-                final_reasoning_info,
-            )
+            # Return the complete list of messages generated in this turn, and the reasoning from the final LLM call
+            return turn_messages, final_reasoning_info
 
         except Exception as e:
             logger.error(
@@ -341,7 +362,7 @@ class ProcessingService:
                 exc_info=True,
             )
             # Ensure tuple is returned even on error
-            return None, None, None
+            return [], None # Return empty list, no reasoning info
 
     def _format_history_for_llm(
         self, history_messages: List[Dict[str, Any]]
@@ -363,10 +384,11 @@ class ProcessingService:
             role = msg.get("role")
             content = (
                 msg.get("content") or ""
-            )  # Content can be None for assistant messages with tool calls
-            tool_calls_info = msg.get(
-                "tool_calls_info_raw"
-            )  # Raw tool calls from LLM output (list of dicts)
+            )
+            # Read the 'tool_calls' field which stores the LLM request structure
+            tool_calls_data = msg.get(
+                "tool_calls"
+            )  # Should be List[Dict] from OpenAI/LiteLLM format or None
             tool_call_id = msg.get(
                 "tool_call_id"
             )  # tool_call_id for role 'tool' messages
@@ -432,7 +454,7 @@ class ProcessingService:
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_call_id,
+                            "tool_call_id": tool_call_id, # The ID linking to the assistant request
                             "content": content,  # Content is the tool's response string
                         }
                     )
@@ -468,12 +490,8 @@ class ProcessingService:
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
         ] = None,
     # --- Refactored Return Type ---
-    ) -> Tuple[
-        Optional[str],
-        Optional[List[Dict[str, Any]]],
-        Optional[Dict[str, Any]],
-        Optional[str],
-    ]:
+    # Returns: List of turn messages, Final reasoning info, Error traceback
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
         """
         Prepares context, message history, calls the LLM processing logic,
         and returns the response, tool info, reasoning info, and any processing error traceback.
@@ -490,7 +508,7 @@ class ProcessingService:
 
         Returns:
             A tuple: (List of generated turn messages, Final reasoning info dict or None, Error traceback string or None).
-        """
+       """
         error_traceback: Optional[str] = None  # Initialize traceback
         logger.info( # Changed to info for better visibility
             f"Generating LLM response for {interface_type}:{conversation_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
@@ -684,7 +702,7 @@ class ProcessingService:
             "content": trigger_content,
         }
         messages.append(trigger_message)
-        logger.debug(f"Appended trigger message to LLM history: {trigger_message}")
+        # logger.debug(f"Appended trigger message to LLM history: {trigger_message}") # Removed to avoid logging potentially large content
         turn_id = str(uuid.uuid4()) # Generate turn ID here
 
         # --- Call Processing Logic ---
@@ -697,7 +715,7 @@ class ProcessingService:
             # Add the turn_id, interface_type, conversation_id here
             # Modify process_message to return the list of turn messages and reasoning info
             # TODO: Adjust the call signature and return value handling based on the final signature of process_message
-            final_content, executed_tool_info, final_reasoning_info = ( # Use current return signature for now
+            generated_turn_messages, final_reasoning_info = ( # Use updated return signature
                 await self.process_message( # Call the other method in this class
                     db_context=db_context,  # Pass context
                     messages=messages,
@@ -708,10 +726,21 @@ class ProcessingService:
                     request_confirmation_callback=request_confirmation_callback,
                 )
             )
-            # TODO: Reconstruct the turn_messages list based on the process_message output
-            # For now, return the current output structure until process_message is fully refactored
-            return final_content, executed_tool_info, final_reasoning_info, None # Return as per current signature
+            # Add context info (turn_id, etc.) to each generated message *before* returning
+            timestamp_now = datetime.now(timezone.utc)
+            for msg_dict in generated_turn_messages:
+                msg_dict["turn_id"] = turn_id
+                msg_dict["interface_type"] = interface_type
+                msg_dict["conversation_id"] = conversation_id
+                msg_dict["timestamp"] = timestamp_now # Approximate timestamp for the whole turn
+                msg_dict["thread_root_id"] = thread_root_id_for_saving # Use determined root ID
+                # interface_message_id will be None initially for agent messages
+                msg_dict["interface_message_id"] = None
+
+            # Return the list of fully populated turn messages, reasoning info, and None for error
+            return generated_turn_messages, final_reasoning_info, None
         except Exception as e:
+
             logger.error(
                 f"Error during ProcessingService interaction for {interface_type}:{conversation_id}: {e}",
                 exc_info=True,
@@ -721,5 +750,3 @@ class ProcessingService:
             error_traceback = traceback.format_exc() # Capture traceback
             # Return None for content/tools/reasoning, but include the traceback
             return [], None, error_traceback  # Return empty list, None reasoning, traceback
-            # Return None for content/tools/reasoning, but include the traceback (as per current signature)
-            # return None, None, None, error_traceback
