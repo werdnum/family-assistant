@@ -216,7 +216,8 @@ class ProcessingService:
 
                 # --- Execute Tool Calls using ToolsProvider ---
                 tool_response_messages = []
-                # Create execution context (can be reused if dependencies don't change)
+                # Create execution context with updated parameters
+                tool_execution_context = ToolExecutionContext( # Updated context
                 tool_execution_context = ToolExecutionContext(
                     chat_id=chat_id,
                     db_context=db_context,
@@ -489,7 +490,8 @@ class ProcessingService:
             history_messages = (
                 await storage.get_recent_history(  # Use storage directly with context
                     db_context=db_context,  # Pass context
-                    chat_id=chat_id,
+                    interface_type=interface_type,      # Pass interface_type
+                    conversation_id=conversation_id,  # Pass conversation_id
                     limit=self.max_history_messages,  # Use self attribute
                     max_age=timedelta(
                         hours=self.history_max_age_hours
