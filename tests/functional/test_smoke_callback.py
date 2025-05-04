@@ -204,9 +204,9 @@ async def test_schedule_and_execute_callback(test_db_engine):
     async with DatabaseContext(engine=test_db_engine) as db_context:
         schedule_response_content, schedule_tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
-                db_context=db_context,
+                db_context=db_context, # Renamed db_context
                 application=mock_application, # Pass mock application
-                interface_type="test", # Added interface type
+                interface_type="test",
                 conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
                 trigger_content_parts=schedule_request_trigger,
                 user_name=TEST_USER_NAME,

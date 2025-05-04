@@ -170,9 +170,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         add_response_content, add_tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,  # Pass the context
-                application=mock_application, # Pass mock application
-                interface_type="test", # Added interface type
-                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
+                application=mock_application,
                 interface_type="test", # Added interface type
                 conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
                 trigger_content_parts=add_note_trigger,
@@ -231,9 +229,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         retrieve_response_content, retrieve_tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,  # Pass the context
-                application=mock_application, # Pass mock application
-                interface_type="test", # Added interface type
-                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
+                application=mock_application,
                 trigger_content_parts=retrieve_note_trigger,
                 user_name=TEST_USER_NAME,
                 # model_name argument removed
