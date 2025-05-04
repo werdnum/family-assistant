@@ -106,7 +106,9 @@ class ProcessingService:
         self,
         db_context: DatabaseContext,  # Added db_context
         messages: List[Dict[str, Any]],
-        chat_id: int,
+        # --- Updated Signature ---
+        interface_type: str,
+        conversation_id: str,
         application: Application,
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
         request_confirmation_callback: Optional[
@@ -490,7 +492,7 @@ class ProcessingService:
         """
         error_traceback: Optional[str] = None  # Initialize traceback
         logger.info( # Changed to info for better visibility
-            f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
+            f"Generating LLM response for {interface_type}:{conversation_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
         )
 
         # --- History and Context Preparation ---
@@ -508,7 +510,7 @@ class ProcessingService:
             )
         except Exception as hist_err:
             logger.error(
-                f"Failed to get message history for chat {chat_id}: {hist_err}",
+                f"Failed to get message history for {interface_type}:{conversation_id}: {hist_err}",
                 exc_info=True,
             )
             history_messages = []  # Continue with empty history on error
