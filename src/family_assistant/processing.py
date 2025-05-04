@@ -509,6 +509,9 @@ class ProcessingService:
         # Format the raw history using the new helper method
         messages = self._format_history_for_llm(history_messages)
 
+        # --- Handle Reply Context ---
+        thread_root_id_for_saving: Optional[int] = None # Store the root ID for saving later
+
         # --- Prepare System Prompt Context ---
         system_prompt_template = self.prompts.get(  # Use self.prompts
             "system_prompt",
