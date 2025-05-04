@@ -333,12 +333,13 @@ class TaskWorker:
                 return  # Stop processing
 
             exec_context = ToolExecutionContext(
-                chat_id=chat_id,
+                # Pass new identifiers
+                interface_type=interface_type,
+                conversation_id=conversation_id,
                 db_context=db_context,
                 calendar_config=self.calendar_config,
                 application=self.application,
-                processing_service=self.processing_service,  # Pass processing service
-                timezone_str=self.timezone_str,
+                timezone_str=self.timezone_str, # Remove processing_service
             )
             # --- Execute Handler with Context ---
             logger.debug(
