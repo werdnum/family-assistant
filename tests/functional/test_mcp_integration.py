@@ -235,8 +235,9 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         final_response_content, tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,
-                application=MagicMock(),  # Provide a basic mock Application
-                chat_id=TEST_CHAT_ID,
+                application=MagicMock(), # Provide a basic mock Application
+                interface_type="test", # Added interface type
+                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
                 trigger_content_parts=user_request_trigger,
                 user_name=TEST_USER_NAME,
             )
@@ -400,8 +401,9 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
         final_response_content, tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,
-                application=MagicMock(),  # Provide a basic mock Application
-                chat_id=TEST_CHAT_ID,
+                application=MagicMock(), # Provide a basic mock Application
+                interface_type="test", # Added interface type
+                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
                 trigger_content_parts=user_request_trigger,
                 user_name=TEST_USER_NAME,
             )

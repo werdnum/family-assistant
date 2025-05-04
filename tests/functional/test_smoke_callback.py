@@ -205,8 +205,9 @@ async def test_schedule_and_execute_callback(test_db_engine):
         schedule_response_content, schedule_tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,
-                application=mock_application,  # Pass mock application
-                chat_id=TEST_CHAT_ID,
+                application=mock_application, # Pass mock application
+                interface_type="test", # Added interface type
+                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
                 trigger_content_parts=schedule_request_trigger,
                 user_name=TEST_USER_NAME,
             )
