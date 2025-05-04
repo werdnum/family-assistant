@@ -9,7 +9,7 @@ import uuid
 import zoneinfo  # Add this import
 from dateutil import rrule
 from datetime import datetime, timedelta, timezone # Added Union
-from typing import Dict, List, Any, Optional, Callable, Awaitable
+from typing import Dict, List, Any, Optional, Callable, Awaitable, Union # Import Union
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
