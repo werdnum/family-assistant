@@ -159,20 +159,9 @@ class DocumentEmbeddingRecord(Base):
         sa.UniqueConstraint("document_id", "chunk_index", "embedding_type"),
         sa.Index("idx_doc_embeddings_type_model", embedding_type, embedding_model),
         sa.Index("idx_doc_embeddings_document_chunk", document_id, chunk_index),
-        # GIN expression index for FTS is now created conditionally in init_vector_db
-        # Example Partial HNSW index for a specific model/dimension using an expression
-        # This casts the dimensionless 'embedding' column to vector(1536) for the index.
-        sa.Index(
-            "idx_doc_embeddings_gemini_1536_hnsw_cos",
-            # Define the exact expression including the operator class using sa.text
-            sa.text("(embedding::vector(1536)) vector_cosine_ops"),
-            postgresql_using="hnsw",
-            postgresql_where=sa.text(
-                "embedding_model = 'gemini-exp-03-07'"
-            ),  # Example filter
-            postgresql_with={"m": 16, "ef_construction": 64},  # Example HNSW parameters
-            # postgresql_ops is not needed here as the opclass is part of the text expression
-        ),
+        # PostgreSQL-specific indexes (like HNSW or GIN on embedding/tsvector)
+        # should be created conditionally elsewhere (e.g., init_vector_db), not defined here
+        # to maintain compatibility with SQLite during metadata definition.
     )
 
 
