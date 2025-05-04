@@ -201,6 +201,7 @@ graph TD
     *   `conversation_id`: String(255), non-nullable, indexed. A generic identifier for the chat session (e.g., Telegram chat ID as string, web session UUID).
     *   `interface_message_id`: String(255), nullable, indexed. The message ID specific to the external interface (e.g., Telegram message ID, email Message-ID header). Null for intermediate agent messages.
     *   `turn_id`: String(36), nullable, indexed. A UUID linking all agent-generated messages (assistant requests, tool responses, final answer) within a single processing turn initiated by a user/system trigger. The trigger message itself would likely have `turn_id = NULL`.
+    *   `thread_root_id`: BigInteger, nullable, indexed. Stores the `internal_id` of the very first message (typically the initial user prompt) that initiated the conversation thread. Allows linking multiple turns originating from the same starting point.
     *   `timestamp`: DateTime(timezone=True), non-nullable, indexed. Time the message was recorded.
     *   `role`: String(50), non-nullable. 'user', 'assistant', 'system', 'tool'.
     *   `content`: Text, nullable. Message content.
