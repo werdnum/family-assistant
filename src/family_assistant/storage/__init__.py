@@ -27,8 +27,8 @@ from family_assistant.storage.message_history import (
     get_grouped_message_history,
     # Renamed from get_message_by_id
     get_message_by_interface_id,
-    get_messages_by_turn_id,        # Added
-    get_messages_by_thread_id,      # Added
+    get_messages_by_turn_id,  # Added
+    get_messages_by_thread_id,  # Added
     update_message_interface_id,  # Added
 )
 from family_assistant.storage.tasks import (
@@ -141,9 +141,9 @@ __all__ = [
     "add_message_to_history",
     "get_recent_history",
     "get_grouped_message_history",
-    "get_message_by_interface_id",   # Renamed
-    "get_messages_by_turn_id",       # Added
-    "get_messages_by_thread_id",     # Added
+    "get_message_by_interface_id",  # Renamed
+    "get_messages_by_turn_id",  # Added
+    "get_messages_by_thread_id",  # Added
     "add_or_update_note",
     "delete_note",
     "enqueue_task",

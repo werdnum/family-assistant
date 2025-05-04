@@ -251,7 +251,7 @@ async def schedule_future_callback_tool(
 
         task_id = f"llm_callback_{uuid.uuid4()}"
         payload = {
-            "interface_type": interface_type,      # Store interface type
+            "interface_type": interface_type,  # Store interface type
             "conversation_id": conversation_id,  # Store conversation ID
             "callback_context": context,
             # Application instance should not be stored in payload.
@@ -467,9 +467,9 @@ async def get_message_history_tool(
     try:
         max_age_delta = timedelta(hours=max_age_hours)
         history_messages = await get_recent_history(
-            db_context=db_context,        # Pass context
+            db_context=db_context,  # Pass context
             interface_type=interface_type,  # Pass interface type
-            conversation_id=conversation_id, # Pass conversation ID
+            conversation_id=conversation_id,  # Pass conversation ID
             limit=limit,
             max_age=max_age_delta,
         )
@@ -493,7 +493,9 @@ async def get_message_history_tool(
             formatted_history.append(f"[{time_str}] {role.capitalize()}: {content}")
 
             # Include tool call info if present (simplified)
-            if role == "assistant" and msg.get("tool_calls"): # Use correct key 'tool_calls'
+            if role == "assistant" and msg.get(
+                "tool_calls"
+            ):  # Use correct key 'tool_calls'
                 tool_calls = msg.get("tool_calls_info_raw", [])
                 if isinstance(tool_calls, list):
                     for call in tool_calls:
