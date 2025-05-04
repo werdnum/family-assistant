@@ -101,7 +101,7 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     async with db_context as ctx: # Use the fixture
         assistant_result = await ctx.fetch_one(
             text("SELECT * FROM message_history WHERE internal_id = :id"),
-            {"id": assistant_msg_id},
+            {"id": assistant_msg_internal_id}, # Use the correct variable name
         )
     assert assistant_result is not None
     assert assistant_result["turn_id"] == turn_id
@@ -115,7 +115,7 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     async with db_context as ctx: # Use the fixture
         tool_result = await ctx.fetch_one(
             text("SELECT * FROM message_history WHERE internal_id = :id"),
-            {"id": tool_msg_id},
+            {"id": tool_msg_internal_id}, # Use the correct variable name
         ) # Error here, should use internal id
     assert tool_result is not None
     assert tool_result["turn_id"] == turn_id
@@ -271,7 +271,7 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext):
     async with db_context as ctx:
         result = await ctx.fetch_one(
             text("SELECT interface_message_id FROM message_history WHERE internal_id = :id"),
-            {"id": internal_id["internal_id"]}, # Use internal_id which holds the result dict
+            {"id": internal_id}, # internal_id is the integer ID itself here
         )
     assert result is not None
     assert result["interface_message_id"] == new_interface_id
