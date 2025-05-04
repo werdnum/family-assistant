@@ -98,6 +98,7 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
             "role": "assistant",
             "content": "", # Formatter converts None to empty string
             "tool_calls": [ # This should be passed through directly
+            "tool_calls": [ # This should be passed through directly
                 {
                     "id": tool_call_id,
                     "type": "function",
