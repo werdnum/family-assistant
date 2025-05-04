@@ -1,3 +1,20 @@
+"""Functional tests for message history storage operations."""
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from sqlalchemy import text
+
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.message_history import (
+    add_message_to_history,
+    get_message_by_interface_id,
+    get_messages_by_thread_id,
+    get_messages_by_turn_id,
+    get_recent_history,
+    update_message_interface_id,
+)
+
 @pytest.mark.asyncio
 async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     """Verify storing messages with optional fields populated."""
@@ -231,6 +248,23 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(db_context: 
     # Assert
     assert len(empty_thread_messages) == 0
 
+
+"""Functional tests for message history storage operations."""
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from sqlalchemy import text
+
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.message_history import (
+    add_message_to_history,
+    get_message_by_interface_id,
+    get_messages_by_thread_id,
+    get_messages_by_turn_id,
+    get_recent_history,
+    update_message_interface_id,
+)
 
 @pytest.mark.asyncio
 async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
