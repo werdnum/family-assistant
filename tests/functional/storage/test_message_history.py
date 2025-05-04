@@ -40,10 +40,13 @@ async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> DatabaseContext:
-    """Provides a DatabaseContext instance for interacting with the test database."""
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext, None]:
+    """Provides an *entered* DatabaseContext instance for interacting with the test database."""
     # Using the factory function aligns better with potential future DI usage
-    return await get_db_context(engine=db_engine, base_delay=0.01)
+    context_instance = await get_db_context(engine=db_engine, base_delay=0.01)
+    async with context_instance as entered_context:
+        yield entered_context
+    # Context is automatically exited here
 
 
 @pytest.mark.asyncio
@@ -61,41 +64,40 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     error_trace = "Something went wrong"
     tool_call_id = "call_abc" # For a potential 'tool' role message
 
-    # Act & Assert within the context
-    async with db_context as ctx:
-        # Store an assistant message with tool calls and reasoning
-        assistant_msg_result = await add_message_to_history(
-            db_context=ctx, # Use the entered context 'ctx'
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=None, # Assistant msg might not have one initially
-            turn_id=turn_id,
-            thread_root_id=thread_root_id,
-            timestamp=now,
-        role=role,
-        content="Calling tool...",
-        tool_calls=tool_calls_data,
-        reasoning_info=reasoning_data,
-    )
-    # Act: Store a tool response message
-    tool_msg_id = await add_message_to_history(
-            db_context=ctx, # Use the entered context 'ctx'
+    # Act: Store messages using the yielded, entered context
+    # Store an assistant message with tool calls and reasoning
+    assistant_msg_result = await add_message_to_history(
+        db_context=db_context, # Use the yielded context directly
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        interface_message_id=None, # Assistant msg might not have one initially
+        turn_id=turn_id,
+        thread_root_id=thread_root_id,
+        timestamp=now,
+    role=role,
+    content="Calling tool...",
+    tool_calls=tool_calls_data,
+    reasoning_info=reasoning_data,
+)
+    # Store a tool response message
+    tool_msg_result = await add_message_to_history( # Renamed variable to avoid confusion
+        db_context=db_context, # Use the yielded context directly
             interface_type=interface_type,
             conversation_id=conversation_id,
             interface_message_id=None,
             turn_id=turn_id,
             thread_root_id=thread_root_id,
             timestamp=now + timedelta(milliseconds=100),
-        role="tool",
-        content="Weather is sunny",
-        tool_call_id=tool_call_id,
-        error_traceback=error_trace, # Can store traceback even for non-error roles if needed
-    )
+    role="tool",
+    content="Weather is sunny",
+    tool_call_id=tool_call_id,
+    error_traceback=error_trace, # Can store traceback even for non-error roles if needed
+)
 
     assert assistant_msg_result is not None and assistant_msg_result.get("internal_id") is not None
     assistant_msg_internal_id = assistant_msg_result["internal_id"]
-    assert tool_msg_id is not None and tool_msg_id.get("internal_id") is not None
-    tool_msg_internal_id = tool_msg_id["internal_id"]
+    assert tool_msg_result is not None and tool_msg_result.get("internal_id") is not None
+    tool_msg_internal_id = tool_msg_result["internal_id"]
 
     # Assert Assistant Message
     async with db_context as ctx: # Use the fixture
@@ -134,19 +136,18 @@ async def test_get_recent_history_retrieves_correct_messages(db_context: Databas
     conv_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
-    async with db_context as ctx:
-        # Add messages with varying timestamps
-        msg1_id_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id="msg1", turn_id=None, thread_root_id=None, timestamp=now - timedelta(minutes=10), role="user", content="Old message")
-        msg2_id_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id="msg2", turn_id=None, thread_root_id=None, timestamp=now - timedelta(minutes=2), role="assistant", content="Recent 1")
-        msg3_id_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id="msg3", turn_id=None, thread_root_id=None, timestamp=now - timedelta(minutes=1), role="user", content="Recent 2")
-        # Add a message for a different conversation
-        await add_message_to_history(ctx, interface_type=interface, conversation_id="other_conv", interface_message_id="msg_other", turn_id=None, thread_root_id=None, timestamp=now, role="user", content="Other convo")
+    # Add messages using the yielded context
+    msg1_id_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id="msg1", turn_id=None, thread_root_id=None, timestamp=now - timedelta(minutes=10), role="user", content="Old message")
+    msg2_id_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id="msg2", turn_id=None, thread_root_id=None, timestamp=now - timedelta(minutes=2), role="assistant", content="Recent 1")
+    msg3_id_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id="msg3", turn_id=None, thread_root_id=None, timestamp=now - timedelta(minutes=1), role="user", content="Recent 2")
+    # Add a message for a different conversation
+    await add_message_to_history(db_context, interface_type=interface, conversation_id="other_conv", interface_message_id="msg_other", turn_id=None, thread_root_id=None, timestamp=now, role="user", content="Other convo")
 
         # Act: Get recent history with limit and age cutoff
-        recent_messages = await get_recent_history(
-            ctx,
-            interface_type=interface,
-            conversation_id=conv_id,
+    recent_messages = await get_recent_history(
+        db_context, # Use the yielded context
+        interface_type=interface,
+        conversation_id=conv_id,
             limit=2,
             max_age=timedelta(minutes=5) # Should exclude msg1
         )
@@ -178,15 +179,13 @@ async def test_get_message_by_interface_id_retrieval(db_context: DatabaseContext
     now = datetime.now(timezone.utc)
     content = "Target message"
 
-    async with db_context as ctx:
-        internal_id_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id=msg_id, turn_id=None, thread_root_id=None, timestamp=now, role="user", content=content)
-        assert internal_id_result is not None and internal_id_result.get("internal_id") is not None
-        msg_internal_id = internal_id_result["internal_id"]
+    internal_id_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id=msg_id, turn_id=None, thread_root_id=None, timestamp=now, role="user", content=content)
+    assert internal_id_result is not None and internal_id_result.get("internal_id") is not None
+    msg_internal_id = internal_id_result["internal_id"]
 
         # Act: Retrieve the message
-        retrieved_message = await get_message_by_interface_id(ctx, interface, conv_id, msg_id)
+    retrieved_message = await get_message_by_interface_id(db_context, interface, conv_id, msg_id)
 
-    # Assert outside context is fine for reads
     assert retrieved_message is not None
     assert retrieved_message["internal_id"] == internal_id_result["internal_id"]
     assert retrieved_message["interface_type"] == interface
@@ -195,8 +194,7 @@ async def test_get_message_by_interface_id_retrieval(db_context: DatabaseContext
     assert retrieved_message["content"] == content
 
     # Act: Try to retrieve non-existent message (needs context)
-    async with db_context as ctx:
-        not_found_message = await get_message_by_interface_id(ctx, interface, conv_id, "non_existent_id")
+    not_found_message = await get_message_by_interface_id(db_context, interface, conv_id, "non_existent_id")
 
     # Assert
     assert not_found_message is None
@@ -212,26 +210,24 @@ async def test_get_messages_by_turn_id_retrieves_correct_sequence(db_context: Da
     turn_2 = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
-    async with db_context as ctx:
-        # Turn 1 messages
-        t1_msg1_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id=None, turn_id=turn_1, thread_root_id=1, timestamp=now, role="assistant", content="T1 Call tool")
-        t1_msg2_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id=None, turn_id=turn_1, thread_root_id=1, timestamp=now + timedelta(seconds=1), role="tool", content="T1 Tool result")
-        t1_msg3_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id=None, turn_id=turn_1, thread_root_id=1, timestamp=now + timedelta(seconds=2), role="assistant", content="T1 Final answer")
-        # Turn 2 message
-        t2_msg1_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id=None, turn_id=turn_2, thread_root_id=1, timestamp=now + timedelta(seconds=3), role="assistant", content="T2 Different turn")
-        # Message with no turn id
-        no_turn_msg_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id, interface_message_id="user1", turn_id=None, thread_root_id=1, timestamp=now - timedelta(seconds=1), role="user", content="Initial prompt")
-        # Assert that results contain IDs
-        assert t1_msg1_result is not None and t1_msg1_result.get("internal_id") is not None
-        t1_msg1_internal_id = t1_msg1_result["internal_id"]
-        assert t1_msg2_result is not None and t1_msg2_result.get("internal_id") is not None
-        t1_msg2_internal_id = t1_msg2_result["internal_id"]
-        assert t1_msg3_result is not None and t1_msg3_result.get("internal_id") is not None
-        t1_msg3_internal_id = t1_msg3_result["internal_id"]
+    # Turn 1 messages
+    t1_msg1_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id=None, turn_id=turn_1, thread_root_id=1, timestamp=now, role="assistant", content="T1 Call tool")
+    t1_msg2_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id=None, turn_id=turn_1, thread_root_id=1, timestamp=now + timedelta(seconds=1), role="tool", content="T1 Tool result")
+    t1_msg3_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id=None, turn_id=turn_1, thread_root_id=1, timestamp=now + timedelta(seconds=2), role="assistant", content="T1 Final answer")
+    # Turn 2 message
+    t2_msg1_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id=None, turn_id=turn_2, thread_root_id=1, timestamp=now + timedelta(seconds=3), role="assistant", content="T2 Different turn")
+    # Message with no turn id
+    no_turn_msg_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id, interface_message_id="user1", turn_id=None, thread_root_id=1, timestamp=now - timedelta(seconds=1), role="user", content="Initial prompt")
+    # Assert that results contain IDs
+    assert t1_msg1_result is not None and t1_msg1_result.get("internal_id") is not None
+    t1_msg1_internal_id = t1_msg1_result["internal_id"]
+    assert t1_msg2_result is not None and t1_msg2_result.get("internal_id") is not None
+    t1_msg2_internal_id = t1_msg2_result["internal_id"]
+    assert t1_msg3_result is not None and t1_msg3_result.get("internal_id") is not None
+    t1_msg3_internal_id = t1_msg3_result["internal_id"]
 
     # Act
-    async with db_context as ctx: # Read needs context too
-        turn_1_messages = await get_messages_by_turn_id(ctx, turn_1)
+    turn_1_messages = await get_messages_by_turn_id(db_context, turn_1)
 
     # Assert
     assert len(turn_1_messages) == 3
@@ -239,8 +235,7 @@ async def test_get_messages_by_turn_id_retrieves_correct_sequence(db_context: Da
     assert all(m["turn_id"] == turn_1 for m in turn_1_messages)
 
     # Act: Get messages for a turn with no messages (needs context)
-    async with db_context as ctx:
-        empty_turn_messages = await get_messages_by_turn_id(ctx, str(uuid.uuid4()))
+    empty_turn_messages = await get_messages_by_turn_id(db_context, str(uuid.uuid4()))
     # Assert
     assert len(empty_turn_messages) == 0
 
@@ -255,21 +250,19 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext):
 
     new_interface_id = f"telegram_{uuid.uuid4()}"
 
-    async with db_context as ctx:
-        initial_result = await add_message_to_history(
-            ctx, interface, conv_id, None, str(uuid.uuid4()), 1, now, "assistant", "Initial content"
-        )
-        assert initial_result is not None and initial_result.get("internal_id") is not None
-        internal_id = initial_result["internal_id"]
+    initial_result = await add_message_to_history(
+        db_context, interface, conv_id, None, str(uuid.uuid4()), 1, now, "assistant", "Initial content"
+    )
+    assert initial_result is not None and initial_result.get("internal_id") is not None
+    internal_id = initial_result["internal_id"]
 
-        # Act
-        update_successful = await update_message_interface_id(ctx, internal_id, new_interface_id)
+    # Act
+    update_successful = await update_message_interface_id(db_context, internal_id, new_interface_id)
 
     # Assert
     assert update_successful is True
     # Verify directly in the DB
-    async with db_context as ctx:
-        result = await ctx.fetch_one(
+    result = await db_context.fetch_one(
             text("SELECT interface_message_id FROM message_history WHERE internal_id = :id"),
             {"id": internal_id}, # internal_id is the integer ID itself here
         )
@@ -277,8 +270,7 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext):
     assert result["interface_message_id"] == new_interface_id
 
     # Act: Try to update non-existent internal ID (needs context)
-    async with db_context as ctx:
-        update_failed = await update_message_interface_id(ctx, 99999, "some_id")
+    update_failed = await update_message_interface_id(db_context, 99999, "some_id")
     # Assert
     assert update_failed is False
 
@@ -292,30 +284,27 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(db_context: 
     conv_id_2 = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
-    async with db_context as ctx:
         # Thread 1 messages
-        msg1_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id_1, interface_message_id="msg1", turn_id=None, thread_root_id=None, timestamp=now, role="user", content="Thread 1 Start")
+    msg1_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id="msg1", turn_id=None, thread_root_id=None, timestamp=now, role="user", content="Thread 1 Start")
         assert msg1_result is not None and msg1_result.get("internal_id") is not None
         thread_1_root = msg1_result["internal_id"] # Use the internal_id of the first message as the root
         msg1_id = thread_1_root # Keep for assertion later
 
-        msg2_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id_1, interface_message_id=None, turn_id="t1", thread_root_id=thread_1_root, timestamp=now + timedelta(seconds=1), role="assistant", content="Thread 1 Reply 1")
+    msg2_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id=None, turn_id="t1", thread_root_id=thread_1_root, timestamp=now + timedelta(seconds=1), role="assistant", content="Thread 1 Reply 1")
         assert msg2_result is not None and msg2_result.get("internal_id") is not None
         msg2_id = msg2_result["internal_id"]
 
-        msg3_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id_1, interface_message_id="msg3", turn_id=None, thread_root_id=thread_1_root, timestamp=now + timedelta(seconds=2), role="user", content="Thread 1 Reply 2")
+    msg3_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id="msg3", turn_id=None, thread_root_id=thread_1_root, timestamp=now + timedelta(seconds=2), role="user", content="Thread 1 Reply 2")
         assert msg3_result is not None and msg3_result.get("internal_id") is not None
         msg3_id = msg3_result["internal_id"]
 
     # Thread 2 message (Different conversation, different thread)
-    async with db_context as ctx:
-        msg4_result = await add_message_to_history(ctx, interface_type=interface, conversation_id=conv_id_2, interface_message_id="msg4", turn_id=None, thread_root_id=None, timestamp=now + timedelta(seconds=3), role="user", content="Thread 2 Start")
+    msg4_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_2, interface_message_id="msg4", turn_id=None, thread_root_id=None, timestamp=now + timedelta(seconds=3), role="user", content="Thread 2 Start")
         assert msg4_result is not None and msg4_result.get("internal_id") is not None
         msg4_id = msg4_result["internal_id"]
 
     # Act
-    async with db_context as ctx:
-        thread_1_messages = await get_messages_by_thread_id(ctx, thread_1_root)
+    thread_1_messages = await get_messages_by_thread_id(db_context, thread_1_root)
 
     # Assert
     assert len(thread_1_messages) == 3
@@ -323,7 +312,6 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(db_context: 
     assert all(m["thread_root_id"] == thread_1_root or m["internal_id"] == thread_1_root for m in thread_1_messages) # Root msg has NULL thread_root_id
 
     # Act: Get messages for a thread_root_id that doesn't exist (use msg4_id)
-    async with db_context as ctx:
-        empty_thread_messages = await get_messages_by_thread_id(ctx, msg4_id)
+    empty_thread_messages = await get_messages_by_thread_id(db_context, msg4_id)
     # Assert outside context
     assert len(empty_thread_messages) == 0
