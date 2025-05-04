@@ -402,7 +402,7 @@ async def view_tools(request: Request):
             else:
                 schema_dict = tool_copy.get("function", {}).get("parameters")
                 # Serialize the schema dict to a stable JSON string for the rendering function
-                schema_json_str = ( # Removed duplicate line
+                schema_json_str = (  # Removed duplicate line
                     json.dumps(schema_dict, sort_keys=True) if schema_dict else None
                 )
                 # Call the rendering function (no longer cached itself)
@@ -826,14 +826,14 @@ async def execute_tool_api(
     # Generate a unique ID for this specific API call context
     # This isn't a persistent conversation like Telegram
     execution_context = ToolExecutionContext(
-        interface_type="api", # Identify interface
+        interface_type="api",  # Identify interface
         conversation_id=f"api_call_{uuid.uuid4()}",
         db_context=db_context,
         calendar_config=calendar_config,  # Pass fetched calendar config
         timezone_str=timezone_str,  # Pass fetched timezone string
-        application=None, # No Telegram app here
+        application=None,  # No Telegram app here
         request_confirmation_callback=None,  # No confirmation from API for now
-        processing_service=None, # API endpoint doesn't have access to this
+        processing_service=None,  # API endpoint doesn't have access to this
     )
 
     try:

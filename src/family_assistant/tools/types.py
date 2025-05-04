@@ -2,12 +2,13 @@
 Defines common types used by the tool system, like the execution context.
 Moved here to avoid circular imports.
 """
+
 import asyncio
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable, Awaitable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from telegram.ext import Application # Keep Application for type checking
+    from telegram.ext import Application  # Keep Application for type checking
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
 
@@ -16,10 +17,10 @@ if TYPE_CHECKING:
 class ToolExecutionContext:
     """Context passed to tool execution functions."""
 
-    interface_type: str # e.g., 'telegram', 'web', 'email'
-    conversation_id: str # e.g., Telegram chat ID string, web session UUID
+    interface_type: str  # e.g., 'telegram', 'web', 'email'
+    conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     db_context: "DatabaseContext"
-    calendar_config: Optional[Dict[str, Any]] = None # Made optional
+    calendar_config: Optional[Dict[str, Any]] = None  # Made optional
     application: Optional["Application"] = None
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC"  # Default, should be overridden

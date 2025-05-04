@@ -417,7 +417,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call (SSE) ---")
-    user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to London time ({TARGET_TZ}) using SSE"
+    user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ}) using SSE"
     # Revert to trigger_content_parts for generate_llm_response_for_chat
     user_request_trigger = [
         {"type": "text", "text": user_request_text}  # Correct input format

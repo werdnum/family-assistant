@@ -34,8 +34,17 @@ from telegram.ext import (
 
 # Import necessary types for type hinting
 from telegram import InlineKeyboardMarkup  # Move this import here
-from sqlalchemy import update # For error handling db update
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, cast # Added cast
+from sqlalchemy import update  # For error handling db update
+from typing import (
+    Any,
+    Callable,
+    Coroutine,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    cast,
+)  # Added cast
 
 # Import necessary types for type hinting
 from family_assistant.processing import ProcessingService
@@ -195,10 +204,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update."
         )
         # Check if the last message is a reply
-        is_reply = bool(
-            last_update.message and last_update.message.reply_to_message
+        is_reply = bool(last_update.message and last_update.message.reply_to_message)
+        replied_to_interface_id = (
+            str(last_update.message.reply_to_message.message_id) if is_reply else None
         )
-        replied_to_interface_id = str(last_update.message.reply_to_message.message_id) if is_reply else None
         all_texts = []
         first_photo_bytes = None
         forward_context = ""
@@ -252,7 +261,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 await context.bot.send_message(
                     chat_id, "Error processing image in batch."
                 )
-                trigger_content_parts = [text_content_part] # Revert to text only
+                trigger_content_parts = [text_content_part]  # Revert to text only
 
         tool_call_info: Optional[List[Dict[str, Any]]] = None
         reasoning_info: Optional[Dict[str, Any]] = None  # Added
@@ -280,27 +289,36 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 return
 
             db_context_getter = self.get_db_context()  # Get the coroutine first
-            async with (
-                await db_context_getter as db_context
-            ):
+            async with await db_context_getter as db_context:
                 # --- Determine Thread Root ID ---
                 thread_root_id_for_turn: Optional[int] = None
                 if replied_to_interface_id:
                     try:
-                        replied_to_db_msg = await self.storage.get_message_by_interface_id(
-                            db_context=db_context,
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            interface_message_id=replied_to_interface_id,
+                        replied_to_db_msg = (
+                            await self.storage.get_message_by_interface_id(
+                                db_context=db_context,
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                interface_message_id=replied_to_interface_id,
+                            )
                         )
                         if replied_to_db_msg:
                             # If the replied-to message has a root ID, use it. Otherwise, use its own internal ID.
-                            thread_root_id_for_turn = replied_to_db_msg.get("thread_root_id") or replied_to_db_msg.get("internal_id")
-                            logger.info(f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}")
+                            thread_root_id_for_turn = replied_to_db_msg.get(
+                                "thread_root_id"
+                            ) or replied_to_db_msg.get("internal_id")
+                            logger.info(
+                                f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}"
+                            )
                         else:
-                             logger.warning(f"Could not find replied-to message {replied_to_interface_id} in DB to determine thread root.")
+                            logger.warning(
+                                f"Could not find replied-to message {replied_to_interface_id} in DB to determine thread root."
+                            )
                     except Exception as thread_err:
-                        logger.error(f"Error determining thread root ID: {thread_err}", exc_info=True)
+                        logger.error(
+                            f"Error determining thread root ID: {thread_err}",
+                            exc_info=True,
+                        )
                         # Continue without thread_root_id if error occurs
 
                 # --- Save User Trigger Message(s) ---
@@ -310,27 +328,37 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     history_user_content += " [Image(s) Attached]"
 
                 # Use the last user update for ID and timestamp
-                user_message_id = last_update.message.message_id if last_update.message else None
-                user_message_timestamp = last_update.message.date if last_update.message else datetime.now(timezone.utc)
+                user_message_id = (
+                    last_update.message.message_id if last_update.message else None
+                )
+                user_message_timestamp = (
+                    last_update.message.date
+                    if last_update.message
+                    else datetime.now(timezone.utc)
+                )
 
                 if user_message_id:
                     await self.storage.add_message_to_history(
                         db_context=db_context,
                         interface_type=interface_type,
                         conversation_id=conversation_id,
-                        interface_message_id=str(user_message_id), # User message has interface ID
-                        turn_id=None, # User message is the trigger, has no turn_id
-                        thread_root_id=thread_root_id_for_turn, # Use determined root ID
+                        interface_message_id=str(
+                            user_message_id
+                        ),  # User message has interface ID
+                        turn_id=None,  # User message is the trigger, has no turn_id
+                        thread_root_id=thread_root_id_for_turn,  # Use determined root ID
                         timestamp=user_message_timestamp,
                         role="user",
                         content=history_user_content,
                         tool_calls=None,
                         reasoning_info=None,
-                        error_traceback=None, # Error hasn't happened yet
+                        error_traceback=None,  # Error hasn't happened yet
                         tool_call_id=None,
                     )
                 else:
-                    logger.warning(f"Could not get user message ID for chat {chat_id} to save to history.")
+                    logger.warning(
+                        f"Could not get user message ID for chat {chat_id} to save to history."
+                    )
 
                 async with self._typing_notifications(context, chat_id):
                     # Create the partial function for the confirmation callback
@@ -339,18 +367,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         chat_id=chat_id,
                     )
                     (
-                        generated_turn_messages, # New return type
-                        final_reasoning_info, # Capture final reasoning info
-
-                        processing_error_traceback, # Capture traceback directly
-                    ) = await self.processing_service.generate_llm_response_for_chat( # Call updated method
-                        db_context=db_context, # Pass db context
+                        generated_turn_messages,  # New return type
+                        final_reasoning_info,  # Capture final reasoning info
+                        processing_error_traceback,  # Capture traceback directly
+                    ) = await self.processing_service.generate_llm_response_for_chat(  # Call updated method
+                        db_context=db_context,  # Pass db context
                         application=self.application,
-                        interface_type=interface_type, # Pass identifiers
-                        conversation_id=conversation_id, # Pass identifiers
+                        interface_type=interface_type,  # Pass identifiers
+                        conversation_id=conversation_id,  # Pass identifiers
                         trigger_content_parts=trigger_content_parts,
                         user_name=user_name,
-                        replied_to_interface_id=replied_to_interface_id, # Pass replied_to ID
+                        replied_to_interface_id=replied_to_interface_id,  # Pass replied_to ID
                         # Pass the partially applied confirmation request callback
                         request_confirmation_callback=confirmation_callback_partial,
                     )
@@ -360,30 +387,41 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     if generated_turn_messages:
                         turn_id_for_saving = generated_turn_messages[0].get("turn_id")
                     if not turn_id_for_saving:
-                        logger.error(f"Could not extract turn_id from generated messages for chat {chat_id}. Assigning new UUID.")
-                        turn_id_for_saving = str(uuid.uuid4()) # Fallback, should not happen
+                        logger.error(
+                            f"Could not extract turn_id from generated messages for chat {chat_id}. Assigning new UUID."
+                        )
+                        turn_id_for_saving = str(
+                            uuid.uuid4()
+                        )  # Fallback, should not happen
 
                     # Save all generated messages (assistant requests, tool responses, final answer)
-                    last_assistant_internal_id : Optional[int] = None # Track for updating interface_id
+                    last_assistant_internal_id: Optional[int] = (
+                        None  # Track for updating interface_id
+                    )
                     for msg_dict in generated_turn_messages:
                         # Ensure correct IDs are set before saving
-                        msg_dict["turn_id"] = turn_id_for_saving # Ensure turn_id is set
-                        msg_dict["thread_root_id"] = thread_root_id_for_turn # Ensure thread_root is set
-                        msg_dict["interface_type"] = interface_type # Add identifiers
+                        msg_dict["turn_id"] = (
+                            turn_id_for_saving  # Ensure turn_id is set
+                        )
+                        msg_dict["thread_root_id"] = (
+                            thread_root_id_for_turn  # Ensure thread_root is set
+                        )
+                        msg_dict["interface_type"] = interface_type  # Add identifiers
                         # Assuming add_message_to_history accepts the dict via ** and returns something usable
-                        msg_dict["conversation_id"] = conversation_id # Add identifiers
+                        msg_dict["conversation_id"] = conversation_id  # Add identifiers
                         saved_msg = await self.storage.add_message_to_history(
-                            db_context=db_context,
-                            **msg_dict # Pass the dict directly
+                            db_context=db_context, **msg_dict  # Pass the dict directly
                         )
                         # Capture the internal ID if the role is assistant
                         if msg_dict.get("role") == "assistant":
-                            last_assistant_internal_id = saved_msg.internal_id # Assuming add_message returns the object or ID
+                            last_assistant_internal_id = (
+                                saved_msg.internal_id
+                            )  # Assuming add_message returns the object or ID
 
             # Create ForceReply object
             force_reply_markup = ForceReply(selective=False)
             # Find the final message content to send to the user from the generated list
-            final_llm_content_to_send : Optional[str] = None
+            final_llm_content_to_send: Optional[str] = None
             if generated_turn_messages:
                 # Look for the last message with content, prioritizing assistant role
                 for msg in reversed(generated_turn_messages):
@@ -391,13 +429,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         final_llm_content_to_send = msg["content"]
                         break
                 # If no assistant content, take the last content regardless of role (e.g., tool error)
-                if not final_llm_content_to_send and generated_turn_messages[-1].get("content"):
-                     final_llm_content_to_send = generated_turn_messages[-1]["content"]
+                if not final_llm_content_to_send and generated_turn_messages[-1].get(
+                    "content"
+                ):
+                    final_llm_content_to_send = generated_turn_messages[-1]["content"]
 
-            if final_llm_content_to_send: # Check if there's content to send
+            if final_llm_content_to_send:  # Check if there's content to send
                 try:
                     # Format the final content for Telegram
-                    converted_markdown = telegramify_markdown.markdownify(final_llm_content_to_send)
+                    converted_markdown = telegramify_markdown.markdownify(
+                        final_llm_content_to_send
+                    )
                     sent_assistant_message = await context.bot.send_message(
                         chat_id=chat_id,
                         text=converted_markdown,
@@ -419,17 +461,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 # --- Update Interface ID for the Sent Message ---
                 # Ensure this runs only if the message was actually sent
                 if sent_assistant_message and last_assistant_internal_id is not None:
-                    try: # Wrap DB update in try/except
+                    try:  # Wrap DB update in try/except
                         await self.storage.update_message_interface_id(
                             db_context=db_context,
                             internal_id=last_assistant_internal_id,
-                            interface_message_id=str(sent_assistant_message.message_id)
+                            interface_message_id=str(sent_assistant_message.message_id),
                         )
-                        logger.info(f"Updated interface_message_id for internal_id {last_assistant_internal_id}")
+                        logger.info(
+                            f"Updated interface_message_id for internal_id {last_assistant_internal_id}"
+                        )
                     except Exception as update_err:
-                         logger.error(f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}", exc_info=True)
-                elif sent_assistant_message: # Only log warning if message was sent but ID wasn't tracked
-                        logger.warning(f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id to update.")
+                        logger.error(
+                            f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}",
+                            exc_info=True,
+                        )
+                elif (
+                    sent_assistant_message
+                ):  # Only log warning if message was sent but ID wasn't tracked
+                    logger.warning(
+                        f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id to update."
+                    )
             # If an error occurred during processing, check for traceback *before* handling empty response
             elif processing_error_traceback and reply_target_message_id:
                 logger.info(
@@ -443,7 +494,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
             # Only handle empty response if there was no content AND no processing error
             else:
-                logger.warning( # This case might be less common now as we save all messages
+                logger.warning(  # This case might be less common now as we save all messages
                     "Received empty response from LLM (and no processing error detected)."
                 )
                 if reply_target_message_id:
@@ -457,7 +508,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         except Exception as e:
             # This catches errors *outside* the generate_llm_response_for_chat call
             # (e.g., DB connection issues before the call, Telegram API errors sending reply)
-            logger.exception( # Use exception to log traceback automatically
+            logger.exception(  # Use exception to log traceback automatically
                 f"Unhandled error in process_chat_queue for chat {chat_id}: {e}",
                 exc_info=True,  # noqa: F821
             )
@@ -485,23 +536,38 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     db_context_getter_err = self.get_db_context()
                     # Get a new context for this update attempt
                     async with await db_context_getter_err as db_ctx_err:
-                         # Fetch the user message's internal ID first (can't update by interface ID)
-                         user_msg_record = await self.storage.get_message_by_interface_id(
-                             db_ctx_err, interface_type, conversation_id, str(user_message_id)
-                         )
-                         if user_msg_record and user_msg_record.get("internal_id"):
-                             stmt = (
-                                 # Use SQLAlchemy update directly
-                                 update(self.storage.message_history_table)
-                                 .where(self.storage.message_history_table.c.internal_id == user_msg_record["internal_id"])
-                                 .values(error_traceback=processing_error_traceback)
-                             )
-                             await db_ctx_err.execute_with_retry(stmt)
-                             logger.info(f"Saved error traceback to user message internal_id {user_msg_record['internal_id']}")
-                         else:
-                             logger.error("Could not find user message record to attach error traceback.")
+                        # Fetch the user message's internal ID first (can't update by interface ID)
+                        user_msg_record = (
+                            await self.storage.get_message_by_interface_id(
+                                db_ctx_err,
+                                interface_type,
+                                conversation_id,
+                                str(user_message_id),
+                            )
+                        )
+                        if user_msg_record and user_msg_record.get("internal_id"):
+                            stmt = (
+                                # Use SQLAlchemy update directly
+                                update(self.storage.message_history_table)
+                                .where(
+                                    self.storage.message_history_table.c.internal_id
+                                    == user_msg_record["internal_id"]
+                                )
+                                .values(error_traceback=processing_error_traceback)
+                            )
+                            await db_ctx_err.execute_with_retry(stmt)
+                            logger.info(
+                                f"Saved error traceback to user message internal_id {user_msg_record['internal_id']}"
+                            )
+                        else:
+                            logger.error(
+                                "Could not find user message record to attach error traceback."
+                            )
                 except Exception as db_err_save:
-                    logger.error(f"Failed to save error traceback to DB for chat {chat_id}: {db_err_save}", exc_info=True)
+                    logger.error(
+                        f"Failed to save error traceback to DB for chat {chat_id}: {db_err_save}",
+                        exc_info=True,
+                    )
 
             # Let the main error handler notify the developer
             raise e  # Re-raise for the main error handler
@@ -616,7 +682,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     # --- Confirmation Handling Logic ---
 
     async def _request_confirmation_impl(
-        self, # Make it instance method if not already
+        self,  # Make it instance method if not already
         chat_id: int,
         prompt_text: str,
         tool_name: str,
@@ -630,7 +696,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         # Or finding a way to get a context for sending messages.
         # Let's assume self.application.bot can send messages.
         if not self.application or not self.application.bot:
-             raise RuntimeError("Telegram application or bot instance not available for sending confirmation.")
+            raise RuntimeError(
+                "Telegram application or bot instance not available for sending confirmation."
+            )
         logger.info(
             f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}"
         )
@@ -650,11 +718,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         try:
             # Send the confirmation message
-            sent_message = await self.application.bot.send_message( # Use self.application.bot
-                chat_id=chat_id,
-                text=prompt_text,  # Assumes already MarkdownV2 formatted/escaped
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=keyboard,
+            sent_message = (
+                await self.application.bot.send_message(  # Use self.application.bot
+                    chat_id=chat_id,
+                    text=prompt_text,  # Assumes already MarkdownV2 formatted/escaped
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    reply_markup=keyboard,
+                )
             )
             logger.debug(
                 f"Confirmation message sent (Message ID: {sent_message.message_id})"
@@ -689,12 +759,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning(f"Confirmation {confirm_uuid} timed out after {timeout}s.")
             # Clean up the original confirmation message (remove keyboard)
             try:
-                await self.application.bot.edit_message_reply_markup( # Use self.application.bot
+                await self.application.bot.edit_message_reply_markup(  # Use self.application.bot
                     chat_id=chat_id,
                     message_id=sent_message.message_id,
                     reply_markup=None,  # Remove keyboard
                 )
-                await self.application.bot.edit_message_text( # Use self.application.bot
+                await self.application.bot.edit_message_text(  # Use self.application.bot
                     chat_id=chat_id,
                     message_id=sent_message.message_id,
                     text=prompt_text
