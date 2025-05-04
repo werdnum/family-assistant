@@ -417,16 +417,24 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             last_assistant_internal_id = (
                                 saved_msg.get("internal_id") # Use dict access (.get for safety)
                             )
+            # --- END OF ORIGINAL DB CONTEXT BLOCK --- # Moved sending logic inside
 
-            # Create ForceReply object
-            force_reply_markup = ForceReply(selective=False)
-            # Find the final message content to send to the user from the generated list
-            final_llm_content_to_send: Optional[str] = None
-            if generated_turn_messages:
-                # Look for the last message with content, prioritizing assistant role
-                for msg in reversed(generated_turn_messages):
-                    if msg.get("content") and msg.get("role") == "assistant":
-                        final_llm_content_to_send = msg["content"]
+                # --- Sending and Updating Logic (Now inside the DB context) ---
+                # Create ForceReply object
+                force_reply_markup = ForceReply(selective=False)
+                # Find the final message content to send to the user from the generated list
+                final_llm_content_to_send: Optional[str] = None
+                if generated_turn_messages:
+                    # Look for the last message with content, prioritizing assistant role
+                    for msg in reversed(generated_turn_messages):
+                        if msg.get("content") and msg.get("role") == "assistant":
+                            final_llm_content_to_send = msg["content"]
+                            break
+                    # If no assistant content, take the last content regardless of role (e.g., tool error)
+                    if not final_llm_content_to_send and generated_turn_messages[-1].get(
+                        "content"
+                    ):
+                        final_llm_content_to_send = generated_turn_messages[-1]["content"]
                         break
                 # If no assistant content, take the last content regardless of role (e.g., tool error)
                 if not final_llm_content_to_send and generated_turn_messages[-1].get(
@@ -481,29 +489,78 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     logger.warning(
                         f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id to update."
                     )
-            # If an error occurred during processing, check for traceback *before* handling empty response
-            elif processing_error_traceback and reply_target_message_id:
-                logger.info(
-                    f"Sending error message to chat {chat_id} due to processing error:\n{processing_error_traceback}"
-                )
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text="Sorry, something went wrong while processing your request.",
-                    reply_to_message_id=reply_target_message_id,
-                    reply_markup=force_reply_markup,  # Add ForceReply
-                )
-            # Only handle empty response if there was no content AND no processing error
-            else:
-                logger.warning(  # This case might be less common now as we save all messages
-                    "Received empty response from LLM (and no processing error detected)."
-                )
-                if reply_target_message_id:
-                    sent_assistant_message = await context.bot.send_message(
+                if final_llm_content_to_send:  # Check if there's content to send
+                    try:
+                        # Format the final content for Telegram
+                        converted_markdown = telegramify_markdown.markdownify(
+                            final_llm_content_to_send
+                        )
+                        sent_assistant_message = await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=converted_markdown,
+                            parse_mode=ParseMode.MARKDOWN_V2,
+                            reply_to_message_id=reply_target_message_id,
+                            reply_markup=force_reply_markup,  # Add ForceReply
+                        )
+                    except Exception as md_err:
+                        logger.error(
+                            f"Failed to convert markdown: {md_err}. Sending plain text.",
+                            exc_info=True,
+                        )
+                        sent_assistant_message = await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=final_llm_content_to_send,
+                            reply_to_message_id=reply_target_message_id,
+                            reply_markup=force_reply_markup,  # Add ForceReply
+                        )
+                    # --- Update Interface ID for the Sent Message ---
+                    # Ensure this runs only if the message was actually sent
+                    if sent_assistant_message and last_assistant_internal_id is not None:
+                        try:  # Wrap DB update in try/except
+                            await self.storage.update_message_interface_id(
+                                db_context=db_context, # Use the still-active context
+                                internal_id=last_assistant_internal_id,
+                                interface_message_id=str(sent_assistant_message.message_id),
+                            )
+                            logger.info(
+                                f"Updated interface_message_id for internal_id {last_assistant_internal_id}"
+                            )
+                        except Exception as update_err:
+                            logger.error(
+                                f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}",
+                                exc_info=True,
+                            )
+                    elif (
+                        sent_assistant_message
+                    ):  # Only log warning if message was sent but ID wasn't tracked
+                        logger.warning(
+                            f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id to update."
+                        )
+                # If an error occurred during processing, check for traceback *before* handling empty response
+                elif processing_error_traceback and reply_target_message_id:
+                    logger.info(
+                        f"Sending error message to chat {chat_id} due to processing error:\n{processing_error_traceback}"
+                    )
+                    await context.bot.send_message(
                         chat_id=chat_id,
-                        text="Sorry, I couldn't process that request.",  # Generic message for empty response
+                        text="Sorry, something went wrong while processing your request.",
                         reply_to_message_id=reply_target_message_id,
                         reply_markup=force_reply_markup,  # Add ForceReply
                     )
+                # Only handle empty response if there was no content AND no processing error
+                else:
+                    logger.warning(  # This case might be less common now as we save all messages
+                        "Received empty response from LLM (and no processing error detected)."
+                    )
+                    if reply_target_message_id:
+                        sent_assistant_message = await context.bot.send_message(
+                            chat_id=chat_id,
+                            text="Sorry, I couldn't process that request.",  # Generic message for empty response
+                            reply_to_message_id=reply_target_message_id,
+                            reply_markup=force_reply_markup,  # Add ForceReply
+                        )
+            # --- END OF MOVED LOGIC --- # DB Context block implicitly ends here
+
 
         except Exception as e:
             # This catches errors *outside* the generate_llm_response_for_chat call
