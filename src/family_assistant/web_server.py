@@ -828,9 +828,6 @@ async def execute_tool_api(
     execution_context = ToolExecutionContext(
         interface_type="api", # Identify interface
         conversation_id=f"api_call_{uuid.uuid4()}",
-        interface_type="api", # Identify interface
-        # Generate a unique ID for this specific API call context
-        # This isn't a persistent conversation like Telegram
         conversation_id=f"api_call_{uuid.uuid4()}",
         db_context=db_context,
         calendar_config=calendar_config,  # Pass fetched calendar config
