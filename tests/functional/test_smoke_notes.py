@@ -261,13 +261,6 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
--
--    logger.info(
--        f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}"
--    )
--    logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
--    logger.info(f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}")
--    logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
     #+    # Find the final assistant message
     #+    final_assistant_message = next((msg for msg in reversed(retrieve_turn_messages) if msg.get("role") == "assistant"), None)
     #+    assert final_assistant_message is not None, "No final assistant message found"
