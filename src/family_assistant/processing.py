@@ -115,7 +115,6 @@ class ProcessingService:
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
         ] = None, # Removed comma
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
-) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """
         Sends the conversation history to the LLM via the injected client,
@@ -238,7 +237,6 @@ class ProcessingService:
                         logger.error(
                             f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}"
                         )
-                            }
                         )
                         # Also add to context for next LLM call
                         turn_messages.append(tool_response_message_for_turn)
@@ -260,7 +258,6 @@ class ProcessingService:
                             f"Failed to parse arguments for tool call {function_name} (iteration {current_iteration}): {function_args_str}"
                         )
                         arguments = {"error": "Failed to parse arguments"}
-                        tool_response_content = (
                             f"Error: Invalid arguments format for {function_name}."
                     else:
                         # Create execution context *inside* the loop if needed by execute_tool
@@ -300,7 +297,6 @@ class ProcessingService:
                             )
 
                     # Create the 'tool' role message for the turn history
-                    )
 
                 # Append all tool response messages for this iteration
                 # The messages for the *next* LLM call context were already prepared
@@ -401,7 +397,7 @@ class ProcessingService:
         )
         return messages
 
-    async def generate_llm_response_for_chat(
+    async def generate_llm_response_for_chat( # Marked line 404
         self,
         db_context: DatabaseContext,  # Added db_context
         application: Application,
@@ -622,7 +618,7 @@ class ProcessingService:
 
         # --- Call Processing Logic ---
         # Tool definitions are now fetched inside process_message
-        try: # Added try block around process_message call
+        try: # Added try block around process_message call # Marked line 625
             # Prepare a list to store all messages generated in this turn
 
             # Add the turn_id, interface_type, conversation_id here
@@ -637,9 +633,8 @@ class ProcessingService:
                     application=application,
                     request_confirmation_callback=request_confirmation_callback,
                 )
-            )
             # Add context info (turn_id, etc.) to each generated message *before* returning
-            timestamp_now = datetime.now(timezone.utc)
+            timestamp_now = datetime.now(timezone.utc) # Marked line 642
             for msg_dict in generated_turn_messages:
                 msg_dict["turn_id"] = turn_id
                 msg_dict["interface_type"] = interface_type
