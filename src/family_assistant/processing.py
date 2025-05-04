@@ -257,9 +257,8 @@ class ProcessingService:
                             f"Failed to parse arguments for tool call {function_name} (iteration {current_iteration}): {function_args_str}"
                         )
                         arguments = {"error": "Failed to parse arguments"}
-                            f"Error: Invalid arguments format for {function_name}."
-                    else:
-                        # Create execution context *inside* the loop if needed by execute_tool
+                        tool_response_content = f"Error: Invalid arguments format for {function_name}."
+
                         # or pass necessary parts if context object isn't strictly required by provider
                         tool_execution_context = ToolExecutionContext(
                             interface_type=interface_type,
