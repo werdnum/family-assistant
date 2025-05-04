@@ -178,10 +178,18 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 # model_name argument removed
             )
         )
-        # model_name argument removed from _generate_llm_response_for_chat call
+         # model_name argument removed from _generate_llm_response_for_chat call
+        assert add_error is None, f"Error during add note: {add_error}"
+        assert add_turn_messages, "No messages generated during add note turn"
 
-    logger.info(f"Add Note - Mock LLM Response Content: {add_response_content}")
-    logger.info(f"Add Note - Tool Info from Processing: {add_tool_info}")
+-    logger.info(f"Add Note - Mock LLM Response Content: {add_response_content}")
+-    logger.info(f"Add Note - Tool Info from Processing: {add_tool_info}")
++    # Find the assistant message requesting the tool call
++    assistant_add_request = next((msg for msg in add_turn_messages if msg.get("role") == "assistant" and msg.get("tool_calls")), None)
++    assert assistant_add_request is not None, "Assistant did not request tool call"
++    assert assistant_add_request["tool_calls"], "Tool calls list is empty"
++    assert assistant_add_request["tool_calls"][0]["id"] == test_tool_call_id
++    assert assistant_add_request["tool_calls"][0]["function"]["name"] == "add_or_update_note"
 
     # Assertion 1: Check the database directly to confirm the note was added
     # Use the test_db_engine yielded by the fixture
@@ -198,20 +206,6 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         note_in_db is not None
     ), f"Note '{test_note_title}' not found in the database after rule-based mock add attempt."
     assert note_in_db.content == TEST_NOTE_CONTENT, "Note content in DB does not match."
-    logger.info(f"Verified note '{test_note_title}' exists in DB.")
-
-    # Assertion 2: Check tool info (verifies ProcessingService handled mock output)
-    assert add_tool_info is not None, "Tool info should not be None for add_note rule"
-    assert len(add_tool_info) == 1, "Expected exactly one tool call info object"
-    assert add_tool_info[0]["function_name"] == "add_or_update_note"
-    assert (
-        add_tool_info[0]["tool_call_id"] == test_tool_call_id
-    )  # Check ID matches rule
-    assert add_tool_info[0]["arguments"]["title"] == test_note_title
-    assert add_tool_info[0]["arguments"]["content"] == TEST_NOTE_CONTENT
-    assert "Error:" not in add_tool_info[0].get(
-        "response_content", ""
-    ), f"Tool execution reported an error: {add_tool_info[0].get('response_content')}"
     logger.info("Tool info check passed.")
 
     # --- Add a small delay ---
@@ -237,7 +231,9 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 # model_name argument removed
             )
         )
-        # model_name argument removed from _generate_llm_response_for_chat call
+         # model_name argument removed from _generate_llm_response_for_chat call
+        assert add_error is None, f"Error during add note: {add_error}"
+        assert add_turn_messages, "No messages generated during add note turn"
 
     logger.info(
         f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}"
