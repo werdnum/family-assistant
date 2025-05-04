@@ -247,37 +247,25 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
                 user_name=TEST_USER_NAME,
             )
 
-    # --- Verification (Assert on final response content) --- # Corrected variable name
+    # --- Verification (Assert on final response content) ---
     logger.info("--- Verifying final response content (stdio) ---")
+    logger.info(f"Final response content received (stdio): {generated_turn_messages}")
 
-    logger.info(f"Final response content received (stdio): {generated_turn_messages}") # Log the structure
-+    # Verify success and extract final message content
-+    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
-+    assert generated_turn_messages is not None
-+    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
-+    # Find the last assistant message with content
-+    final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
-+    assert final_assistant_message is not None, "No final assistant message with content found"
-+    sent_text = final_assistant_message["content"]
-     assert (
-         EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-     ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    # Verify success and extract final message content
+    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
+    assert generated_turn_messages is not None
+    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
 
-+    # --- Verification (Assert on final response content) ---
-+    logger.info("--- Verifying final response content ---")
-+    logger.info(f"Final response content received: {generated_turn_messages}") # Log the structure
-+    # Verify success and extract final message content
-+    # Use processing_error_traceback from the unpacking
-+    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
-+    assert generated_turn_messages is not None
-+    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
-+    # Find the last assistant message with content
-+    final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
-+    assert final_assistant_message is not None, "No final assistant message with content found"
-+    sent_text = final_assistant_message["content"]
+    # Find the last assistant message with content
+    final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
+    assert final_assistant_message is not None, "No final assistant message with content found"
+    sent_text = final_assistant_message["content"]
+
+    # Assertions on the final message content
     assert (
         EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-    ), f"Final response did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    ), f"Final response (stdio) did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+
     assert (
         final_response_text in sent_text
     ), f"Final response did not match the mock LLM's final rule output. Sent: '{sent_text}' Expected: '{final_response_text}'"
@@ -449,30 +437,16 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
                 user_name=TEST_USER_NAME,
             )
 
-    # --- Verification (Assert on final response content) --- # Corrected variable name
-    logger.info("--- Verifying final response content (stdio) ---")
+    # --- Verification (Assert on final response content) ---
+    logger.info("--- Verifying final response content (SSE) ---")
+    logger.info(f"Final response content received (SSE): {generated_turn_messages}")
 
-    logger.info(f"Final response content received (stdio): {generated_turn_messages}") # Log the structure
-+    # Verify success and extract final message content
-+    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
-+    assert generated_turn_messages is not None
-+    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
-+    # Find the last assistant message with content
-+    final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
-+    assert final_assistant_message is not None, "No final assistant message with content found"
-+    sent_text = final_assistant_message["content"]
-     assert (
-         EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-     ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
-# --- Remove Duplicate Verification Block ---
--    # --- Verification (Assert on final response content) ---
--    logger.info("--- Verifying final response content (SSE) ---")
--    logger.info(f"Final response content received (SSE): {generated_turn_messages}") # Log the structure
--    # Verify success and extract final message content
--    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
--    assert generated_turn_messages is not None
--    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
--    # Find the last assistant message with content
+    # Verify success and extract final message content
+    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
+    assert generated_turn_messages is not None
+    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
+
+    # Find the last assistant message with content
     final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
     assert final_assistant_message is not None, "No final assistant message with content found"
     sent_text = final_assistant_message["content"]
@@ -487,10 +461,16 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     assert (
         EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
     ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+
+    # Assertions on the final message content
+    assert (
+        EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
+    ), f"Final response (SSE) did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+
     assert (
         final_response_text in sent_text
     ), f"Final response did not match the mock LLM's final rule output (SSE). Sent: '{sent_text}' Expected: '{final_response_text}'"
     logger.info(
         f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and final response contained expected fragment."
     )
-    logger.info(f"--- MCP Time Conversion SSE Test ({test_run_id}) Passed ---")
+
