@@ -19,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 from typing import List, Dict, Optional, Any  # Added Any
 from datetime import datetime, timezone, date  # Added date
 import json
-import uuid # Added import
+import uuid  # Added import
 import pathlib  # Import pathlib for finding template/static dirs
 import telegram.error  # Import telegram errors for specific checking in health check
 import aiofiles  # For reading docs
