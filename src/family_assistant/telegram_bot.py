@@ -613,7 +613,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
     async def _request_confirmation_impl(
         self, # Make it instance method if not already
-        self,
         chat_id: int,
         prompt_text: str,
         tool_name: str,
