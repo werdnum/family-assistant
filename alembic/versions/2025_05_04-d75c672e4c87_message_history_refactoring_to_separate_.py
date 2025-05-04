@@ -54,17 +54,18 @@ def upgrade() -> None:
         batch_op.alter_column('interface_type', existing_type=sa.String(length=50), nullable=False)
         batch_op.alter_column('conversation_id', existing_type=sa.String(length=255), nullable=False)
 
-        # Drop old PK constraint (assuming name 'message_history_pkey' or based on columns)
-        # This name might need adjustment based on actual DB state.
-        # If dropping by name fails, try dropping by columns (less portable).
-        try:
-             batch_op.drop_constraint('message_history_pkey', type_='primary')
-        except Exception:
-             # Fallback or specific handling if constraint name is different/unknown
-             # For SQLite, PK might be implicit and harder to drop directly.
-             # This might require table recreation in downgrade/upgrade for SQLite.
-             # For now, proceed assuming direct drop works or isn't needed for SQLite batch.
-             print("Could not drop constraint 'message_history_pkey', it might not exist or name differs.")
+        # # Drop old PK constraint (REMOVED - rely on create_primary_key below)
+        # # This name might need adjustment based on actual DB state.
+        # # If dropping by name fails, try dropping by columns (less portable).
+        # try:
+        #      batch_op.drop_constraint('message_history_pkey', type_='primary')
+        # except Exception:
+        #      # Fallback or specific handling if constraint name is different/unknown
+        #      # For SQLite, PK might be implicit and harder to drop directly.
+        #      # This might require table recreation in downgrade/upgrade for SQLite.
+        #      # For now, proceed assuming direct drop works or isn't needed for SQLite batch.
+        #      # print("Could not drop constraint 'message_history_pkey', it might not exist or name differs.")
+        #      pass # Suppress error if drop fails, maybe it doesn't exist
 
         # Drop original columns
         batch_op.drop_column('tool_calls_info')
@@ -98,11 +99,12 @@ def downgrade() -> None:
         batch_op.drop_index(op.f('ix_message_history_interface_message_id'))
         batch_op.drop_index(op.f('ix_message_history_conversation_id'))
 
-        # Drop primary key constraint on internal_id
-        try:
-            batch_op.drop_constraint('message_history_pkey', type_='primary')
-        except Exception:
-            print("Could not drop constraint 'message_history_pkey' during downgrade.")
+        # # Drop primary key constraint on internal_id (REMOVED - rely on create_primary_key below)
+        # try:
+        #     batch_op.drop_constraint('message_history_pkey', type_='primary')
+        # except Exception:
+        #     # print("Could not drop constraint 'message_history_pkey' during downgrade.")
+        #     pass # Suppress error if drop fails
 
         # Add old columns back (nullable first)
         batch_op.add_column(sa.Column('chat_id', sa.BIGINT(), nullable=True))
