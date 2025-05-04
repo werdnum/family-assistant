@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable, Awaitable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from telegram.ext import Application
+    from telegram.ext import Application # Keep Application for type checking
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
 
