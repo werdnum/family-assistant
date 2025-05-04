@@ -200,9 +200,9 @@ async def test_schedule_and_execute_callback(test_db_engine):
     schedule_request_trigger = [{"type": "text", "text": schedule_request_text}]
 
     scheduled_task_id = None
-    # Removed patch context manager
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        schedule_response_content, schedule_tool_info, _, _ = (
+        # Correct unpacking to 3 values: generated_turn_messages, final_reasoning_info, processing_error_traceback
+        schedule_generated_messages, _, schedule_error = (
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,  # Renamed db_context
                 application=mock_application,  # Pass mock application
@@ -213,7 +213,11 @@ async def test_schedule_and_execute_callback(test_db_engine):
             )
         )
 
-    logger.info(f"Schedule Request - Mock LLM Response: {schedule_response_content}")
+    assert (
+        schedule_error is None
+    ), f"Error during schedule request: {schedule_error}"
+    assistant_schedule_message = next((m for m in schedule_generated_messages if m.get("role") == "assistant"), None)
+    logger.info(f"Schedule Request - Mock LLM Response: {assistant_schedule_message.get('content') if assistant_schedule_message else 'No assistant message found'}")
 
     # --- Part 2: Run Worker and Wait for Callback ---
     logger.info("--- Part 2: Waiting for task completion ---")
