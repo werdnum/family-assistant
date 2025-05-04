@@ -102,11 +102,15 @@ async def handle_llm_callback(
     """
     # Access dependencies from the execution context
     processing_service = (
-        exec_context.processing_service
+        exec_context.processing_service # TaskWorker passes its own instance
     )  # TaskWorker passes its own instance
     application = exec_context.application
     db_context = exec_context.db_context
-    chat_id = exec_context.chat_id  # Get chat_id from context
+    # Get interface identifiers from context
+    interface_type = exec_context.interface_type
+    conversation_id = exec_context.conversation_id
+    timezone_str = exec_context.timezone_str
+
 
     # Basic validation of dependencies from context
     if not processing_service:
@@ -124,10 +128,10 @@ async def handle_llm_callback(
             "DatabaseContext not found in ToolExecutionContext for handle_llm_callback."
         )
         raise ValueError("Missing DatabaseContext dependency in context.")
-    if not chat_id:  # chat_id should be set by _process_task
+    if not conversation_id:  # conversation_id should be set by _process_task
         logger.error(
-            "Chat ID not found in ToolExecutionContext for handle_llm_callback."
-        )
+            "Conversation ID not found in ToolExecutionContext for handle_llm_callback."
+        ) # Corrected error message
         raise ValueError("Missing Chat ID in context.")
 
     # Extract necessary info from payload
@@ -141,7 +145,7 @@ async def handle_llm_callback(
         )
         raise ValueError("Missing required field in payload: callback_context")
 
-    logger.info(f"Handling LLM callback for chat_id {chat_id}")
+    logger.info(f"Handling LLM callback for conversation {interface_type}:{conversation_id}")
     current_time_str = datetime.now(
         zoneinfo.ZoneInfo(exec_context.timezone_str)
     ).strftime(
@@ -165,14 +169,19 @@ async def handle_llm_callback(
         # Tool definitions are fetched within process_message now
         # all_tools = local_tools_definition + mcp_tools # Removed
 
+        # Generate a turn ID for this callback execution
+        callback_turn_id = str(uuid.uuid4())
+
         # Call the ProcessingService directly, using dependencies from context
         # Unpack all expected return values (content, tool_info, reasoning, error)
-        llm_response_content, tool_call_info, _ = (
+        # TODO: Update call signature when ProcessingService is fully refactored
+        llm_response_content, tool_call_info, reasoning_info = ( # Assuming old return for now
             await processing_service.process_message(  # Use service from context
                 db_context=db_context,
                 messages=messages_for_llm,
-                chat_id=chat_id,
                 application=application,
+                interface_type=interface_type, # Pass interface type
+                conversation_id=conversation_id, # Pass conversation ID
             )
         )
 
@@ -180,46 +189,56 @@ async def handle_llm_callback(
             # Send the LLM's response back to the chat
             formatted_response = format_llm_response_for_telegram(llm_response_content)
             sent_message = await application.bot.send_message(
-                chat_id=chat_id,
+                chat_id=int(conversation_id) if interface_type == "telegram" else conversation_id, # Assuming TG ID is int convertible
                 text=formatted_response,
                 parse_mode="MARKDOWN_V2",
                 # Note: We don't have an original message ID to reply to here.
             )
-            logger.info(f"Sent LLM response for callback to chat {chat_id}.")
+            logger.info(f"Sent LLM response for callback to {interface_type}:{conversation_id}.")
 
             # Store the callback trigger and response in history
             try:
-                # Pseudo-ID for the trigger message (timestamp based?)
-                trigger_msg_id = int(datetime.now(timezone.utc).timestamp() * 1000)
+                # Save trigger message
                 await storage.add_message_to_history(
                     db_context=db_context,
-                    chat_id=chat_id,
-                    message_id=trigger_msg_id,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    interface_message_id=None, # No interface ID for trigger
+                    turn_id=callback_turn_id, # Associate with this turn
+                    thread_root_id=None, # Callbacks likely don't belong to a user thread
                     timestamp=datetime.now(timezone.utc),
                     role="system",
                     content=trigger_text,
                 )
                 # Use the actual sent message ID if available and makes sense, else pseudo-ID
-                response_msg_id = (
-                    sent_message.message_id if sent_message else trigger_msg_id + 1
+                response_interface_id = (
+                    str(sent_message.message_id) if sent_message else None
                 )
                 await storage.add_message_to_history(
                     db_context=db_context,
-                    chat_id=chat_id,
-                    message_id=response_msg_id,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    interface_message_id=response_interface_id, # Store actual ID if sent
+                    turn_id=callback_turn_id, # Associate with this turn
+                    thread_root_id=None, # Callbacks likely don't belong to a user thread
                     timestamp=datetime.now(timezone.utc),
                     role="assistant",
                     content=llm_response_content,
-                    tool_calls_info=tool_call_info,
+                    tool_calls=tool_call_info, # Use correct key
+                    reasoning_info=reasoning_info, # Store reasoning
                 )
             except Exception as db_err:
                 logger.error(
-                    f"Failed to store callback history for chat {chat_id}: {db_err}",
+                    f"Failed to store callback history for {interface_type}:{conversation_id}: {db_err}",
                     exc_info=True,
                 )
 
         else:
             # Handle case where the turn completed but the final assistant message had no content
+            # Need interface_type and conversation_id here
+            interface_type = exec_context.interface_type
+            conversation_id = exec_context.conversation_id
+
             logger.warning(
                 f"LLM turn completed for callback in {interface_type}:{conversation_id}, but final message had no content."
             )
@@ -233,6 +252,10 @@ async def handle_llm_callback(
 
     except Exception as e:
         # Catch errors during the generate_llm_response_for_chat call or sending/saving messages
+        # Need interface_type and conversation_id here
+        interface_type = exec_context.interface_type
+        conversation_id = exec_context.conversation_id
+
         logger.error(
             f"Failed during LLM callback processing for {interface_type}:{conversation_id}: {e}",
             exc_info=True,
@@ -311,6 +334,10 @@ class TaskWorker:
             # --- Create Execution Context ---
             # Extract interface identifiers from payload
             payload_dict = task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
+            # Need to define these *before* using them in logging etc.
+            # Define with default or None initially
+            interface_type: Optional[str] = None
+            conversation_id: Optional[str] = None
             interface_type = payload_dict.get("interface_type")
             conversation_id = payload_dict.get("conversation_id")
             # Validate extracted identifiers (ensure they exist for tasks needing them)
@@ -441,9 +468,13 @@ class TaskWorker:
     ):
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
-        max_retries = task.get(
-            "max_retries",
-            3,  # Use DB default if missing somehow
+        max_retries = task.get("max_retries", 3) # Use DB default if missing somehow
+        # Define interface/conversation ID for logging if available in payload
+        payload_dict = task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
+        interface_info = ( # Create helper string for logging
+            f" ({payload_dict.get('interface_type', 'unknown_if')}:"
+            f"{payload_dict.get('conversation_id', 'unknown_cid')})"
+            if payload_dict.get("interface_type") else ""
         )
         error_str = str(handler_exc)
         logger.error(

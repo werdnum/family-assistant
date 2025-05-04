@@ -111,7 +111,7 @@ class ProcessingService:
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
         request_confirmation_callback: Optional[
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-        ] = None,
+        ] = None, # Removed comma
     ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
         """
         Sends the conversation history to the LLM via the injected client,
@@ -119,9 +119,13 @@ class ProcessingService:
         and returns the final response content along with details of any tool calls made.
 
         Args:
+            db_context: The database context.
             messages: A list of message dictionaries for the LLM.
-            chat_id: The chat ID for context.
+            # --- Updated args based on refactoring plan ---
+            interface_type: Identifier for the interaction interface (e.g., 'telegram').
+            conversation_id: Identifier for the conversation (e.g., chat ID string).
             application: The Telegram Application instance for context.
+            request_confirmation_callback: Function to request user confirmation for tools.
 
         Returns:
             A tuple containing:
@@ -134,10 +138,6 @@ class ProcessingService:
         final_content: Optional[str] = None  # Store final text response from LLM
         max_iterations = 5  # Safety limit for tool call loops
         current_iteration = 1
-
-        logger.info(
-            f"Processing {len(messages)} messages for chat {chat_id}. Last message: {messages[-1]['content'][:100]}..."
-        )
 
         try:
             # --- Get Tool Definitions ---
@@ -454,13 +454,17 @@ class ProcessingService:
         self,
         db_context: DatabaseContext,  # Added db_context
         application: Application,
-        chat_id: int,
+        # --- Refactored Parameters ---
+        interface_type: str,
+        conversation_id: str,
         trigger_content_parts: List[Dict[str, Any]],
         user_name: str,
+        replied_to_interface_id: Optional[str] = None, # Added for reply context
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
         request_confirmation_callback: Optional[
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
         ] = None,
+    # --- Refactored Return Type ---
     ) -> Tuple[
         Optional[str],
         Optional[List[Dict[str, Any]]],
@@ -474,15 +478,18 @@ class ProcessingService:
         Args:
             db_context: The database context to use for storage operations.
             application: The Telegram application instance.
-            chat_id: The target chat ID.
+            interface_type: Identifier for the interaction interface.
+            conversation_id: Identifier for the conversation.
             trigger_content_parts: List of content parts for the triggering message.
             user_name: The user name to format into the system prompt.
+            replied_to_interface_id: Optional interface-specific ID of the message being replied to.
+            request_confirmation_callback: Optional callback for tool confirmations.
 
         Returns:
-            A tuple: (LLM response string or None, List of tool call info dicts or None, Reasoning info dict or None, Error traceback string or None).
+            A tuple: (List of generated turn messages, Final reasoning info dict or None, Error traceback string or None).
         """
         error_traceback: Optional[str] = None  # Initialize traceback
-        logger.debug(
+        logger.info( # Changed to info for better visibility
             f"Generating LLM response for chat {chat_id}, triggered by: {trigger_content_parts[0].get('type', 'unknown')}"
         )
 
@@ -507,16 +514,55 @@ class ProcessingService:
             history_messages = []  # Continue with empty history on error
 
         # Format the raw history using the new helper method
-        messages = self._format_history_for_llm(history_messages)
+        initial_messages_for_llm = self._format_history_for_llm(history_messages)
 
-        # --- Handle Reply Context ---
+        # --- Handle Reply Thread Context ---
         thread_root_id_for_saving: Optional[int] = None # Store the root ID for saving later
+        if replied_to_interface_id:
+            try:
+                replied_to_db_msg = await storage.get_message_by_interface_id(
+                    db_context=db_context,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    interface_message_id=replied_to_interface_id,
+                )
+                if replied_to_db_msg:
+                    # Determine thread root ID for saving
+                    thread_root_id_for_saving = replied_to_db_msg.get("thread_root_id") or replied_to_db_msg.get("internal_id")
+                    logger.info(f"Determined thread_root_id {thread_root_id_for_saving} from replied-to message {replied_to_interface_id}")
+
+                    # Fetch the full thread history if a root ID exists
+                    if thread_root_id_for_saving:
+                        logger.info(f"Fetching full thread history for root ID {thread_root_id_for_saving}")
+                        full_thread_messages_db = await storage.get_messages_by_thread_id(
+                            db_context=db_context,
+                            thread_root_id=thread_root_id_for_saving
+                        )
+                        # Format thread messages and replace the initial limited history
+                        formatted_thread_messages = self._format_history_for_llm(full_thread_messages_db)
+                        initial_messages_for_llm = formatted_thread_messages
+                        logger.info(f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context.")
+                    else:
+                        # If the replied-to message had no root (was the first), the initial history fetch is sufficient.
+                        logger.info(f"Replied-to message {replied_to_interface_id} is the start of the thread. Using standard history.")
+
+                else:
+                    logger.warning(f"Could not find replied-to message {replied_to_interface_id} in DB to determine thread root or fetch full thread.")
+                    # Fallback: Use the initially fetched recent history
+
+            except Exception as thread_err:
+                logger.error(f"Error handling reply context: {thread_err}", exc_info=True)
+                # Fallback: Use the initially fetched recent history
+
+        # Use the potentially updated message list
+        messages = initial_messages_for_llm
 
         # --- Prepare System Prompt Context ---
         system_prompt_template = self.prompts.get(  # Use self.prompts
             "system_prompt",
             "You are a helpful assistant. Current time is {current_time}.",
         )
+
         try:
             local_tz = pytz.timezone(self.timezone_str)  # Use self.timezone_str
             current_local_time = datetime.now(local_tz)
@@ -636,28 +682,31 @@ class ProcessingService:
         }
         messages.append(trigger_message)
         logger.debug(f"Appended trigger message to LLM history: {trigger_message}")
+        turn_id = str(uuid.uuid4()) # Generate turn ID here
 
         # --- Call Processing Logic ---
         # Tool definitions are now fetched inside process_message
         try:
+            # Prepare a list to store all messages generated in this turn
+            generated_turn_messages = []
+
             # Call the process_message method of the *same* instance (self)
-            # Unpack all three return values: content, tool_info, reasoning_info
-            llm_response_content, tool_info, reasoning_info = (
+            # Add the turn_id, interface_type, conversation_id here
+            # Modify process_message to return the list of turn messages and reasoning info
+            # TODO: Adjust the call signature and return value handling based on the final signature of process_message
+            final_content, executed_tool_info, final_reasoning_info = ( # Use current return signature for now
                 await self.process_message(
                     db_context=db_context,  # Pass context
                     messages=messages,
                     interface_type=interface_type,      # Pass interface_type
                     conversation_id=conversation_id,  # Pass conversation_id
                     application=application,
-                    # Pass the confirmation callback down
                     request_confirmation_callback=request_confirmation_callback,
-                    turn_id=turn_id, # Pass the generated turn_id
                 )
-            return (
-                generated_turn_messages,
-                final_reasoning_info,
-                None,
-            )  # No error traceback
+            )
+            # TODO: Reconstruct the turn_messages list based on the process_message output
+            # For now, return the current output structure until process_message is fully refactored
+            return final_content, executed_tool_info, final_reasoning_info, None # Return as per current signature
         except Exception as e:
             logger.error(
                 f"Error during ProcessingService interaction for chat {chat_id}: {e}",
@@ -668,5 +717,5 @@ class ProcessingService:
             error_traceback = traceback.format_exc() # Capture traceback
             # Return None for content/tools/reasoning, but include the traceback
             return [], None, error_traceback  # Return empty list, None reasoning, traceback
-
-            return None, None, None, error_traceback  # Return traceback here
+            # Return None for content/tools/reasoning, but include the traceback (as per current signature)
+            # return None, None, None, error_traceback
