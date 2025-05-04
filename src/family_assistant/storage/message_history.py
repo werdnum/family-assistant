@@ -95,10 +95,8 @@ async def add_message_to_history(
         str
     ] = None,  # Added: ID linking tool response to assistant request
 ) -> Optional[Dict[str, Any]]:  # Changed to return Optional[Dict]
-    """Adds a message to the history table, including optional tool call info, reasoning, error, and tool_call_id."""
-    stmt = (
-        insert(message_history_table)
-        .values(
+    """Adds a message to the history table, including optional fields."""
+    # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
     try:
         stmt = (
             insert(message_history_table)
@@ -120,9 +118,7 @@ async def add_message_to_history(
         # Use execute_with_retry as commit is handled by context manager
         result: Result = await db_context.execute_with_retry(stmt)
         internal_id = result.scalar_one_or_none()
-        logger.debug(
-        )
-        # Return a dict containing the ID, or None
+        # Log after successful insertion before returning
         # Ideally return the full row, but returning just the ID for now
         return {"internal_id": internal_id} if internal_id else None
     except SQLAlchemyError as e:
@@ -234,7 +230,7 @@ async def get_message_by_interface_id(
         raise
 
 
-# --- New Functions Implemented ---
+# --- New Functions ---
 async def get_messages_by_turn_id(
     db_context: DatabaseContext, turn_id: str
 ) -> List[Dict[str, Any]]:
@@ -263,7 +259,10 @@ async def get_messages_by_thread_id(
     db_context: DatabaseContext, thread_root_id: int
 ) -> List[Dict[str, Any]]:
     """Retrieves all messages belonging to a specific conversation thread."""
-    try:
+    # A thread is defined by the `internal_id` of its first message.
+    # Messages in the thread either have `thread_root_id` pointing to that first message,
+    # or *are* the first message (where `internal_id == thread_root_id` would be true,
+    # although the first message itself has `thread_root_id` as NULL).
         stmt = (
             select(message_history_table)
             .where(message_history_table.c.thread_root_id == thread_root_id)
