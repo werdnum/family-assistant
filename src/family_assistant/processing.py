@@ -390,7 +390,10 @@ class ProcessingService:
                                     {
                                         "id": call_id,
                                         "type": "function",  # Assuming only function calls for now
-                                        "function": function_info,  # Pass the whole function dict (name, arguments str)
+                                        "function": { # Correctly format the function info
+                                            "name": function_name,
+                                            "arguments": json.dumps(arguments_dict) # Serialize the dict back to string
+                                        },
                                     }
                                 )
                             else:
