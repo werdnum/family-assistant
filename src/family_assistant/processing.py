@@ -355,9 +355,8 @@ class ProcessingService:
         for msg in history_messages:
             # Use .get for safer access to potentially missing keys
             role = msg.get("role")
-            content = (
-                msg.get("content") or ""
-            )  # Should be List[Dict] from OpenAI/LiteLLM format or None
+            content = msg.get("content") # Keep as None if null in DB
+            tool_calls = msg.get("tool_calls") # Get tool calls if present
             tool_call_id = msg.get(
                 "tool_call_id"
             )  # tool_call_id for role 'tool' messages
@@ -365,7 +364,16 @@ class ProcessingService:
             # error_traceback = msg.get("error_traceback") # Error info not needed for LLM history format
 
             if role == "assistant":
-                # Check if there's actual tool call data (not None, not empty list)
+                # Format assistant message, including content and tool_calls if they exist
+                assistant_msg_for_llm = {"role": "assistant"}
+                if content:
+                    assistant_msg_for_llm["content"] = content
+                # Check if tool_calls exists and is a non-empty list/dict
+                if tool_calls:
+                    assistant_msg_for_llm["tool_calls"] = tool_calls
+                # Only add the message if it has content or tool calls
+                if content or tool_calls:
+                    messages.append(assistant_msg_for_llm)
             elif role == "tool":
                 # --- Format tool response messages ---
                 if (
@@ -375,7 +383,7 @@ class ProcessingService:
                         {
                             "role": "tool",
                             "tool_call_id": tool_call_id, # The ID linking to the assistant request
-                            "content": content,  # Content is the tool's response string
+                            "content": content or "",  # Ensure content is a string, default empty
                         }
                     )
                 else:
@@ -388,7 +396,7 @@ class ProcessingService:
                 role != "error"
             ):  # Don't include previous error messages in history sent to LLM
                 # Append other non-error messages directly
-                messages.append({"role": role, "content": content})
+                messages.append({"role": role, "content": content or ""}) # Ensure content is string
 
         logger.debug(
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
