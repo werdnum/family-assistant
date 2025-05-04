@@ -695,10 +695,11 @@ class ProcessingService:
             # Modify process_message to return the list of turn messages and reasoning info
             # TODO: Adjust the call signature and return value handling based on the final signature of process_message
             final_content, executed_tool_info, final_reasoning_info = ( # Use current return signature for now
-                await self.process_message(
+                await self.process_message( # Call the other method in this class
                     db_context=db_context,  # Pass context
                     messages=messages,
-                    interface_type=interface_type,      # Pass interface_type
+                    # Removed chat_id, added interface_type/conversation_id
+                    interface_type=interface_type,
                     conversation_id=conversation_id,  # Pass conversation_id
                     application=application,
                     request_confirmation_callback=request_confirmation_callback,
@@ -709,7 +710,7 @@ class ProcessingService:
             return final_content, executed_tool_info, final_reasoning_info, None # Return as per current signature
         except Exception as e:
             logger.error(
-                f"Error during ProcessingService interaction for chat {chat_id}: {e}",
+                f"Error during ProcessingService interaction for {interface_type}:{conversation_id}: {e}",
                 exc_info=True,
             )
             # Capture traceback on error
