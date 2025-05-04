@@ -100,11 +100,11 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     tool_msg_internal_id = tool_msg_result["internal_id"]
 
     # Assert Assistant Message
-    async with db_context as ctx: # Use the fixture
-        assistant_result = await ctx.fetch_one(
-            text("SELECT * FROM message_history WHERE internal_id = :id"),
-            {"id": assistant_msg_internal_id}, # Use the correct variable name
-        )
+    # Use the yielded db_context directly
+    assistant_result = await db_context.fetch_one(
+        text("SELECT * FROM message_history WHERE internal_id = :id"),
+        {"id": assistant_msg_internal_id}, # Use the correct variable name
+    )
     assert assistant_result is not None
     assert assistant_result["turn_id"] == turn_id
     assert assistant_result["thread_root_id"] == thread_root_id
@@ -114,11 +114,11 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     assert assistant_result["error_traceback"] is None
 
     # Assert Tool Message
-    async with db_context as ctx: # Use the fixture
-        tool_result = await ctx.fetch_one(
-            text("SELECT * FROM message_history WHERE internal_id = :id"),
-            {"id": tool_msg_internal_id}, # Use the correct variable name
-        ) # Error here, should use internal id
+    # Use the yielded db_context directly
+    tool_result = await db_context.fetch_one(
+        text("SELECT * FROM message_history WHERE internal_id = :id"),
+        {"id": tool_msg_internal_id}, # Use the correct variable name
+    )
     assert tool_result is not None
     assert tool_result["turn_id"] == turn_id
     assert tool_result["thread_root_id"] == thread_root_id
