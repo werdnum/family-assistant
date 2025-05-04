@@ -8,7 +8,7 @@ import random
 import uuid
 import zoneinfo  # Add this import
 from dateutil import rrule
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone # Added Union
 from typing import Dict, List, Any, Optional, Callable, Awaitable
 
 # Use absolute imports based on the package structure
