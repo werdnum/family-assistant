@@ -24,8 +24,11 @@ from family_assistant.storage.message_history import (
     message_history_table,
     add_message_to_history,
     get_recent_history,
-    get_message_by_id,
     get_grouped_message_history,
+    get_message_by_interface_id,  # Renamed from get_message_by_id
+    get_messages_by_turn_id,      # Added
+    get_messages_by_thread_id,    # Added
+    update_message_interface_id,  # Added
 )
 from family_assistant.storage.tasks import (
     tasks_table,
@@ -136,7 +139,10 @@ __all__ = [
     "get_engine",
     "add_message_to_history",
     "get_recent_history",
-    "get_message_by_id",
+    "get_grouped_message_history",
+    "get_message_by_interface_id",   # Renamed
+    "get_messages_by_turn_id",       # Added
+    "get_messages_by_thread_id",     # Added
     "add_or_update_note",
     "delete_note",
     "enqueue_task",
@@ -144,7 +150,7 @@ __all__ = [
     "update_task_status",
     "reschedule_task_for_retry",  # Removed duplicate
     "get_all_tasks",
-    "get_grouped_message_history",
+    "update_message_interface_id",  # Added
     "notes_table",
     "message_history_table",
     "tasks_table",
