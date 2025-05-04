@@ -316,9 +316,6 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     logger.info("--- Verifying final response content (SSE) ---") # Log message adjustment
     logger.info(f"Final response content received (SSE): {generated_turn_messages}") # Log the structure
 
-    assert (
-         EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-     ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
     # Verify success and extract final message content
     assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}" # Use correct variable
     assert generated_turn_messages is not None # Assertion was already here
@@ -329,7 +326,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     sent_text = final_assistant_message["content"]
     assert (
          EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-     ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+     ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'" # Added closing parenthesis
 
     tool_call_response = LLMOutput(
         content=f"OK, I will convert {SOURCE_TIME} from {SOURCE_TZ} to {TARGET_TZ} using the MCP time tool (via SSE).",
