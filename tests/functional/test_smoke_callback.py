@@ -204,10 +204,10 @@ async def test_schedule_and_execute_callback(test_db_engine):
     async with DatabaseContext(engine=test_db_engine) as db_context:
         schedule_response_content, schedule_tool_info, _, _ = (
             await processing_service.generate_llm_response_for_chat(
-                db_context=db_context, # Renamed db_context
-                application=mock_application, # Pass mock application
+                db_context=db_context,  # Renamed db_context
+                application=mock_application,  # Pass mock application
                 interface_type="test",
-                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
+                conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
                 trigger_content_parts=schedule_request_trigger,
                 user_name=TEST_USER_NAME,
             )
@@ -231,7 +231,9 @@ async def test_schedule_and_execute_callback(test_db_engine):
     # Compare chat_id as string, as conversation_id is stored as string
     # The test uses interface_type="test", so handle_llm_callback passes the string conversation_id.
     # Therefore, compare the string value from kwargs with the string representation of TEST_CHAT_ID.
-    assert call_kwargs.get("chat_id") == str(TEST_CHAT_ID) # Assert string matches string
+    assert call_kwargs.get("chat_id") == str(
+        TEST_CHAT_ID
+    )  # Assert string matches string
     sent_text = call_kwargs.get("text")
     assert sent_text is not None
     # Check if the *mock's* expected response content is in the sent text
