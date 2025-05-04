@@ -280,7 +280,7 @@ class ProcessingService:
                         }
                         turn_messages.append(tool_response_message_for_turn)
                         # Create the 'tool' response message for the next LLM context
-                        tool_response_message_for_llm.append(
+                        tool_response_messages_for_llm.append( # Corrected variable name
                             {
                                 "role": "tool",
                                 "tool_call_id": call_id,
@@ -345,7 +345,7 @@ class ProcessingService:
 
                     # --- Add Tool Response to Context for *Next* LLM Call ---
                     # Format for the LLM API (needs tool_call_id and content)
-                    tool_response_message_for_llm.append(
+                    tool_response_messages_for_llm.append( # Corrected variable name
                         {
                             "role": "tool",
                             "tool_call_id": call_id,
