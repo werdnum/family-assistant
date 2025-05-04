@@ -412,11 +412,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         saved_msg = await self.storage.add_message_to_history(
                             db_context=db_context, **msg_dict  # Pass the dict directly
                         )
-                        # Capture the internal ID if the role is assistant
-                        if msg_dict.get("role") == "assistant":
+                        # Capture the internal ID if the role is assistant and the message was saved successfully
+                        if msg_dict.get("role") == "assistant" and saved_msg:
                             last_assistant_internal_id = (
-                                saved_msg.internal_id
-                            )  # Assuming add_message returns the object or ID
+                                saved_msg.get("internal_id") # Use dict access (.get for safety)
+                            )
 
             # Create ForceReply object
             force_reply_markup = ForceReply(selective=False)
