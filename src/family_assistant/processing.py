@@ -416,8 +416,7 @@ class ProcessingService:
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
         request_confirmation_callback: Optional[
             Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-        ] = None,
-        """
+        ] = None, # Added closing parenthesis and colon
         Prepares context, message history, calls the LLM processing logic,
         and returns the response, tool info, reasoning info, and any processing error traceback.
 
