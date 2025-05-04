@@ -173,19 +173,28 @@ async def handle_llm_callback(
         # Generate a turn ID for this callback execution
         callback_turn_id = str(uuid.uuid4())
 
-        # Call the ProcessingService directly, using dependencies from context
-        # Unpack all expected return values (content, tool_info, reasoning, error)
-        # process_message returns (final_content, final_tool_info)
+        # Call the ProcessingService.
+        # NOTE: process_message returns the LIST of generated messages for the turn,
+        # not just the final content string.
         (
-            llm_response_content,
+            generated_messages, # This is List[Dict[str, Any]]
             tool_call_info,
         ) = await processing_service.process_message(  # Assuming old return for now  # Use service from context
             db_context=db_context,
             messages=messages_for_llm,
             application=application,
-            interface_type=interface_type,  # Pass interface type
-            conversation_id=conversation_id,  # Pass conversation ID
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            # No confirmation callback needed for system-triggered callbacks
+            request_confirmation_callback=None,
         )
+
+        # Extract the content of the final assistant message from the list
+        final_assistant_message = next(
+            (m for m in reversed(generated_messages) if m.get("role") == "assistant"),
+            None,
+        )
+        llm_response_content = final_assistant_message.get("content") if final_assistant_message else None
 
         if llm_response_content:
             # Send the LLM's response back to the chat
@@ -246,7 +255,7 @@ async def handle_llm_callback(
                 logger.error(
                     f"Failed to store callback history for {interface_type}:{conversation_id}: {db_err}",
                     exc_info=True,
-                )
+                )            
 
         else:
             # Handle case where the turn completed but the final assistant message had no content
