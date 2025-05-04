@@ -286,22 +286,22 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(db_context: 
 
         # Thread 1 messages
     msg1_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id="msg1", turn_id=None, thread_root_id=None, timestamp=now, role="user", content="Thread 1 Start")
-        assert msg1_result is not None and msg1_result.get("internal_id") is not None
-        thread_1_root = msg1_result["internal_id"] # Use the internal_id of the first message as the root
-        msg1_id = thread_1_root # Keep for assertion later
+    assert msg1_result is not None and msg1_result.get("internal_id") is not None
+    thread_1_root = msg1_result["internal_id"] # Use the internal_id of the first message as the root
+    msg1_id = thread_1_root # Keep for assertion later
 
     msg2_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id=None, turn_id="t1", thread_root_id=thread_1_root, timestamp=now + timedelta(seconds=1), role="assistant", content="Thread 1 Reply 1")
-        assert msg2_result is not None and msg2_result.get("internal_id") is not None
-        msg2_id = msg2_result["internal_id"]
+    assert msg2_result is not None and msg2_result.get("internal_id") is not None
+    msg2_id = msg2_result["internal_id"]
 
     msg3_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_1, interface_message_id="msg3", turn_id=None, thread_root_id=thread_1_root, timestamp=now + timedelta(seconds=2), role="user", content="Thread 1 Reply 2")
-        assert msg3_result is not None and msg3_result.get("internal_id") is not None
-        msg3_id = msg3_result["internal_id"]
+    assert msg3_result is not None and msg3_result.get("internal_id") is not None
+    msg3_id = msg3_result["internal_id"]
 
     # Thread 2 message (Different conversation, different thread)
     msg4_result = await add_message_to_history(db_context, interface_type=interface, conversation_id=conv_id_2, interface_message_id="msg4", turn_id=None, thread_root_id=None, timestamp=now + timedelta(seconds=3), role="user", content="Thread 2 Start")
-        assert msg4_result is not None and msg4_result.get("internal_id") is not None
-        msg4_id = msg4_result["internal_id"]
+    assert msg4_result is not None and msg4_result.get("internal_id") is not None
+    msg4_id = msg4_result["internal_id"]
 
     # Act
     thread_1_messages = await get_messages_by_thread_id(db_context, thread_1_root)
