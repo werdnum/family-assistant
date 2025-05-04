@@ -25,9 +25,10 @@ from family_assistant.storage.message_history import (
     add_message_to_history,
     get_recent_history,
     get_grouped_message_history,
-    get_message_by_interface_id,  # Renamed from get_message_by_id
-    get_messages_by_turn_id,      # Added
-    get_messages_by_thread_id,    # Added
+    # Renamed from get_message_by_id
+    get_message_by_interface_id,
+    get_messages_by_turn_id,        # Added
+    get_messages_by_thread_id,      # Added
     update_message_interface_id,  # Added
 )
 from family_assistant.storage.tasks import (
