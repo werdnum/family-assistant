@@ -77,6 +77,7 @@ def format_llm_response_for_telegram(response_text: str) -> str:
         if converted and not converted.isspace():
             return converted
         else:
+            # Handle case where the turn completed but the final assistant message had no content
             logger.warning(
                 f"Markdown conversion resulted in empty string for: {response_text[:100]}... Using original."
             )
@@ -218,30 +219,25 @@ async def handle_llm_callback(
                 )
 
         else:
+            # Handle case where the turn completed but the final assistant message had no content
             logger.warning(
-                f"LLM did not return a response content for callback in chat {chat_id}."
+                f"LLM turn completed for callback in {interface_type}:{conversation_id}, but final message had no content."
             )
             # Optionally send a generic failure message to the chat
             await application.bot.send_message(
-                chat_id=chat_id,
+                chat_id=int(conversation_id) if interface_type == 'telegram' else conversation_id,
                 text="Sorry, I couldn't process the scheduled callback.",
             )
             # Raise an error to mark the task as failed if no response was generated
             raise RuntimeError("LLM failed to generate response content for callback.")
 
     except Exception as e:
+        # Catch errors during the generate_llm_response_for_chat call or sending/saving messages
         logger.error(
-            f"Failed during LLM callback processing for chat {chat_id}: {e}",
+            f"Failed during LLM callback processing for {interface_type}:{conversation_id}: {e}",
             exc_info=True,
         )
         # Raise the exception to ensure the task is marked as failed
-        raise
-
-
-# Note: Registration now happens in __main__.py using worker instance
-
-
-# --- Task Worker Class ---
 
 
 class TaskWorker:
@@ -485,6 +481,7 @@ class TaskWorker:
                     error=f"Handler Error: {error_str}. Reschedule Failed: {reschedule_err}",
                 )
         else:
+            # Handle case where the turn completed but the final assistant message had no content
             logger.warning(
                 f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
             )
