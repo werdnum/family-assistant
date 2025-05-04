@@ -83,11 +83,11 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
                 }
             ],
         },
-        # Note: The final assistant message *after* the tool call is a separate entry
+        # This should represent the stored 'tool' response message
         {
-            "role": "assistant",
-            "content": "The weather is sunny.",
-            "tool_calls_info_raw": None,
+            "role": "tool",
+            "tool_call_id": tool_call_id, # Required for tool messages
+            "content": tool_response,     # The actual tool response content
         },
     ]
 
@@ -96,7 +96,7 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         # Assistant message requesting the tool
         {
             "role": "assistant",
-            "content": "",  # Content was None in input
+            "content": None, # Keep None as content might be None
             "tool_calls": [
                 {
                     "id": tool_call_id,
@@ -114,8 +114,6 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
             "tool_call_id": tool_call_id,
             "content": tool_response,
         },
-        # Final assistant message after processing tool response
-        {"role": "assistant", "content": "The weather is sunny."},
     ]
 
     actual_output = processing_service._format_history_for_llm(history_messages)
