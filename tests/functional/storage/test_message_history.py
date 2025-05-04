@@ -50,6 +50,7 @@ async def db_context(db_engine: AsyncEngine) -> DatabaseContext:
 async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     """Verify storing messages with optional fields populated."""
     # Arrange
+    interface_type = "test_optional" # Define interface_type
     conversation_id = str(uuid.uuid4())
     turn_id = str(uuid.uuid4())
     thread_root_id = 123  # Assume this ID exists from a previous message
@@ -244,7 +245,7 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext):
     async with db_context as ctx:
         result = await ctx.fetch_one(
             text("SELECT interface_message_id FROM message_history WHERE internal_id = :id"),
-            {"id": internal_id_result["internal_id"]},
+            {"id": internal_id["internal_id"]}, # Use internal_id which holds the result dict
         )
     assert result is not None
     assert result["interface_message_id"] == new_interface_id
@@ -282,7 +283,6 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(db_context: 
     assert all(m["thread_root_id"] == thread_1_root or m["internal_id"] == thread_1_root for m in thread_1_messages) # Root msg has NULL thread_root_id
 
     # Act: Get messages for a thread_root_id that doesn't exist (use msg4_id which isn't a root)
-    empty_thread_messages = await get_messages_by_thread_id(db_context, msg4_id)
-    empty_thread_messages = await get_messages_by_thread_id(db_context, msg4_id_result["internal_id"])
+    empty_thread_messages = await get_messages_by_thread_id(db_context, msg4_id["internal_id"]) # Use msg4_id which holds the result dict
     # Assert
     assert len(empty_thread_messages) == 0
