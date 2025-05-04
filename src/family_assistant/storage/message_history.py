@@ -248,8 +248,6 @@ async def get_messages_by_turn_id(
             .where(
                 (message_history_table.c.thread_root_id == thread_root_id) |
                 (message_history_table.c.internal_id == thread_root_id)
-            ) # Re-add the correct WHERE clause
-        )
         )
         rows = await db_context.fetch_all(
 
@@ -283,8 +281,6 @@ async def get_messages_by_thread_id(
             .where(
                 (message_history_table.c.thread_root_id == thread_root_id) |
                 (message_history_table.c.internal_id == thread_root_id)
-            ) # Re-add the correct WHERE clause
-        )
         )
         rows = await db_context.fetch_all(
 
