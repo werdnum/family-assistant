@@ -33,11 +33,11 @@ The `message_history` table schema will be modified as follows (referencing `doc
 
 *   **`add_message_to_history`**:
     *   Update signature to accept `interface_type: str`, `conversation_id: str`, `interface_message_id: Optional[str]`, and `turn_id: Optional[str]`.
-    *   Update `INSERT` statement to use the new/renamed columns.
+    *   Update `INSERT` statement to use the new/renamed columns, including `thread_root_id: Optional[int]`.
 *   **`get_message_by_id` -> `get_message_by_interface_id`**:
     *   Rename function for clarity.
     *   Update signature to accept `interface_type: str`, `conversation_id: str`, `interface_message_id: str`.
-    *   Update `SELECT` statement to filter by these three columns.
+    *   Update `SELECT` statement to filter by these three columns. Should return all columns, including `thread_root_id`.
 *   **`get_recent_history`**:
     *   Update signature to accept `interface_type: str`, `conversation_id: str`.
     *   Update `SELECT` statement to filter by `interface_type` and `conversation_id`.
@@ -48,6 +48,9 @@ The `message_history` table schema will be modified as follows (referencing `doc
 *   **Add `get_messages_by_turn_id`**:
     *   Create a new function accepting `turn_id: str`.
     *   It should `SELECT` messages where `turn_id` matches, ordered by `internal_id` (or `timestamp`) to preserve sequence.
+*   **Add `get_messages_by_thread_id`**:
+    *   Create a new function accepting `thread_root_id: int`.
+    *   It should `SELECT` messages where `thread_root_id` matches, ordered by `internal_id` or `timestamp`.
 
 ## 4. Processing Logic Changes (`src/family_assistant/processing.py`, `src/family_assistant/tools/types.py`)
 
@@ -84,10 +87,13 @@ The `message_history` table schema will be modified as follows (referencing `doc
     *   **Saving Logic:**
         *   Save the initial **user message**: Use `interface_type`, `conversation_id`, its actual `interface_message_id` (e.g., `str(telegram_message_id)`), and `turn_id=None`.
         *   Iterate through the `turn_messages` list received from the processing service.
-        *   For each message in `turn_messages`: Save it using `add_message_to_history`, passing `interface_type`, `conversation_id`, `interface_message_id=None`, and the `turn_id` present in the message dictionary. Include role, content, `tool_calls`, `tool_call_id`, `reasoning_info` as appropriate from the dictionary.
+        *   For each message in `turn_messages`: Save it using `add_message_to_history`, passing `interface_type`, `conversation_id`, `interface_message_id=None`, the `turn_id` present in the message dictionary, and the determined `thread_root_id` (inherited from the trigger message). Include role, content, `tool_calls`, `tool_call_id`, `reasoning_info` as appropriate from the dictionary.
         *   If a final assistant message was successfully sent to the interface (e.g., `sent_assistant_message` in Telegram):
             *   Identify the corresponding message record in the database (e.g., the last 'assistant' message with the correct `turn_id`).
             *   Update that specific record to set its `interface_message_id` to the actual ID from the interface (e.g., `str(sent_assistant_message.message_id)`).
+*   **Reply Handling:**
+    *   When a user replies, the interface layer needs to fetch the message being replied to (using `get_message_by_interface_id`).
+    *   Extract the `thread_root_id` from the replied-to message. This ID will be used when saving the new user reply message and subsequent assistant turn messages. If the replied-to message has a `NULL` `thread_root_id`, use its `internal_id` as the `thread_root_id` for the new thread.
 
 ## 6. Tooling Changes (`src/family_assistant/tools/*`)
 
@@ -100,5 +106,4 @@ The `message_history` table schema will be modified as follows (referencing `doc
 *   **Complete History:** Captures the full agent execution trace (tool requests, tool results, final response) for each turn.
 *   **Improved Debugging/Traceability:** Allows analysing exactly how an assistant response was generated.
 *   **Enhanced Context:** Provides the LLM with richer history, including tool interactions from previous turns, potentially improving response quality.
-*   **Reply Context:** Enables fetching and providing the specific generation context when a user replies to a previous assistant message.
 

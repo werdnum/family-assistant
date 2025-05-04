@@ -46,6 +46,9 @@ message_history_table = Table(
     Column(
         "turn_id", String(36), nullable=True, index=True
     ),  # UUID linking messages within a turn
+    Column(
+        "thread_root_id", BigInteger, nullable=True, index=True
+    ), # internal_id of the first message in the conversation thread
     Column("timestamp", DateTime(timezone=True), nullable=False, index=True),
     Column(
         "role", String, nullable=False
