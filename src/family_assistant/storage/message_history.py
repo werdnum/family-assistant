@@ -245,10 +245,6 @@ async def get_messages_by_turn_id(
             .order_by(
                 message_history_table.c.internal_id
             )  # Order by insertion sequence first
-            .where(
-                (message_history_table.c.thread_root_id == thread_root_id) |
-                (message_history_table.c.internal_id == thread_root_id)
-        )
         rows = await db_context.fetch_all(
 
             cast(Select[Any], stmt)
@@ -278,10 +274,6 @@ async def get_messages_by_thread_id(
             .order_by(
                 message_history_table.c.internal_id
             )  # Order by insertion sequence first
-            .where(
-                (message_history_table.c.thread_root_id == thread_root_id) |
-                (message_history_table.c.internal_id == thread_root_id)
-        )
         rows = await db_context.fetch_all(
 
             cast(Select[Any], stmt)
