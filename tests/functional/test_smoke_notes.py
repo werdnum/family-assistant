@@ -178,7 +178,19 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 # model_name argument removed
             )
         )
-    assert add_error is None, f"Error during add note: {add_error}"
+    # Unpack correctly, using the correct variable names from ProcessingService return
+    add_turn_messages, add_reasoning_info, add_error = ( # Unpack correctly
+        await processing_service.generate_llm_response_for_chat(
+            db_context=db_context,  # Pass the context
+            application=mock_application,
+            interface_type="test", # Added interface type
+            conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
+            trigger_content_parts=add_note_trigger,
+            user_name=TEST_USER_NAME,
+            # model_name argument removed
+        )
+    )
+    assert add_error is None, f"Error during add note: {add_error}" # Use correct error variable
     assert add_turn_messages, "No messages generated during add note turn"
 +    # Find the assistant message requesting the tool call
 +    assistant_add_request = next((msg for msg in add_turn_messages if msg.get("role") == "assistant" and msg.get("tool_calls")), None)
@@ -222,20 +234,6 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
 +    assert assistant_add_request["tool_calls"][0]["id"] == test_tool_call_id
 +    assert assistant_add_request["tool_calls"][0]["function"]["name"] == "add_or_update_note"
 -
-     # Assertion 1: Check the database directly to confirm the note was added
-     # Use the test_db_engine yielded by the fixture
-     note_in_db = None
-     logger.info("Checking database for the new note...")
-     async with test_db_engine.connect() as connection:
-+    # Find the assistant message requesting the tool call
-+    assistant_add_request = next((msg for msg in add_turn_messages if msg.get("role") == "assistant" and msg.get("tool_calls")), None)
-+    assert assistant_add_request is not None, "Assistant did not request tool call"
-+    assert assistant_add_request["tool_calls"], "Tool calls list is empty"
-+    assert assistant_add_request["tool_calls"][0]["id"] == test_tool_call_id
-+    assert assistant_add_request["tool_calls"][0]["function"]["name"] == "add_or_update_note"
-
-     # Assertion 1: Check the database directly to confirm the note was added
-     # Use the test_db_engine yielded by the fixture
      note_in_db = None
      logger.info("Checking database for the new note...")
      async with test_db_engine.connect() as connection:
