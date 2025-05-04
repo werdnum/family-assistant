@@ -178,7 +178,9 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 # model_name argument removed
             )
         )
-           # model_name argument removed from _generate_llm_response_for_chat call
+            # model_name argument removed from _generate_llm_response_for_chat call
+    assert add_error is None, f"Error during add note: {add_error}"
+    assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
@@ -186,8 +188,14 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         assert add_error is None, f"Error during add note: {add_error}"
         assert add_turn_messages, "No messages generated during add note turn"
 
--    logger.info(f"Add Note - Mock LLM Response Content: {add_response_content}") # Marked line 187
--    logger.info(f"Add Note - Tool Info from Processing: {add_tool_info}") # Marked line 187
+-    # logger.info(f"Add Note - Mock LLM Response Content: {add_response_content}") # Marked line 187
+-    # logger.info(f"Add Note - Tool Info from Processing: {add_tool_info}") # Marked line 187
++    # Find the assistant message requesting the tool call
++    assistant_add_request = next((msg for msg in add_turn_messages if msg.get("role") == "assistant" and msg.get("tool_calls")), None)
++    assert assistant_add_request is not None, "Assistant did not request tool call"
++    assert assistant_add_request["tool_calls"], "Tool calls list is empty"
++    assert assistant_add_request["tool_calls"][0]["id"] == test_tool_call_id
++    assert assistant_add_request["tool_calls"][0]["function"]["name"] == "add_or_update_note"
 +    # Find the assistant message requesting the tool call
 +    assistant_add_request = next((msg for msg in add_turn_messages if msg.get("role") == "assistant" and msg.get("tool_calls")), None)
 +    assert assistant_add_request is not None, "Assistant did not request tool call"
@@ -201,18 +209,22 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
 +    assert assistant_add_request["tool_calls"][0]["id"] == test_tool_call_id
 +    assert assistant_add_request["tool_calls"][0]["function"]["name"] == "add_or_update_note"
 
-    # Assertion 1: Check the database directly to confirm the note was added
-    # Use the test_db_engine yielded by the fixture
-    note_in_db = None
-    logger.info("Checking database for the new note...")
-    async with test_db_engine.connect() as connection:
-          # model_name argument removed from _generate_llm_response_for_chat call
+     # Assertion 1: Check the database directly to confirm the note was added
+     # Use the test_db_engine yielded by the fixture
+     note_in_db = None
+     logger.info("Checking database for the new note...")
+     async with test_db_engine.connect() as connection:
+           # model_name argument removed from _generate_llm_response_for_chat call
+    assert add_error is None, f"Error during add note: {add_error}"
+    assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
 
--         # model_name argument removed from _generate_llm_response_for_chat call
+-          # model_name argument removed from _generate_llm_response_for_chat call
+    assert add_error is None, f"Error during add note: {add_error}"
+    assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
 -
@@ -277,7 +289,9 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 # model_name argument removed
             )
         )
-           # model_name argument removed from _generate_llm_response_for_chat call
+            # model_name argument removed from _generate_llm_response_for_chat call
+    assert add_error is None, f"Error during add note: {add_error}"
+    assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
@@ -293,13 +307,17 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                  # model_name argument removed
              )
          )
-          # model_name argument removed from _generate_llm_response_for_chat call
+           # model_name argument removed from _generate_llm_response_for_chat call
+    assert add_error is None, f"Error during add note: {add_error}"
+    assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
     assert retrieve_error is None, f"Error during retrieve note: {retrieve_error}"
     assert retrieve_turn_messages, "No messages generated during retrieve note turn"
 
--         # model_name argument removed from _generate_llm_response_for_chat call
+-          # model_name argument removed from _generate_llm_response_for_chat call
+    assert add_error is None, f"Error during add note: {add_error}"
+    assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
 -

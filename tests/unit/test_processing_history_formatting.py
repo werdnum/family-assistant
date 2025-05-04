@@ -54,8 +54,8 @@ def test_format_simple_history(processing_service: ProcessingService):
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi there!"},
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages) # Marked line 120
-    assert actual_output == expected_output
+    actual_output = processing_service._format_history_for_llm(history_messages)
+    assert actual_output == expected_output # Marked line 120
 
 
 def test_format_history_with_tool_call(processing_service: ProcessingService):
@@ -96,8 +96,8 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         # Assistant message requesting the tool
         {
             "role": "assistant",
-            "content": None, # Content can be None when tool_calls are present
-            "tool_calls": [
+-            "content": None, # Content can be None when tool_calls are present
++            "content": "", # Formatter converts None to empty string
             "tool_calls": [ # This should be passed through directly # Marked line 80
             "tool_calls": [ # This should be passed through directly
                 {
@@ -118,8 +118,8 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         },
     ]
 
-    actual_output = processing_service._format_history_for_llm(history_messages) # Marked line 120
-    assert actual_output == expected_output
+    actual_output = processing_service._format_history_for_llm(history_messages)
+    assert actual_output == expected_output # Marked line 120
 
 
 def test_format_history_filters_errors(processing_service: ProcessingService):
@@ -138,8 +138,8 @@ def test_format_history_filters_errors(processing_service: ProcessingService):
         {"role": "user", "content": "Try something"},
         {"role": "assistant", "content": "Okay"},
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages) # Marked line 120
-    assert actual_output == expected_output
+    actual_output = processing_service._format_history_for_llm(history_messages)
+    assert actual_output == expected_output # Marked line 120
 
 
 def test_format_history_handles_empty_tool_calls(processing_service: ProcessingService):
