@@ -101,7 +101,7 @@ async def handle_llm_callback(
     Dependencies are accessed via the ToolExecutionContext.
     """
     # Access dependencies from the execution context
-    processing_service = (
+    processing_service: Optional[ProcessingService] = (
         exec_context.processing_service # TaskWorker passes its own instance
     )  # TaskWorker passes its own instance
     application = exec_context.application
@@ -362,6 +362,7 @@ class TaskWorker:
                 calendar_config=self.calendar_config,
                 application=self.application,
                 timezone_str=self.timezone_str, # Remove processing_service
+                processing_service=self.processing_service, # Add processing service
             )
             # --- Execute Handler with Context ---
             logger.debug(

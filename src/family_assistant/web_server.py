@@ -833,6 +833,7 @@ async def execute_tool_api(
         timezone_str=timezone_str,  # Pass fetched timezone string
         application=None, # No Telegram app here
         request_confirmation_callback=None,  # No confirmation from API for now
+        processing_service=None, # API endpoint doesn't have access to this
     )
 
     try:

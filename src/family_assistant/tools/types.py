@@ -2,7 +2,6 @@
 Defines common types used by the tool system, like the execution context.
 Moved here to avoid circular imports.
 """
-
 import asyncio
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable, Awaitable, TYPE_CHECKING
@@ -20,7 +19,7 @@ class ToolExecutionContext:
     interface_type: str # e.g., 'telegram', 'web', 'email'
     conversation_id: str # e.g., Telegram chat ID string, web session UUID
     db_context: "DatabaseContext"
-    calendar_config: Dict[str, Any]  # Add calendar config
+    calendar_config: Optional[Dict[str, Any]] = None # Made optional
     application: Optional["Application"] = None
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC"  # Default, should be overridden
@@ -29,6 +28,8 @@ class ToolExecutionContext:
     request_confirmation_callback: Optional[
         Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
     ] = None
+    # Add processing_service back, make it optional
+    processing_service: Optional["ProcessingService"] = None
 
 
 class ToolNotFoundError(LookupError):
