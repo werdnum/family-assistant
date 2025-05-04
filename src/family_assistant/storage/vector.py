@@ -5,7 +5,8 @@ Provides functions for adding, retrieving, deleting, and querying documents and 
 
 """
 
-import logging
+import asyncio  # Import asyncio, was previously flagged by flake8
+import logging  # Import the logging module
 import os
 from datetime import datetime
 from typing import (
