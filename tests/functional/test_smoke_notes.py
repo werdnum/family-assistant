@@ -236,36 +236,28 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance again
-        # Unpack all 4 return values, assign unused ones to _
-        retrieve_response_content, retrieve_tool_info, _, _ = (
-            await processing_service.generate_llm_response_for_chat(
-                db_context=db_context,  # Pass the context
-                interface_type="test", # Added missing interface type
-                conversation_id=str(TEST_CHAT_ID), # Added missing conversation ID
-                application=mock_application,
-                trigger_content_parts=retrieve_note_trigger,
-                user_name=TEST_USER_NAME,
-                # model_name argument removed
-            )
+        retrieve_turn_messages, _, retrieve_error = (
+             await processing_service.generate_llm_response_for_chat(
+                 db_context=db_context,  # Pass the context
+                 interface_type="test", # Added missing interface type
+                 conversation_id=str(TEST_CHAT_ID), # Added missing conversation ID
+                 application=mock_application,
+                 trigger_content_parts=retrieve_note_trigger,
+                 user_name=TEST_USER_NAME,
+                 # model_name argument removed
+             )
         )
-    assert add_error is None, f"Error during add note: {add_error}"
-    assert add_turn_messages, "No messages generated during add note turn"
-
-    logger.info(
-        f"Retrieve Note - Mock LLM Response Content: {retrieve_response_content}"
-    )
-    logger.info(f"Retrieve Note - Tool Info from Processing: {retrieve_tool_info}")
 
                  # model_name argument removed
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_turn_messages, "No messages generated during add note turn"
-    #+    # Find the final assistant message
-    #+    final_assistant_message = next((msg for msg in reversed(retrieve_turn_messages) if msg.get("role") == "assistant"), None)
-    #+    assert final_assistant_message is not None, "No final assistant message found"
-    #+    assert final_assistant_message.get("tool_calls") is None, "LLM made an unexpected tool call for retrieval"
-    #+    assert final_assistant_message.get("content") is not None
+    # Find the final assistant message
+    final_assistant_message = next((msg for msg in reversed(retrieve_turn_messages) if msg.get("role") == "assistant"), None)
+    assert final_assistant_message is not None, "No final assistant message found"
+    assert final_assistant_message.get("tool_calls") is None, "LLM made an unexpected tool call for retrieval"
+    assert final_assistant_message.get("content") is not None
 
     # Assertion 3: Check the final response content from the mock rule
     # Use lower() for case-insensitive comparison # Marked line 244
