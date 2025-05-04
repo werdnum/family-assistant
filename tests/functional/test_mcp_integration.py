@@ -310,23 +310,8 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
             and any(
                 tool.get("function", {}).get("name") == MCP_TIME_TOOL_NAME
                 for tool in tools
-            ) # Add missing closing parenthesis for the return statement
-
-    # --- Verification (Assert on final response content) --- # Renamed variable
-    logger.info("--- Verifying final response content (SSE) ---") # Log message adjustment
-    logger.info(f"Final response content received (SSE): {generated_turn_messages}") # Log the structure
-
-    # Verify success and extract final message content
-    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}" # Use correct variable
-    assert generated_turn_messages is not None # Assertion was already here
-    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
-    # Find the last assistant message with content
-    final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
-    assert final_assistant_message is not None, "No final assistant message with content found"
-    sent_text = final_assistant_message["content"]
-    assert (
-         EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-     ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'" # Added closing parenthesis
+            )
+        ) # Added missing closing parenthesis
 
     tool_call_response = LLMOutput(
         content=f"OK, I will convert {SOURCE_TIME} from {SOURCE_TZ} to {TARGET_TZ} using the MCP time tool (via SSE).",
@@ -454,18 +439,6 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     assert (
         EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
     ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
-    # Verify success and extract final message content
-    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}" # Use correct variable
-    assert generated_turn_messages is not None # Assertion was already here
-    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
-    # Find the last assistant message with content
-    final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
-    assert final_assistant_message is not None, "No final assistant message with content found"
-    sent_text = final_assistant_message["content"]
-    assert (
-        EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-    ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
-
     # Assertions on the final message content
     assert (
         EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
