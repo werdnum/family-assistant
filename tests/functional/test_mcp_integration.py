@@ -4,7 +4,7 @@ import asyncio
 import logging
 import json
 from typing import List, Dict, Any, Optional, Callable, Tuple
-import os # Added os import
+import os  # Added os import
 import signal  # Import the signal module
 import pytest_asyncio  # Import pytest_asyncio
 import subprocess
@@ -82,7 +82,7 @@ async def mcp_proxy_server():
     # Let subprocess stdout/stderr go to parent (test runner) to avoid pipe buffers filling up
     # Use preexec_fn to ensure the child process gets its own process group,
     # so signals don't affect the parent pytest process.
-    process = subprocess.Popen(command, preexec_fn=os.setpgrp) # type: ignore
+    process = subprocess.Popen(command, preexec_fn=os.setpgrp)  # type: ignore
     time.sleep(5)  # Increased wait time for server and proxy to start reliably
 
     yield sse_url  # Provide the SSE URL to the test
@@ -237,28 +237,40 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call generate_llm_response_for_chat directly
         # Unpack the correct return values: generated_turn_messages, final_reasoning_info, processing_error_traceback
-        generated_turn_messages, final_reasoning_info, processing_error_traceback = await processing_service.generate_llm_response_for_chat(
-
+        generated_turn_messages, final_reasoning_info, processing_error_traceback = (
+            await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,
                 application=MagicMock(),
-                interface_type="test", # Added interface type
-                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
+                interface_type="test",  # Added interface type
+                conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
                 trigger_content_parts=user_request_trigger,
                 user_name=TEST_USER_NAME,
             )
+        )
 
     # --- Verification (Assert on final response content) ---
     logger.info("--- Verifying final response content (stdio) ---")
     logger.info(f"Final response content received (stdio): {generated_turn_messages}")
 
     # Verify success and extract final message content
-    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
+    assert (
+        processing_error_traceback is None
+    ), f"Processing error: {processing_error_traceback}"
     assert generated_turn_messages is not None
     assert len(generated_turn_messages) > 0, "No messages generated during the turn"
 
     # Find the last assistant message with content
-    final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
-    assert final_assistant_message is not None, "No final assistant message with content found"
+    final_assistant_message = next(
+        (
+            msg
+            for msg in reversed(generated_turn_messages)
+            if msg.get("role") == "assistant" and msg.get("content")
+        ),
+        None,
+    )
+    assert (
+        final_assistant_message is not None
+    ), "No final assistant message with content found"
     sent_text = final_assistant_message["content"]
 
     # Assertions on the final message content
@@ -302,16 +314,17 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
         match_tool_name = any(name == MCP_TIME_TOOL_NAME for name in tool_names)
         # Simplified matcher checks for SSE test
         return (
-            "convert" in last_text # Corrected syntax for matcher
+            "convert" in last_text  # Corrected syntax for matcher
             and SOURCE_TIME in last_text
             and "new york" in last_text  # Keep simple checks
-            and "los angeles" in last_text # Corrected target TZ for SSE matcher context check
+            and "los angeles"
+            in last_text  # Corrected target TZ for SSE matcher context check
             and tools is not None
             and any(
                 tool.get("function", {}).get("name") == MCP_TIME_TOOL_NAME
                 for tool in tools
             )
-        ) # Added missing closing parenthesis
+        )  # Added missing closing parenthesis
 
     tool_call_response = LLMOutput(
         content=f"OK, I will convert {SOURCE_TIME} from {SOURCE_TZ} to {TARGET_TZ} using the MCP time tool (via SSE).",
@@ -412,28 +425,40 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Correct unpacking based on function signature
-        generated_turn_messages, final_reasoning_info, processing_error_traceback = await processing_service.generate_llm_response_for_chat(
-
+        generated_turn_messages, final_reasoning_info, processing_error_traceback = (
+            await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,
                 application=MagicMock(),
-                interface_type="test", # Added interface type
-                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
+                interface_type="test",  # Added interface type
+                conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
                 trigger_content_parts=user_request_trigger,
                 user_name=TEST_USER_NAME,
             )
+        )
 
     # --- Verification (Assert on final response content) ---
     logger.info("--- Verifying final response content (SSE) ---")
     logger.info(f"Final response content received (SSE): {generated_turn_messages}")
 
     # Verify success and extract final message content
-    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
+    assert (
+        processing_error_traceback is None
+    ), f"Processing error: {processing_error_traceback}"
     assert generated_turn_messages is not None
     assert len(generated_turn_messages) > 0, "No messages generated during the turn"
 
     # Find the last assistant message with content
-    final_assistant_message = next((msg for msg in reversed(generated_turn_messages) if msg.get("role") == "assistant" and msg.get("content")), None)
-    assert final_assistant_message is not None, "No final assistant message with content found"
+    final_assistant_message = next(
+        (
+            msg
+            for msg in reversed(generated_turn_messages)
+            if msg.get("role") == "assistant" and msg.get("content")
+        ),
+        None,
+    )
+    assert (
+        final_assistant_message is not None
+    ), "No final assistant message with content found"
     sent_text = final_assistant_message["content"]
 
     assert (
