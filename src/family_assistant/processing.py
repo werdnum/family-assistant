@@ -228,6 +228,7 @@ class ProcessingService:
                     application=application,
                     timezone_str=self.timezone_str,
                     request_confirmation_callback=request_confirmation_callback,
+                    processing_service=self, # Pass self
                 )
 
                 for tool_call_dict in tool_calls:
