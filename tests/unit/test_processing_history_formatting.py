@@ -96,9 +96,8 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         # Assistant message requesting the tool
         {
             "role": "assistant",
--            "content": None, # Content can be None when tool_calls are present
-+            "content": "", # Formatter converts None to empty string
-            "tool_calls": [ # This should be passed through directly # Marked line 80
+            "content": None, # Formatter should handle None content
+            "tool_calls": [ # This should be passed through directly
             "tool_calls": [ # This should be passed through directly
                 {
                     "id": tool_call_id,
