@@ -17,11 +17,11 @@ if TYPE_CHECKING:
 class ToolExecutionContext:
     """Context passed to tool execution functions."""
 
-    chat_id: int
+    interface_type: str # e.g., 'telegram', 'web', 'email'
+    conversation_id: str # e.g., Telegram chat ID string, web session UUID
     db_context: "DatabaseContext"
     calendar_config: Dict[str, Any]  # Add calendar config
     application: Optional["Application"] = None
-    processing_service: Optional["ProcessingService"] = None  # Add processing service
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC"  # Default, should be overridden
     # Callback to request confirmation from the user interface (e.g., Telegram)
