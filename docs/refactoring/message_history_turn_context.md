@@ -51,6 +51,9 @@ The `message_history` table schema will be modified as follows (referencing `doc
 *   **Add `get_messages_by_thread_id`**:
     *   Create a new function accepting `thread_root_id: int`.
     *   It should `SELECT` messages where `thread_root_id` matches, ordered by `internal_id` or `timestamp`.
+*   **Add `get_messages_by_thread_id`**:
+    *   Create a new function accepting `thread_root_id: int`.
+    *   It should `SELECT` messages where `thread_root_id` matches, ordered by `internal_id` or `timestamp`.
 
 ## 4. Processing Logic Changes (`src/family_assistant/processing.py`, `src/family_assistant/tools/types.py`)
 
@@ -106,4 +109,3 @@ The `message_history` table schema will be modified as follows (referencing `doc
 *   **Complete History:** Captures the full agent execution trace (tool requests, tool results, final response) for each turn.
 *   **Improved Debugging/Traceability:** Allows analysing exactly how an assistant response was generated.
 *   **Enhanced Context:** Provides the LLM with richer history, including tool interactions from previous turns, potentially improving response quality.
-
