@@ -648,13 +648,11 @@ class ProcessingService:
                     application=application,
                     # Pass the confirmation callback down
                     request_confirmation_callback=request_confirmation_callback,
+                    turn_id=turn_id, # Pass the generated turn_id
                 )
-            )
-            # Return content, tool info, and reasoning info
             return (
-                llm_response_content,
-                tool_info,
-                reasoning_info,
+                generated_turn_messages,
+                final_reasoning_info,
                 None,
             )  # No error traceback
         except Exception as e:
@@ -663,12 +661,9 @@ class ProcessingService:
                 exc_info=True,
             )
             # Capture traceback on error
-            import traceback
-
-            error_traceback = traceback.format_exc()
-            # Capture traceback on error
-            import traceback
-
-            error_traceback = traceback.format_exc()
+            import traceback # Keep import here for safety
+            error_traceback = traceback.format_exc() # Capture traceback
             # Return None for content/tools/reasoning, but include the traceback
+            return [], None, error_traceback  # Return empty list, None reasoning, traceback
+
             return None, None, None, error_traceback  # Return traceback here
