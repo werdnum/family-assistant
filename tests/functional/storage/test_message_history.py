@@ -1,6 +1,7 @@
 """Functional tests for message history storage operations."""
 import asyncio
 import uuid
+import json # Import json for parsing SQLite results
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Dict, List, Optional
 
@@ -108,8 +109,18 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
     assert assistant_result is not None
     assert assistant_result["turn_id"] == turn_id
     assert assistant_result["thread_root_id"] == thread_root_id
-    assert assistant_result["tool_calls"] == tool_calls_data # Check JSON storage
-    assert assistant_result["reasoning_info"] == reasoning_data
+
+    # Check JSON fields, parsing if necessary (for SQLite)
+    retrieved_tool_calls = assistant_result["tool_calls"]
+    if isinstance(retrieved_tool_calls, str): # SQLite stores JSON as string
+        retrieved_tool_calls = json.loads(retrieved_tool_calls)
+    assert retrieved_tool_calls == tool_calls_data
+
+    retrieved_reasoning = assistant_result["reasoning_info"]
+    if isinstance(retrieved_reasoning, str): # SQLite stores JSON as string
+        retrieved_reasoning = json.loads(retrieved_reasoning)
+    assert retrieved_reasoning == reasoning_data
+
     assert assistant_result["tool_call_id"] is None # Assistant doesn't have tool_call_id
     assert assistant_result["error_traceback"] is None
 
