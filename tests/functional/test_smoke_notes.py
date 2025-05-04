@@ -173,6 +173,8 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 application=mock_application, # Pass mock application
                 interface_type="test", # Added interface type
                 conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
+                interface_type="test", # Added interface type
+                conversation_id=str(TEST_CHAT_ID), # Added conversation ID as string
                 trigger_content_parts=add_note_trigger,
                 user_name=TEST_USER_NAME,
                 # model_name argument removed
