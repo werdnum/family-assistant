@@ -55,7 +55,7 @@ def test_format_simple_history(processing_service: ProcessingService):
         {"role": "assistant", "content": "Hi there!"},
     ]
     actual_output = processing_service._format_history_for_llm(history_messages)
-    assert actual_output == expected_output # Marked line 120
+    assert actual_output == expected_output  # Marked line 120
 
 
 def test_format_history_with_tool_call(processing_service: ProcessingService):
@@ -74,13 +74,15 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         {
             "role": "assistant",
             "content": None,  # Assistant might not provide text when calling tools
-            "tool_calls": [ # Use the new key 'tool_calls' and OpenAI-like structure
+            "tool_calls": [  # Use the new key 'tool_calls' and OpenAI-like structure
                 {
-                    "id": tool_call_id, # Corresponds to OpenAI tool_call 'id'
+                    "id": tool_call_id,  # Corresponds to OpenAI tool_call 'id'
                     "type": "function",
                     "function": {
                         "name": tool_name,
-                        "arguments": json.dumps(tool_args), # Arguments should be a JSON string in this format
+                        "arguments": json.dumps(
+                            tool_args
+                        ),  # Arguments should be a JSON string in this format
                     },
                 }
             ],
@@ -88,8 +90,8 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         # This should represent the stored 'tool' response message
         {
             "role": "tool",
-            "tool_call_id": tool_call_id, # Required for tool messages
-            "content": tool_response,     # The actual tool response content
+            "tool_call_id": tool_call_id,  # Required for tool messages
+            "content": tool_response,  # The actual tool response content
         },
     ]
 
@@ -98,8 +100,8 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         # Assistant message requesting the tool
         {
             "role": "assistant",
-            "content": None, # Formatter should handle None content
-            "tool_calls": [ # This should be passed through directly
+            "content": None,  # Formatter should handle None content
+            "tool_calls": [  # This should be passed through directly
                 {
                     "id": tool_call_id,
                     "type": "function",
@@ -119,7 +121,7 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
     ]
 
     actual_output = processing_service._format_history_for_llm(history_messages)
-    assert actual_output == expected_output # Marked line 120
+    assert actual_output == expected_output  # Marked line 120
 
 
 def test_format_history_filters_errors(processing_service: ProcessingService):
@@ -139,7 +141,7 @@ def test_format_history_filters_errors(processing_service: ProcessingService):
         {"role": "assistant", "content": "Okay"},
     ]
     actual_output = processing_service._format_history_for_llm(history_messages)
-    assert actual_output == expected_output # Marked line 120
+    assert actual_output == expected_output  # Marked line 120
 
 
 def test_format_history_handles_empty_tool_calls(processing_service: ProcessingService):
@@ -159,5 +161,7 @@ def test_format_history_handles_empty_tool_calls(processing_service: ProcessingS
             "content": "Assistant message",
         },  # Should be treated as simple message
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages) # Marked line 120
+    actual_output = processing_service._format_history_for_llm(
+        history_messages
+    )  # Marked line 120
     assert actual_output == expected_output
