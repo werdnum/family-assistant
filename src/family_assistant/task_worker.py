@@ -8,8 +8,8 @@ import random
 import uuid
 import zoneinfo  # Add this import
 from dateutil import rrule
-from datetime import datetime, timedelta, timezone # Added Union
-from typing import Dict, List, Any, Optional, Callable, Awaitable, Union # Import Union
+from datetime import datetime, timedelta, timezone  # Added Union
+from typing import Dict, List, Any, Optional, Callable, Awaitable, Union  # Import Union
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
@@ -102,7 +102,7 @@ async def handle_llm_callback(
     """
     # Access dependencies from the execution context
     processing_service: Optional[ProcessingService] = (
-        exec_context.processing_service # TaskWorker passes its own instance
+        exec_context.processing_service  # TaskWorker passes its own instance
     )  # TaskWorker passes its own instance
     application = exec_context.application
     db_context = exec_context.db_context
@@ -110,7 +110,6 @@ async def handle_llm_callback(
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
     timezone_str = exec_context.timezone_str
-
 
     # Basic validation of dependencies from context
     if not processing_service:
@@ -131,7 +130,7 @@ async def handle_llm_callback(
     if not conversation_id:  # conversation_id should be set by _process_task
         logger.error(
             "Conversation ID not found in ToolExecutionContext for handle_llm_callback."
-        ) # Corrected error message
+        )  # Corrected error message
         raise ValueError("Missing Chat ID in context.")
 
     # Extract necessary info from payload
@@ -145,7 +144,9 @@ async def handle_llm_callback(
         )
         raise ValueError("Missing required field in payload: callback_context")
 
-    logger.info(f"Handling LLM callback for conversation {interface_type}:{conversation_id}")
+    logger.info(
+        f"Handling LLM callback for conversation {interface_type}:{conversation_id}"
+    )
     current_time_str = datetime.now(
         zoneinfo.ZoneInfo(exec_context.timezone_str)
     ).strftime(
@@ -175,14 +176,16 @@ async def handle_llm_callback(
         # Call the ProcessingService directly, using dependencies from context
         # Unpack all expected return values (content, tool_info, reasoning, error)
         # TODO: Update call signature when ProcessingService is fully refactored
-        llm_response_content, tool_call_info, reasoning_info = ( # Assuming old return for now
-            await processing_service.process_message(  # Use service from context
-                db_context=db_context,
-                messages=messages_for_llm,
-                application=application,
-                interface_type=interface_type, # Pass interface type
-                conversation_id=conversation_id, # Pass conversation ID
-            )
+        (
+            llm_response_content,
+            tool_call_info,
+            reasoning_info,
+        ) = await processing_service.process_message(  # Assuming old return for now  # Use service from context
+            db_context=db_context,
+            messages=messages_for_llm,
+            application=application,
+            interface_type=interface_type,  # Pass interface type
+            conversation_id=conversation_id,  # Pass conversation ID
         )
 
         if llm_response_content:
@@ -190,18 +193,24 @@ async def handle_llm_callback(
             # Determine target chat_id based on interface type
             target_chat_id: Union[int, str]
             if interface_type == "telegram":
-                target_chat_id = int(conversation_id) # Convert Telegram ID back to int
+                target_chat_id = int(conversation_id)  # Convert Telegram ID back to int
             else:
-                target_chat_id = conversation_id # Keep as string for other interfaces
+                target_chat_id = conversation_id  # Keep as string for other interfaces
 
             formatted_response = format_llm_response_for_telegram(llm_response_content)
-            sent_message = await application.bot.send_message( # type: ignore
-                chat_id=int(conversation_id) if interface_type == "telegram" else conversation_id, # Assuming TG ID is int convertible
+            sent_message = await application.bot.send_message(  # type: ignore
+                chat_id=(
+                    int(conversation_id)
+                    if interface_type == "telegram"
+                    else conversation_id
+                ),  # Assuming TG ID is int convertible
                 text=formatted_response,
                 parse_mode="MARKDOWN_V2",
                 # Note: We don't have an original message ID to reply to here.
             )
-            logger.info(f"Sent LLM response for callback to {interface_type}:{conversation_id}.")
+            logger.info(
+                f"Sent LLM response for callback to {interface_type}:{conversation_id}."
+            )
 
             # Store the callback trigger and response in history
             try:
@@ -210,9 +219,9 @@ async def handle_llm_callback(
                     db_context=db_context,
                     interface_type=interface_type,
                     conversation_id=conversation_id,
-                    interface_message_id=None, # No interface ID for trigger
-                    turn_id=callback_turn_id, # Associate with this turn
-                    thread_root_id=None, # Callbacks likely don't belong to a user thread
+                    interface_message_id=None,  # No interface ID for trigger
+                    turn_id=callback_turn_id,  # Associate with this turn
+                    thread_root_id=None,  # Callbacks likely don't belong to a user thread
                     timestamp=datetime.now(timezone.utc),
                     role="system",
                     content=trigger_text,
@@ -225,14 +234,14 @@ async def handle_llm_callback(
                     db_context=db_context,
                     interface_type=interface_type,
                     conversation_id=conversation_id,
-                    interface_message_id=response_interface_id, # Store actual ID if sent
-                    turn_id=callback_turn_id, # Associate with this turn
-                    thread_root_id=None, # Callbacks likely don't belong to a user thread
+                    interface_message_id=response_interface_id,  # Store actual ID if sent
+                    turn_id=callback_turn_id,  # Associate with this turn
+                    thread_root_id=None,  # Callbacks likely don't belong to a user thread
                     timestamp=datetime.now(timezone.utc),
                     role="assistant",
                     content=llm_response_content,
-                    tool_calls=tool_call_info, # Use correct key
-                    reasoning_info=reasoning_info, # Store reasoning
+                    tool_calls=tool_call_info,  # Use correct key
+                    reasoning_info=reasoning_info,  # Store reasoning
                 )
             except Exception as db_err:
                 logger.error(
@@ -251,7 +260,11 @@ async def handle_llm_callback(
             )
             # Optionally send a generic failure message to the chat
             await application.bot.send_message(
-                chat_id=int(conversation_id) if interface_type == 'telegram' else conversation_id,
+                chat_id=(
+                    int(conversation_id)
+                    if interface_type == "telegram"
+                    else conversation_id
+                ),
                 text="Sorry, I couldn't process the scheduled callback.",
             )
             # Raise an error to mark the task as failed if no response was generated
@@ -340,7 +353,9 @@ class TaskWorker:
         try:
             # --- Create Execution Context ---
             # Extract interface identifiers from payload
-            payload_dict = task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
+            payload_dict = (
+                task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
+            )
             # Need to define these *before* using them in logging etc.
             # Define with default or None initially
             interface_type: Optional[str] = None
@@ -348,16 +363,18 @@ class TaskWorker:
             interface_type = payload_dict.get("interface_type")
             conversation_id = payload_dict.get("conversation_id")
             # Validate extracted identifiers (ensure they exist for tasks needing them)
-            if (not interface_type or not conversation_id) and task["task_type"] == "llm_callback":
+            if (not interface_type or not conversation_id) and task[
+                "task_type"
+            ] == "llm_callback":
                 logger.error(
                     f"Task {task['task_id']} ({task['task_type']}) missing interface_type or conversation_id in payload. Cannot create context."
                 )
                 # Mark task as failed? Or raise error?
                 await storage.update_task_status(
                     db_context,
-                    task_id=task['task_id'],
+                    task_id=task["task_id"],
                     status="failed",
-                    error="Missing interface_type or conversation_id in payload"
+                    error="Missing interface_type or conversation_id in payload",
                 )
                 return  # Stop processing
 
@@ -368,8 +385,8 @@ class TaskWorker:
                 db_context=db_context,
                 calendar_config=self.calendar_config,
                 application=self.application,
-                timezone_str=self.timezone_str, # Remove processing_service
-                processing_service=self.processing_service, # Add processing service
+                timezone_str=self.timezone_str,  # Remove processing_service
+                processing_service=self.processing_service,  # Add processing service
             )
             # --- Execute Handler with Context ---
             logger.debug(
@@ -476,13 +493,16 @@ class TaskWorker:
     ):
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
-        max_retries = task.get("max_retries", 3) # Use DB default if missing somehow
+        max_retries = task.get("max_retries", 3)  # Use DB default if missing somehow
         # Define interface/conversation ID for logging if available in payload
-        payload_dict = task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
-        interface_info = ( # Create helper string for logging
+        payload_dict = (
+            task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
+        )
+        interface_info = (  # Create helper string for logging
             f" ({payload_dict.get('interface_type', 'unknown_if')}:"
             f"{payload_dict.get('conversation_id', 'unknown_cid')})"
-            if payload_dict.get("interface_type") else ""
+            if payload_dict.get("interface_type")
+            else ""
         )
         error_str = str(handler_exc)
         logger.error(
