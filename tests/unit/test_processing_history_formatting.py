@@ -74,12 +74,14 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         {
             "role": "assistant",
             "content": None,  # Assistant might not provide text when calling tools
-            "tool_calls_info_raw": [  # List containing info for each call
+            "tool_calls": [ # Use the new key 'tool_calls' and OpenAI-like structure
                 {
-                    "tool_call_id": tool_call_id, # FIX: Use the key 'tool_call_id' as stored in DB
-                    "function_name": tool_name,
-                    "arguments": tool_args,
-                    "response_content": tool_response,
+                    "id": tool_call_id, # Corresponds to OpenAI tool_call 'id'
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(tool_args), # Arguments should be a JSON string in this format
+                    },
                 }
             ],
         },
@@ -97,7 +99,6 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
         {
             "role": "assistant",
             "content": None, # Formatter should handle None content
-            "tool_calls": [ # This should be passed through directly
             "tool_calls": [ # This should be passed through directly
                 {
                     "id": tool_call_id,
