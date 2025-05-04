@@ -245,6 +245,8 @@ async def get_messages_by_turn_id(
             .order_by(
                 message_history_table.c.internal_id
             )  # Order by insertion sequence first
+        ) # Close the statement parenthesis
+        ) # Close the statement parenthesis
         rows = await db_context.fetch_all(
 
             cast(Select[Any], stmt)
@@ -270,10 +272,13 @@ async def get_messages_by_thread_id(
     # although the first message itself has `thread_root_id` as NULL).
         # Corrected query to include the root message itself
         stmt = (
-            select(message_history_table)
+            select(message_history_table) # Filter by thread root ID or the root message itself
+            .where( (message_history_table.c.thread_root_id == thread_root_id) | (message_history_table.c.internal_id == thread_root_id) )
             .order_by(
                 message_history_table.c.internal_id
             )  # Order by insertion sequence first
+        ) # Close the statement parenthesis
+        ) # Close the statement parenthesis
         rows = await db_context.fetch_all(
 
             cast(Select[Any], stmt)
