@@ -256,6 +256,7 @@ async def schedule_future_callback_tool(
             "callback_context": context,
             # Application instance should not be stored in payload.
             # It will be injected into the task handler at runtime.
+        }
 
         # TODO: Need access to the new_task_event from main.py to notify worker.
         # This refactor doesn't address passing the event down yet.
