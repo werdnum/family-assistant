@@ -220,7 +220,9 @@ async def schedule_future_callback_tool(
     """
     # Get application instance, chat_id, and db_context from the execution context object
     application = exec_context.application
-    chat_id = exec_context.chat_id
+    # Use new identifiers from context
+    interface_type = exec_context.interface_type
+    conversation_id = exec_context.conversation_id
     db_context = exec_context.db_context  # Get db_context
 
     if not application:
@@ -249,11 +251,11 @@ async def schedule_future_callback_tool(
 
         task_id = f"llm_callback_{uuid.uuid4()}"
         payload = {
-            "chat_id": chat_id,
+            "interface_type": interface_type,      # Store interface type
+            "conversation_id": conversation_id,  # Store conversation ID
             "callback_context": context,
             # Application instance should not be stored in payload.
             # It will be injected into the task handler at runtime.
-        }
 
         # TODO: Need access to the new_task_event from main.py to notify worker.
         # This refactor doesn't address passing the event down yet.
@@ -266,7 +268,7 @@ async def schedule_future_callback_tool(
             # notify_event=new_task_event # Needs event passed down
         )
         logger.info(
-            f"Scheduled LLM callback task {task_id} for chat {chat_id} at {scheduled_dt}"
+            f"Scheduled LLM callback task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
         )
         return f"OK. Callback scheduled for {callback_time}."
     except ValueError as ve:
@@ -453,17 +455,20 @@ async def get_message_history_tool(
     Returns:
         A formatted string containing the message history or an error message.
     """
-    chat_id = exec_context.chat_id
+    # Use new identifiers
+    interface_type = exec_context.interface_type
+    conversation_id = exec_context.conversation_id
     db_context = exec_context.db_context
     logger.info(
-        f"Executing get_message_history_tool for chat {chat_id} (limit={limit}, max_age_hours={max_age_hours})"
+        f"Executing get_message_history_tool for {interface_type}:{conversation_id} (limit={limit}, max_age_hours={max_age_hours})"
     )
 
     try:
         max_age_delta = timedelta(hours=max_age_hours)
         history_messages = await get_recent_history(
-            db_context=db_context,
-            chat_id=chat_id,
+            db_context=db_context,        # Pass context
+            interface_type=interface_type,  # Pass interface type
+            conversation_id=conversation_id, # Pass conversation ID
             limit=limit,
             max_age=max_age_delta,
         )
@@ -487,7 +492,7 @@ async def get_message_history_tool(
             formatted_history.append(f"[{time_str}] {role.capitalize()}: {content}")
 
             # Include tool call info if present (simplified)
-            if role == "assistant" and msg.get("tool_calls_info_raw"):
+            if role == "assistant" and msg.get("tool_calls"): # Use correct key 'tool_calls'
                 tool_calls = msg.get("tool_calls_info_raw", [])
                 if isinstance(tool_calls, list):
                     for call in tool_calls:
@@ -503,7 +508,7 @@ async def get_message_history_tool(
 
     except Exception as e:
         logger.error(
-            f"Error executing get_message_history_tool for chat {chat_id}: {e}",
+            f"Error executing get_message_history_tool for {interface_type}:{conversation_id}: {e}",
             exc_info=True,
         )
         return f"Error: Failed to retrieve message history. {e}"
