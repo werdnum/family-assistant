@@ -251,7 +251,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 await context.bot.send_message(
                     chat_id, "Error processing image in batch."
-                    chat_id, "Error processing image in batch."
                 )
                 trigger_content_parts = [text_content_part] # Revert to text only
 
@@ -338,9 +337,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     confirmation_callback_partial = functools.partial(
                         self._request_confirmation_impl,
                         chat_id=chat_id,
+                    )
                     (
                         generated_turn_messages, # New return type
                         final_reasoning_info, # Capture final reasoning info
+
                         processing_error_traceback, # Capture traceback directly
                     ) = await self.processing_service.generate_llm_response_for_chat( # Call updated method
                         db_context=db_context, # Pass db context
