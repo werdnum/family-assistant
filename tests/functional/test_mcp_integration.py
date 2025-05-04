@@ -79,14 +79,17 @@ async def mcp_proxy_server():
 
     logger.info(f"Starting MCP proxy server: {' '.join(command)}")
     # Let subprocess stdout/stderr go to parent (test runner) to avoid pipe buffers filling up
-    process = subprocess.Popen(command)
-    time.sleep(3)  # Give server and proxy time to start up
+    # Use preexec_fn to ensure the child process gets its own process group,
+    # so signals don't affect the parent pytest process.
+    process = subprocess.Popen(command, preexec_fn=os.setpgrp) # type: ignore
+    time.sleep(5)  # Increased wait time for server and proxy to start reliably
 
     yield sse_url  # Provide the SSE URL to the test
 
     logger.info("Stopping MCP proxy server...")
     try:
-        # Try sending SIGINT (Ctrl+C) for a potentially more graceful shutdown
+        # Terminate the process group first
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
         process.send_signal(signal.SIGINT)
         process.wait(timeout=5)  # Wait for graceful shutdown
     except subprocess.TimeoutExpired:

@@ -228,7 +228,11 @@ async def test_schedule_and_execute_callback(test_db_engine):
     logger.info("Checking if mock_bot.send_message was called...")
     mock_bot.send_message.assert_called_once()
     call_args, call_kwargs = mock_bot.send_message.call_args
-    assert call_kwargs.get("chat_id") == TEST_CHAT_ID
+    # Compare chat_id as string, as conversation_id is stored as string
+    # and handle_llm_callback now converts it back to int for Telegram
+    # Let's assert the *integer* version matches TEST_CHAT_ID (which is int)
+    # assert call_kwargs.get("chat_id") == str(TEST_CHAT_ID) # Original attempt (incorrect)
+    assert call_kwargs.get("chat_id") == TEST_CHAT_ID # Assert integer matches integer
     sent_text = call_kwargs.get("text")
     assert sent_text is not None
     # Check if the *mock's* expected response content is in the sent text

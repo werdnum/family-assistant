@@ -187,8 +187,15 @@ async def handle_llm_callback(
 
         if llm_response_content:
             # Send the LLM's response back to the chat
+            # Determine target chat_id based on interface type
+            target_chat_id: Union[int, str]
+            if interface_type == "telegram":
+                target_chat_id = int(conversation_id) # Convert Telegram ID back to int
+            else:
+                target_chat_id = conversation_id # Keep as string for other interfaces
+
             formatted_response = format_llm_response_for_telegram(llm_response_content)
-            sent_message = await application.bot.send_message(
+            sent_message = await application.bot.send_message( # type: ignore
                 chat_id=int(conversation_id) if interface_type == "telegram" else conversation_id, # Assuming TG ID is int convertible
                 text=formatted_response,
                 parse_mode="MARKDOWN_V2",
