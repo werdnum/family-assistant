@@ -313,22 +313,21 @@ class TaskWorker:
 
         try:
             # --- Create Execution Context ---
-            # Extract chat_id from payload if available (needed for context)
-            # Default to 0 or None if not applicable for the task type?
-            # For llm_callback, it should be present.
-            chat_id = task.get("payload", {}).get(
-                "chat_id", 0
-            )  # Default to 0 if missing
-            if not chat_id and task["task_type"] == "llm_callback":
+            # Extract interface identifiers from payload
+            payload_dict = task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
+            interface_type = payload_dict.get("interface_type")
+            conversation_id = payload_dict.get("conversation_id")
+            # Validate extracted identifiers (ensure they exist for tasks needing them)
+            if (not interface_type or not conversation_id) and task["task_type"] == "llm_callback":
                 logger.error(
-                    f"Task {task['task_id']} (llm_callback) missing chat_id in payload. Cannot create context."
+                    f"Task {task['task_id']} ({task['task_type']}) missing interface_type or conversation_id in payload. Cannot create context."
                 )
                 # Mark task as failed? Or raise error?
                 await storage.update_task_status(
-                    db_context=db_context,
-                    task_id=task["task_id"],
+                    db_context,
+                    task_id=task['task_id'],
                     status="failed",
-                    error="Missing chat_id in payload for llm_callback",
+                    error="Missing interface_type or conversation_id in payload"
                 )
                 return  # Stop processing
 
