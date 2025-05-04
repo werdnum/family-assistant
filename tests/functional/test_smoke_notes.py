@@ -209,7 +209,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     assert assistant_add_request["tool_calls"][0]["id"] == test_tool_call_id
     assert assistant_add_request["tool_calls"][0]["function"]["name"] == "add_or_update_note"
 
-     note_in_db = None
+    note_in_db = None # Correct indentation
 
      logger.info("Checking database for the new note...")
      async with test_db_engine.connect() as connection:
