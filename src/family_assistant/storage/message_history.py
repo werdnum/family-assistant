@@ -189,31 +189,9 @@ async def get_recent_history(
         raise
 
 
-async def update_message_interface_id(
-    db_context: DatabaseContext, internal_id: int, interface_message_id: str
-) -> bool:
-    """Updates the interface_message_id for a message identified by its internal_id."""
-    try:
-        stmt = (
-            update(message_history_table)
-            .where(message_history_table.c.internal_id == internal_id)
-            .values(interface_message_id=interface_message_id)
-        )
-        result = await db_context.execute_with_retry(stmt)
-        return result.rowcount > 0
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in update_message_interface_id(internal_id={internal_id}): {e}",
-            exc_info=True,
-        )
-        raise
-
-
 # --- New Functions ---
         raise
 
-
-async def get_messages_by_thread_id(
 async def get_message_by_interface_id(
     db_context: DatabaseContext,  # Added context
     # --- New Parameters ---
@@ -240,31 +218,46 @@ async def get_message_by_interface_id(
         raise
 
 
-async def update_message_interface_id(
-    db_context: DatabaseContext, internal_id: int, interface_message_id: str
-) -> bool:
-    """Updates the interface_message_id for a message identified by its internal_id."""
+# --- New Functions Implemented ---
+async def get_messages_by_turn_id(
+    db_context: DatabaseContext, turn_id: str
+) -> List[Dict[str, Any]]:
+    """Retrieves all messages associated with a specific turn ID."""
     try:
         stmt = (
-            update(message_history_table)
-            .where(message_history_table.c.internal_id == internal_id)
-            .values(interface_message_id=interface_message_id)
+            select(message_history_table)
+            .where(message_history_table.c.turn_id == turn_id)
+            .order_by(message_history_table.c.internal_id)  # Order by insertion sequence
         )
-        result = await db_context.execute_with_retry(stmt)
-        return result.rowcount > 0
+        rows = await db_context.fetch_all(stmt)
+        return [dict(row) for row in rows]
     except SQLAlchemyError as e:
         logger.error(
-            f"Database error in update_message_interface_id(internal_id={internal_id}): {e}",
+            f"Database error in get_messages_by_turn_id(turn_id={turn_id}): {e}",
             exc_info=True,
         )
         raise
 
 
-# --- New Functions ---
+async def get_messages_by_thread_id(
+    db_context: DatabaseContext, thread_root_id: int
+) -> List[Dict[str, Any]]:
+    """Retrieves all messages belonging to a specific conversation thread."""
+    try:
+        stmt = (
+            select(message_history_table)
+            .where(message_history_table.c.thread_root_id == thread_root_id)
+            .order_by(message_history_table.c.internal_id)  # Order by insertion sequence
+        )
+        rows = await db_context.fetch_all(stmt)
+        return [dict(row) for row in rows]
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error in get_messages_by_thread_id(thread_root_id={thread_root_id}): {e}",
+            exc_info=True,
+        )
         raise
 
-
-async def get_messages_by_thread_id(
 async def get_grouped_message_history(
     db_context: DatabaseContext,  # Added context
 ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
