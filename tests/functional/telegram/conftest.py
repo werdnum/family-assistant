@@ -101,9 +101,19 @@ async def telegram_handler_fixture(
          test_local_tool_functions["delete_calendar_event"] = calendar_integration.delete_calendar_event_tool
          # Add others if needed: modify_calendar_event, add_calendar_event, search_calendar_events
 
+    # --- Modify Tool Definitions for Test ---
+    # Create a deep copy to avoid modifying the original definition list
+    import copy
+    test_local_tools_definition = copy.deepcopy(local_tools_definition)
+    # Mark 'add_or_update_note' as requiring confirmation for testing
+    for tool_def in test_local_tools_definition:
+        if tool_def.get("function", {}).get("name") == "add_or_update_note":
+            tool_def["function"]["requires_confirmation"] = True
+            break
+
     # Instantiate with actual local tools
     local_tools_provider = LocalToolsProvider(
-        definitions=local_tools_definition, # Use imported definitions
+        definitions=test_local_tools_definition, # Use the MODIFIED definitions
         implementations=test_local_tool_functions, # Use potentially extended functions
         embedding_generator=None, # Add mock/real embedding generator if needed by tools
         calendar_config=None, # Add accepted calendar_config argument
@@ -111,11 +121,12 @@ async def telegram_handler_fixture(
     composite_provider = CompositeToolsProvider([local_tools_provider])
 
     # Wrap with Confirming Provider
-    # Make 'add_or_update_note' require confirmation for testing purposes
+    # Confirming provider reads 'requires_confirmation' from the definitions
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
         # calendar_config=test_calendar_config, # No longer needed for this test setup
-        tools_requiring_confirmation={"add_or_update_note"} # Specify the tool to confirm
+        # Remove the unexpected keyword argument: tools_requiring_confirmation={"add_or_update_note"}
+        calendar_config=None # Pass None as it's optional and not used for note confirmation
     )
 
     processing_service = ProcessingService(
