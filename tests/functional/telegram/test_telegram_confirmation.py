@@ -99,41 +99,38 @@ async def test_confirmation_accepted(
     # --- Mock Confirmation Manager ---
     # Simulate user ACCEPTING the confirmation prompt
     fix.mock_confirmation_manager.request_confirmation.return_value = True
+
     # --- Mock Tool Execution ---
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
-    # Patch the *wrapped* provider's execute_tool to capture the call
-    with patch.object(
-        fix.wrapped_tools_provider, 'execute_tool', new_callable=AsyncMock
-    ) as mock_execute_wrapped:
-        # Simulate the tool execution succeeding after confirmation, returning the
     # Patch the *original* provider's execute_tool (the one from the fixture)
     # This is what the confirming wrapper will call internally.
+    # The 'with' block was missing indentation for its content.
     with patch.object(
         fix.tools_provider, 'execute_tool', new_callable=AsyncMock
     ) as mock_execute_original:
         # expected *string* result from add_or_update_note tool.
         mock_execute_original.return_value = f"Note '{test_note_title}' added/updated successfully."
+
         # --- Mock Bot Response ---
         # Mock the final message sent by the bot after successful tool execution
         mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
         fix.mock_bot.send_message.return_value = mock_final_message
 
-
-    # --- Mock Tool Execution (Should NOT be called) ---
-    # Patch the *wrapped* provider's execute_tool to fail if called
-    # Patch the *original* provider's execute_tool
-    with patch.object(
-        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
-    ) as mock_execute_original:
         # --- Create Mock Update/Context ---
         update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
         context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
 
         # Act
-        # Patch processing service to use the confirming wrapper
+        # 3. Patch the processing service to use the confirming wrapper for this call
+        # This patch needs to be nested *inside* the mock_execute_original patch
+        # because the handler call will trigger the tool execution.
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
             await fix.handler.message_handler(update, context)
+            # Close the wrapper after use (optional but good practice)
+            # Moving it here ensures it's closed after the handler call within the patch context.
             await confirming_wrapper.close()
+
+        # Assertions now happen *inside* the mock_execute_original patch block
         # 3. Patch the processing service to use the confirming wrapper for this call
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
             await fix.handler.message_handler(update, context)
@@ -239,12 +236,7 @@ async def test_confirmation_rejected(
     # --- Mock Tool Execution (Should NOT be called) ---
     # Patch the *wrapped* provider's execute_tool to fail if called
     # Patch the *original* provider's execute_tool
-    with patch.object(
-        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
-    ) as mock_execute_original:
-
-    # --- Mock Tool Execution (Should NOT be called) ---
-    # Patch the *wrapped* provider's execute_tool to fail if called
+    # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
     with patch.object(
         fix.tools_provider, 'execute_tool', new_callable=AsyncMock
@@ -254,13 +246,19 @@ async def test_confirmation_rejected(
         context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
 
         # Act
-        # Patch processing service to use the confirming wrapper
+        # 3. Patch the processing service to use the confirming wrapper for this call
+        # This patch needs to be nested *inside* the mock_execute_original patch
+        # because the handler call will trigger the tool execution.
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
             await fix.handler.message_handler(update, context)
+            # Close the wrapper after use (optional but good practice)
+            # Moving it here ensures it's closed after the handler call within the patch context.
             await confirming_wrapper.close()
         # Patch processing service to use the confirming wrapper
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
             await fix.handler.message_handler(update, context)
+            # Close the wrapper after use (optional but good practice)
+            # Moving it here ensures it's closed after the handler call within the patch context.
             await confirming_wrapper.close()
         await fix.handler.message_handler(update, context)
 
@@ -352,12 +350,7 @@ async def test_confirmation_timed_out(
     # --- Mock Tool Execution (Should NOT be called) ---
     # Patch the *wrapped* provider's execute_tool to fail if called
     # Patch the *original* provider's execute_tool
-    with patch.object(
-        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
-    ) as mock_execute_original:
-
-    # --- Mock Tool Execution (Should NOT be called) ---
-    # Patch the *wrapped* provider's execute_tool to fail if called
+    # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
     with patch.object(
         fix.tools_provider, 'execute_tool', new_callable=AsyncMock
@@ -367,13 +360,19 @@ async def test_confirmation_timed_out(
         context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
 
         # Act
-        # Patch processing service to use the confirming wrapper
+        # 3. Patch the processing service to use the confirming wrapper for this call
+        # This patch needs to be nested *inside* the mock_execute_original patch
+        # because the handler call will trigger the tool execution.
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
             await fix.handler.message_handler(update, context)
+            # Close the wrapper after use (optional but good practice)
+            # Moving it here ensures it's closed after the handler call within the patch context.
             await confirming_wrapper.close()
         # Patch processing service to use the confirming wrapper
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
             await fix.handler.message_handler(update, context)
+            # Close the wrapper after use (optional but good practice)
+            # Moving it here ensures it's closed after the handler call within the patch context.
             await confirming_wrapper.close()
         await fix.handler.message_handler(update, context)
 
