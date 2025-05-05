@@ -143,7 +143,29 @@ async def init_db():
                             logger.info("Vector DB components initialized.")
                         except Exception as vec_e:
                             logger.error(f"Failed to initialize vector database components after initial creation: {vec_e}", exc_info=True)
+                            # Decide if this failure should prevent startup or just be logged
+                            # For now, let's re-raise to prevent startup if vector init fails
+                            raise
 
+                # If we reach here, initialization was successful
+                logger.info("Database initialization successful.")
+                return  # Exit the function successfully
+
+        except DBAPIError as e:
+            logger.warning(
+                f"DBAPIError during init_db (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
+            )
+            if attempt == max_retries - 1:
+                logger.error("Max retries exceeded for init_db due to DBAPIError.")
+                # Let it fall through to the final critical log and raise
+            else:
+                delay = base_delay * (2**attempt) + random.uniform(0, base_delay * 0.5)
+                await asyncio.sleep(delay)
+        except Exception as e:
+            logger.error(f"Unexpected non-retryable error in init_db: {e}", exc_info=True)
+            raise # Re-raise unexpected errors immediately
+
+    # This part is reached only if the loop completes without returning (all retries failed)
     logger.critical("Database initialization failed after all retries.")
     raise RuntimeError("Database initialization failed after multiple retries")
 
