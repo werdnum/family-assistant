@@ -95,6 +95,7 @@ COPY src/ /app/src/
 # These need to be accessible relative to the WORKDIR at runtime when running the app
 COPY prompts.yaml mcp_config.json ./
 COPY alembic.ini ./
+COPY alembic /app/alembic/
 
 # --- Install the Package ---
 # This step might be redundant if `uv pip install .` in the previous step
