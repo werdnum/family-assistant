@@ -142,7 +142,7 @@ class RuleBasedMockLLMClient(LLMInterface):
                 "tool_choice": tool_choice,
             }
             self._calls.append(call_data)
-            logger.debug(f"Recorded call {self.call_count()}. Args keys: {call_data.keys()}")
+            logger.debug(f"Recorded call {len(self._calls)}. Args keys: {call_data.keys()}")
             return await original_method(*args, **kwargs)
         return wrapper
 
