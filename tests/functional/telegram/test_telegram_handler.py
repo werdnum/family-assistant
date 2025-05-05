@@ -85,9 +85,9 @@ async def test_simple_text_message(
         logger.debug(f"Matcher_hello checking: '{last_text}' against '{user_text}'")
         return last_text == user_text
 
-    rule_hello_response = Rule(
-        matcher=matcher_hello,
-        response=LLMOutput(content=llm_response_text, tool_calls=None),
+    # Create a tuple literal directly, instead of calling the Rule type alias
+    rule_hello_response: Rule = ( # Use the type hint for clarity
+        matcher_hello, LLMOutput(content=llm_response_text, tool_calls=None)
     )
     fix.mock_llm.rules = [rule_hello_response] # Set rules for this test instance
 
