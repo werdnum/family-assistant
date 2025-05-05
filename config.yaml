@@ -20,8 +20,8 @@ llm_parameters:
 # Provide a list of tool names (strings).
 # This list is overridden by the TOOLS_REQUIRING_CONFIRMATION environment variable if set.
 tools_requiring_confirmation:
-  # - delete_calendar_event
-  # - modify_calendar_event
+  - delete_calendar_event
+  - modify_calendar_event
   # - tool_that_posts_online
 
 # Other future configurations can go here
