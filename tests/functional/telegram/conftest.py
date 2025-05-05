@@ -86,7 +86,6 @@ async def telegram_handler_fixture(
     # Ensure tools don't rely on external services not mocked
     local_tools_provider = LocalToolsProvider(
         embedding_generator=None, # Add mock/real embedding generator if needed by tools
-        config={}, # Add necessary config for local tools
         llm_client=mock_llm, # Pass mock LLM if tools need it
     )
     tools_provider = CompositeToolsProvider([local_tools_provider])
