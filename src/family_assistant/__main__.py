@@ -166,6 +166,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         "calendar_config": {},
         "llm_parameters": {},
         "prompts": {},
+        "tools_requiring_confirmation": [], # Default empty list
         "mcp_config": {"mcpServers": {}},  # Default empty MCP config
         "server_url": "http://localhost:8000",  # Default server URL
     }
@@ -234,6 +235,15 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
             config_data["developer_chat_id"] = int(dev_id_str)
         except ValueError:
             logger.error("Invalid DEVELOPER_CHAT_ID env var. Using previous value.")
+
+    # Tools requiring confirmation from Env Var (comma-separated list)
+    tools_confirm_str_env = os.getenv("TOOLS_REQUIRING_CONFIRMATION")
+    if tools_confirm_str_env is not None: # Only override if env var is explicitly set
+        # Override the list loaded from config.yaml
+        config_data["tools_requiring_confirmation"] = [
+            tool.strip() for tool in tools_confirm_str_env.split(",") if tool.strip()
+        ]
+        logger.info("Loaded tools requiring confirmation from environment variable.")
 
     # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
     caldav_user_env = os.getenv("CALDAV_USERNAME")
@@ -567,8 +577,13 @@ async def main_async(
         raise SystemExit(f"Tool provider initialization failed: {provider_err}")
 
     # --- Wrap with Confirming Provider ---
+    # Retrieve the list of tools requiring confirmation from the loaded config
+    confirm_tool_names = set(config.get("tools_requiring_confirmation", []))
+    logger.info(f"Tools configured to require confirmation: {confirm_tool_names}")
+
     confirming_provider = ConfirmingToolsProvider(  # Use the imported class name directly
         wrapped_provider=composite_provider,
+        tools_requiring_confirmation=confirm_tool_names, # Pass the set from config
         calendar_config=config[
             "calendar_config"
         ],  # Pass calendar config for detail fetching
