@@ -77,7 +77,6 @@ async def run_async_migrations() -> None:
     cfg = config.get_section(config.config_ini_section, {}) # Get existing alembic config section
     cfg["sqlalchemy.url"] = db_url # Explicitly set the URL from env var
 
-    )
     connectable = async_engine_from_config(
         cfg,
         prefix="sqlalchemy.",
