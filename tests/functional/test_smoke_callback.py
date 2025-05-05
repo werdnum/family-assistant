@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 # --- Test Configuration ---
 TEST_CHAT_ID = 54321
 TEST_USER_NAME = "CallbackTester"
+TEST_USER_ID = 123098 # Added user ID
 CALLBACK_DELAY_SECONDS = 3  # Schedule callback this many seconds into the future
 WAIT_BUFFER_SECONDS = 10  # Wait this much longer than the delay for processing
 CALLBACK_CONTEXT = "Remind me to check the test results"
@@ -65,6 +66,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
     logger.info(f"\n--- Running Callback Test ({test_run_id}) ---")
 
     # --- Calculate future callback time ---
+    user_message_id_schedule = 401 # Added user message ID for the scheduling request
     now_utc = datetime.now(timezone.utc)
     callback_dt = now_utc + timedelta(seconds=CALLBACK_DELAY_SECONDS)
     callback_time_iso = callback_dt.isoformat()
@@ -209,6 +211,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
                 interface_type="test",
                 conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
                 trigger_content_parts=schedule_request_trigger,
+                trigger_interface_message_id=str(user_message_id_schedule), # Added missing argument
                 user_name=TEST_USER_NAME,
             )
         )
