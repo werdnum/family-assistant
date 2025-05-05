@@ -58,10 +58,10 @@ async def telegram_handler_fixture(
     - Function to get DatabaseContext for the test DB.
     """
     # 1. Mock External Dependencies
-    mock_llm = AsyncMock(spec=LLMInterface)
-    # Example: Configure a default return value for the mock LLM
-    mock_llm.generate_response.return_value = MagicMock(
-        content="Default mock response", tool_calls=None, reasoning=None, error=None
+    # Use RuleBasedMockLLMClient - rules will be set per-test
+    mock_llm = RuleBasedMockLLMClient(
+        rules=[], # Start with empty rules
+        default_response=LLMOutput(content="Default mock response (no rule matched)"),
     )
 
     mock_bot = AsyncMock(name="MockBot")
@@ -129,4 +129,3 @@ async def telegram_handler_fixture(
 
     # 4. Teardown (implicit via pytest-asyncio and fixture scope)
     await tools_provider.close() # Ensure tools provider resources are closed
-

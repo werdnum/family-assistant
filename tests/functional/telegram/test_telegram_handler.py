@@ -11,7 +11,7 @@ import pytest_asyncio # Keep this import if other fixtures need it
 from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
-from family_assistant.llm import LLMOutput
+from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.message_history import get_recent_history
 
@@ -19,6 +19,10 @@ from family_assistant.storage.message_history import get_recent_history
 from .conftest import TelegramHandlerTestFixture
 
 logger = logging.getLogger(__name__)
+
+# Import mock LLM helpers
+from tests.mocks.mock_llm import Rule, get_last_message_text
+
 
 # --- Test Helper Functions ---
 
@@ -75,11 +79,17 @@ async def test_simple_text_message(
     user_text = "Hello assistant!"
     llm_response_text = "Hello TestUser! This is the LLM response."
 
-    # Configure mock LLM client response (used by the *real* processing service)
-    mock_llm_output = LLMOutput(
-        content=llm_response_text, tool_calls=None, reasoning=None, error=None
+    # Define rules for the RuleBasedMockLLMClient for this specific test
+    def matcher_hello(messages, tools, tool_choice):
+        last_text = get_last_message_text(messages)
+        logger.debug(f"Matcher_hello checking: '{last_text}' against '{user_text}'")
+        return last_text == user_text
+
+    rule_hello_response = Rule(
+        matcher=matcher_hello,
+        response=LLMOutput(content=llm_response_text, tool_calls=None),
     )
-    fix.mock_llm.generate_response.return_value = mock_llm_output
+    fix.mock_llm.rules = [rule_hello_response] # Set rules for this test instance
 
     # Configure mock Bot response (simulate sending message)
     mock_sent_message = AsyncMock(spec=Message, message_id=assistant_message_id) # Use AsyncMock for awaitable return
@@ -93,11 +103,11 @@ async def test_simple_text_message(
     await fix.handler.message_handler(update, context)
 
     # Assert
-    # 1. LLM Call Verification (Input to the LLM)
+    # 1. LLM Call Verification (Input to the LLM) - Check it was called once
     fix.mock_llm.generate_response.assert_awaited_once()
     call_args, call_kwargs = fix.mock_llm.generate_response.call_args
     messages_to_llm = call_kwargs.get("messages")
-    assert isinstance(messages_to_llm, list)
+    assert isinstance(messages_to_llm, list), "Messages passed to LLM should be a list"
     assert len(messages_to_llm) >= 2 # Should include system prompt and user message
     assert messages_to_llm[-1]["role"] == "user"
     assert messages_to_llm[-1]["content"] == user_text
