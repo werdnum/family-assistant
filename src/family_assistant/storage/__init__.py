@@ -2,10 +2,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 import asyncio
+import os # Added for path manipulation
 import random
 from sqlalchemy.exc import DBAPIError
 from dateutil import rrule
 from dateutil.parser import isoparse
+from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
+from alembic import command as alembic_command
 
 # Import base components using absolute package paths
 from family_assistant.storage.base import metadata, get_engine, engine
@@ -96,6 +99,15 @@ async def init_db():
                 logger.info(f"Initializing database schema (attempt {attempt+1})...")
                 # Create all tables attached to metadata
                 await conn.run_sync(metadata.create_all)
+                # --- Alembic Stamping ---
+                # Stamp the database with the latest Alembic revision
+                # Assume alembic.ini is in the project root, 3 levels up from this file's directory
+                alembic_ini_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "alembic.ini"))
+                logger.info(f"Attempting to stamp database with Alembic head using config: {alembic_ini_path}")
+                alembic_cfg = AlembicConfig(alembic_ini_path)
+                # Set the sqlalchemy.url for Alembic using the engine's URL
+                alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
+                await conn.run_sync(alembic_command.stamp, alembic_cfg, "head")
                 logger.info("Database schema initialized.")
                 # Also initialize vector DB parts if enabled
                 if VECTOR_STORAGE_ENABLED:
