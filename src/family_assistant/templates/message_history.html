@@ -22,11 +22,11 @@
 </header>
 
 <main>
-    {% if history_by_chat %}
-        {% for conversation_key, messages in history_by_chat.items() %}
+    {% if paged_items %}
+        {% for conversation_key, messages in paged_items %} {# Iterate over paginated items #}
         <div class="chat-group">
             <div class="chat-header">Conversation: {{ conversation_key }}</div> {# Updated header #}
-            {% for message in messages %}
+            {% for message in messages | reverse %} {# Apply reverse filter here #}
             <div class="message {{ message.role }}-message">
                 <div class="message-meta">
                     {{ message.role.capitalize() }} - {{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S %Z') }}
@@ -89,6 +89,23 @@
     {% endif %}
 </main>
 
+{% if pagination and pagination.total_pages > 1 %}
+<nav class="pagination">
+    {% if pagination.has_prev %}
+    <a href="?page={{ pagination.prev_num }}&per_page={{ pagination.per_page }}">&laquo; Previous</a>
+    {% else %}
+    <span class="disabled">&laquo; Previous</span>
+    {% endif %}
+
+    <span>Page {{ pagination.current_page }} of {{ pagination.total_pages }}</span>
+
+    {% if pagination.has_next %}
+    <a href="?page={{ pagination.next_num }}&per_page={{ pagination.per_page }}">Next &raquo;</a>
+    {% else %}
+    <span class="disabled">Next &raquo;</span>
+    {% endif %}
+{% endif %}
+
 <!-- Optional Footer
 <footer> ... </footer>
 -->
@@ -146,8 +163,8 @@
     }
 
     // Use conversation_key and internal_id for unique IDs
-    {% for conversation_key, messages in history_by_chat.items() %}
-        {% for message in messages %}
+    {% for conversation_key, messages in paged_items %} {# Use paginated items here too #}
+        {% for message in messages %} {# No need to reverse here, just for loops #}
             {% if message.role == 'assistant' and message.tool_calls_info %}{% for tool_call in message.tool_calls_info %}
             {# Initialize editor for arguments using unique ID #}
             initializeEditor('tool-args-{{ conversation_key }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.arguments | tojson | safe }});

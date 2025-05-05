@@ -7,7 +7,7 @@ from fastapi import (
     Form,
     HTTPException,
     Depends,
-    Response,
+    Response, # Added Query for pagination parameters
     status,
 )  # Added status
 from fastapi.responses import (
@@ -16,6 +16,7 @@ from fastapi.responses import (
     JSONResponse,
 )  # Added JSONResponse
 from fastapi.templating import Jinja2Templates
+from fastapi import Query # Added Query for pagination parameters
 from typing import List, Dict, Optional, Any  # Added Any
 from datetime import datetime, timezone, date  # Added date
 import json
@@ -366,20 +367,48 @@ async def handle_mail_webhook(
 
 @app.get("/history", response_class=HTMLResponse)
 async def view_message_history(
-    request: Request, db_context: DatabaseContext = Depends(get_db)
+    request: Request,
+    db_context: DatabaseContext = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number for message history"),
+    per_page: int = Query(
+        10, ge=1, le=100, description="Number of conversations per page"
+    ),
 ):
     """Serves the page displaying message history."""
     try:
-        # Assumes get_grouped_message_history is updated to return data
-        # compatible with the new schema, grouped by a key like "interface:conversation_id"
         history_by_chat = await get_grouped_message_history(db_context)
 
-        # Convert dictionary keys to strings if they are tuples (interface, conversation_id)
-        # history_by_chat = {f"{k[0]}:{k[1]}": v for k, v in history_by_chat.items()}
+        # --- Pagination Logic ---
+        # Convert dict items to a list for slicing. Note: Dict order is not guaranteed
+        # before Python 3.7, but generally insertion order from 3.7+.
+        # If a specific order of *conversations* is needed (e.g., by most recent message),
+        # more complex sorting would be required here *before* pagination.
+        all_items = list(history_by_chat.items())
+        total_conversations = len(all_items)
+        total_pages = (total_conversations + per_page - 1) // per_page
+
+        # Ensure page number is valid
+        current_page = min(page, total_pages) if total_pages > 0 else 1
+
+        start_index = (current_page - 1) * per_page
+        end_index = start_index + per_page
+        paged_items = all_items[start_index:end_index]
+
+        # Pagination metadata for the template
+        pagination_info = {
+            "current_page": current_page,
+            "per_page": per_page,
+            "total_conversations": total_conversations,
+            "total_pages": total_pages,
+            "has_prev": current_page > 1,
+            "has_next": current_page < total_pages,
+            "prev_num": current_page - 1 if current_page > 1 else None,
+            "next_num": current_page + 1 if current_page < total_pages else None,
+        }
 
         return templates.TemplateResponse(
             "message_history.html",
-            {"request": request, "history_by_chat": history_by_chat},
+            {"request": request, "paged_items": paged_items, "pagination": pagination_info}, # Pass paginated items and info
         )
     except Exception as e:
         logger.error(f"Error fetching message history: {e}", exc_info=True)
