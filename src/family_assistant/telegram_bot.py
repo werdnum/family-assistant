@@ -124,7 +124,7 @@ class DefaultMessageBatcher(MessageBatcher):
             logger.debug(f"Scheduled batch processing for chat {chat_id} in {self.batch_delay_seconds}s.")
 
 class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
-    """Handles specific Telegram updates (messages, commands) and delegates processing."""
+    """Handles specific Telegram updates (messages, commands) and delegates processing.""" # noqa: E501
 
     def __init__(
         self,
@@ -232,7 +232,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )
 
     async def process_batch( # Renamed from process_chat_queue, implements BatchProcessor protocol
-        self, chat_id: int, context: ContextTypes.DEFAULT_TYPE
+        # Add batch parameter
+        self, chat_id: int, batch: List[Tuple[Update, Optional[bytes]]], context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Processes the message buffer for a given chat."""
         # Logic to fetch the actual batch is now in the MessageBatcher
@@ -254,11 +255,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         # --- Assuming DefaultMessageBatcher provides the batch ---
         # (We'll implement the caller side in DefaultMessageBatcher next)
-        # The batch is passed directly now, not via context.job.data
-        # Correct signature: async def process_batch(self, chat_id: int, batch: List[Tuple[Update, Optional[bytes]]], context: ContextTypes.DEFAULT_TYPE) -> None:
-        # Add the 'batch' parameter to the signature
-        # (This was missed in the previous diff)
-        # It seems the previous diff *did* add batch to the signature, but the calling code assumed it was in context.job.data. Let's fix the calling code part.
+        # Remove incorrect retrieval from context.job.data - batch is now a parameter
 
         if not buffered_batch: # Check the passed batch
             logger.info(
@@ -483,7 +480,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         msg_to_save["interface_type"] = interface_type  # Add identifiers
                         msg_to_save["conversation_id"] = conversation_id  # Add identifiers
                         # Explicitly pass args instead of ** to ensure only expected columns are used
-                        saved_msg = await self.storage.add_message_to_history(
+                        saved_msg_mapping = await self.storage.add_message_to_history(
                             db_context=db_context, **msg_to_save # Pass the prepared dict
                         )
                         # Capture the internal ID if the role is assistant and the message was saved successfully
@@ -617,7 +614,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             await self.storage.get_message_by_interface_id(
                                 db_ctx_err,
                                 interface_type,
-                                conversation_id,
+                                conversation_id, # Correct variable name was already here
                                 str(user_message_id),
                             )
                         )
