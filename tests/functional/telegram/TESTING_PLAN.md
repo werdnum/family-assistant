@@ -42,7 +42,6 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
     *   **Bot API Calls (Primary):** Use `mock_bot.method.assert_called_with(...)` or similar assertions to verify that the handler produced the correct **user-facing output** via the Telegram API. Check the content, formatting (parse mode), reply status, and any interactive elements (keyboards) of messages sent or edited by the bot.
     *   **Mock LLM Input (Primary):** Verify that the `ProcessingService` made the expected call(s) to the mock LLM client. **Crucially, inspect the `messages` list passed to the mock LLM** to ensure the correct system prompt, user input, and **formatted message history** (including previous user messages, assistant responses, and tool interactions) were included. This indirectly verifies that history was stored and retrieved correctly.
     *   **Mock LLM Calls (Optional/Debugging):** Verify that the `ProcessingService` made the expected call to the mock LLM based on the input. This is mainly for debugging test failures.
-
 ## 5. Key Scenarios to Test
 
 *   **Basic Interaction:** Simple text message -> Verify mock Bot sent the LLM's text response. -> Send another message -> Verify mock LLM received history including the first exchange.
@@ -64,24 +63,19 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 *   **/start command:** Verify welcome message is sent.
 
 ## 6. Assertions
-
 *   **Primary (Output):** Focus on the **calls made to the mocked `telegram.Bot` API**. Ensure the handler produced the correct user-facing output. Check key parameters like `chat_id`, `text` (content and formatting), `reply_to_message_id`, `parse_mode`, `reply_markup`.
 *   **Primary (History Context):** Focus on the **`messages` argument passed to the mocked `LLMInterface`**. Verify that the correct system prompt, user input, and formatted message history (including roles, content, tool calls/responses) were provided as context for the LLM's generation. This validates the storage and retrieval logic indirectly.
-
 ## 7. Prerequisites/Assumptions
-
 *   Reliable `pytest` fixtures exist for setting up and tearing down a test database instance (`AsyncEngine`), defaulting to SQLite (`test_db_engine`).
 *   A method exists to obtain an `asynccontextmanager` function (`get_db_context_func`) that yields a `DatabaseContext` connected to the test database engine.
 *   The test environment can instantiate the real `ProcessingService` and its dependencies (like `ToolsProvider`), potentially loading configuration and prompts.
 *   A suitable mock LLM client implementation is available (`RuleBasedMockLLMClient`, `PlaybackLLMClient`, or standard mocks).
-
 ## 8. Potential Future Improvements (Refactoring)
 
 As discussed previously, the following refactorings could simplify these tests further, although the current plan is feasible without them:
 
 *   **Extract `MessageBatcher`:** Simplifies testing the core processing logic by allowing direct invocation of `process_chat_queue` with a prepared batch, removing the need to test the complex batching state machine within these E2E tests.
 *   **Extract `ConfirmationUIManager`:** Drastically simplifies testing confirmation flows by mocking the manager instead of the detailed `Bot` interactions and `Future` management.
-
 ## 9. Implementation Tasks
 
 1.  **Refactor `MessageBatcher`:**
@@ -101,7 +95,7 @@ As discussed previously, the following refactorings could simplify these tests f
     *   Ensure the `TelegramConfirmationUIManager` registers the `confirmation_callback_handler` with the Telegram `Application`.
 3.  **Create Test Fixture for `TelegramUpdateHandler`:**
     *   In `tests/functional/telegram/conftest.py` (or a dedicated test file), create a `pytest` fixture (e.g., `telegram_update_handler_fixture`).
-    *   This fixture will depend on `pg_vector_db_engine`, mock LLM fixtures, etc.
+    *   This fixture will depend on the **default database fixture (`test_db_engine`)**, mock LLM fixtures, etc.
     *   It will instantiate mock `Application`, `Bot`, and potentially a mock `ConfirmationUIManager`.
     *   It will instantiate the real `ProcessingService` (with mock LLM).
     *   It will instantiate the `TelegramUpdateHandler` with all real and mocked dependencies injected.
@@ -113,6 +107,6 @@ As discussed previously, the following refactorings could simplify these tests f
     *   Create mock `Update` and `Context` objects for a basic text message.
     *   Call `handler.message_handler(update, context)`.
     *   Wait for processing to complete (using logic derived from the `MessageBatcher`).
-    *   Assert that the mock `Bot.send_message` was called with the expected text and parameters.
-    *   Assert the relevant database state changes (e.g., `message_history` entries).
+    *   Assert that the mock `Bot.send_message` was called with the expected text and parameters (Primary Output Assertion).
+    *   Assert that the mock LLM received the expected input `messages` list (Primary History Context Assertion).
 ```
