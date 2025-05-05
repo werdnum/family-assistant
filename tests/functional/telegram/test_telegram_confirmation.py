@@ -119,12 +119,17 @@ async def test_confirmation_accepted(
             assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content})
 
             # 2. Wrapped Tool Provider's execute_tool was called (meaning confirmation passed)
-            mock_execute_wrapped.assert_awaited_once_with(
-                name=TOOL_NAME_SENSITIVE,
+            # Check the call happened without strict context matching
+            mock_execute_wrapped.assert_awaited_once()
+            # Manually check the arguments we care about from the call args
+            call_args_tuple, call_kwargs_dict = mock_execute_wrapped.await_args
+            # Expected call signature: execute_tool(self, name, arguments, context) - self is implicit
+            called_name = call_args_tuple[0] if call_args_tuple else call_kwargs_dict.get("name")
+            called_arguments = call_args_tuple[1] if len(call_args_tuple) > 1 else call_kwargs_dict.get("arguments")
+            assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
+            assert_that(called_arguments).is_equal_to(
                 # Update expected arguments for add_or_update_note
-                arguments={"title": test_note_title, "content": test_note_content},
-                context=ANY # Context object is created dynamically
-            )
+                {"title": test_note_title, "content": test_note_content})
 
             # 3. LLM was called twice (request tool, process result)
             assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
