@@ -14,7 +14,7 @@ from telegram.ext import Application, ContextTypes
 # or ensure mocks are injected properly.
 from tests.mocks.mock_llm import RuleBasedMockLLMClient  # Or use AsyncMock
 
-from family_assistant.llm import LLMInterface
+from family_assistant.llm import LLMInterface, LLMOutput # Import LLMOutput
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.telegram_bot import (
