@@ -1465,7 +1465,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                     prompt_text=confirmation_prompt,
                     tool_name=name,  # Pass tool name for context if needed by callback
                     tool_args=arguments,  # Pass args for context if needed by callback
-                    # Timeout is handled by the callback implementation now
+                    timeout=self.confirmation_timeout, # Pass the timeout value
                 )
 
                 if user_confirmed:
