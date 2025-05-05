@@ -97,8 +97,7 @@ def run_migrations_online() -> None:
     # This typically happens when invoked via engine.connect().run_sync()
     connectable = context.config.attributes.get("connection", None)
 
-    try:
-        if connectable is None:
+    if connectable is None:
             # Standard CLI execution: No external connection provided.
             # Use the async engine setup
             asyncio.run(run_async_migrations())
