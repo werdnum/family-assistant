@@ -570,7 +570,7 @@ def get_engine():
 
 # from .message_history import add_message_to_history
 async def add_message_to_history(db_context: DatabaseContext, interface_type: str, conversation_id: str, interface_message_id: Optional[str], turn_id: Optional[str], thread_root_id: Optional[int], timestamp: datetime, role: str, content: Optional[str], tool_calls: Optional[List[Dict[(str, Any)]]], reasoning_info: Optional[Dict[(str, Any)]], error_traceback: Optional[str], tool_call_id: Optional[str]) -> Optional[Dict[(str, Any)]]:
-    "Adds a message to the history table, including optional tool call info, reasoning, error, and tool_call_id."
+    "Adds a message to the history table, including optional fields."
 
 # from .message_history import update_message_interface_id
 async def update_message_interface_id(db_context: DatabaseContext, internal_id: int, interface_message_id: str) -> bool:
