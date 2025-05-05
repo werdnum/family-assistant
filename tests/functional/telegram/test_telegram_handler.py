@@ -281,7 +281,8 @@ async def test_tool_result_in_subsequent_history(
     tool_call_id_1 = f"call_{uuid.uuid4()}"
     llm_tool_request_text_1 = "Okay, adding the note."
     llm_final_confirmation_text_1 = f"Note '{test_note_title}' added."
-    llm_response_text_2 = f"The last tool call result was: Success" # Based on current tool behavior
+    # Update expected response based on the actual tool result ("Success") seen in history
+    llm_response_text_2 = f"The last tool call result was: Success"
 
     # --- Mock LLM Rules ---
 
