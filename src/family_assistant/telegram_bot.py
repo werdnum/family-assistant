@@ -34,6 +34,7 @@ from telegram.ext import (
 )
 
 # Import necessary types for type hinting
+import os  # Added for environment variable access
 from telegram import InlineKeyboardMarkup  # Move this import here
 from sqlalchemy import update  # For error handling db update
 from typing import (
@@ -204,6 +205,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         message_batcher: MessageBatcher, # Inject the batcher
         confirmation_manager: ConfirmationUIManager, # Inject confirmation manager
     ):
+        # Check for debug mode environment variable
+        self.debug_mode = os.environ.get("ASSISTANT_DEBUG_MODE", "false").lower() == "true"
+        logger.info(f"Debug mode enabled: {self.debug_mode}")
+
         """
         Initializes the TelegramUpdateHandler. # Updated docstring
 
@@ -618,12 +623,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id to update."
                         ) # If an error occurred during processing, check for traceback *before* handling empty response
                 elif processing_error_traceback and reply_target_message_id: # If processing failed, send error message
-                    logger.info(
-                        f"Sending error message to chat {chat_id} due to processing error:\n{processing_error_traceback}"
-                    )
+                    error_message_to_send = "Sorry, something went wrong while processing your request."
+                    if self.debug_mode:
+                        logger.info(f"Sending DEBUG error traceback to chat {chat_id}")
+                        # Format traceback for Telegram (HTML preformatted)
+                        error_message_to_send = (
+                            "Encountered error during processing \\(debug mode\\):\n"
+                            f"<pre>{html.escape(processing_error_traceback)}</pre>"
+                        )
+                    else:
+                        logger.info(f"Sending generic error message to chat {chat_id}")
+
                     await context.bot.send_message(
+                        # Send either the generic message or the traceback
                         chat_id=chat_id,
-                        text="Sorry, something went wrong while processing your request.",
+                        text=error_message_to_send,
+                        parse_mode=ParseMode.HTML if self.debug_mode else None, # Use HTML for traceback
                         reply_to_message_id=reply_target_message_id,
                         reply_markup=force_reply_markup,  # Add ForceReply
                     )
@@ -659,9 +674,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 ):  # Suppress errors sending the error message
                     sent_assistant_message = await context.bot.send_message(
                         chat_id=chat_id,
-                        text="Sorry, an unexpected error occurred.",
+                        # Send traceback in debug mode, otherwise generic message
+                        text=(
+                            f"An unexpected error occurred \\(debug mode\\):\n<pre>{html.escape(processing_error_traceback)}</pre>"
+                            if self.debug_mode and processing_error_traceback
+                            else "Sorry, an unexpected error occurred."
+                        ),
+                        parse_mode=(
+                            ParseMode.HTML if self.debug_mode and processing_error_traceback else None
+                        ),
                         reply_to_message_id=reply_target_message_id,
                     )
+                    logger.info(f"Sent {'debug' if self.debug_mode else 'generic'} unexpected error message to chat {chat_id}")
 
             # --- Save Error Traceback with User Message ---
             # If an error happened, try to update the user message record
