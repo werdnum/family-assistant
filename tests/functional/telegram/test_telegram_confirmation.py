@@ -76,7 +76,7 @@ async def test_confirmation_accepted(
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
-            # Check content to ensure it's the *actual success message* from the real tool
+            # Check content to ensure it's the *actual success message* string from the real tool
             and "Success" in msg.get("content", "")
             for msg in messages
         )
@@ -100,8 +100,9 @@ async def test_confirmation_accepted(
     with patch.object(
         fix.wrapped_tools_provider, 'execute_tool', new_callable=AsyncMock
     ) as mock_execute_wrapped:
-        # Simulate the tool execution succeeding after confirmation
-        mock_execute_wrapped.return_value = {"result": f"Success: Note '{test_note_title}' added."}
+        # Simulate the tool execution succeeding after confirmation, returning the
+        # expected *string* result from add_or_update_note tool.
+        mock_execute_wrapped.return_value = f"Note '{test_note_title}' added/updated successfully."
 
         # --- Mock Bot Response ---
         # Mock the final message sent by the bot after successful tool execution
@@ -188,7 +189,7 @@ async def test_confirmation_rejected(
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
-            and tool_cancel_result_text in msg.get("content", "")
+            and msg.get("content") == tool_cancel_result_text # Match the exact string
             for msg in messages
         )
     final_cancel_output = LLMOutput(content=llm_final_cancel_text)
@@ -280,7 +281,7 @@ async def test_confirmation_timed_out(
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
-            and tool_timeout_result_text in msg.get("content", "")
+            and msg.get("content") == tool_timeout_result_text # Match the exact string
             for msg in messages
         )
     final_timeout_output = LLMOutput(content=llm_final_timeout_text)
