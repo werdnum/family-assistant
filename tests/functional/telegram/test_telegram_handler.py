@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import uuid # Add import
 import json # Add import
 from unittest.mock import AsyncMock, MagicMock, call  # Import call
+from typing import Optional, Dict, Any # Add missing typing imports
 from datetime import timedelta # Import timedelta from datetime
 
 import pytest
