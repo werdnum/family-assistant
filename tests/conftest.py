@@ -16,7 +16,7 @@ from family_assistant.storage import init_db  # Import init_db
 import family_assistant.storage.tasks
 
 # Import vector storage init and context
-from family_assistant.storage.vector import init_vector_db
+from family_assistant.storage import init_vector_db # Import from __init__
 from family_assistant.storage.context import DatabaseContext
 
 # Configure logging for tests (optional, but can be helpful)
