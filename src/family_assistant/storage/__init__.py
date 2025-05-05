@@ -203,21 +203,25 @@ async def init_db():
 
         # --- Retry Logic ---
         except DBAPIError as e:
+            # Specifically handle DBAPI errors (like connection issues)
             logger.warning(f"Database API error during init_db (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
             if attempt == max_retries - 1:
-                logger.error("Max retries exceeded for init_db due to DBAPIError.")
-                # Let it fall through to the final critical log and raise
+                logger.error(f"Max retries exceeded for init_db due to DBAPIError: {e}", exc_info=True)
             else:
                 delay = base_delay * (2**attempt) + random.uniform(0, base_delay * 0.5)
                 await asyncio.sleep(delay)
         except Exception as e:
-            logger.critical(f"Unexpected non-retryable error during init_db attempt {attempt + 1}: {e}", exc_info=True) # Use critical for unexpected failure
-            raise # Re-raise unexpected errors immediately
+            # Catch any other exception during init (e.g., from Alembic commands)
+            logger.warning(f"Error during database initialization (attempt {attempt + 1}/{max_retries}): {e}", exc_info=True)
+            if attempt == max_retries - 1:
+                logger.error(f"Max retries exceeded for init_db due to error: {e}", exc_info=True)
+            else:
+                delay = base_delay * (2**attempt) + random.uniform(0, base_delay * 0.5)
+                await asyncio.sleep(delay)
 
     # This part is reached only if the loop completes without returning (all retries failed)
     logger.critical("Database initialization failed after all retries.")
     raise RuntimeError("Database initialization failed after multiple retries")
-
 
 # --- Exports ---
 # Re-export functions and tables from specific modules to maintain the facade
