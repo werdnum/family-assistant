@@ -150,37 +150,37 @@ async def init_db():
             else:
                 # Database is new or not managed by Alembic, create tables and stamp.
                 logger.info(f"Tables found by inspector: {found_tables_list}")
-                logger.info("Alembic version table not found. Performing initial schema creation and stamping...")
+                logger.info("Alembic version table not found. Performing initial schema creation and stamping...") # Restored log message
 
                 # Create all tables defined in SQLAlchemy metadata
                 logger.info("Creating tables from SQLAlchemy metadata...")
                 async with engine.begin() as conn:
-                    await conn.run_sync(metadata.create_all)
+                    await conn.run_sync(metadata.create_all) # Restored metadata.create_all
                 logger.info("Tables created.")
 
                 # Use run_sync for ensure_version and stamp commands
                 try:
                     async with engine.connect() as conn:
-                        # Explicitly ensure the alembic_version table exists
-                        logger.info("Attempting to run ensure_version via run_sync...")
-                        def sync_ensure_version_command(sync_conn, cfg):
-                            """Wrapper to run alembic ensure_version with existing connection."""
+                        # Explicitly ensure the alembic_version table exists (Needed before stamping)
+                        logger.info("Attempting to run ensure_version via run_sync...") # Restored log
+                        def sync_ensure_version_command(sync_conn, cfg): # Restored function
+                            """Wrapper to run alembic ensure_version with existing connection.""" # Restored docstring
                             # Make the connection available to env.py
-                            cfg.attributes["connection"] = sync_conn
-                            alembic_command.ensure_version(cfg)
-                        await conn.run_sync(sync_ensure_version_command, alembic_cfg)
-                        logger.info("ensure_version command completed.")
+                            cfg.attributes["connection"] = sync_conn # Restored line
+                            alembic_command.ensure_version(cfg) # Restored command
+                        await conn.run_sync(sync_ensure_version_command, alembic_cfg) # Restored call
+                        logger.info("ensure_version command completed.") # Restored log
 
                         # Stamp the database with the latest revision
-                        logger.info("Attempting to run stamp via run_sync...")
-                        def sync_stamp_command(sync_conn, cfg, revision):
-                            """Wrapper to run alembic stamp with existing connection."""
+                        logger.info("Attempting to run stamp via run_sync...") # Restored log
+                        def sync_stamp_command(sync_conn, cfg, revision): # Restored function
+                            """Wrapper to run alembic stamp with existing connection.""" # Restored docstring
                             # Make the connection available to env.py
-                            cfg.attributes["connection"] = sync_conn
-                            alembic_command.stamp(cfg, revision)
-                        await conn.run_sync(sync_stamp_command, alembic_cfg, "head")
-                        logger.info("stamp command completed.")
-                        logger.info("Database schema stamped.")
+                            cfg.attributes["connection"] = sync_conn # Restored line
+                            alembic_command.stamp(cfg, revision) # Restored command
+                        await conn.run_sync(sync_stamp_command, alembic_cfg, "head") # Restored call
+                        logger.info("stamp command completed.") # Restored log
+                        logger.info("Database schema stamped.") # Restored log
                 except Exception as stamp_err:
                      # Covers errors from both ensure_version and stamp
                      logger.error(f"Failed during ensure_version or stamp: {stamp_err}", exc_info=True)
