@@ -52,6 +52,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "aiosqlite",
+    "assertpy>=1.1", # Add assertpy
     "pytest-mock",
     "testcontainers[postgres]>=3.7.1",
     "asyncpg>=0.29.0",
