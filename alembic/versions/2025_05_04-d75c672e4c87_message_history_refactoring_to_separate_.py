@@ -37,12 +37,31 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column('thread_root_id', sa.BigInteger(), nullable=True))
         batch_op.add_column(sa.Column('tool_calls', sa.JSON().with_variant(postgresql.JSONB(astext_type=Text), 'postgresql'), nullable=True)) # Temp name handled by rename below
 
-    # 2. Populate new columns based on old ones (outside batch)
+    # 2. Populate new columns based on old ones (outside batch mode)
     #    Use op.execute for data migration logic. Casts might differ per DB.
     #    Populate internal_id - using ROW_NUMBER() for PG/SQLite or similar.
-    #    This part is complex and backend-specific, especially for setting a PK sequence.
-    #    A simpler approach for non-critical internal ID might be needed if this fails.
-    #    For now, let's assume manual population or handle PK differently. We'll make it PK later.
+
+    # Backfill internal_id sequentially based on timestamp
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.execute("""
+            WITH numbered_rows AS (
+                SELECT ctid, ROW_NUMBER() OVER (ORDER BY timestamp) AS rn
+                FROM message_history
+            )
+            UPDATE message_history
+            SET internal_id = numbered_rows.rn
+            FROM numbered_rows
+            WHERE message_history.ctid = numbered_rows.ctid AND message_history.internal_id IS NULL;
+        """)
+    elif bind.dialect.name == 'sqlite':
+        op.execute("""
+            UPDATE message_history
+            SET internal_id = (SELECT rn FROM (SELECT rowid, ROW_NUMBER() OVER (ORDER BY timestamp) as rn FROM message_history) AS sub WHERE sub.rowid = message_history.rowid)
+            WHERE internal_id IS NULL;
+        """)
+    # Add other dialect support if needed
+
     op.execute("UPDATE message_history SET interface_type = 'telegram' WHERE interface_type IS NULL") # Default existing to telegram
     op.execute("UPDATE message_history SET conversation_id = CAST(chat_id AS VARCHAR(255)) WHERE conversation_id IS NULL")
     op.execute("UPDATE message_history SET interface_message_id = CAST(message_id AS VARCHAR(255)) WHERE interface_message_id IS NULL")
@@ -54,19 +73,6 @@ def upgrade() -> None:
         batch_op.alter_column('interface_type', existing_type=sa.String(length=50), nullable=False)
         batch_op.alter_column('conversation_id', existing_type=sa.String(length=255), nullable=False)
 
-        # # Drop old PK constraint (REMOVED - rely on create_primary_key below)
-        # # This name might need adjustment based on actual DB state.
-        # # If dropping by name fails, try dropping by columns (less portable).
-        # try:
-        #      batch_op.drop_constraint('message_history_pkey', type_='primary')
-        # except Exception:
-        #      # Fallback or specific handling if constraint name is different/unknown
-        #      # For SQLite, PK might be implicit and harder to drop directly.
-        #      # This might require table recreation in downgrade/upgrade for SQLite.
-        #      # For now, proceed assuming direct drop works or isn't needed for SQLite batch.
-        #      # print("Could not drop constraint 'message_history_pkey', it might not exist or name differs.")
-        #      pass # Suppress error if drop fails, maybe it doesn't exist
-
         # Drop original columns
         batch_op.drop_column('tool_calls_info')
         batch_op.drop_column('message_id')
@@ -75,7 +81,10 @@ def upgrade() -> None:
         # Make internal_id the primary key (handle autoincrement if needed - dialect specific)
         # Making it non-nullable first
         batch_op.alter_column('internal_id', existing_type=sa.BigInteger(), nullable=False)
+
         # Create PK constraint (this might fail if internal_id wasn't populated uniquely)
+        # Note: Dropping the old implicit/explicit PK is handled implicitly by
+        #       batch mode or by setting a new PK in some backends.
         batch_op.create_primary_key('message_history_pkey', ['internal_id'])
 
         # Create indexes on new columns
@@ -98,13 +107,6 @@ def downgrade() -> None:
         batch_op.drop_index(op.f('ix_message_history_interface_type'))
         batch_op.drop_index(op.f('ix_message_history_interface_message_id'))
         batch_op.drop_index(op.f('ix_message_history_conversation_id'))
-
-        # # Drop primary key constraint on internal_id (REMOVED - rely on create_primary_key below)
-        # try:
-        #     batch_op.drop_constraint('message_history_pkey', type_='primary')
-        # except Exception:
-        #     # print("Could not drop constraint 'message_history_pkey' during downgrade.")
-        #     pass # Suppress error if drop fails
 
         # Add old columns back (nullable first)
         batch_op.add_column(sa.Column('chat_id', sa.BIGINT(), nullable=True))
@@ -132,6 +134,7 @@ def downgrade() -> None:
         batch_op.drop_column('internal_id')
 
         # Recreate the old primary key constraint
+        # Note: This assumes the old PK was ('chat_id', 'message_id')
         batch_op.create_primary_key('message_history_pkey', ['chat_id', 'message_id'])
 
     # ### end Alembic commands ###
