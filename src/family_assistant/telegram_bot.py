@@ -123,6 +123,84 @@ class DefaultMessageBatcher(MessageBatcher):
             )
             logger.debug(f"Scheduled batch processing for chat {chat_id} in {self.batch_delay_seconds}s.")
 
+    def __init__(self, batch_processor: BatchProcessor, batch_delay_seconds: float = 0.5):
+        self.batch_processor = batch_processor
+        self.batch_delay_seconds = batch_delay_seconds # Delay before processing a batch
+        self.chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
+        self.processing_tasks: Dict[int, asyncio.Task] = {}
+        self.batch_timers: Dict[int, asyncio.TimerHandle] = {} # Store timers for delayed processing
+
+    async def _trigger_batch_processing(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Gets the current batch and triggers the BatchProcessor if no task is running."""
+        async with self.chat_locks[chat_id]:
+            if chat_id in self.batch_timers: # Remove timer as we are processing now
+                self.batch_timers.pop(chat_id)
+
+            current_batch = self.message_buffers[chat_id][:]
+            self.message_buffers[chat_id].clear()
+            logger.debug(f"Extracted batch of {len(current_batch)} for chat {chat_id}, cleared buffer.")
+
+            if not current_batch:
+                logger.info(f"Batch for chat {chat_id} is empty, skipping processing trigger.")
+                return
+
+            if chat_id not in self.processing_tasks or self.processing_tasks[chat_id].done():
+                logger.info(f"Starting new processing task for chat {chat_id} via batch trigger.")
+                task = asyncio.create_task(self.batch_processor.process_batch(chat_id, current_batch, context))
+                self.processing_tasks[chat_id] = task
+                task.add_done_callback(
+                    lambda t, c=chat_id: self._remove_task_callback(t, c)
+                )
+            else:
+                logger.info(f"Processing task already running for chat {chat_id}. Batch was cleared but not processed immediately.")
+                # Re-add batch? Or just let it be dropped? Current logic drops it.
+                # Let's re-add it to avoid losing messages if a task is slow.
+                self.message_buffers[chat_id] = current_batch + self.message_buffers[chat_id]
+                logger.warning(f"Re-added batch to buffer for chat {chat_id} as task was still running.")
+
+    def _remove_task_callback(self, task: asyncio.Task, chat_id: int): # No longer in TelegramUpdateHandler
+        """Callback function to remove task from processing_tasks dict."""
+        try:
+            task.result()  # Raise exception if task failed
+        except asyncio.CancelledError:
+            logger.info(f"Processing task for chat {chat_id} was cancelled.")
+        except Exception:
+            logger.debug(
+                f"Processing task for chat {chat_id} completed with an exception (handled elsewhere)."
+            )
+            pass  # Error should have been logged by the task itself or the error handler
+
+        if hasattr(self, "processing_tasks"):
+            self.processing_tasks.pop(chat_id, None)
+            logger.debug(f"Task entry removed for chat {chat_id} via callback.")
+        else:
+            logger.warning(
+                f"Cannot remove task entry for chat {chat_id}: processing_tasks dict not found."
+            )
+
+    # This was the method causing the error, moved definition earlier
+    async def add_to_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, photo_bytes: Optional[bytes]) -> None:
+        chat_id = update.effective_chat.id
+        async with self.chat_locks[chat_id]:
+            self.message_buffers[chat_id].append((update, photo_bytes))
+            buffer_size = len(self.message_buffers[chat_id])
+            logger.info(f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}")
+
+            # Cancel existing timer if new message arrives
+            if chat_id in self.batch_timers:
+                self.batch_timers[chat_id].cancel()
+                logger.debug(f"Cancelled existing batch timer for chat {chat_id}.")
+
+            # Start a new timer to process the batch after a short delay
+            loop = asyncio.get_running_loop()
+            self.batch_timers[chat_id] = loop.call_later(
+                self.batch_delay_seconds,
+                # Call the correctly defined method now
+                lambda: asyncio.create_task(self._trigger_batch_processing(chat_id, context))
+            )
+            logger.debug(f"Scheduled batch processing for chat {chat_id} in {self.batch_delay_seconds}s.")
+
 class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     """Handles specific Telegram updates (messages, commands) and delegates processing.""" # noqa: E501
 
@@ -172,6 +250,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         from family_assistant import storage  # Import storage locally if needed
 
         self.storage = storage
+
+    @contextlib.asynccontextmanager
+    # --- Confirmation Handling Logic - Moved back into TelegramUpdateHandler ---
 
     @contextlib.asynccontextmanager
     async def _typing_notifications(
@@ -431,7 +512,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                 async with self._typing_notifications(context, chat_id):
                     # Create the partial function for the confirmation callback
-                    confirmation_callback_partial = functools.partial(
+                    confirmation_callback_partial = functools.partial( # Call the method now correctly located on self
                         self._request_confirmation_impl,
                         chat_id=chat_id,
                     )
@@ -645,6 +726,228 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             # Let the main error handler notify the developer
             raise e  # Re-raise for the main error handler
 
+    # --- Confirmation Handling Methods - Moved back into TelegramUpdateHandler ---
+
+    async def _request_confirmation_impl(
+        self,  # Make it instance method if not already
+        chat_id: int,
+        prompt_text: str,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        timeout: float,
+    ) -> bool:
+        """Internal implementation to send confirmation and wait."""
+        confirm_uuid = str(uuid.uuid4())
+        if not self.application or not self.application.bot:
+            raise RuntimeError(
+                "Telegram application or bot instance not available for sending confirmation."
+            )
+        logger.info(
+            f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}"
+        )
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"
+                    ),
+                    InlineKeyboardButton(
+                        "❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"
+                    ),
+                ]
+            ]
+        )
+
+        try:
+            sent_message = (
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text=prompt_text,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    reply_markup=keyboard,
+                )
+            )
+            logger.debug(
+                f"Confirmation message sent (Message ID: {sent_message.message_id})"
+            )
+        except Exception as send_err:
+            logger.error(
+                f"Failed to send confirmation message to chat {chat_id}: {send_err}",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Failed to send confirmation message: {send_err}"
+            ) from send_err
+
+        confirmation_future = asyncio.get_running_loop().create_future()
+        self.pending_confirmations[confirm_uuid] = confirmation_future
+
+        try:
+            logger.debug(
+                f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {timeout}s)"
+            )
+            user_confirmed = await asyncio.wait_for(
+                confirmation_future, timeout=timeout
+            )
+            logger.info(
+                f"Confirmation response received for {confirm_uuid}: {user_confirmed}"
+            )
+            return user_confirmed
+        except asyncio.TimeoutError:
+            logger.warning(f"Confirmation {confirm_uuid} timed out after {timeout}s.")
+            try:
+                await self.application.bot.edit_message_reply_markup(
+                    chat_id=chat_id,
+                    message_id=sent_message.message_id,
+                    reply_markup=None,
+                )
+                await self.application.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=sent_message.message_id,
+                    text=prompt_text
+                    + "\n\n\\(Confirmation timed out\\)",
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+            except Exception as edit_err:
+                logger.warning(
+                    f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}"
+                )
+            self.pending_confirmations.pop(confirm_uuid, None)
+            raise
+        finally:
+            self.pending_confirmations.pop(confirm_uuid, None)
+
+    async def confirmation_callback_handler(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handles button presses for tool confirmations."""
+        query = update.callback_query
+        await query.answer()
+
+        callback_data = query.data
+        logger.info(f"Received confirmation callback: {callback_data}")
+
+        try:
+            _, confirm_uuid, action = callback_data.split(":")
+        except ValueError:
+            logger.error(f"Invalid confirmation callback data format: {callback_data}")
+            await query.edit_message_text(text="Error: Invalid callback data.")
+            return
+
+        confirmation_future = self.pending_confirmations.pop(confirm_uuid, None)
+
+        if confirmation_future and not confirmation_future.done():
+            original_text = (
+                query.message.text_markdown_v2
+            )
+
+            if action == "yes":
+                logger.debug(f"Setting confirmation result for {confirm_uuid} to True")
+                confirmation_future.set_result(True)
+                status_text = "\n\n*Confirmed* ✅"
+            elif action == "no":
+                logger.debug(f"Setting confirmation result for {confirm_uuid} to False")
+                confirmation_future.set_result(False)
+                status_text = "\n\n*Cancelled* ❌"
+            else:
+                logger.warning(
+                    f"Unknown action '{action}' in confirmation callback {confirm_uuid}"
+                )
+                status_text = "\n\n*Error: Unknown action*"
+                confirmation_future.cancel()
+            try:
+                await query.edit_message_text(
+                    text=original_text + status_text,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    reply_markup=None,
+                )
+            except Exception as edit_err:
+                logger.error(
+                    f"Failed to edit confirmation message {query.message.message_id} after callback: {edit_err}"
+                )
+
+        elif confirmation_future and confirmation_future.done():
+            logger.warning(
+                f"Confirmation callback {confirm_uuid} received, but future was already done (likely timed out or duplicate callback)."
+            )
+            await query.edit_message_text(
+                text=query.message.text_markdown_v2
+                + "\n\n\\(Request already handled or expired\\)",
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=None,
+            )
+        else:
+            logger.warning(
+                f"Confirmation callback {confirm_uuid} received, but no pending confirmation found."
+            )
+            await query.edit_message_text(
+                text="This confirmation request is no longer valid or has expired.",
+                reply_markup=None,
+            )
+
+    # --- Error Handling and Registration - Moved back into TelegramUpdateHandler ---
+
+    async def error_handler(self, update: object, context: CallbackContext) -> None:
+        """Log the error, store it in the service, and notify the developer."""
+        error = context.error
+        logger.error(f"Exception while handling an update: {error}", exc_info=error)
+
+        if self.telegram_service:
+            self.telegram_service._last_error = error
+            if isinstance(error, Conflict):
+                logger.critical(
+                    f"Telegram Conflict error detected: {error}. Polling will likely stop."
+                )
+            elif isinstance(
+                error, Exception
+            ):
+                pass
+
+        tb_list = traceback.format_exception(None, error, error.__traceback__)
+        tb_string = "".join(tb_list)
+
+        update_str = update.to_dict() if isinstance(update, Update) else str(update)
+        message = (
+            "An exception was raised while handling an update\n"
+            f"<pre>update = {html.escape(json.dumps(update_str, indent=2, ensure_ascii=False))}</pre>\n\n"
+            f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
+            f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
+            f"<pre>{html.escape(tb_string)}</pre>"
+        )
+
+        if self.developer_chat_id:
+            max_len = 4096
+            for i in range(0, len(message), max_len):
+                try:
+                    await context.bot.send_message(
+                        chat_id=self.developer_chat_id,
+                        text=message[i : i + max_len],
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send error message to developer: {e}")
+        else:
+            logger.warning("DEVELOPER_CHAT_ID not set, cannot send error notification.")
+
+    def register_handlers(self):
+        """Registers the necessary Telegram handlers with the application."""
+        self.application.add_handler(CommandHandler("start", self.start))
+
+        self.application.add_handler(
+            MessageHandler(
+                (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self.message_handler
+            )
+        )
+
+        self.application.add_handler(
+            CallbackQueryHandler(
+                self.confirmation_callback_handler, pattern=r"^confirm:"
+            )
+        )
+
+        self.application.add_error_handler(self.error_handler)
+        logger.info("Telegram handlers registered (including confirmation callback).")
 
     async def message_handler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -685,100 +988,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         # Delegate to the injected message batcher
         await self.message_batcher.add_to_batch(update, context, photo_bytes)
 
-
-class DefaultMessageBatcher(MessageBatcher): # noqa: F811
-    """Buffers messages and processes them in batches to avoid race conditions."""
-
-    def __init__(self, batch_processor: BatchProcessor, batch_delay_seconds: float = 0.5):
-        self.batch_processor = batch_processor
-        self.batch_delay_seconds = batch_delay_seconds # Delay before processing a batch
-        self.chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
-        self.processing_tasks: Dict[int, asyncio.Task] = {}
-        self.batch_timers: Dict[int, asyncio.TimerHandle] = {} # Store timers for delayed processing
-
-    async def add_to_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, photo_bytes: Optional[bytes]) -> None:
-        chat_id = update.effective_chat.id
-        async with self.chat_locks[chat_id]:
-            self.message_buffers[chat_id].append((update, photo_bytes))
-            buffer_size = len(self.message_buffers[chat_id])
-            logger.info(f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}")
-
-            # Cancel existing timer if new message arrives
-            if chat_id in self.batch_timers:
-                self.batch_timers[chat_id].cancel()
-                logger.debug(f"Cancelled existing batch timer for chat {chat_id}.")
-
-            # Start a new timer to process the batch after a short delay
-            loop = asyncio.get_running_loop()
-            self.batch_timers[chat_id] = loop.call_later(
-                self.batch_delay_seconds,
-                # Use lambda to schedule the coroutine correctly
-                lambda c=chat_id, ctx=context: asyncio.create_task(self._trigger_batch_processing(c, ctx))
-            )
-            logger.debug(f"Scheduled batch processing for chat {chat_id} in {self.batch_delay_seconds}s.")
-
-    async def _trigger_batch_processing(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Gets the current batch and triggers the BatchProcessor if no task is running."""
-        async with self.chat_locks[chat_id]:
-            if chat_id in self.batch_timers: # Remove timer as we are processing now
-                self.batch_timers.pop(chat_id)
-
-            current_batch = self.message_buffers[chat_id][:]
-            self.message_buffers[chat_id].clear()
-            logger.debug(f"Extracted batch of {len(current_batch)} for chat {chat_id}, cleared buffer.")
-
-            if not current_batch:
-                logger.info(f"Batch for chat {chat_id} is empty, skipping processing trigger.")
-                return
-
-            if chat_id not in self.processing_tasks or self.processing_tasks[chat_id].done():
-                logger.info(f"Starting new processing task for chat {chat_id} via batch trigger.")
-                # Pass the extracted batch to the processor via context or direct call
-                # Using context.job.data is tricky here as this isn't a PTB job.
-                # Let's pass it directly if the processor accepts it.
-                # The BatchProcessor protocol needs `batch` argument.
-                task = asyncio.create_task(self.batch_processor.process_batch(chat_id, current_batch, context))
-                self.processing_tasks[chat_id] = task
-                task.add_done_callback(
-                    lambda t, c=chat_id: self._remove_task_callback(t, c)
-                )
-            else:
-                logger.info(f"Processing task already running for chat {chat_id}. Batch was cleared but not processed immediately.")
-                # Re-add batch? Or just let it be dropped? Current logic drops it.
-                # Let's re-add it to avoid losing messages if a task is slow.
-                self.message_buffers[chat_id] = current_batch + self.message_buffers[chat_id]
-                logger.warning(f"Re-added batch to buffer for chat {chat_id} as task was still running.")
-
-
-    def _remove_task_callback(self, task: asyncio.Task, chat_id: int): # No longer in TelegramUpdateHandler
-        """Callback function to remove task from processing_tasks dict."""
-        # Check for exceptions in the completed task
-        try:
-            task.result()  # Raise exception if task failed
-        except asyncio.CancelledError:
-            logger.info(f"Processing task for chat {chat_id} was cancelled.")
-        except Exception:
-            # Error already logged by process_chat_queue or error_handler
-            # We just need to ensure the task is removed from the dict
-            logger.debug(
-                f"Processing task for chat {chat_id} completed with an exception (handled elsewhere)."
-            )
-            pass  # Error should have been logged by the task itself or the error handler
-
-        # Remove the task using the lock to prevent race conditions
-        # Need to run this removal in the event loop if called from a different thread context,
-        # but add_done_callback usually runs in the same loop.
-        # Using a lock here might be overkill/problematic if the callback isn't async.
-        # Let's simplify: just pop it. The lock in message_handler prevents starting a new one while popping.
-        # Ensure the dict exists before popping
-        if hasattr(self, "processing_tasks"):
-            self.processing_tasks.pop(chat_id, None)
-            logger.debug(f"Task entry removed for chat {chat_id} via callback.")
-        else:
-            logger.warning(
-                f"Cannot remove task entry for chat {chat_id}: processing_tasks dict not found."
-            )
+# Remove duplicate DefaultMessageBatcher definition and methods incorrectly placed in NoBatchMessageBatcher
 
 class NoBatchMessageBatcher(MessageBatcher):
     """A simple batcher that processes each message immediately without buffering."""
@@ -792,251 +1002,6 @@ class NoBatchMessageBatcher(MessageBatcher):
         # Create a single-item batch
         batch = [(update, photo_bytes)]
         await self.batch_processor.process_batch(chat_id, batch, context)
-
-    # --- Confirmation Handling Logic ---
-
-    async def _request_confirmation_impl(
-        self,  # Make it instance method if not already
-        chat_id: int,
-        prompt_text: str,
-        tool_name: str,
-        tool_args: Dict[str, Any],
-        timeout: float,
-    ) -> bool:
-        """Internal implementation to send confirmation and wait."""
-        confirm_uuid = str(uuid.uuid4())
-        # Need the Telegram context - assume it's accessible via self.application?
-        # This might require passing the specific `context` object from the handler
-        # Or finding a way to get a context for sending messages.
-        # Let's assume self.application.bot can send messages.
-        if not self.application or not self.application.bot:
-            raise RuntimeError(
-                "Telegram application or bot instance not available for sending confirmation."
-            )
-        logger.info(
-            f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}"
-        )
-
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"
-                    ),
-                    InlineKeyboardButton(
-                        "❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"
-                    ),
-                ]
-            ]
-        )
-
-        try:
-            # Send the confirmation message
-            sent_message = (
-                await self.application.bot.send_message(  # Use self.application.bot
-                    chat_id=chat_id,
-                    text=prompt_text,  # Assumes already MarkdownV2 formatted/escaped
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_markup=keyboard,
-                )
-            )
-            logger.debug(
-                f"Confirmation message sent (Message ID: {sent_message.message_id})"
-            )
-        except Exception as send_err:
-            logger.error(
-                f"Failed to send confirmation message to chat {chat_id}: {send_err}",
-                exc_info=True,
-            )
-            # Cannot proceed without sending the message
-            raise RuntimeError(
-                f"Failed to send confirmation message: {send_err}"
-            ) from send_err
-
-        # Create and store the Future
-        confirmation_future = asyncio.get_running_loop().create_future()
-        self.pending_confirmations[confirm_uuid] = confirmation_future
-
-        try:
-            # Wait for the future to be set by the callback handler, with timeout
-            logger.debug(
-                f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {timeout}s)"
-            )
-            user_confirmed = await asyncio.wait_for(
-                confirmation_future, timeout=timeout
-            )
-            logger.info(
-                f"Confirmation response received for {confirm_uuid}: {user_confirmed}"
-            )
-            return user_confirmed
-        except asyncio.TimeoutError:
-            logger.warning(f"Confirmation {confirm_uuid} timed out after {timeout}s.")
-            # Clean up the original confirmation message (remove keyboard)
-            try:
-                await self.application.bot.edit_message_reply_markup(  # Use self.application.bot
-                    chat_id=chat_id,
-                    message_id=sent_message.message_id,
-                    reply_markup=None,  # Remove keyboard
-                )
-                await self.application.bot.edit_message_text(  # Use self.application.bot
-                    chat_id=chat_id,
-                    message_id=sent_message.message_id,
-                    text=prompt_text
-                    + "\n\n\\(Confirmation timed out\\)",  # Append timeout message
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                )
-            except Exception as edit_err:
-                logger.warning(
-                    f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}"
-                )
-            # Future is automatically cancelled by wait_for on timeout, but remove from dict
-            self.pending_confirmations.pop(confirm_uuid, None)
-            raise  # Re-raise TimeoutError for the caller (ConfirmingToolsProvider)
-        finally:
-            # Ensure future is removed from dict if it's still there (e.g., cancellation)
-            self.pending_confirmations.pop(confirm_uuid, None)
-
-    async def confirmation_callback_handler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
-        """Handles button presses for tool confirmations."""
-        query = update.callback_query
-        await query.answer()  # Answer immediately to remove loading indicator
-
-        callback_data = query.data
-        logger.info(f"Received confirmation callback: {callback_data}")
-
-        try:
-            _, confirm_uuid, action = callback_data.split(":")
-        except ValueError:
-            logger.error(f"Invalid confirmation callback data format: {callback_data}")
-            await query.edit_message_text(text="Error: Invalid callback data.")
-            return
-
-        # Find the pending future
-        confirmation_future = self.pending_confirmations.pop(confirm_uuid, None)
-
-        if confirmation_future and not confirmation_future.done():
-            original_text = (
-                query.message.text_markdown_v2
-            )  # Get original text with markdown
-
-            if action == "yes":
-                logger.debug(f"Setting confirmation result for {confirm_uuid} to True")
-                confirmation_future.set_result(True)
-                status_text = "\n\n*Confirmed* ✅"
-            elif action == "no":
-                logger.debug(f"Setting confirmation result for {confirm_uuid} to False")
-                confirmation_future.set_result(False)
-                status_text = "\n\n*Cancelled* ❌"
-            else:
-                logger.warning(
-                    f"Unknown action '{action}' in confirmation callback {confirm_uuid}"
-                )
-                # Don't set future result, edit message to show error?
-                status_text = "\n\n*Error: Unknown action*"
-                # Keep future in dict? Or cancel it? Let's cancel.
-                confirmation_future.cancel()
-            # The noqa was here previously, likely unnecessary if edit_message_text is defined
-            # Edit the original message to remove keyboard and show status
-            try:  # noqa: F821
-                await query.edit_message_text(
-                    text=original_text + status_text,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_markup=None,  # Remove keyboard
-                )
-            except Exception as edit_err:
-                logger.error(
-                    f"Failed to edit confirmation message {query.message.message_id} after callback: {edit_err}"
-                )
-
-        elif confirmation_future and confirmation_future.done():
-            logger.warning(
-                f"Confirmation callback {confirm_uuid} received, but future was already done (likely timed out or duplicate callback)."
-            )
-            # Optionally edit message to indicate it expired?
-            await query.edit_message_text(
-                text=query.message.text_markdown_v2
-                + "\n\n\\(Request already handled or expired\\)",
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=None,
-            )
-        else:
-            logger.warning(
-                f"Confirmation callback {confirm_uuid} received, but no pending confirmation found."
-            )
-            await query.edit_message_text(
-                text="This confirmation request is no longer valid or has expired.",
-                reply_markup=None,
-            )
-
-    async def error_handler(self, update: object, context: CallbackContext) -> None:
-        """Log the error, store it in the service, and notify the developer."""
-        error = context.error
-        logger.error(f"Exception while handling an update: {error}", exc_info=error)
-
-        # Store the error in the TelegramService instance
-        if self.telegram_service:
-            self.telegram_service._last_error = error
-            # Log if polling might stop due to this error
-            if isinstance(error, Conflict):
-                logger.critical(
-                    f"Telegram Conflict error detected: {error}. Polling will likely stop."
-                )
-            elif isinstance(
-                error, Exception
-            ):  # Catch other potential fatal errors if needed
-                # You might add checks for other specific errors that stop polling
-                pass
-
-        tb_list = traceback.format_exception(None, error, error.__traceback__)
-        tb_string = "".join(tb_list)
-
-        update_str = update.to_dict() if isinstance(update, Update) else str(update)
-        message = (
-            "An exception was raised while handling an update\n"
-            f"<pre>update = {html.escape(json.dumps(update_str, indent=2, ensure_ascii=False))}</pre>\n\n"
-            f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
-            f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
-            f"<pre>{html.escape(tb_string)}</pre>"
-        )
-
-        if self.developer_chat_id:
-            max_len = 4096
-            for i in range(0, len(message), max_len):
-                try:
-                    await context.bot.send_message(
-                        chat_id=self.developer_chat_id,
-                        text=message[i : i + max_len],
-                        parse_mode=ParseMode.HTML,
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send error message to developer: {e}")
-        else:
-            logger.warning("DEVELOPER_CHAT_ID not set, cannot send error notification.")
-
-    def register_handlers(self):
-        """Registers the necessary Telegram handlers with the application."""
-        # Command handlers
-        self.application.add_handler(CommandHandler("start", self.start))
-
-        # Message handlers (text or photo with optional caption, excluding commands)
-        self.application.add_handler(
-            MessageHandler(
-                (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self.message_handler
-            )
-        )
-
-        # Callback query handler for confirmations
-        self.application.add_handler(
-            CallbackQueryHandler(
-                self.confirmation_callback_handler, pattern=r"^confirm:"
-            )
-        )
-
-        # Error handler (add last)
-        self.application.add_error_handler(self.error_handler)
-        logger.info("Telegram handlers registered (including confirmation callback).")
 
 
 class TelegramService:
