@@ -123,6 +123,33 @@ class DefaultMessageBatcher(MessageBatcher):
             )
             logger.debug(f"Scheduled batch processing for chat {chat_id} in {self.batch_delay_seconds}s.")
 
+    async def _trigger_batch_processing(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Gets the current batch and triggers the BatchProcessor if no task is running."""
+        async with self.chat_locks[chat_id]:
+            if chat_id in self.batch_timers: # Remove timer as we are processing now
+                self.batch_timers.pop(chat_id)
+
+            current_batch = self.message_buffers[chat_id][:]
+            self.message_buffers[chat_id].clear()
+            logger.debug(f"Extracted batch of {len(current_batch)} for chat {chat_id}, cleared buffer.")
+
+            if not current_batch:
+                logger.info(f"Batch for chat {chat_id} is empty, skipping processing trigger.")
+                return
+
+            if chat_id not in self.processing_tasks or self.processing_tasks[chat_id].done():
+                logger.info(f"Starting new processing task for chat {chat_id} via batch trigger.")
+                task = asyncio.create_task(self.batch_processor.process_batch(chat_id, current_batch, context))
+                self.processing_tasks[chat_id] = task
+                task.add_done_callback(
+                    lambda t, c=chat_id: self._remove_task_callback(t, c)
+                )
+            else:
+                logger.info(f"Processing task already running for chat {chat_id}. Batch was cleared but not processed immediately.")
+                # Re-add batch? Or just let it be dropped? Current logic drops it.
+                # Let's re-add it to avoid losing messages if a task is slow.
+                self.message_buffers[chat_id] = current_batch + self.message_buffers[chat_id]
+                logger.warning(f"Re-added batch to buffer for chat {chat_id} as task was still running.")
     def _remove_task_callback(self, task: asyncio.Task, chat_id: int): # No longer in TelegramUpdateHandler
         """Callback function to remove task from processing_tasks dict."""
         try:
