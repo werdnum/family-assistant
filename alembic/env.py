@@ -92,29 +92,21 @@ async def run_async_migrations() -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
 
-    # Detect if an event loop is already running
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:  # No running event loop
-        loop = None
+    # Check if Alembic is being run with an existing connection
+    # This typically happens when invoked via engine.connect().run_sync()
+    connectable = context.config.attributes.get("connection", None)
 
-    if loop and loop.is_running():
-        # If loop is running, schedule the task and wait (or run directly if possible)
-        # This might still be tricky depending on context, but await is better than asyncio.run
-        # A more robust solution might involve checking context vars or passing flags.
-        # For now, let's assume awaiting directly works if a loop exists.
-        # Note: This await might need adjustments if run_migrations_online itself
-        # isn't called from an async function context when invoked via run_sync.
-        # Let's try running it synchronously if a loop is present, as run_sync expects a sync function.
-        # A better approach might be needed if this still fails.
-        task = loop.create_task(run_async_migrations())
-        # This is tricky - we are in a sync function called by run_sync.
-        # We can't directly await task here. Let's try running until complete.
-        # This is still risky. The core issue is invoking async logic from run_sync triggering this path.
-        loop.run_until_complete(task) # Attempt to run the async task within the existing loop
+    try:
+        if connectable is None:
+            # No external connection provided (e.g., CLI execution)
+            # Use the async engine setup
+            asyncio.run(run_async_migrations())
+        else:
+            # Connection provided, run migrations synchronously using it
+            do_run_migrations(connectable)
     else:
-        # No loop running (e.g., command line execution), safe to use asyncio.run
-        asyncio.run(run_async_migrations())
+        # Fallback or error handling if needed, though connectable should cover online mode
+        logger.warning("Could not determine how to run online migrations.") # Use logger if defined
 
 if context.is_offline_mode():
     run_migrations_offline()
