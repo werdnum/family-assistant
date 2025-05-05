@@ -149,7 +149,7 @@ async def test_confirmation_rejected(
     fix = telegram_handler_fixture
     user_message_id = 501
     assistant_cancel_message_id = 502 # ID for the cancellation message
-    # Update test data for adding a note
+    # Test data for adding a note (rejected scenario)
     test_note_title = f"Rejected Note Add {uuid.uuid4()}"
     test_note_content = "This note add was rejected."
     user_text = f"Add note: Title={test_note_title}, Content={test_note_content}"
@@ -220,7 +220,7 @@ async def test_confirmation_timed_out(
     fix = telegram_handler_fixture
     user_message_id = 601
     assistant_timeout_message_id = 602 # ID for the timeout message
-    # Update test data for adding a note
+    # Test data for adding a note (timeout scenario)
     test_note_title = f"Timeout Note Add {uuid.uuid4()}"
     test_note_content = "This note add timed out."
     user_text = f"Add note: Title={test_note_title}, Content={test_note_content}"
