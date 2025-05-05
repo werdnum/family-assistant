@@ -39,24 +39,21 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
     *   **Crucially:** Implement logic to wait for the background `process_chat_queue` task spawned by `message_handler` to complete (e.g., polling `handler.processing_tasks`, using `asyncio.wait_for`).
 3.  **Assert:**
     *   **Database State (Primary):** Use the `get_test_db_context_func` to query the test database and verify the expected state changes in relevant tables (`message_history`, `notes`, `tasks`, etc.). Check message content, roles, linkage (`turn_id`, `thread_root_id`), and updated fields (`interface_message_id`, `error_traceback`).
-    *   **Bot API Calls (Primary):** Use `mock_bot.method.assert_called_with(...)` or similar assertions to verify that the handler attempted the correct interactions with the Telegram API. Check the content, formatting (parse mode), reply status, and any interactive elements (keyboards) of messages sent or edited by the bot. This verifies the user-facing behavior.
-    *   **Database State (Secondary/Inferential):** Where possible, use subsequent interactions with the bot (as part of the same or a follow-up test) to infer database state changes (e.g., ask the bot to retrieve a note after creating it). Only perform direct database queries using `get_test_db_context_func` if the state change cannot be reasonably verified through bot interaction (e.g., checking internal `turn_id` linkage, specific task parameters, or error tracebacks not exposed to the user).
-    *   **Mock LLM Calls (Optional/Debug):** Verify that the `ProcessingService` made the expected call to the mock LLM based on the input.
+    *   **Bot API Calls (Primary):** Use `mock_bot.method.assert_called_with(...)` or similar assertions to verify that the handler produced the correct **user-facing output** via the Telegram API. Check the content, formatting (parse mode), reply status, and any interactive elements (keyboards) of messages sent or edited by the bot.
+    *   **Mock LLM Input (Primary):** Verify that the `ProcessingService` made the expected call(s) to the mock LLM client. **Crucially, inspect the `messages` list passed to the mock LLM** to ensure the correct system prompt, user input, and **formatted message history** (including previous user messages, assistant responses, and tool interactions) were included. This indirectly verifies that history was stored and retrieved correctly.
     *   **Mock LLM Calls (Optional/Debugging):** Verify that the `ProcessingService` made the expected call to the mock LLM based on the input. This is mainly for debugging test failures.
 
 ## 5. Key Scenarios to Test
 
-*   **Basic Interaction:** Simple text message -> LLM text response.
+*   **Basic Interaction:** Simple text message -> Verify mock Bot sent the LLM's text response. -> Send another message -> Verify mock LLM received history including the first exchange.
 *   **Photo Message:** Message with photo -> LLM response (verify image data passed to `ProcessingService`).
 *   **Message Batching:** Send multiple messages quickly -> Verify they are processed as one batch.
 *   **Tool Usage (Simulated):**
-    *   User message -> Mock LLM requests `add_or_update_note` -> Verify `ProcessingService` executes tool -> Verify `notes` table in DB reflects the change -> Verify final confirmation message sent via mock Bot.
-    *   User message -> Mock LLM requests `add_or_update_note` -> Verify `ProcessingService` executes tool -> **Verify confirmation message sent via mock Bot.** -> **Follow-up:** Ask bot about the note -> Verify bot responds with correct content. (Direct DB check only if necessary).
-    *   User message -> Mock LLM requests `schedule_future_callback` -> Verify `ProcessingService` executes tool -> Verify `tasks` table in DB contains the scheduled task.
-*   **Reply Context:** User replies to a previous message -> Verify `replied_to_interface_id` is passed to `ProcessingService` -> Verify `thread_root_id` is correctly determined and stored in `message_history`.
-*   **Reply Context:** User replies to a previous message -> Verify `replied_to_interface_id` is passed to `ProcessingService` -> Verify bot's response is sent as a reply to the correct user message (`reply_to_message_id` in `send_message` call). (DB check for `thread_root_id` secondary).
+    *   User message -> Mock LLM requests `add_or_update_note` -> Verify `ProcessingService` executes tool -> **Verify confirmation message sent via mock Bot.** -> **Follow-up:** Ask bot about the note -> Mock LLM expects note content in context / provides it -> Verify bot responds with correct content.
+    *   User message -> Mock LLM requests `schedule_future_callback` -> Verify `ProcessingService` executes tool -> **Verify confirmation message sent via mock Bot.** (Task creation not directly verifiable via bot API or standard LLM context).
+*   **Reply Context:** User replies to a previous message -> Verify `replied_to_interface_id` is passed to `ProcessingService` -> Verify mock LLM receives history including the replied-to message and its context -> Verify bot's response is sent as a reply to the correct user message (`reply_to_message_id` in `send_message` call).
 *   **Error Handling:**
-    *   Simulate error during `ProcessingService.generate_llm_response_for_chat` (via mock LLM or by mocking a tool execution to raise error) -> Verify error message sent via mock Bot -> Verify `error_traceback` stored in `message_history`.
+    *   Simulate error during `ProcessingService.generate_llm_response_for_chat` (via mock LLM or by mocking a tool execution to raise error) -> Verify error message sent via mock Bot. -> Send subsequent message -> Verify mock LLM does *not* receive the traceback from the failed turn in its history context (unless designed to).
     *   Simulate error sending message via mock Bot -> Verify error is logged and potentially reported via `error_handler`.
 *   **Confirmation Flow (if not refactored out):**
     *   User message -> Mock LLM requires confirmation for a tool -> Verify handler calls `_request_confirmation_impl` -> Verify mock Bot sent message with keyboard.
@@ -68,16 +65,12 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 
 ## 6. Assertions
 
-*   **Primary:** Focus on the state of the **test database** after the handler has processed the update. This reflects the actual outcome of the integrated system (Handler + ProcessingService + Storage).
-    *   `message_history`: Correct number of rows, correct `role`, `content`, `interface_type`, `conversation_id`, `turn_id` linkage, `thread_root_id` propagation, `interface_message_id` update on final message, `tool_calls`/`tool_call_id`, `error_traceback`.
-    *   `notes`: Rows created/updated/deleted based on simulated tool calls.
-    *   `tasks`: Rows created based on simulated tool calls.
-*   **Secondary:** Verify calls made to the **mocked `telegram.Bot` API**. Ensure the handler *attempted* to communicate correctly (send messages, actions, edit messages). Check key parameters like `chat_id`, `text`, `reply_to_message_id`, `parse_mode`, `reply_markup`.
-*   **Tertiary:** Check calls made to the **mocked `LLMInterface`**. Useful for debugging and ensuring the `ProcessingService` received the correct input and context from the handler.
+*   **Primary (Output):** Focus on the **calls made to the mocked `telegram.Bot` API**. Ensure the handler produced the correct user-facing output. Check key parameters like `chat_id`, `text` (content and formatting), `reply_to_message_id`, `parse_mode`, `reply_markup`.
+*   **Primary (History Context):** Focus on the **`messages` argument passed to the mocked `LLMInterface`**. Verify that the correct system prompt, user input, and formatted message history (including roles, content, tool calls/responses) were provided as context for the LLM's generation. This validates the storage and retrieval logic indirectly.
 
 ## 7. Prerequisites/Assumptions
 
-*   Reliable `pytest` fixtures exist for setting up and tearing down a test database instance (`AsyncEngine`).
+*   Reliable `pytest` fixtures exist for setting up and tearing down a test database instance (`AsyncEngine`), defaulting to SQLite (`test_db_engine`).
 *   A method exists to obtain an `asynccontextmanager` function (`get_db_context_func`) that yields a `DatabaseContext` connected to the test database engine.
 *   The test environment can instantiate the real `ProcessingService` and its dependencies (like `ToolsProvider`), potentially loading configuration and prompts.
 *   A suitable mock LLM client implementation is available (`RuleBasedMockLLMClient`, `PlaybackLLMClient`, or standard mocks).
