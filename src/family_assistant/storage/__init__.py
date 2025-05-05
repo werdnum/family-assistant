@@ -126,7 +126,9 @@ async def init_db():
                 # Use run_sync for the upgrade command
                 async with engine.connect() as conn:
                     def sync_upgrade_command(sync_conn, cfg, revision):
-                        """Wrapper for the synchronous upgrade command."""
+                        """Wrapper to run alembic upgrade with existing connection."""
+                        # Make the connection available to env.py
+                        cfg.attributes["connection"] = sync_conn
                         alembic_command.upgrade(cfg, revision)
                     await conn.run_sync(sync_upgrade_command, alembic_cfg, "head")
                     logger.info("Alembic upgrade command completed via run_sync.")
@@ -148,7 +150,9 @@ async def init_db():
                         # Explicitly ensure the alembic_version table exists
                         logger.info("Attempting to run ensure_version via run_sync...")
                         def sync_ensure_version_command(sync_conn, cfg):
-                            """Wrapper for the synchronous ensure_version command."""
+                            """Wrapper to run alembic ensure_version with existing connection."""
+                            # Make the connection available to env.py
+                            cfg.attributes["connection"] = sync_conn
                             alembic_command.ensure_version(cfg)
                         await conn.run_sync(sync_ensure_version_command, alembic_cfg)
                         logger.info("ensure_version command completed.")
@@ -156,7 +160,9 @@ async def init_db():
                         # Stamp the database with the latest revision
                         logger.info("Attempting to run stamp via run_sync...")
                         def sync_stamp_command(sync_conn, cfg, revision):
-                            """Wrapper for the synchronous stamp command."""
+                            """Wrapper to run alembic stamp with existing connection."""
+                            # Make the connection available to env.py
+                            cfg.attributes["connection"] = sync_conn
                             alembic_command.stamp(cfg, revision)
                         await conn.run_sync(sync_stamp_command, alembic_cfg, "head")
                         logger.info("stamp command completed.")
