@@ -137,17 +137,18 @@ async def init_db():
 
                 try:
                     # Explicitly ensure the alembic_version table exists
-                    logger.info("Ensuring Alembic version table exists...")
+                    logger.info("Attempting to run ensure_version via asyncio.to_thread...")
                     await asyncio.to_thread(alembic_command.ensure_version, alembic_cfg)
-                    logger.info("Alembic version table ensured.")
+                    logger.info("ensure_version command completed.")
 
                     # Stamp the database with the latest revision
-                    logger.info("Stamping database with Alembic 'head'...")
+                    logger.info("Attempting to run stamp via asyncio.to_thread...")
                     await asyncio.to_thread(alembic_command.stamp, alembic_cfg, "head")
+                    logger.info("stamp command completed.")
                     logger.info("Database schema stamped.")
                 except Exception as stamp_err:
                      # Covers errors from both ensure_version and stamp
-                     logger.error(f"Failed to stamp database after creation: {stamp_err}", exc_info=True)
+                     logger.error(f"Failed during ensure_version or stamp: {stamp_err}", exc_info=True)
                      raise # Re-raise stamping error
 
                 # Initialize vector DB parts if enabled (only on initial creation)
