@@ -34,6 +34,7 @@ from family_assistant.tools import (
 class TelegramHandlerTestFixture(NamedTuple):
     handler: TelegramUpdateHandler
     mock_bot: AsyncMock
+    mock_telegram_service: AsyncMock # Add the missing field
     mock_llm: LLMInterface # Can be AsyncMock or RuleBasedMockLLMClient
     mock_confirmation_manager: AsyncMock
     processing_service: ProcessingService
@@ -127,6 +128,7 @@ async def telegram_handler_fixture(
     yield TelegramHandlerTestFixture(
         handler=handler,
         mock_bot=mock_bot,
+        mock_telegram_service=mock_telegram_service, # Yield the mock service
         mock_llm=mock_llm,
         mock_confirmation_manager=mock_confirmation_manager,
         processing_service=processing_service,
