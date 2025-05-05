@@ -121,9 +121,14 @@ async def init_db():
             if has_version_table:
                 # Database is already managed by Alembic, upgrade it.
                 logger.info("Alembic version table found. Upgrading database to 'head'...")
-                # Run Alembic migrations to upgrade to head
-                await asyncio.to_thread(alembic_command.upgrade, alembic_cfg, "head")
-                logger.info("Alembic upgrade to 'head' completed.")
+                # Use run_sync for the upgrade command
+                async with engine.connect() as conn:
+                    def sync_upgrade_command(sync_conn, cfg, revision):
+                        """Wrapper for the synchronous upgrade command."""
+                        alembic_command.upgrade(cfg, revision)
+                    await conn.run_sync(sync_upgrade_command, alembic_cfg, "head")
+                    logger.info("Alembic upgrade command completed via run_sync.")
+
             else:
                 # Database is new or not managed by Alembic, create tables and stamp.
                 logger.info(f"Tables found by inspector: {found_tables_list}")
@@ -135,17 +140,25 @@ async def init_db():
                     await conn.run_sync(metadata.create_all)
                 logger.info("Tables created.")
 
+                # Use run_sync for ensure_version and stamp commands
                 try:
-                    # Explicitly ensure the alembic_version table exists
-                    logger.info("Attempting to run ensure_version via asyncio.to_thread...")
-                    await asyncio.to_thread(alembic_command.ensure_version, alembic_cfg)
-                    logger.info("ensure_version command completed.")
+                    async with engine.connect() as conn:
+                        # Explicitly ensure the alembic_version table exists
+                        logger.info("Attempting to run ensure_version via run_sync...")
+                        def sync_ensure_version_command(sync_conn, cfg):
+                            """Wrapper for the synchronous ensure_version command."""
+                            alembic_command.ensure_version(cfg)
+                        await conn.run_sync(sync_ensure_version_command, alembic_cfg)
+                        logger.info("ensure_version command completed.")
 
-                    # Stamp the database with the latest revision
-                    logger.info("Attempting to run stamp via asyncio.to_thread...")
-                    await asyncio.to_thread(alembic_command.stamp, alembic_cfg, "head")
-                    logger.info("stamp command completed.")
-                    logger.info("Database schema stamped.")
+                        # Stamp the database with the latest revision
+                        logger.info("Attempting to run stamp via run_sync...")
+                        def sync_stamp_command(sync_conn, cfg, revision):
+                            """Wrapper for the synchronous stamp command."""
+                            alembic_command.stamp(cfg, revision)
+                        await conn.run_sync(sync_stamp_command, alembic_cfg, "head")
+                        logger.info("stamp command completed.")
+                        logger.info("Database schema stamped.")
                 except Exception as stamp_err:
                      # Covers errors from both ensure_version and stamp
                      logger.error(f"Failed during ensure_version or stamp: {stamp_err}", exc_info=True)
