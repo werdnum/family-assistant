@@ -90,11 +90,10 @@ async def test_confirmation_accepted(
     # --- Configure Confirmation (New Approach) ---
     # 1. Create the confirming provider wrapper for this test
     confirming_wrapper = ConfirmingToolsProvider(
-        wrapped_provider=fix.tools_provider, # Wrap the provider from the fixture
-        calendar_config=None # Not needed for this tool
+        wrapped_provider=fix.tools_provider,  # Wrap the provider from the fixture
+        tools_requiring_confirmation={TOOL_NAME_SENSITIVE}, # Pass the set during init
+        calendar_config=None,  # Not needed for this tool
     )
-    # 2. Configure which tools require confirmation *on the wrapper*
-    confirming_wrapper._tools_requiring_confirmation = {TOOL_NAME_SENSITIVE} # Set directly for testing
 
     # --- Mock Confirmation Manager ---
     # Simulate user ACCEPTING the confirmation prompt
@@ -216,10 +215,9 @@ async def test_confirmation_rejected(
     fix.mock_llm.rules = [rule_request_tool, rule_final_cancel]
     # --- Configure Confirmation (New Approach) ---
     confirming_wrapper = ConfirmingToolsProvider(
-        wrapped_provider=fix.tools_provider,
-        calendar_config=None
+        wrapped_provider=fix.tools_provider, # Wrap the provider from the fixture
+        tools_requiring_confirmation={TOOL_NAME_SENSITIVE}, # Pass the set during init
     )
-    confirming_wrapper._tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
 
     # --- Mock Confirmation Manager ---
     # Simulate user REJECTING the confirmation prompt
@@ -325,10 +323,9 @@ async def test_confirmation_timed_out(
     fix.mock_llm.rules = [rule_request_tool, rule_final_timeout]
     # --- Configure Confirmation (New Approach) ---
     confirming_wrapper = ConfirmingToolsProvider(
-        wrapped_provider=fix.tools_provider,
-        calendar_config=None
+        wrapped_provider=fix.tools_provider, # Wrap the provider from the fixture
+        tools_requiring_confirmation={TOOL_NAME_SENSITIVE}, # Pass the set during init
     )
-    confirming_wrapper._tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
 
     # --- Mock Confirmation Manager ---
     # Simulate TIMEOUT during the confirmation request
