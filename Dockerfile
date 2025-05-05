@@ -87,6 +87,11 @@ COPY pyproject.toml ./
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
     uv pip install .
 
+# --- Install Python dependencies for contrib/scrape_mcp.py ---
+RUN --mount=type=cache,target=${UV_CACHE_DIR} \
+    uv pip install "playwright>=1.0" "markitdown[html]>=0.1.0" && \
+    playwright install --with-deps chromium
+
 # --- Copy Application Code ---
 # Copy the source code into the image
 COPY src/ /app/src/
