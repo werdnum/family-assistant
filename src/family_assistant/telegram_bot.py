@@ -752,15 +752,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
     def register_handlers(self):
         """Registers the necessary Telegram handlers with the application."""
-        self.application.add_handler(CommandHandler("start", self.start))
+        # Access application via the telegram_service instance
+        application = self.telegram_service.application # Get application instance
 
-        self.application.add_handler(
+        application.add_handler(CommandHandler("start", self.start))
+
+        application.add_handler(
             MessageHandler(
                 (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self.message_handler
             )
         )
 
-        self.application.add_error_handler(self.error_handler)
+        application.add_error_handler(self.error_handler)
         logger.info("Telegram handlers registered (start, message, error).")
 
     async def message_handler(
