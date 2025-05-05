@@ -2,8 +2,9 @@ import asyncio
 import contextlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, timedelta # Add timedelta import
 from unittest.mock import AsyncMock, MagicMock, call  # Import call
+from datetime import timedelta # Import timedelta from datetime
+from typing import Any, Callable, Dict, List, Optional # Remove timedelta from typing import
 
 import pytest
 import pytest_asyncio # Keep this import if other fixtures need it
