@@ -254,3 +254,113 @@ async def test_add_note_tool_usage(
         # We trust the message history saving logic works. Asserting its content
         # here would make it an integration test. We verified the *final* user-facing
         # output and the LLM call chain.
+
+@pytest.mark.asyncio
+async def test_tool_result_in_subsequent_history(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+):
+    """
+    Tests that after a tool call completes in one turn, the 'tool' result message
+    is included in the history passed to the LLM in the *next* turn.
+    """
+    # Arrange
+    fix = telegram_handler_fixture
+    user_chat_id = 123
+    user_id = 12345
+    # Message IDs for Turn 1
+    user_message_id_1 = 301
+    assistant_final_message_id_1 = 302
+    # Message IDs for Turn 2
+    user_message_id_2 = 303
+    assistant_final_message_id_2 = 304
+
+    test_note_title = f"History Context Test Note {uuid.uuid4()}"
+    test_note_content = "Content for history context test."
+    user_text_1 = f"Add note: Title={test_note_title}, Content={test_note_content}"
+    user_text_2 = "What was the result of the last tool I asked you to use?"
+    tool_call_id_1 = f"call_{uuid.uuid4()}"
+    llm_tool_request_text_1 = "Okay, adding the note."
+    llm_final_confirmation_text_1 = f"Note '{test_note_title}' added."
+    llm_response_text_2 = f"The last tool call result was: Success" # Based on current tool behavior
+
+    # --- Mock LLM Rules ---
+
+    # Turn 1: Add Note
+    def add_note_matcher_t1(messages, tools, tool_choice):
+        return get_last_message_text(messages).startswith("Add note:")
+
+    add_note_tool_call_t1 = LLMOutput(
+        content=llm_tool_request_text_1,
+        tool_calls=[{"id": tool_call_id_1, "type": "function", "function": {"name": "add_or_update_note", "arguments": json.dumps({"title": test_note_title, "content": test_note_content})}}],
+    )
+    rule_add_note_request_t1: Rule = (add_note_matcher_t1, add_note_tool_call_t1)
+
+    def tool_result_matcher_t1(messages, tools, tool_choice):
+        return any(msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id_1 for msg in messages)
+
+    final_confirmation_response_t1 = LLMOutput(content=llm_final_confirmation_text_1, tool_calls=None)
+    rule_final_confirmation_t1: Rule = (tool_result_matcher_t1, final_confirmation_response_t1)
+
+    # Turn 2: Ask about the tool result (this matcher is the key assertion)
+    def ask_result_matcher_t2(messages, tools, tool_choice):
+        # Check 1: Is the user asking the right question?
+        last_user_msg_correct = get_last_message_text(messages) == user_text_2
+        # Check 2: Does the history *before* the last user message contain the tool result from Turn 1?
+        history_includes_tool_result = any(
+            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id_1
+            for msg in messages[:-1] # Look in history *before* the current user message
+        )
+        logger.debug(f"Matcher T2: Last user msg correct? {last_user_msg_correct}. History includes tool result? {history_includes_tool_result}. History: {messages}")
+        return last_user_msg_correct and history_includes_tool_result
+
+    ask_result_response_t2 = LLMOutput(content=llm_response_text_2, tool_calls=None)
+    rule_ask_result_t2: Rule = (ask_result_matcher_t2, ask_result_response_t2)
+
+    # Set rules (order matters for non-overlapping matchers, but explicit here)
+    fix.mock_llm.rules = [
+        rule_add_note_request_t1,
+        rule_final_confirmation_t1,
+        rule_ask_result_t2,
+    ]
+
+    # --- Mock Bot Responses ---
+    mock_sent_message_1 = AsyncMock(spec=Message, message_id=assistant_final_message_id_1)
+    mock_sent_message_2 = AsyncMock(spec=Message, message_id=assistant_final_message_id_2)
+    # Set side effect to return different messages for different calls
+    fix.mock_bot.send_message.side_effect = [mock_sent_message_1, mock_sent_message_2]
+
+    # --- Context ---
+    # Same context object can be reused if state doesn't need to be reset between turns
+    context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
+
+    # --- Act (Turn 1) ---
+    update_1 = create_mock_update(user_text_1, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id_1)
+    await fix.handler.message_handler(update_1, context)
+
+    # --- Assert (Turn 1 - Minimal, just ensure it likely completed) ---
+    assert_that(fix.mock_llm._calls).described_as("LLM Calls after Turn 1").is_length(2)
+    assert_that(fix.mock_bot.send_message.await_count).described_as("Bot Sends after Turn 1").is_equal_to(1)
+    # Retrieve the args/kwargs for the first call
+    call_1_args, call_1_kwargs = fix.mock_bot.send_message.call_args_list[0]
+    assert_that(call_1_kwargs["text"]).contains(llm_final_confirmation_text_1)
+
+    # --- Act (Turn 2) ---
+    update_2 = create_mock_update(user_text_2, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id_2)
+    await fix.handler.message_handler(update_2, context)
+
+    # --- Assert (Turn 2) ---
+    with soft_assertions():
+        assert_that(fix.mock_llm._calls).described_as("LLM Calls after Turn 2").is_length(3) # One more call
+        assert_that(fix.mock_bot.send_message.await_count).described_as("Bot Sends after Turn 2").is_equal_to(2) # One more send
+
+        # Check the *second* call to send_message
+        call_2_args, call_2_kwargs = fix.mock_bot.send_message.call_args_list[1]
+        expected_escaped_text_2 = telegramify_markdown.markdownify(llm_response_text_2)
+        assert_that(call_2_kwargs["text"]).described_as("Final bot message text (Turn 2)").is_equal_to(expected_escaped_text_2)
+        assert_that(call_2_kwargs["reply_to_message_id"]).described_as("Final bot message reply ID (Turn 2)").is_equal_to(user_message_id_2)
+
+        # The key assertion is implicit: rule_ask_result_t2 matched.
+        # If it hadn't matched (because the tool result wasn't in the history),
+        # the mock LLM would have returned the default response or failed differently.
+        # We check that the *expected* response for Turn 2 was sent.
+        # output and the LLM call chain.
