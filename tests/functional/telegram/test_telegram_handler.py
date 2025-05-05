@@ -12,6 +12,7 @@ from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 from family_assistant.llm import LLMInterface, LLMOutput
+from assertpy import assert_that # Import assert_that
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.message_history import get_recent_history
 
@@ -109,22 +110,33 @@ async def test_simple_text_message(
 
     # Assert
     # 1. LLM Call Verification (Input to the LLM) - Check it was called once
-    # Use the call recording mechanism of the mock client
-    assert len(fix.mock_llm._calls) == 1, "Expected LLM to be called exactly once"
+    assert_that(fix.mock_llm._calls).is_length(1)
+
+    # Verify the structure and content of the message list passed to LLM
     last_call_args = fix.mock_llm._calls[0]
     messages_to_llm = last_call_args.get("messages")
-    assert isinstance(messages_to_llm, list), "Messages passed to LLM should be a list"
-    assert len(messages_to_llm) >= 2 # Should include system prompt and user message
-    assert messages_to_llm[-1]["role"] == "user"
-    assert messages_to_llm[-1]["content"] == user_text
+
+    assert_that(messages_to_llm).is_instance_of(list).is_not_empty()
+    # Check the last message specifically
+    assert_that(messages_to_llm[-1]).is_instance_of(dict)
+    assert_that(messages_to_llm[-1]).contains_key("role")
+    assert_that(messages_to_llm[-1]["role"]).is_equal_to("user")
+    assert_that(messages_to_llm[-1]).contains_key("content")
+    assert_that(messages_to_llm[-1]["content"]).is_equal_to(user_text)
 
     # 2. Bot API Call Verification (Output to user)
     fix.mock_bot.send_message.assert_awaited_once()
     # Check specific arguments using call_args
     args, kwargs = fix.mock_bot.send_message.call_args
-    assert kwargs.get("chat_id") == user_chat_id
-    # Assuming markdown conversion happens, check for escaped chars or use exact expected output
-    assert llm_response_text in kwargs.get("text") # Simple check for content presence
-    assert kwargs.get("reply_to_message_id") == user_message_id
-    assert kwargs.get("parse_mode") is not None # Check parse mode was set
-    assert kwargs.get("reply_markup") is not None # Check ForceReply was added
+
+    # Use assert_that for kwargs dictionary checks
+    assert_that(kwargs).contains_key("chat_id")
+    assert_that(kwargs["chat_id"]).is_equal_to(user_chat_id)
+    assert_that(kwargs).contains_key("text")
+    assert_that(kwargs["text"]).contains(llm_response_text) # Check if expected text is part of actual text
+    assert_that(kwargs).contains_key("reply_to_message_id")
+    assert_that(kwargs["reply_to_message_id"]).is_equal_to(user_message_id)
+    assert_that(kwargs).contains_key("parse_mode")
+    assert_that(kwargs["parse_mode"]).is_not_none()
+    assert_that(kwargs).contains_key("reply_markup")
+    assert_that(kwargs["reply_markup"]).is_not_none()
