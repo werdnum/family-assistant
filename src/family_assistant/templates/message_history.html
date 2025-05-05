@@ -23,23 +23,33 @@
 
 <main>
     {% if history_by_chat %}
-        {% for chat_id, messages in history_by_chat.items() %}
+        {% for conversation_key, messages in history_by_chat.items() %}
         <div class="chat-group">
-            <div class="chat-header">Chat ID: {{ chat_id }}</div>
+            <div class="chat-header">Conversation: {{ conversation_key }}</div> {# Updated header #}
             {% for message in messages %}
             <div class="message {{ message.role }}-message">
                 <div class="message-meta">
-                    {{ message.role.capitalize() }} - {{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S %Z') }} (Msg ID: {{ message.message_id }})
+                    {{ message.role.capitalize() }} - {{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S %Z') }}
+                    {# Display Interface ID if available, otherwise Internal ID #}
+                    (ID: {% if message.interface_message_id %}{{ message.interface_message_id }}{% else %}Internal #{{ message.internal_id }}{% endif %})
+                    {# Optionally display Turn ID and Thread Root ID for debugging/context #}
+                    {% if message.turn_id %}<br>Turn: {{ message.turn_id }}{% endif %}
+                    {% if message.thread_root_id %}<br>Thread Root: {{ message.thread_root_id }}{% endif %}
                 </div>
                 <div class="message-content">
                     <div class="message-content-text">{{ message.content }}</div> <!-- Wrap text content -->
-                    {% if message.role == 'assistant' and message.tool_calls_info %}
+                    {# Display tool *requests* made by the assistant #}
+                    {% if message.role == 'assistant' and message.tool_calls %}
                     <details class="tool-info-details">
-                        <summary>Tool Calls ({{ message.tool_calls_info|length }})</summary>
+                        <summary>Tool Calls Requested ({{ message.tool_calls|length }})</summary> {# Updated field name #}
                         <div class="tool-info-content">
-                            {% for tool_call in message.tool_calls_info %}
+                            {% for tool_call in message.tool_calls %} {# Updated field name #}
                             <div class="tool-call-item">
-                                <strong>Tool:</strong> {{ tool_call.function_name }}<br>
+                                <strong>Function:</strong> {{ tool_call.function.name }}<br> {# Adjusted structure based on common LLM output #}
+                                <strong>Call ID:</strong> {{ tool_call.id }}<br> {# Adjusted structure #}
+                                <strong>Arguments:</strong>
+                                <div id="tool-args-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}" class="json-editor-container"></div>
+
                                 <strong>Call ID:</strong> {{ tool_call.call_id }}<br>
                                 <strong>Arguments:</strong>
                                 <div id="tool-args-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}" class="json-editor-container"></div>

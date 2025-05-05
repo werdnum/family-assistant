@@ -370,9 +370,13 @@ async def view_message_history(
 ):
     """Serves the page displaying message history."""
     try:
+        # Assumes get_grouped_message_history is updated to return data
+        # compatible with the new schema, grouped by a key like "interface:conversation_id"
         history_by_chat = await get_grouped_message_history(db_context)
-        # Optional: Sort chats by ID if needed (DB query already sorts)
-        # history_by_chat = dict(sorted(history_by_chat.items()))
+
+        # Convert dictionary keys to strings if they are tuples (interface, conversation_id)
+        # history_by_chat = {f"{k[0]}:{k[1]}": v for k, v in history_by_chat.items()}
+
         return templates.TemplateResponse(
             "message_history.html",
             {"request": request, "history_by_chat": history_by_chat},
