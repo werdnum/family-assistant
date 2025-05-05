@@ -119,9 +119,6 @@ async def telegram_handler_fixture(
     # Confirming provider reads 'requires_confirmation' from the definitions
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
-        # Initialize with no tools requiring confirmation by default for the fixture.
-        # Tests can override this set as needed.
-        tools_requiring_confirmation=set(),
         calendar_config=None # Pass None as it's optional and not used for note confirmation
     )
 
