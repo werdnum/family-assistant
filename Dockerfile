@@ -73,7 +73,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_TOOL_BIN_DIR=/uv/bin \
     UV_TOOL_DIR=/uv/tools \
-    UV_CACHE_DIR=/uv-cache
+    UV_CACHE_DIR=/uv-cache \
+    ALEMBIC_CONFIG=/app/alembic.ini
 
 # Update PATH separately
 ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
