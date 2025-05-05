@@ -131,6 +131,12 @@ a.button-link:hover {
     border-color: #eeeeee;
     font-style: italic;
 }
+/* Add a style for tool messages */
+.tool-message {
+    background-color: #eeeeee; /* Example: Light grey */
+    border-color: #dddddd; /* Example: Slightly darker grey border */
+    font-style: italic; /* Optional: Make it look slightly different */
+}
 /* Adjust text color for better contrast on custom backgrounds if needed */
 .user-message, .assistant-message, .system-message {
     color: #333; /* Ensure readability */
