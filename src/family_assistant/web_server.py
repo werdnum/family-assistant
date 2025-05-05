@@ -126,11 +126,6 @@ try:
     # Add the 'tojson' filter to the Jinja environment
     templates.env.filters["tojson"] = json.dumps
 
-    # Mount static files using the calculated path
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    logger.info(f"Templates directory set to: {templates_dir}")
-    logger.info(f"Static files directory set to: {static_dir}")
-    logger.info(f"User docs directory set to: {docs_user_dir}")
 
 except NameError:
     # __file__ might not be defined in some execution contexts (e.g., interactive)
@@ -139,9 +134,7 @@ except NameError:
     )
     # Provide fallback paths relative to CWD, although this might not work reliably
     templates = Jinja2Templates(directory="src/family_assistant/templates")
-    app.mount(
-        "/static", StaticFiles(directory="src/family_assistant/static"), name="static"
-    )
+    static_dir = pathlib.Path("src/family_assistant/static") # Define fallback static_dir
     # Fallback docs path relative to CWD
     docs_user_dir = pathlib.Path("docs") / "user"
     logger.warning(f"Using fallback user docs directory: {docs_user_dir}")
@@ -303,6 +296,12 @@ app = FastAPI(
     middleware=middleware, # Add configured middleware
 )
 
+# --- Mount Static Files (after app initialization) ---
+if 'static_dir' in locals() and static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    logger.info(f"Mounted static files from: {static_dir}")
+else:
+    logger.error(f"Static directory '{static_dir if 'static_dir' in locals() else 'Not Defined'}' not found or not a directory. Static files will not be served.")
 
 # --- Pydantic model for search results (optional but good practice) ---
 class SearchResultItem(BaseModel):
