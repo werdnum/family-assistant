@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # --- Constants for Test ---
 USER_CHAT_ID = 123
 USER_ID = 12345
-TOOL_NAME_SENSITIVE = "delete_calendar_event" # Tool requiring confirmation
+TOOL_NAME_SENSITIVE = "add_or_update_note" # Tool requiring confirmation for this test
 
 
 @pytest.mark.asyncio
@@ -44,13 +44,14 @@ async def test_confirmation_accepted(
     fix = telegram_handler_fixture
     user_message_id = 401
     assistant_final_message_id = 402
-    event_uid = "event-to-delete-uid"
-    calendar_url = "http://mock.caldav/cal.ics" # Must match fixture config
-    user_text = f"Delete the event with ID {event_uid}"
+    # Update test data for adding a note
+    test_note_title = f"Confirmed Note Add {uuid.uuid4()}"
+    test_note_content = "This note required confirmation."
+    user_text = f"Please add this note: Title={test_note_title}, Content={test_note_content}"
     tool_call_id = f"call_accept_{uuid.uuid4()}"
-    llm_request_tool_text = "Okay, I need to delete that event."
-    llm_final_success_text = f"Okay, I have deleted the event {event_uid}."
-    tool_success_result_text = f"Successfully deleted event with UID: {event_uid}"
+    llm_request_tool_text = "Okay, I can add that note for you."
+    llm_final_success_text = f"Okay, I have added the note titled '{test_note_title}'."
+    tool_success_result_text = f"Note '{test_note_title}' added/updated successfully." # Adjust expected tool result text
 
     # --- Mock LLM Rules ---
     # 1. User asks -> LLM requests sensitive tool
@@ -63,7 +64,8 @@ async def test_confirmation_accepted(
             "id": tool_call_id, "type": "function",
             "function": {
                 "name": TOOL_NAME_SENSITIVE,
-                "arguments": json.dumps({"uid": event_uid, "calendar_url": calendar_url})
+                # Update arguments for add_or_update_note
+                "arguments": json.dumps({"title": test_note_title, "content": test_note_content})
             }
         }]
     )
@@ -113,12 +115,14 @@ async def test_confirmation_accepted(
             # Check args if needed (prompt text, tool name, tool args)
             conf_args, conf_kwargs = fix.mock_confirmation_manager.request_confirmation.call_args
             assert_that(conf_kwargs.get("tool_name")).is_equal_to(TOOL_NAME_SENSITIVE)
-            assert_that(conf_kwargs.get("tool_args")).is_equal_to({"uid": event_uid, "calendar_url": calendar_url})
+            # Update expected arguments for add_or_update_note
+            assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content})
 
             # 2. Wrapped Tool Provider's execute_tool was called (meaning confirmation passed)
             mock_execute_wrapped.assert_awaited_once_with(
                 name=TOOL_NAME_SENSITIVE,
-                arguments={"uid": event_uid, "calendar_url": calendar_url},
+                # Update expected arguments for add_or_update_note
+                arguments={"title": test_note_title, "content": test_note_content},
                 context=ANY # Context object is created dynamically
             )
 
@@ -145,11 +149,12 @@ async def test_confirmation_rejected(
     fix = telegram_handler_fixture
     user_message_id = 501
     assistant_cancel_message_id = 502 # ID for the cancellation message
-    event_uid = "event-not-to-delete-uid"
-    calendar_url = "http://mock.caldav/cal.ics"
-    user_text = f"Delete the event with ID {event_uid}"
+    # Update test data for adding a note
+    test_note_title = f"Rejected Note Add {uuid.uuid4()}"
+    test_note_content = "This note add was rejected."
+    user_text = f"Add note: Title={test_note_title}, Content={test_note_content}"
     tool_call_id = f"call_reject_{uuid.uuid4()}"
-    llm_request_tool_text = "Okay, I need to delete that event."
+    llm_request_tool_text = "Okay, I can add that note."
     # Message sent by ConfirmingToolsProvider on cancellation
     expected_cancel_text_raw = f"Okay, I will not run the tool `{TOOL_NAME_SENSITIVE}`."
 
@@ -164,7 +169,8 @@ async def test_confirmation_rejected(
             "id": tool_call_id, "type": "function",
             "function": {
                 "name": TOOL_NAME_SENSITIVE,
-                "arguments": json.dumps({"uid": event_uid, "calendar_url": calendar_url})
+                # Update arguments for add_or_update_note
+                "arguments": json.dumps({"title": test_note_title, "content": test_note_content})
             }
         }]
     )
@@ -214,11 +220,12 @@ async def test_confirmation_timed_out(
     fix = telegram_handler_fixture
     user_message_id = 601
     assistant_timeout_message_id = 602 # ID for the timeout message
-    event_uid = "event-timeout-uid"
-    calendar_url = "http://mock.caldav/cal.ics"
-    user_text = f"Delete the event with ID {event_uid}"
+    # Update test data for adding a note
+    test_note_title = f"Timeout Note Add {uuid.uuid4()}"
+    test_note_content = "This note add timed out."
+    user_text = f"Add note: Title={test_note_title}, Content={test_note_content}"
     tool_call_id = f"call_timeout_{uuid.uuid4()}"
-    llm_request_tool_text = "Okay, I need to delete that event."
+    llm_request_tool_text = "Okay, I can add that note."
     # Message sent by ConfirmingToolsProvider on timeout/cancellation
     expected_timeout_text_raw = f"Okay, I will not run the tool `{TOOL_NAME_SENSITIVE}`."
 
@@ -233,7 +240,8 @@ async def test_confirmation_timed_out(
             "id": tool_call_id, "type": "function",
             "function": {
                 "name": TOOL_NAME_SENSITIVE,
-                "arguments": json.dumps({"uid": event_uid, "calendar_url": calendar_url})
+                # Update arguments for add_or_update_note
+                "arguments": json.dumps({"title": test_note_title, "content": test_note_content})
             }
         }]
     )

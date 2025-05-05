@@ -34,7 +34,7 @@ from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition, # Import tool definitions
     # Import a tool that requires confirmation
     calendar_integration, # Import the module
-    _format_event_details_for_confirmation, # Needed by confirming provider
+    # _format_event_details_for_confirmation, # No longer needed for confirming provider setup
     ToolConfirmationRequired, ToolConfirmationFailed # Exceptions
 )
 
@@ -111,10 +111,11 @@ async def telegram_handler_fixture(
     composite_provider = CompositeToolsProvider([local_tools_provider])
 
     # Wrap with Confirming Provider
-    test_calendar_config = {"caldav": {"calendar_urls": ["http://mock.caldav/cal.ics"], "username": "user", "password": "pw"}}
+    # Make 'add_or_update_note' require confirmation for testing purposes
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
-        calendar_config=test_calendar_config # Provide dummy config for detail fetching mock
+        # calendar_config=test_calendar_config, # No longer needed for this test setup
+        tools_requiring_confirmation={"add_or_update_note"} # Specify the tool to confirm
     )
 
     processing_service = ProcessingService(
