@@ -49,7 +49,7 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 *   **Message Batching:** Send multiple messages quickly -> Verify they are processed as one batch.
 *   **Tool Usage (Simulated):**
     *   User message -> Mock LLM requests `add_or_update_note` -> Verify `ProcessingService` executes tool -> Verify `notes` table in DB reflects the change -> Verify final confirmation message sent via mock Bot.
-    *   User message -> Mock LLM requests `schedule_future_callback` -> Verify `ProcessingService` executes tool -> Verify `tasks` table in DB contains the scheduled task.
+    *   User message -> Mock LLM requests `schedule_future_callback` -> Verify `ProcessingService` executes tool -> **Verify confirmation message sent via mock Bot.** (Direct DB check for task details if needed, as bot won't confirm task *creation* explicitly unless designed to).
 *   **Reply Context:** User replies to a previous message -> Verify `replied_to_interface_id` is passed to `ProcessingService` -> Verify `thread_root_id` is correctly determined and stored in `message_history`.
 *   **Forward Context:** User forwards a message -> Verify forward context text is prepended.
 *   **Error Handling:**
@@ -65,12 +65,12 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 
 ## 6. Assertions
 
-*   **Primary:** Focus on the state of the **test database** after the handler has processed the update. This reflects the actual outcome of the integrated system (Handler + ProcessingService + Storage).
+*   **Primary:** Focus on the **calls made to the mocked `telegram.Bot` API**. Ensure the handler produced the correct user-facing output. Check key parameters like `chat_id`, `text` (content and formatting), `reply_to_message_id`, `parse_mode`, `reply_markup` (keyboards), and whether messages were sent, edited, or deleted as expected.
+*   **Secondary (Inferential/Fallback):** Focus on the state of the **test database**, primarily accessed through subsequent bot interactions within the test setup where feasible (e.g., asking the bot to retrieve data it should have stored). Direct database queries are used as a fallback or for verifying internal details not exposed via the bot's "API".
     *   `message_history`: Correct number of rows, correct `role`, `content`, `interface_type`, `conversation_id`, `turn_id` linkage, `thread_root_id` propagation, `interface_message_id` update on final message, `tool_calls`/`tool_call_id`, `error_traceback`.
     *   `notes`: Rows created/updated/deleted based on simulated tool calls.
     *   `tasks`: Rows created based on simulated tool calls.
-*   **Secondary:** Verify calls made to the **mocked `telegram.Bot` API**. Ensure the handler *attempted* to communicate correctly (send messages, actions, edit messages). Check key parameters like `chat_id`, `text`, `reply_to_message_id`, `parse_mode`, `reply_markup`.
-*   **Tertiary:** Check calls made to the **mocked `LLMInterface`**. Useful for debugging and ensuring the `ProcessingService` received the correct input and context from the handler.
+*   **Tertiary (Debugging):** Check calls made to the **mocked `LLMInterface`**. Useful for debugging test failures and ensuring the `ProcessingService` received the correct input and context from the handler.
 
 ## 7. Prerequisites/Assumptions
 
