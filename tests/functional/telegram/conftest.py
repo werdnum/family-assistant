@@ -20,12 +20,11 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.telegram_bot import (
     BatchProcessor,
     TelegramConfirmationUIManager, # Import the real UIManager
+    CompositeToolsProvider,
     ConfirmationUIManager,
     NoBatchMessageBatcher,
     TelegramService,
     TelegramUpdateHandler,
-)
-from family_assistant.tools import (
     CompositeToolsProvider,
     ConfirmingToolsProvider, # Import Confirming provider
     AVAILABLE_FUNCTIONS as local_tool_functions, # Import tool implementations
@@ -46,9 +45,8 @@ class TelegramHandlerTestFixture(NamedTuple):
     mock_llm: LLMInterface # Can be AsyncMock or RuleBasedMockLLMClient
     mock_confirmation_manager: AsyncMock # Keep the mock for request_confirmation control
     processing_service: ProcessingService
+    tools_provider: CompositeToolsProvider # The main tools provider
     get_db_context_func: Callable[..., contextlib.AbstractAsyncContextManager[DatabaseContext]]
-    tools_provider: ConfirmingToolsProvider # Updated type hint
-    wrapped_tools_provider: CompositeToolsProvider # Provide access to wrapped provider for mocking
 
 @pytest_asyncio.fixture(scope="function")
 async def telegram_handler_fixture(
@@ -61,8 +59,7 @@ async def telegram_handler_fixture(
     - Real TelegramUpdateHandler instance.
     - Real ProcessingService instance with Mock LLM.
     - Real ToolsProvider instance (Composite/Local).
-    - Real NoBatchMessageBatcher.
-    - Real ConfirmingToolsProvider wrapping the CompositeProvider.
+    - Real NoBatchMessageBatcher.    - Real ConfirmingToolsProvider wrapping the CompositeProvider.
     - Mocked telegram.Bot instance.
     - Function to get DatabaseContext for the test DB.
     """
@@ -115,16 +112,10 @@ async def telegram_handler_fixture(
     )
     composite_provider = CompositeToolsProvider([local_tools_provider])
 
-    # Wrap with Confirming Provider
-    # Confirming provider reads 'requires_confirmation' from the definitions
-    confirming_provider = ConfirmingToolsProvider(
-        wrapped_provider=composite_provider,
-        calendar_config=None # Pass None as it's optional and not used for note confirmation
-    )
-
     processing_service = ProcessingService(
         llm_client=mock_llm,
-        tools_provider=confirming_provider, # Use the confirming provider
+        # Initialize with the non-confirming provider by default
+        tools_provider=composite_provider,
         prompts={},  # Add mock/real prompts if needed
         calendar_config={},
         timezone_str="UTC",
@@ -160,10 +151,9 @@ async def telegram_handler_fixture(
         mock_llm=mock_llm,
         mock_confirmation_manager=mock_confirmation_manager,
         processing_service=processing_service,
+        tools_provider=composite_provider, # Yield the composite provider
         get_db_context_func=get_test_db_context_func, # Correct assignment
-        tools_provider=confirming_provider, # Yield the confirming provider
-        wrapped_tools_provider=composite_provider, # Yield the wrapped one too
     )
 
     # 4. Teardown (implicit via pytest-asyncio and fixture scope)
-    await confirming_provider.close() # Ensure tools provider resources are closed
+    await composite_provider.close() # Close the main provider
