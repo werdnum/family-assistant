@@ -135,8 +135,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         processing_service: "ProcessingService",  # Use string quote for forward reference
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager["DatabaseContext"]
+        ],  # Closing bracket was misplaced
         message_batcher: MessageBatcher, # Inject the batcher
-        ],
     ):
         """
         Initializes the TelegramUpdateHandler. # Updated docstring
@@ -254,7 +254,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         # --- Assuming DefaultMessageBatcher provides the batch ---
         # (We'll implement the caller side in DefaultMessageBatcher next)
-        buffered_batch: List[Tuple[Update, Optional[bytes]]] = context.job.data["batch"] # Example: Pass via job context
+        # The batch is passed directly now, not via context.job.data
+        # Correct signature: async def process_batch(self, chat_id: int, batch: List[Tuple[Update, Optional[bytes]]], context: ContextTypes.DEFAULT_TYPE) -> None:
+        # Add the 'batch' parameter to the signature
+        # (This was missed in the previous diff)
+        # It seems the previous diff *did* add batch to the signature, but the calling code assumed it was in context.job.data. Let's fix the calling code part.
 
         if not buffered_batch: # Check the passed batch
             logger.info(
@@ -450,10 +454,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         request_confirmation_callback=confirmation_callback_partial,
                     )
                     # Add turn_id to all generated messages before saving
-                    # Get the turn_id from the first message (they all share it)
-                    turn_id_for_saving = None
+                        turn_id_for_saving = None
                     if generated_turn_messages:
                         turn_id_for_saving = generated_turn_messages[0].get("turn_id")
+
                     if not turn_id_for_saving:
                         logger.error(
                             f"Could not extract turn_id from generated messages for chat {chat_id}. Assigning new UUID."
@@ -468,17 +472,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
                     for msg_dict in generated_turn_messages:
                         # Ensure correct IDs are set before saving
-                        msg_dict["turn_id"] = (
-                            turn_id_for_saving  # Ensure turn_id is set
+                        # Create a copy to avoid modifying the original dict potentially used elsewhere
+                        msg_to_save = msg_dict.copy()
+                        msg_to_save["turn_id"] = (
+                            turn_id_for_saving  # Ensure turn_id is set from extracted value
                         )
-                        msg_dict["thread_root_id"] = (
+                        msg_to_save["thread_root_id"] = (
                             thread_root_id_for_turn  # Ensure thread_root is set
                         )
-                        msg_dict["interface_type"] = interface_type  # Add identifiers
-                        # Assuming add_message_to_history accepts the dict via ** and returns something usable
-                        msg_dict["conversation_id"] = conversation_id  # Add identifiers
+                        msg_to_save["interface_type"] = interface_type  # Add identifiers
+                        msg_to_save["conversation_id"] = conversation_id  # Add identifiers
+                        # Explicitly pass args instead of ** to ensure only expected columns are used
                         saved_msg = await self.storage.add_message_to_history(
-                            db_context=db_context, **msg_dict  # Pass the dict directly
+                            db_context=db_context, **msg_to_save # Pass the prepared dict
                         )
                         # Capture the internal ID if the role is assistant and the message was saved successfully
                         if msg_dict.get("role") == "assistant" and saved_msg:
@@ -488,7 +494,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 # --- END OF MESSAGE SAVING LOOP ---
 
                     # --- Sending and Updating Logic (Now inside the DB context) ---
-                    # Create ForceReply object
+                    # Create ForceReply object - needs selective=True for replies
+                    # Let's keep selective=False for now as per previous code.
                     force_reply_markup = ForceReply(selective=False)
                     # Find the final message content to send to the user from the generated list
                     final_llm_content_to_send: Optional[str] = None
@@ -1098,7 +1105,6 @@ class TelegramService:
         else:
             self.message_batcher = NoBatchMessageBatcher(batch_processor=self.update_handler)
         self.update_handler.message_batcher = self.message_batcher # Assign the batcher back to the handler
-        )
 
         # Register handlers using the handler instance
         self.update_handler.register_handlers()

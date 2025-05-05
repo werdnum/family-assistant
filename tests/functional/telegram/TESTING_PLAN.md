@@ -13,8 +13,8 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 *   **Mocked Dependencies:**
     *   **Telegram API:** `telegram.ext.Application`, `telegram.Bot`, `telegram.Update`, `telegram.ext.ContextTypes.DEFAULT_TYPE`. Bot API calls (`send_message`, `send_chat_action`, etc.) will be mocked to verify interaction attempts and simulate realistic return values (e.g., mock `Message` objects).
     *   **LLM:** The `LLMInterface` implementation used by the real `ProcessingService` instance will be replaced with a mock (e.g., `RuleBasedMockLLMClient`, `PlaybackLLMClient`, `unittest.mock.AsyncMock`). The mock LLM will provide controlled outputs (text, tool calls, errors) to drive specific test scenarios.
-    *   **(Minimal) `TelegramService`:** The `TelegramService` instance passed to the handler can be a simple `unittest.mock.Mock` as its direct usage by the handler is minimal (mainly for error reporting).
-
+    *   **`MessageBatcher`:** The `MessageBatcher` interface injected into the handler can be the real `NoBatchMessageBatcher` for simpler E2E tests, or a mocked one if testing the handler's interaction *with* the batcher is desired (less common for E2E).
+    *   **(Minimal) `TelegramService`:** The `TelegramService` instance passed to the handler can often be a simple `unittest.mock.Mock` as its direct usage by the handler is minimal (mainly for error reporting).
 ## 3. Test Environment & Fixtures (`pytest`)
 
 *   **Database Fixture:** Leverage existing `pytest` fixtures (e.g., `pg_vector_db_engine` from `tests/conftest.py`) that provide an initialized, ephemeral test database (`AsyncEngine`).
@@ -32,8 +32,8 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
     *   Instantiate and configure the mock LLM client for the specific scenario (e.g., return text, request a specific tool call).
     *   Instantiate the real `ProcessingService` with the mock LLM.
     *   Instantiate mock `Application` and `Bot`, configuring the `Bot`'s mocked methods.
-    *   Instantiate the `TelegramUpdateHandler` with the real `ProcessingService`, the `DatabaseContext` provided by the fixture (implicitly via the patched engine), and mocked Telegram components.
     *   Instantiate the chosen `MessageBatcher` implementation (e.g., `NoBatchMessageBatcher` for simplicity, passing the handler instance) and assign it to `handler.message_batcher`.
+    *   Instantiate the `TelegramUpdateHandler` with the real `ProcessingService`, the `DatabaseContext` provider function (derived from the fixture), the chosen `MessageBatcher`, and mocked Telegram components.
     *   Create the specific mock `Update` and `Context` representing the user input for the scenario.
 2.  **Act:**
     *   Call the relevant handler method (e.g., `await handler.message_handler(mock_update, mock_context)`).
@@ -69,7 +69,6 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 *   **Primary (History Context):** Focus on the **`messages` argument passed to the mocked `LLMInterface`**. Verify that the correct system prompt, user input, and formatted message history (including roles, content, tool calls/responses) were provided as context for the LLM's generation. This validates the storage and retrieval logic indirectly.
 ## 7. Prerequisites/Assumptions
 *   Reliable `pytest` fixtures exist for setting up and tearing down a test database instance (`AsyncEngine`), defaulting to SQLite (`test_db_engine`).
-*   A suitable mock LLM client implementation is available (`RuleBasedMockLLMClient`, `PlaybackLLMClient`, or standard mocks).
 ## 8. Potential Future Improvements (Refactoring)
 
 The following refactoring could simplify these tests further:
@@ -79,7 +78,7 @@ The following refactoring could simplify these tests further:
 ## 9. Implementation Tasks
 
 1.  **Refactor `MessageBatcher`:**
-    *   Define a `BatchProcessor` protocol with a method like `process_batch(chat_id: int, batch: List[Tuple[Update, Optional[bytes]]], context: ContextTypes.DEFAULT_TYPE) -> None`.
+    *   Define a `BatchProcessor` protocol with a method like `async process_batch(chat_id: int, batch: List[Tuple[Update, Optional[bytes]]], context: ContextTypes.DEFAULT_TYPE) -> None`.
     *   Implement this protocol in `TelegramUpdateHandler`.
     *   Create a `MessageBatcher` class that takes a `BatchProcessor` instance during initialization.
     *   The `MessageBatcher` will manage the `chat_locks`, `message_buffers`, and `processing_tasks`. Its `add_to_batch` method will handle adding updates and triggering the `process_batch` method on the `BatchProcessor` via `asyncio.create_task`.
@@ -94,7 +93,7 @@ The following refactoring could simplify these tests further:
     *   Ensure the `TelegramConfirmationUIManager` registers the `confirmation_callback_handler` with the Telegram `Application`.
 3.  **Create Test Fixture for `TelegramUpdateHandler`:**
     *   In `tests/functional/telegram/conftest.py` (or a dedicated test file), create a `pytest` fixture (e.g., `telegram_update_handler_fixture`).
-    *   This fixture will depend on the **default database fixture (`test_db_engine`)**, mock LLM fixtures, etc.
+    *   This fixture will depend on the default database fixture (`test_db_engine`), mock LLM fixtures, etc.
     *   It will instantiate mock `Application`, `Bot`, and potentially a mock `ConfirmationUIManager`.
     *   It will instantiate the real `ProcessingService` (with mock LLM).
     *   It will instantiate the `TelegramUpdateHandler` with all real and mocked dependencies injected.
