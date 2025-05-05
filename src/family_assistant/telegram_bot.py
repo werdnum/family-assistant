@@ -89,6 +89,24 @@ class MessageBatcher(Protocol):
         """Adds an update to the batch and triggers processing if necessary."""
         ...
 
+@runtime_checkable
+class ConfirmationUIManager(Protocol):
+    """Protocol defining the interface for requesting user confirmation."""
+
+    async def request_confirmation(
+        self,
+        chat_id: int,
+        prompt_text: str,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        timeout: float,
+    ) -> bool:
+        """
+        Requests confirmation from the user via the UI.
+
+        Returns True if confirmed, False if denied or timed out.
+        """
+        ...
 
 # --- MessageBatcher Implementations ---
 
@@ -185,12 +203,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             ..., contextlib.AbstractAsyncContextManager["DatabaseContext"]
         ],  # Closing bracket was misplaced
         message_batcher: MessageBatcher, # Inject the batcher
+        confirmation_manager: ConfirmationUIManager, # Inject confirmation manager
     ):
         """
         Initializes the TelegramUpdateHandler. # Updated docstring
 
         Args:
-            application: The telegram.ext.Application instance.
+            telegram_service: The parent TelegramService instance.
             allowed_user_ids: List of chat IDs allowed to interact with the bot.
             developer_chat_id: Optional chat ID for sending error notifications.
             processing_service: The ProcessingService instance.
@@ -198,20 +217,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             message_batcher: The message batcher instance to use.
         """
         self.telegram_service = telegram_service  # Store the service instance
-        # Imports moved to top level
 
-        self.application = application
+        # application is accessed via telegram_service.application if needed
         self.allowed_user_ids = allowed_user_ids
         self.developer_chat_id = developer_chat_id
         self.processing_service = processing_service  # Store the service instance
         self.get_db_context = get_db_context_func
         self.message_batcher = message_batcher # Store the injected batcher
-
-        # Store pending confirmation Futures
-        self.pending_confirmations: Dict[str, asyncio.Future] = {}
-        self.confirmation_timeout = (
-            3600.0  # Default 1 hour, should match ConfirmingToolsProvider
-        )
+        self.confirmation_manager = confirmation_manager # Store the injected manager
 
         # Store storage functions needed directly by the handler (e.g., history)
         # These might be better accessed via the db_context passed around,
@@ -221,8 +234,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         self.storage = storage
 
-    @contextlib.asynccontextmanager
-    # --- Confirmation Handling Logic - Moved back into TelegramUpdateHandler ---
 
     async def _typing_notifications(
         self,
@@ -481,15 +492,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                 async with self._typing_notifications(context, chat_id):
                     # Create the partial function for the confirmation callback
-                    confirmation_callback_partial = functools.partial( # Call the method now correctly located on self
-                        self._request_confirmation_impl,
+                    confirmation_callback_partial = functools.partial(
+                        self.confirmation_manager.request_confirmation, # Target manager's method
                         chat_id=chat_id,
                     )
                     (
                         generated_turn_messages,  # New return type
                         final_reasoning_info,  # Capture final reasoning info
                         processing_error_traceback,  # Capture traceback directly
-                    ) = await self.processing_service.generate_llm_response_for_chat(  # Call updated method
+                    ) = await self.processing_service.generate_llm_response_for_chat(
                         db_context=db_context,  # Pass db context
                         application=self.application,
                         interface_type=interface_type,  # Pass identifiers
@@ -695,166 +706,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             # Let the main error handler notify the developer
             raise e  # Re-raise for the main error handler
 
-    # --- Confirmation Handling Methods - Moved back into TelegramUpdateHandler ---
-
-    async def _request_confirmation_impl(
-        self,  # Make it instance method if not already
-        chat_id: int,
-        prompt_text: str,
-        tool_name: str,
-        tool_args: Dict[str, Any],
-        timeout: float,
-    ) -> bool:
-        """Internal implementation to send confirmation and wait."""
-        confirm_uuid = str(uuid.uuid4())
-        if not self.application or not self.application.bot:
-            raise RuntimeError(
-                "Telegram application or bot instance not available for sending confirmation."
-            )
-        logger.info(
-            f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}"
-        )
-
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"
-                    ),
-                    InlineKeyboardButton(
-                        "❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"
-                    ),
-                ]
-            ]
-        )
-
-        try:
-            sent_message = (
-                await self.application.bot.send_message(
-                    chat_id=chat_id,
-                    text=prompt_text,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_markup=keyboard,
-                )
-            )
-            logger.debug(
-                f"Confirmation message sent (Message ID: {sent_message.message_id})"
-            )
-        except Exception as send_err:
-            logger.error(
-                f"Failed to send confirmation message to chat {chat_id}: {send_err}",
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"Failed to send confirmation message: {send_err}"
-            ) from send_err
-
-        confirmation_future = asyncio.get_running_loop().create_future()
-        self.pending_confirmations[confirm_uuid] = confirmation_future
-
-        try:
-            logger.debug(
-                f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {timeout}s)"
-            )
-            user_confirmed = await asyncio.wait_for(
-                confirmation_future, timeout=timeout
-            )
-            logger.info(
-                f"Confirmation response received for {confirm_uuid}: {user_confirmed}"
-            )
-            return user_confirmed
-        except asyncio.TimeoutError:
-            logger.warning(f"Confirmation {confirm_uuid} timed out after {timeout}s.")
-            try:
-                await self.application.bot.edit_message_reply_markup(
-                    chat_id=chat_id,
-                    message_id=sent_message.message_id,
-                    reply_markup=None,
-                )
-                await self.application.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=sent_message.message_id,
-                    text=prompt_text
-                    + "\n\n\\(Confirmation timed out\\)",
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                )
-            except Exception as edit_err:
-                logger.warning(
-                    f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}"
-                )
-            self.pending_confirmations.pop(confirm_uuid, None)
-            raise
-        finally:
-            self.pending_confirmations.pop(confirm_uuid, None)
-
-    async def confirmation_callback_handler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
-        """Handles button presses for tool confirmations."""
-        query = update.callback_query
-        await query.answer()
-
-        callback_data = query.data
-        logger.info(f"Received confirmation callback: {callback_data}")
-
-        try:
-            _, confirm_uuid, action = callback_data.split(":")
-        except ValueError:
-            logger.error(f"Invalid confirmation callback data format: {callback_data}")
-            await query.edit_message_text(text="Error: Invalid callback data.")
-            return
-
-        confirmation_future = self.pending_confirmations.pop(confirm_uuid, None)
-
-        if confirmation_future and not confirmation_future.done():
-            original_text = (
-                query.message.text_markdown_v2
-            )
-
-            if action == "yes":
-                logger.debug(f"Setting confirmation result for {confirm_uuid} to True")
-                confirmation_future.set_result(True)
-                status_text = "\n\n*Confirmed* ✅"
-            elif action == "no":
-                logger.debug(f"Setting confirmation result for {confirm_uuid} to False")
-                confirmation_future.set_result(False)
-                status_text = "\n\n*Cancelled* ❌"
-            else:
-                logger.warning(
-                    f"Unknown action '{action}' in confirmation callback {confirm_uuid}"
-                )
-                status_text = "\n\n*Error: Unknown action*"
-                confirmation_future.cancel()
-            try:
-                await query.edit_message_text(
-                    text=original_text + status_text,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_markup=None,
-                )
-            except Exception as edit_err:
-                logger.error(
-                    f"Failed to edit confirmation message {query.message.message_id} after callback: {edit_err}"
-                )
-
-        elif confirmation_future and confirmation_future.done():
-            logger.warning(
-                f"Confirmation callback {confirm_uuid} received, but future was already done (likely timed out or duplicate callback)."
-            )
-            await query.edit_message_text(
-                text=query.message.text_markdown_v2
-                + "\n\n\\(Request already handled or expired\\)",
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=None,
-            )
-        else:
-            logger.warning(
-                f"Confirmation callback {confirm_uuid} received, but no pending confirmation found."
-            )
-            await query.edit_message_text(
-                text="This confirmation request is no longer valid or has expired.",
-                reply_markup=None,
-            )
-
     # --- Error Handling and Registration - Moved back into TelegramUpdateHandler ---
 
     async def error_handler(self, update: object, context: CallbackContext) -> None:
@@ -909,18 +760,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             )
         )
 
-        self.application.add_handler(
-            CallbackQueryHandler(
-                self.confirmation_callback_handler, pattern=r"^confirm:"
-            )
-        )
-
         self.application.add_error_handler(self.error_handler)
-        logger.info("Telegram handlers registered (including confirmation callback).")
+        logger.info("Telegram handlers registered (start, message, error).")
 
     async def message_handler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    ) -> None: # noqa: E501
         """Buffers incoming messages and triggers processing if not already running."""
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
@@ -956,6 +801,122 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         # Delegate to the injected message batcher
         await self.message_batcher.add_to_batch(update, context, photo_bytes)
+
+
+class TelegramConfirmationUIManager(ConfirmationUIManager):
+    """Implementation of ConfirmationUIManager using Telegram Inline Keyboards."""
+
+    def __init__(self, application: Application, confirmation_timeout: float = 3600.0):
+        self.application = application
+        self.confirmation_timeout = confirmation_timeout
+        self.pending_confirmations: Dict[str, asyncio.Future] = {}
+
+    async def request_confirmation(
+        self,
+        chat_id: int,
+        prompt_text: str,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        timeout: float,
+    ) -> bool:
+        """Sends confirmation message and waits for user response or timeout."""
+        effective_timeout = min(timeout, self.confirmation_timeout)
+        confirm_uuid = str(uuid.uuid4())
+        if not self.application or not self.application.bot:
+            raise RuntimeError("Telegram application or bot instance not available.")
+        logger.info(
+            f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}"
+        )
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"),
+                    InlineKeyboardButton("❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"),
+                ]
+            ]
+        )
+
+        try:
+            sent_message = await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=prompt_text,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=keyboard,
+            )
+            logger.debug(f"Confirmation message sent (Message ID: {sent_message.message_id})")
+        except Exception as send_err:
+            logger.error(f"Failed to send confirmation message to chat {chat_id}: {send_err}", exc_info=True)
+            # Don't raise here, return False to indicate failure to confirm
+            return False
+
+        confirmation_future = asyncio.get_running_loop().create_future()
+        self.pending_confirmations[confirm_uuid] = confirmation_future
+
+        try:
+            logger.debug(f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {effective_timeout}s)")
+            user_confirmed = await asyncio.wait_for(confirmation_future, timeout=effective_timeout)
+            logger.info(f"Confirmation response received for {confirm_uuid}: {user_confirmed}")
+            return user_confirmed
+        except asyncio.TimeoutError:
+            logger.warning(f"Confirmation {confirm_uuid} timed out after {effective_timeout}s.")
+            try:
+                # Edit message on timeout
+                await self.application.bot.edit_message_reply_markup(
+                    chat_id=chat_id, message_id=sent_message.message_id, reply_markup=None
+                )
+                await self.application.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=sent_message.message_id,
+                    text=prompt_text + "\n\n\\(Confirmation timed out\\)",
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+            except Exception as edit_err:
+                logger.warning(f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}")
+            # Return False on timeout
+            return False
+        finally:
+            self.pending_confirmations.pop(confirm_uuid, None)
+
+    async def confirmation_callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handles button presses for tool confirmations."""
+        query = update.callback_query
+        await query.answer()
+
+        callback_data = query.data
+        logger.info(f"Received confirmation callback: {callback_data}")
+
+        try:
+            _, confirm_uuid, action = callback_data.split(":")
+        except ValueError:
+            logger.error(f"Invalid confirmation callback data format: {callback_data}")
+            await query.edit_message_text(text="Error: Invalid callback data.")
+            return
+
+        confirmation_future = self.pending_confirmations.get(confirm_uuid) # Use get() to avoid popping yet
+
+        if confirmation_future and not confirmation_future.done():
+            original_text = query.message.text_markdown_v2
+            status_text = ""
+            if action == "yes":
+                logger.debug(f"Setting confirmation result for {confirm_uuid} to True")
+                confirmation_future.set_result(True)
+                status_text = "\n\n*Confirmed* ✅"
+            elif action == "no":
+                logger.debug(f"Setting confirmation result for {confirm_uuid} to False")
+                confirmation_future.set_result(False)
+                status_text = "\n\n*Cancelled* ❌"
+            else:
+                logger.warning(f"Unknown action '{action}' in confirmation callback {confirm_uuid}")
+                status_text = "\n\n*Error: Unknown action*"
+                confirmation_future.cancel()
+
+            try:
+                await query.edit_message_text(text=original_text + status_text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=None)
+            except Exception as edit_err:
+                logger.error(f"Failed to edit confirmation message {query.message.message_id} after callback: {edit_err}")
+
+        # Rest of the handler logic remains the same (handling already done/invalid cases) - omitted for brevity but should be here
 
 # Remove duplicate DefaultMessageBatcher definition and methods incorrectly placed in NoBatchMessageBatcher
 
@@ -1009,25 +970,23 @@ class TelegramService:
         self.application.bot_data["processing_service"] = processing_service
         logger.info("Stored ProcessingService instance in application.bot_data.")
 
-        # Instantiate the Update Handler first (it acts as the BatchProcessor)
-        # We need to create a dummy batcher just for the init, then replace it.
-        # Or, better: initialize the handler *without* the batcher first, then create batcher, then assign.
-        # Let's adjust TelegramUpdateHandler init to allow batcher=None initially.
-        # --- This approach is complex. Let's instantiate the Handler fully, then the Batcher ---
-        # Instantiate handler first (it *is* the BatchProcessor implementation)
-
+        # Instantiate Confirmation Manager
+        self.confirmation_manager = TelegramConfirmationUIManager(
+            application=self.application
+            # Optionally pass custom timeout from config:
+            # confirmation_timeout=config.get("telegram", {}).get("confirmation_timeout", 3600.0)
+        )
 
         # Instantiate the handler class, passing self (the service instance)
         self.update_handler = TelegramUpdateHandler(
             telegram_service=self,  # Pass self
-            application=self.application,
             allowed_user_ids=allowed_user_ids,
             developer_chat_id=developer_chat_id,
             processing_service=processing_service,
             get_db_context_func=get_db_context_func,
-            message_batcher=None, # Temporarily None, will be set below
-            # Pass confirmation timeout if needed, or let handler use default
-            # confirmation_timeout=...
+            message_batcher=None,  # Will be set below
+            confirmation_manager=self.confirmation_manager, # Inject manager
+
         )
 
         # Now instantiate the appropriate batcher, passing the handler as the processor
@@ -1037,8 +996,14 @@ class TelegramService:
             self.message_batcher = NoBatchMessageBatcher(batch_processor=self.update_handler)
         self.update_handler.message_batcher = self.message_batcher # Assign the batcher back to the handler
 
-        # Register handlers using the handler instance
+        # Register core handlers (start, message, error) using the handler instance
         self.update_handler.register_handlers()
+        # Register confirmation callback handler using the confirmation manager instance
+        self.application.add_handler(
+            CallbackQueryHandler(
+                self.confirmation_manager.confirmation_callback_handler, pattern=r"^confirm:"
+            )
+        )
         logger.info("TelegramService initialized.")
 
     # Add the confirmation request method to the service, delegating to the handler
@@ -1051,9 +1016,10 @@ class TelegramService:
         timeout: float,
     ) -> bool:
         """Public method to request confirmation, called by ConfirmingToolsProvider."""
-        if hasattr(self.update_handler, "_request_confirmation_impl"):
-            return await self.update_handler._request_confirmation_impl(
-                chat_id=chat_id,
+        # Delegate directly to the confirmation manager
+        if self.confirmation_manager:
+            return await self.confirmation_manager.request_confirmation(
+                chat_id=chat_id, # Correct parameter name
                 prompt_text=prompt_text,
                 tool_name=tool_name,
                 tool_args=tool_args,
@@ -1061,7 +1027,7 @@ class TelegramService:
             )
         else:
             logger.error(
-                "TelegramUpdateHandler does not have the _request_confirmation_impl method."
+                "ConfirmationUIManager instance not available in TelegramService."
             )
             raise RuntimeError(
                 "Confirmation mechanism not properly initialized in handler."
