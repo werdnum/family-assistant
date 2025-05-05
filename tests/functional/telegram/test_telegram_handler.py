@@ -121,8 +121,9 @@ async def test_simple_text_message(
 
         # Compare the last message (user input) directly
         # Note: If comparing the whole list, need to account for dynamic system prompt content (e.g., timestamp)
+        # The *triggering* user message is the second to last in the list sent to the LLM
         expected_last_message = {"role": "user", "content": user_text}
-        assert_that(messages_to_llm[-1]).described_as("Last message to LLM").is_equal_to(expected_last_message)
+        assert_that(messages_to_llm[-2]).described_as("Triggering message sent to LLM").is_equal_to(expected_last_message)
 
         # 2. Bot API Call Verification (Output to user)
         fix.mock_bot.send_message.assert_awaited_once()
@@ -134,7 +135,8 @@ async def test_simple_text_message(
         assert_that(kwargs["chat_id"]).described_as("send_message chat_id").is_equal_to(user_chat_id)
 
         assert_that(kwargs).described_as("send_message kwargs").contains_key("text")
-        assert_that(kwargs["text"]).described_as("send_message text").contains(llm_response_text)
+        # Expect the MarkdownV2 escaped version of the text
+        assert_that(kwargs["text"]).described_as("send_message text").is_equal_to("Hello TestUser\\! This is the LLM response\\.")
 
         assert_that(kwargs).described_as("send_message kwargs").contains_key("reply_to_message_id")
         assert_that(kwargs["reply_to_message_id"]).described_as("send_message reply_to_message_id").is_equal_to(user_message_id)
