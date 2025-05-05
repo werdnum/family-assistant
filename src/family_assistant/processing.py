@@ -497,6 +497,7 @@ class ProcessingService:
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: List[Dict[str, Any]],
+        trigger_interface_message_id: Optional[str], # Added trigger message ID
         user_name: str,
         replied_to_interface_id: Optional[str] = None,  # Added for reply context
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
@@ -513,6 +514,7 @@ class ProcessingService:
             interface_type: Identifier for the interaction interface.
             conversation_id: Identifier for the conversation.
             trigger_content_parts: List of content parts for the triggering message.
+            trigger_interface_message_id: The interface-specific ID of the triggering message.
             user_name: The user name to format into the system prompt.
             replied_to_interface_id: Optional interface-specific ID of the message being replied to.
             request_confirmation_callback: Optional callback for tool confirmations.
@@ -521,7 +523,7 @@ class ProcessingService:
             A tuple: (List of generated turn messages, Final reasoning info dict or None, Error traceback string or None).
         """
         try:
-            history_messages = (
+            raw_history_messages = (
                 await storage.get_recent_history(  # Use storage directly with context
                     db_context=db_context,  # Pass context
                     interface_type=interface_type,  # Pass interface_type
@@ -537,10 +539,20 @@ class ProcessingService:
                 f"Failed to get message history for {interface_type}:{conversation_id}: {hist_err}",
                 exc_info=True,
             )
-            history_messages = []  # Continue with empty history on error
+            raw_history_messages = []  # Continue with empty history on error
+
+        # --- Filter out the triggering message from the fetched history ---
+        filtered_history_messages = []
+        if trigger_interface_message_id:
+            for msg in raw_history_messages:
+                if msg.get("interface_message_id") != trigger_interface_message_id:
+                    filtered_history_messages.append(msg)
+            logger.debug(f"Filtered history: {len(raw_history_messages)} -> {len(filtered_history_messages)} messages after removing trigger ID {trigger_interface_message_id}")
+        else:
+            filtered_history_messages = raw_history_messages # No trigger ID to filter by
 
         # Format the raw history using the new helper method
-        initial_messages_for_llm = self._format_history_for_llm(history_messages)
+        initial_messages_for_llm = self._format_history_for_llm(filtered_history_messages)
 
         # --- Handle Reply Thread Context ---
         thread_root_id_for_saving: Optional[int] = (

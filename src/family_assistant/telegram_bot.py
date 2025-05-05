@@ -457,7 +457,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         )
                         # Continue without thread_root_id if error occurs
 
-                # --- Save User Trigger Message(s) ---
+                # --- Prepare and Save User Trigger Message(s) ---
+                trigger_interface_message_id: Optional[str] = None
                 # Combine text again for saving user message content
                 history_user_content = combined_text.strip()
                 if first_photo_bytes:
@@ -474,6 +475,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
 
                 if user_message_id:
+                    trigger_interface_message_id = str(user_message_id) # Store the ID
                     await self.storage.add_message_to_history(
                         db_context=db_context,
                         interface_type=interface_type,
@@ -520,6 +522,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         interface_type=interface_type,  # Pass identifiers
                         conversation_id=conversation_id,  # Pass identifiers
                         trigger_content_parts=trigger_content_parts,
+                        trigger_interface_message_id=trigger_interface_message_id, # Pass the trigger message ID
                         user_name=user_name,
                         replied_to_interface_id=replied_to_interface_id,  # Pass replied_to ID
                         # Pass the partially applied confirmation request callback
