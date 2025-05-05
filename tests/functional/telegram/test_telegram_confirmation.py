@@ -98,10 +98,10 @@ async def test_confirmation_accepted(
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
     mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
 
-        # Act
-        await fix.handler.message_handler(update, context)
+    # Act
+    await fix.handler.message_handler(update, context)
 
-        # Assert
+    # Assert
         with soft_assertions():
             # 1. Confirmation Manager was called because the tool was configured to require it
             fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
