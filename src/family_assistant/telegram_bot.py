@@ -257,13 +257,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         # (We'll implement the caller side in DefaultMessageBatcher next)
         # Remove incorrect retrieval from context.job.data - batch is now a parameter
 
-        if not buffered_batch: # Check the passed batch
+        if not batch: # Check the passed batch
             logger.info(
                 f"process_batch for chat {chat_id} called with empty batch. Exiting."
             )
             return
 
-        last_update, _ = buffered_batch[-1]
+        last_update, _ = batch[-1]
         user = last_update.effective_user
         user_name = user.first_name if user else "Unknown User"
         reply_target_message_id = (
@@ -281,7 +281,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         first_photo_bytes = None
         forward_context = ""
 
-        for update_item, photo_bytes in buffered_batch:
+        for update_item, photo_bytes in batch:
             if update_item.message:
                 text = update_item.message.caption or update_item.message.text or ""
                 if text:
@@ -482,11 +482,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         # Explicitly pass args instead of ** to ensure only expected columns are used
                         saved_msg_mapping = await self.storage.add_message_to_history(
                             db_context=db_context, **msg_to_save # Pass the prepared dict
-                        )
-                        # Capture the internal ID if the role is assistant and the message was saved successfully
-                        if msg_dict.get("role") == "assistant" and saved_msg:
+                        ) # Capture the internal ID if the role is assistant and the message was saved successfully
+                        if msg_dict.get("role") == "assistant" and saved_msg_mapping:
                             last_assistant_internal_id = (
-                                saved_msg.get("internal_id") # Use dict access (.get for safety)
+                                # Use dict access (.get for safety) on the returned mapping
+                                saved_msg_mapping.get("internal_id")
                             )
                 # --- END OF MESSAGE SAVING LOOP ---
 
