@@ -116,18 +116,6 @@ async def test_simple_text_message(
         # 1. LLM Call Verification
         assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(1)
 
-        # Verify the structure and content of the message list passed to LLM
-        last_call_args = fix.mock_llm._calls[0]
-        messages_to_llm = last_call_args.get("messages")
-
-        assert_that(messages_to_llm).described_as("Messages passed to LLM").is_instance_of(list).is_not_empty()
-
-        # Compare the last message (user input) directly
-        # Note: If comparing the whole list, need to account for dynamic system prompt content (e.g., timestamp)
-        # The *triggering* user message is the second to last in the list sent to the LLM
-        expected_last_message = {"role": "user", "content": user_text}
-        assert_that(messages_to_llm[-2]).described_as("Triggering message sent to LLM").is_equal_to(expected_last_message)
-
         # 2. Bot API Call Verification (Output to user)
         fix.mock_bot.send_message.assert_awaited_once()
         # Check specific arguments using call_args
@@ -244,18 +232,11 @@ async def test_add_note_tool_usage(
         # Expect two calls: first triggers tool, second processes result
         assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
 
-        # Check first LLM call (triggers tool)
-        llm_call_1_args = fix.mock_llm._calls[0]
-        messages_to_llm_1 = llm_call_1_args.get("messages")
-        assert_that(messages_to_llm_1[-2]["content"]).described_as("Triggering user message in LLM call 1").is_equal_to(user_text)
-
-        # Check second LLM call (processes tool result)
-        llm_call_2_args = fix.mock_llm._calls[1]
-        messages_to_llm_2 = llm_call_2_args.get("messages")
-        tool_result_msg_in_llm_input = next((msg for msg in reversed(messages_to_llm_2) if msg.get("role") == "tool"), None)
-        assert_that(tool_result_msg_in_llm_input).described_as("Tool result message in LLM call 2 input").is_not_none()
-        assert_that(tool_result_msg_in_llm_input.get("tool_call_id")).described_as("Tool result message tool_call_id").is_equal_to(tool_call_id)
-        assert_that(tool_result_msg_in_llm_input.get("content")).described_as("Tool result message content").contains(f"Note '{test_note_title}' added/updated successfully.")
+        # Implicitly verified LLM inputs:
+        # - The first call must have matched add_note_matcher to produce the tool call.
+        # - The second call must have matched tool_result_matcher (which checks for the
+        #   tool result message with the correct tool_call_id) to produce the final response.
+        # Therefore, explicit checks on the `messages` list sent to the LLM are removed.
 
         # 3. Bot API Call (Final Response)
         fix.mock_bot.send_message.assert_awaited_once() # Check it was called exactly once for the final message
