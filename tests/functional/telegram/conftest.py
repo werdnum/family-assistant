@@ -96,6 +96,12 @@ async def telegram_handler_fixture(
         llm_client=mock_llm,
         tools_provider=tools_provider,
         prompts={},  # Add mock/real prompts if needed
+        # Add missing required arguments with test defaults
+        calendar_config={},
+        timezone_str="UTC",
+        max_history_messages=10,
+        server_url="http://test-server:8000", # Placeholder URL for tests
+        history_max_age_hours=24,
     )
 
     # Function to get DB context for the specific test engine
