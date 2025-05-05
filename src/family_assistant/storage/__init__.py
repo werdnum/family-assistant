@@ -5,7 +5,7 @@ import asyncio
 import os # Added for path manipulation
 import random
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy import inspect, create_engine as create_sync_engine # Import inspect and sync engine creator
+from sqlalchemy import inspect # Import inspect
 from dateutil import rrule
 from dateutil.parser import isoparse
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
@@ -106,26 +106,23 @@ async def init_db():
             alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
 
             # --- Check for alembic_version table using inspect ---
-            db_url_str = engine.url.render_as_string(hide_password=False)
-
-            def check_version_table_sync(sync_db_url: str) -> bool:
-                """Synchronous function to check for alembic_version table."""
-                sync_engine = create_sync_engine(sync_db_url)
-                try:
-                    with sync_engine.connect() as sync_conn:
-                        inspector = inspect(sync_conn)
-                        return inspector.has_table("alembic_version")
-                finally:
-                    sync_engine.dispose()
-
-            has_version_table = await asyncio.to_thread(check_version_table_sync, db_url_str)
+            # Use run_sync on the async engine's connection to perform the check
+            logger.info("Inspecting database for alembic_version table...")
+            async with engine.connect() as conn:
+                def inspector_sync(sync_conn):
+                    inspector = inspect(sync_conn)
+                    return inspector.has_table("alembic_version")
+                has_version_table = await conn.run_sync(inspector_sync)
+            logger.info(f"Alembic version table found: {has_version_table}")
 
             if has_version_table:
+                # Database is already managed by Alembic, upgrade it.
                 logger.info("Alembic version table found. Upgrading database to 'head'...")
                 # Run Alembic migrations to upgrade to head
                 await asyncio.to_thread(alembic_command.upgrade, alembic_cfg, "head")
                 logger.info("Alembic upgrade to 'head' completed.")
             else:
+                # Database is new or not managed by Alembic, create tables and stamp.
                 logger.info("Alembic version table not found. Performing initial schema creation and stamping...")
 
                 # Create all tables defined in SQLAlchemy metadata
