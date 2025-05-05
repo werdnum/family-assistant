@@ -190,6 +190,12 @@ wheels = [
 ]
 
 [[package]]
+name = "assertpy"
+version = "1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/39/720b5d4463612a40a166d00999cbb715fce3edaf08a9a7588ba5985699ec/assertpy-1.1.tar.gz", hash = "sha256:acc64329934ad71a3221de185517a43af33e373bb44dc05b5a9b174394ef4833", size = 25421 }
+
+[[package]]
 name = "astroid"
 version = "3.3.9"
 source = { registry = "https://pypi.org/simple" }
@@ -470,6 +476,7 @@ dependencies = [
 dev = [
     { name = "aiosqlite" },
     { name = "alembic" },
+    { name = "assertpy" },
     { name = "asyncpg" },
     { name = "httpx" },
     { name = "mcp-proxy" },
@@ -492,6 +499,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.19.0" },
     { name = "aiosqlite", marker = "extra == 'dev'" },
     { name = "alembic", marker = "extra == 'dev'", specifier = ">=1.15.2" },
+    { name = "assertpy", marker = "extra == 'dev'", specifier = ">=1.1" },
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "asyncpg", marker = "extra == 'dev'", specifier = ">=0.29.0" },
     { name = "caldav", specifier = ">=1.2.0" },

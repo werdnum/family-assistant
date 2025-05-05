@@ -228,13 +228,14 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
-        server_url=None,  # Added missing argument
+        server_url=None,
     )
 
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ})"
     user_request_trigger = [{"type": "text", "text": user_request_text}]
+    user_message_id = 101
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call generate_llm_response_for_chat directly
@@ -243,9 +244,10 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,
                 application=MagicMock(),
-                interface_type="test",  # Added interface type
-                conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
+                interface_type="test",
+                conversation_id=str(TEST_CHAT_ID),
                 trigger_content_parts=user_request_trigger,
+                trigger_interface_message_id=user_message_id,
                 user_name=TEST_USER_NAME,
             )
         )
@@ -406,7 +408,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
     dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
-    dummy_history_age = 24  # Added missing argument
+    dummy_history_age = 24
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
@@ -432,9 +434,10 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
             await processing_service.generate_llm_response_for_chat(
                 db_context=db_context,
                 application=MagicMock(),
-                interface_type="test",  # Added interface type
-                conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
+                interface_type="test",
+                conversation_id=str(TEST_CHAT_ID),
                 trigger_content_parts=user_request_trigger,
+                trigger_interface_message_id=user_message_id,
                 user_name=TEST_USER_NAME,
             )
         )
