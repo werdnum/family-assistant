@@ -9,6 +9,8 @@ from dateutil import rrule
 from dateutil.parser import isoparse
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
 from alembic import command as alembic_command
+from alembic.script import ScriptDirectory
+from alembic.runtime.environment import EnvironmentContext
 
 # Import base components using absolute package paths
 from family_assistant.storage.base import metadata, get_engine, engine
@@ -96,35 +98,47 @@ async def init_db():
     for attempt in range(max_retries):
         try:
             async with engine.begin() as conn:  # Use begin for transactional DDL
-                logger.info(f"Initializing database schema (attempt {attempt+1})...")
-                # Create all tables attached to metadata
-                await conn.run_sync(metadata.create_all)
-                # --- Alembic Stamping ---
-                # Stamp the database with the latest Alembic revision
+                logger.info(f"Checking database state (attempt {attempt+1})...")
+
+                # --- Alembic Configuration ---
                 # Assume alembic.ini is in the project root, 3 levels up from this file's directory
                 alembic_ini_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "alembic.ini"))
-                logger.info(f"Attempting to stamp database with Alembic head using config: {alembic_ini_path}")
                 alembic_cfg = AlembicConfig(alembic_ini_path)
                 # Set the sqlalchemy.url for Alembic using the engine's URL
                 alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
-                await conn.run_sync(alembic_command.stamp, alembic_cfg, "head")
-                logger.info("Database schema initialized.")
-                # Also initialize vector DB parts if enabled
-                if VECTOR_STORAGE_ENABLED:
-                    try:
-                        # Create a context specifically for vector init using the current engine
-                        # Instantiate DatabaseContext directly for the async with statement
-                        async with DatabaseContext(
-                            engine=engine
-                        ) as vector_init_context:
-                            await init_vector_db(db_context=vector_init_context)
-                    except Exception as vec_e:
-                        logger.error(
-                            f"Failed to initialize vector database components: {vec_e}",
-                            exc_info=True,
-                        )
-                        # Decide if this failure should prevent startup
-                        raise  # Propagate error for now
+
+                # --- Function to check current revision (run synchronously) ---
+                def check_revision_sync(sync_conn):
+                    script = ScriptDirectory.from_config(alembic_cfg)
+                    with EnvironmentContext(
+                        alembic_cfg, script, opts={'connection': sync_conn}
+                    ) as context:
+                        return context.get_current_revision()
+
+                # --- Check current revision ---
+                current_revision = await conn.run_sync(check_revision_sync)
+                logger.info(f"Current Alembic revision: {current_revision}")
+
+                if current_revision is None:
+                    logger.info("No Alembic revision found. Creating tables and stamping 'head'...")
+                    # Create all tables defined in SQLAlchemy metadata
+                    await conn.run_sync(metadata.create_all)
+                    # Stamp the database with the latest Alembic revision
+                    await conn.run_sync(alembic_command.stamp, alembic_cfg, "head")
+                    logger.info("Database schema created and stamped with Alembic 'head'.")
+                    # Also initialize vector DB parts if enabled (only on initial creation)
+                    if VECTOR_STORAGE_ENABLED:
+                        try:
+                            async with DatabaseContext(engine=engine) as vector_init_context:
+                                await init_vector_db(db_context=vector_init_context)
+                        except Exception as vec_e:
+                            logger.error(f"Failed to initialize vector database components after initial creation: {vec_e}", exc_info=True)
+                            raise
+                else:
+                    logger.info("Existing Alembic revision found. Running migrations to 'head'...")
+                    await conn.run_sync(alembic_command.upgrade, alembic_cfg, "head")
+                    logger.info("Database migrated to Alembic 'head'.")
+
                 return  # Success
         except DBAPIError as e:
             logger.warning(
