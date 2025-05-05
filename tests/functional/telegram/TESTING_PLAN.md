@@ -88,4 +88,38 @@ As discussed previously, the following refactorings could simplify these tests f
 
 *   **Extract `MessageBatcher`:** Simplifies testing the core processing logic by allowing direct invocation of `process_chat_queue` with a prepared batch, removing the need to test the complex batching state machine within these E2E tests.
 *   **Extract `ConfirmationUIManager`:** Drastically simplifies testing confirmation flows by mocking the manager instead of the detailed `Bot` interactions and `Future` management.
+
+## 9. Implementation Tasks
+
+1.  **Refactor `MessageBatcher`:**
+    *   Define a `BatchProcessor` protocol with a method like `process_batch(chat_id: int, batch: List[Tuple[Update, Optional[bytes]]], context: ContextTypes.DEFAULT_TYPE) -> None`.
+    *   Implement this protocol in `TelegramUpdateHandler`.
+    *   Create a `MessageBatcher` class that takes a `BatchProcessor` instance during initialization.
+    *   The `MessageBatcher` will manage the `chat_locks`, `message_buffers`, and `processing_tasks`. Its `add_to_batch` method will handle adding updates and triggering the `process_batch` method on the `BatchProcessor` via `asyncio.create_task`.
+    *   Update `TelegramUpdateHandler.__init__` to instantiate `MessageBatcher`.
+    *   Update `TelegramUpdateHandler.message_handler` to delegate buffering and task creation to `MessageBatcher.add_to_batch`.
+    *   Update `TelegramUpdateHandler.process_chat_queue` to become the `process_batch` implementation required by the protocol.
+    *   *(Optional):* Create a `NoBatchMessageBatcher` implementation that immediately calls `process_batch` for simpler testing setups if needed.
+2.  **Refactor `ConfirmationUIManager`:**
+    *   Define a `ConfirmationUIManager` protocol/interface with methods like `request_confirmation(chat_id: int, prompt_text: str, tool_name: str, tool_args: Dict[str, Any], timeout: float) -> bool`.
+    *   Move the `pending_confirmations`, `confirmation_timeout`, `_request_confirmation_impl`, and `confirmation_callback_handler` logic from `TelegramUpdateHandler` into a concrete `TelegramConfirmationUIManager` class that implements the protocol. This class will need access to the `telegram.ext.Application` instance.
+    *   Inject an instance of the `ConfirmationUIManager` protocol into `TelegramUpdateHandler` during initialization.
+    *   Update `ProcessingService` or the `ConfirmingToolsProvider` callback mechanism to call the injected `confirmation_manager.request_confirmation`.
+    *   Ensure the `TelegramConfirmationUIManager` registers the `confirmation_callback_handler` with the Telegram `Application`.
+3.  **Create Test Fixture for `TelegramUpdateHandler`:**
+    *   In `tests/functional/telegram/conftest.py` (or a dedicated test file), create a `pytest` fixture (e.g., `telegram_update_handler_fixture`).
+    *   This fixture will depend on `pg_vector_db_engine`, mock LLM fixtures, etc.
+    *   It will instantiate mock `Application`, `Bot`, and potentially a mock `ConfirmationUIManager`.
+    *   It will instantiate the real `ProcessingService` (with mock LLM).
+    *   It will instantiate the `TelegramUpdateHandler` with all real and mocked dependencies injected.
+    *   The fixture should yield the handler instance and potentially the mock objects (Bot, LLM, ConfirmationManager) for assertions.
+4.  **Write Initial Test Case:**
+    *   Create `tests/functional/telegram/test_telegram_handler.py`.
+    *   Write a test function (e.g., `test_simple_text_message`) that uses the `telegram_update_handler_fixture`.
+    *   Define the mock LLM response for a simple text input.
+    *   Create mock `Update` and `Context` objects for a basic text message.
+    *   Call `handler.message_handler(update, context)`.
+    *   Wait for processing to complete (using logic derived from the `MessageBatcher`).
+    *   Assert that the mock `Bot.send_message` was called with the expected text and parameters.
+    *   Assert the relevant database state changes (e.g., `message_history` entries).
 ```
