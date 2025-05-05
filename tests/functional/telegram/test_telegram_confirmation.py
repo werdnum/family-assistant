@@ -3,7 +3,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch # Import ANY
 
 import pytest
 import telegramify_markdown
@@ -119,7 +119,7 @@ async def test_confirmation_accepted(
             mock_execute_wrapped.assert_awaited_once_with(
                 name=TOOL_NAME_SENSITIVE,
                 arguments={"uid": event_uid, "calendar_url": calendar_url},
-                context=unittest.mock.ANY # Context object is created dynamically
+                context=ANY # Context object is created dynamically
             )
 
             # 3. LLM was called twice (request tool, process result)
@@ -269,4 +269,3 @@ async def test_confirmation_timed_out(
         expected_timeout_escaped_text = telegramify_markdown.markdownify(expected_timeout_text_raw)
         assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(expected_timeout_escaped_text)
         assert_that(kwargs_bot["reply_to_message_id"]).described_as("Final bot message reply ID").is_equal_to(user_message_id)
-
