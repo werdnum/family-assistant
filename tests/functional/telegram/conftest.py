@@ -19,8 +19,6 @@ from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.telegram_bot import (
     BatchProcessor,
-    # Import necessary tools components
-    AVAILABLE_FUNCTIONS as local_tool_functions,
     ConfirmationUIManager,
     NoBatchMessageBatcher,
     TelegramService,
@@ -28,6 +26,7 @@ from family_assistant.telegram_bot import (
 )
 from family_assistant.tools import (
     CompositeToolsProvider,
+    AVAILABLE_FUNCTIONS as local_tool_functions, # Import tool implementations
     LocalToolsProvider,
     ToolExecutionContext,
     TOOLS_DEFINITION as local_tools_definition, # Import tool definitions
