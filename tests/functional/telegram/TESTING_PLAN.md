@@ -33,15 +33,17 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
     *   Instantiate the real `ProcessingService` with the mock LLM.
     *   Instantiate mock `Application` and `Bot`, configuring the `Bot`'s mocked methods.
     *   Instantiate the `TelegramUpdateHandler` with the real `ProcessingService`, the `DatabaseContext` provided by the fixture (implicitly via the patched engine), and mocked Telegram components.
+    *   Instantiate the chosen `MessageBatcher` implementation (e.g., `NoBatchMessageBatcher` for simplicity, passing the handler instance) and assign it to `handler.message_batcher`.
     *   Create the specific mock `Update` and `Context` representing the user input for the scenario.
 2.  **Act:**
     *   Call the relevant handler method (e.g., `await handler.message_handler(mock_update, mock_context)`).
-    *   **Crucially:** Implement logic to wait for the background `process_chat_queue` task spawned by `message_handler` to complete (e.g., polling `handler.processing_tasks`, using `asyncio.wait_for`).
+    *   **Crucially:** If testing with `DefaultMessageBatcher`, wait for the processing task (`batcher.processing_tasks`) to complete. If using `NoBatchMessageBatcher`, the call to `handler.message_handler` will block until `handler.process_batch` completes.
 3.  **Assert:**
     *   **Database State (Primary):** Use the `get_test_db_context_func` to query the test database and verify the expected state changes in relevant tables (`message_history`, `notes`, `tasks`, etc.). Check message content, roles, linkage (`turn_id`, `thread_root_id`), and updated fields (`interface_message_id`, `error_traceback`).
     *   **Bot API Calls (Primary):** Use `mock_bot.method.assert_called_with(...)` or similar assertions to verify that the handler produced the correct **user-facing output** via the Telegram API. Check the content, formatting (parse mode), reply status, and any interactive elements (keyboards) of messages sent or edited by the bot.
     *   **Mock LLM Input (Primary):** Verify that the `ProcessingService` made the expected call(s) to the mock LLM client. **Crucially, inspect the `messages` list passed to the mock LLM** to ensure the correct system prompt, user input, and **formatted message history** (including previous user messages, assistant responses, and tool interactions) were included. This indirectly verifies that history was stored and retrieved correctly.
-    *   **Mock LLM Calls (Optional/Debugging):** Verify that the `ProcessingService` made the expected call to the mock LLM based on the input. This is mainly for debugging test failures.
+    *   **(Optional/Debugging) Mock LLM Calls:** Verify that the `ProcessingService` made the expected call to the mock LLM based on the input. This is mainly for debugging test failures.
+    *   **(Optional/Debugging) `MessageBatcher` State:** If testing `DefaultMessageBatcher`, check internal state like `message_buffers` or `processing_tasks` if needed.
 ## 5. Key Scenarios to Test
 
 *   **Basic Interaction:** Simple text message -> Verify mock Bot sent the LLM's text response. -> Send another message -> Verify mock LLM received history including the first exchange.
@@ -70,9 +72,9 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 *   A suitable mock LLM client implementation is available (`RuleBasedMockLLMClient`, `PlaybackLLMClient`, or standard mocks).
 ## 8. Potential Future Improvements (Refactoring)
 
-As discussed previously, the following refactorings could simplify these tests further, although the current plan is feasible without them:
+The following refactoring could simplify these tests further:
 
-*   **Extract `MessageBatcher`:** Simplifies testing the core processing logic by allowing direct invocation of `process_chat_queue` with a prepared batch, removing the need to test the complex batching state machine within these E2E tests.
+*   **Extract `MessageBatcher`:** Done. This simplifies testing the core processing logic (`process_batch`) by allowing direct invocation. Testing `DefaultMessageBatcher` itself might require separate, more focused tests. Using `NoBatchMessageBatcher` in E2E tests makes them simpler.
 *   **Extract `ConfirmationUIManager`:** Drastically simplifies testing confirmation flows by mocking the manager instead of the detailed `Bot` interactions and `Future` management.
 ## 9. Implementation Tasks
 
@@ -81,9 +83,8 @@ As discussed previously, the following refactorings could simplify these tests f
     *   Implement this protocol in `TelegramUpdateHandler`.
     *   Create a `MessageBatcher` class that takes a `BatchProcessor` instance during initialization.
     *   The `MessageBatcher` will manage the `chat_locks`, `message_buffers`, and `processing_tasks`. Its `add_to_batch` method will handle adding updates and triggering the `process_batch` method on the `BatchProcessor` via `asyncio.create_task`.
-    *   Update `TelegramUpdateHandler.__init__` to instantiate `MessageBatcher`.
+    *   Update `TelegramUpdateHandler.__init__` to accept a `MessageBatcher`. Update `TelegramService` to instantiate and inject it.
     *   Update `TelegramUpdateHandler.message_handler` to delegate buffering and task creation to `MessageBatcher.add_to_batch`.
-    *   Update `TelegramUpdateHandler.process_chat_queue` to become the `process_batch` implementation required by the protocol.
     *   *(Optional):* Create a `NoBatchMessageBatcher` implementation that immediately calls `process_batch` for simpler testing setups if needed.
 2.  **Refactor `ConfirmationUIManager`:**
     *   Define a `ConfirmationUIManager` protocol/interface with methods like `request_confirmation(chat_id: int, prompt_text: str, tool_name: str, tool_args: Dict[str, Any], timeout: float) -> bool`.

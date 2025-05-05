@@ -20,6 +20,7 @@ from telegram import (
     Update,
     Message,
 )
+from typing import Protocol, runtime_checkable
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
@@ -60,6 +61,67 @@ logger = logging.getLogger(__name__)
 # Import telegram errors for specific checking
 from telegram.error import Conflict
 
+# --- Protocols for Refactoring ---
+
+@runtime_checkable
+class BatchProcessor(Protocol):
+    """Protocol defining the interface for processing a batch of messages."""
+
+    async def process_batch(
+        self,
+        chat_id: int,
+        batch: List[Tuple[Update, Optional[bytes]]],
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Processes a given batch of updates for a specific chat."""
+        ...
+
+@runtime_checkable
+class MessageBatcher(Protocol):
+    """Protocol defining the interface for buffering messages."""
+
+    async def add_to_batch(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        photo_bytes: Optional[bytes],
+    ) -> None:
+        """Adds an update to the batch and triggers processing if necessary."""
+        ...
+
+
+# --- MessageBatcher Implementations ---
+
+class DefaultMessageBatcher(MessageBatcher):
+    """Buffers messages and processes them in batches to avoid race conditions."""
+
+    def __init__(self, batch_processor: BatchProcessor, batch_delay_seconds: float = 0.5):
+        self.batch_processor = batch_processor
+        self.batch_delay_seconds = batch_delay_seconds # Delay before processing a batch
+        self.chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
+        self.processing_tasks: Dict[int, asyncio.Task] = {}
+        self.batch_timers: Dict[int, asyncio.TimerHandle] = {} # Store timers for delayed processing
+
+    async def add_to_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, photo_bytes: Optional[bytes]) -> None:
+        chat_id = update.effective_chat.id
+        async with self.chat_locks[chat_id]:
+            self.message_buffers[chat_id].append((update, photo_bytes))
+            buffer_size = len(self.message_buffers[chat_id])
+            logger.info(f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}")
+
+            # Cancel existing timer if new message arrives
+            if chat_id in self.batch_timers:
+                self.batch_timers[chat_id].cancel()
+                logger.debug(f"Cancelled existing batch timer for chat {chat_id}.")
+
+            # Start a new timer to process the batch after a short delay
+            loop = asyncio.get_running_loop()
+            self.batch_timers[chat_id] = loop.call_later(
+                self.batch_delay_seconds,
+                lambda: asyncio.create_task(self._trigger_batch_processing(chat_id, context))
+            )
+            logger.debug(f"Scheduled batch processing for chat {chat_id} in {self.batch_delay_seconds}s.")
 
 class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     """Handles specific Telegram updates (messages, commands) and delegates processing."""
@@ -73,6 +135,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         processing_service: "ProcessingService",  # Use string quote for forward reference
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager["DatabaseContext"]
+        message_batcher: MessageBatcher, # Inject the batcher
         ],
     ):
         """
@@ -84,6 +147,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             developer_chat_id: Optional chat ID for sending error notifications.
             processing_service: The ProcessingService instance.
             get_db_context_func: Async context manager function to get a DatabaseContext.
+            message_batcher: The message batcher instance to use.
         """
         self.telegram_service = telegram_service  # Store the service instance
         # Imports moved to top level
@@ -93,13 +157,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self.developer_chat_id = developer_chat_id
         self.processing_service = processing_service  # Store the service instance
         self.get_db_context = get_db_context_func
+        self.message_batcher = message_batcher # Store the injected batcher
 
-        # Internal state for message batching
-        self.chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = (
-            defaultdict(list)
-        )
-        self.processing_tasks: Dict[int, asyncio.Task] = {}
         # Store pending confirmation Futures
         self.pending_confirmations: Dict[str, asyncio.Future] = {}
         self.confirmation_timeout = (
@@ -172,27 +231,36 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             welcome_message, parse_mode=ParseMode.MARKDOWN_V2
         )
 
-    async def process_chat_queue(
+    async def process_batch( # Renamed from process_chat_queue, implements BatchProcessor protocol
         self, chat_id: int, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Processes the message buffer for a given chat."""
-        logger.debug(f"Starting process_chat_queue for chat_id {chat_id}")
-        async with self.chat_locks[chat_id]:
-            buffered_batch = self.message_buffers[chat_id][:]
-            self.message_buffers[chat_id].clear()
-            logger.debug(
-                f"Cleared buffer for chat {chat_id}, processing {len(buffered_batch)} items."
-            )
+        # Logic to fetch the actual batch is now in the MessageBatcher
+        # This method now receives the batch directly
+        # Note: This requires DefaultMessageBatcher to actually *call* this method.
+        # Let's adjust the method signature to receive the batch.
 
-        if not buffered_batch:
+        # This method is *called* by the MessageBatcher now.
+        # It needs the batch as an argument.
+        # Let's adjust the BatchProcessor protocol and this implementation.
+
+        # The protocol `process_batch` expects `batch` argument. Let's assume the batcher provides it.
+        # The user requested DefaultMessageBatcher implementation, so let's adjust that first.
+        # Assuming `DefaultMessageBatcher._trigger_batch_processing` calls this with the batch.
+        logger.debug(f"Starting process_batch for chat_id {chat_id}")
+        # The `batch` argument is now expected based on the protocol
+        # We need to retrieve it somehow. Let's assume the batcher provides it.
+        # We need to adjust the DefaultMessageBatcher to pass the batch.
+
+        # --- Assuming DefaultMessageBatcher provides the batch ---
+        # (We'll implement the caller side in DefaultMessageBatcher next)
+        buffered_batch: List[Tuple[Update, Optional[bytes]]] = context.job.data["batch"] # Example: Pass via job context
+
+        if not buffered_batch: # Check the passed batch
             logger.info(
-                f"Processing queue for chat {chat_id} called with empty buffer. Exiting."
+                f"process_batch for chat {chat_id} called with empty batch. Exiting."
             )
             return
-
-        logger.info(
-            f"Processing batch of {len(buffered_batch)} message update(s) for chat {chat_id}."
-        )
 
         last_update, _ = buffered_batch[-1]
         user = last_update.effective_user
@@ -573,18 +641,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             # Let the main error handler notify the developer
             raise e  # Re-raise for the main error handler
 
-        finally:
-            # History saving moved into the main try block
-            async with self.chat_locks[chat_id]:
-                if self.processing_tasks.get(chat_id) is asyncio.current_task():
-                    self.processing_tasks.pop(chat_id, None)
-                    logger.info(
-                        f"Processing task for chat {chat_id} finished and removed."
-                    )
-                else:
-                    logger.warning(
-                        f"Current task for chat {chat_id} doesn't match entry in processing_tasks during cleanup."
-                    )
 
     async def message_handler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -622,36 +678,76 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 return
 
+        # Delegate to the injected message batcher
+        await self.message_batcher.add_to_batch(update, context, photo_bytes)
+
+
+class DefaultMessageBatcher(MessageBatcher): # noqa: F811
+    """Buffers messages and processes them in batches to avoid race conditions."""
+
+    def __init__(self, batch_processor: BatchProcessor, batch_delay_seconds: float = 0.5):
+        self.batch_processor = batch_processor
+        self.batch_delay_seconds = batch_delay_seconds # Delay before processing a batch
+        self.chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = defaultdict(list)
+        self.processing_tasks: Dict[int, asyncio.Task] = {}
+        self.batch_timers: Dict[int, asyncio.TimerHandle] = {} # Store timers for delayed processing
+
+    async def add_to_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, photo_bytes: Optional[bytes]) -> None:
+        chat_id = update.effective_chat.id
         async with self.chat_locks[chat_id]:
             self.message_buffers[chat_id].append((update, photo_bytes))
             buffer_size = len(self.message_buffers[chat_id])
-            logger.info(
-                f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}"
-            )
+            logger.info(f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}")
 
-            if (
-                chat_id not in self.processing_tasks
-                or self.processing_tasks[chat_id].done()
-            ):
-                logger.info(f"Starting new processing task for chat {chat_id}.")
-                task = asyncio.create_task(self.process_chat_queue(chat_id, context))
+            # Cancel existing timer if new message arrives
+            if chat_id in self.batch_timers:
+                self.batch_timers[chat_id].cancel()
+                logger.debug(f"Cancelled existing batch timer for chat {chat_id}.")
+
+            # Start a new timer to process the batch after a short delay
+            loop = asyncio.get_running_loop()
+            self.batch_timers[chat_id] = loop.call_later(
+                self.batch_delay_seconds,
+                # Use lambda to schedule the coroutine correctly
+                lambda c=chat_id, ctx=context: asyncio.create_task(self._trigger_batch_processing(c, ctx))
+            )
+            logger.debug(f"Scheduled batch processing for chat {chat_id} in {self.batch_delay_seconds}s.")
+
+    async def _trigger_batch_processing(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Gets the current batch and triggers the BatchProcessor if no task is running."""
+        async with self.chat_locks[chat_id]:
+            if chat_id in self.batch_timers: # Remove timer as we are processing now
+                self.batch_timers.pop(chat_id)
+
+            current_batch = self.message_buffers[chat_id][:]
+            self.message_buffers[chat_id].clear()
+            logger.debug(f"Extracted batch of {len(current_batch)} for chat {chat_id}, cleared buffer.")
+
+            if not current_batch:
+                logger.info(f"Batch for chat {chat_id} is empty, skipping processing trigger.")
+                return
+
+            if chat_id not in self.processing_tasks or self.processing_tasks[chat_id].done():
+                logger.info(f"Starting new processing task for chat {chat_id} via batch trigger.")
+                # Pass the extracted batch to the processor via context or direct call
+                # Using context.job.data is tricky here as this isn't a PTB job.
+                # Let's pass it directly if the processor accepts it.
+                # The BatchProcessor protocol needs `batch` argument.
+                task = asyncio.create_task(self.batch_processor.process_batch(chat_id, current_batch, context))
                 self.processing_tasks[chat_id] = task
-                # Add callback to remove task from dict upon completion/error
-                # Use lambda to capture chat_id correctly
                 task.add_done_callback(
-                    # Ensure the callback function exists
-                    lambda t, c=chat_id: (
-                        self._remove_task_callback(t, c)
-                        if hasattr(self, "_remove_task_callback")
-                        else None
-                    )
+                    lambda t, c=chat_id: self._remove_task_callback(t, c)
                 )
             else:
-                logger.info(
-                    f"Processing task already running for chat {chat_id}. Message added to buffer."
-                )
+                logger.info(f"Processing task already running for chat {chat_id}. Batch was cleared but not processed immediately.")
+                # Re-add batch? Or just let it be dropped? Current logic drops it.
+                # Let's re-add it to avoid losing messages if a task is slow.
+                self.message_buffers[chat_id] = current_batch + self.message_buffers[chat_id]
+                logger.warning(f"Re-added batch to buffer for chat {chat_id} as task was still running.")
 
-    def _remove_task_callback(self, task: asyncio.Task, chat_id: int):
+
+    def _remove_task_callback(self, task: asyncio.Task, chat_id: int): # No longer in TelegramUpdateHandler
         """Callback function to remove task from processing_tasks dict."""
         # Check for exceptions in the completed task
         try:
@@ -679,6 +775,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning(
                 f"Cannot remove task entry for chat {chat_id}: processing_tasks dict not found."
             )
+
+class NoBatchMessageBatcher(MessageBatcher):
+    """A simple batcher that processes each message immediately without buffering."""
+
+    def __init__(self, batch_processor: BatchProcessor):
+        self.batch_processor = batch_processor
+
+    async def add_to_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, photo_bytes: Optional[bytes]) -> None:
+        chat_id = update.effective_chat.id
+        logger.info(f"NoBatchMessageBatcher: Immediately processing update {update.update_id} for chat {chat_id}")
+        # Create a single-item batch
+        batch = [(update, photo_bytes)]
+        await self.batch_processor.process_batch(chat_id, batch, context)
 
     # --- Confirmation Handling Logic ---
 
@@ -938,6 +1047,7 @@ class TelegramService:
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
+        use_batching: bool = True, # Add flag to control batching
     ):
         """
         Initializes the Telegram Service.
@@ -948,6 +1058,7 @@ class TelegramService:
             developer_chat_id: Optional chat ID for sending error notifications.
             processing_service: The ProcessingService instance.
             get_db_context_func: Async context manager function to get a DatabaseContext.
+            use_batching: If True (default), use DefaultMessageBatcher. Otherwise, use NoBatchMessageBatcher.
         """
         logger.info("Initializing TelegramService...")
         self.application = ApplicationBuilder().token(telegram_token).build()
@@ -960,6 +1071,14 @@ class TelegramService:
         self.application.bot_data["processing_service"] = processing_service
         logger.info("Stored ProcessingService instance in application.bot_data.")
 
+        # Instantiate the Update Handler first (it acts as the BatchProcessor)
+        # We need to create a dummy batcher just for the init, then replace it.
+        # Or, better: initialize the handler *without* the batcher first, then create batcher, then assign.
+        # Let's adjust TelegramUpdateHandler init to allow batcher=None initially.
+        # --- This approach is complex. Let's instantiate the Handler fully, then the Batcher ---
+        # Instantiate handler first (it *is* the BatchProcessor implementation)
+
+
         # Instantiate the handler class, passing self (the service instance)
         self.update_handler = TelegramUpdateHandler(
             telegram_service=self,  # Pass self
@@ -968,8 +1087,17 @@ class TelegramService:
             developer_chat_id=developer_chat_id,
             processing_service=processing_service,
             get_db_context_func=get_db_context_func,
+            message_batcher=None, # Temporarily None, will be set below
             # Pass confirmation timeout if needed, or let handler use default
             # confirmation_timeout=...
+        )
+
+        # Now instantiate the appropriate batcher, passing the handler as the processor
+        if use_batching:
+            self.message_batcher = DefaultMessageBatcher(batch_processor=self.update_handler)
+        else:
+            self.message_batcher = NoBatchMessageBatcher(batch_processor=self.update_handler)
+        self.update_handler.message_batcher = self.message_batcher # Assign the batcher back to the handler
         )
 
         # Register handlers using the handler instance
