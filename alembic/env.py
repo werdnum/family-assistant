@@ -66,11 +66,17 @@ def do_run_migrations(connection: Connection) -> None:
     script_location = config.get_main_option("script_location")
     context.configure(connection=connection, target_metadata=target_metadata, version_table_schema=target_metadata.schema, include_schemas=True, script_location=script_location)
 
-    logger.info("Starting database migrations...")
+    dialect_name = connection.dialect.name
+    logger.info(f"Starting database migrations... Detected dialect: {dialect_name}")
     try:
-        with context.begin_transaction():
-            logger.info(f"Running migrations within transaction for target: {context.get_revision_argument()}")
+        # SQLite does not support transactional DDL, so run migrations outside a transaction block.
+        if dialect_name == "sqlite":
+            logger.info(f"Running SQLite migrations (non-transactional DDL) for target: {context.get_revision_argument()}")
             context.run_migrations()
+        else:
+            with context.begin_transaction():
+                logger.info(f"Running migrations within transaction for target: {context.get_revision_argument()}")
+                context.run_migrations()
         logger.info("Database migrations completed successfully.")
     except Exception as e:
         logger.exception(f"Error running migrations: {e}")
