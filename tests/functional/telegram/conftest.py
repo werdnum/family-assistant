@@ -85,8 +85,10 @@ async def telegram_handler_fixture(
     # Configure ToolsProvider (using Local for simplicity initially)
     # Ensure tools don't rely on external services not mocked
     local_tools_provider = LocalToolsProvider(
+        definitions=[], # Provide required definitions (empty list for now)
+        implementations={}, # Provide required implementations (empty dict for now)
         embedding_generator=None, # Add mock/real embedding generator if needed by tools
-        llm_client=mock_llm, # Pass mock LLM if tools need it
+        calendar_config=None, # Add accepted calendar_config argument
     )
     tools_provider = CompositeToolsProvider([local_tools_provider])
 
