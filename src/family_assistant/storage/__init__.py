@@ -203,9 +203,7 @@ async def init_db():
 
         # --- Retry Logic ---
         except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError during init_db (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
+            logger.warning(f"Database API error during init_db (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
             if attempt == max_retries - 1:
                 logger.error("Max retries exceeded for init_db due to DBAPIError.")
                 # Let it fall through to the final critical log and raise
@@ -213,7 +211,7 @@ async def init_db():
                 delay = base_delay * (2**attempt) + random.uniform(0, base_delay * 0.5)
                 await asyncio.sleep(delay)
         except Exception as e:
-            logger.error(f"Unexpected non-retryable error during init_db attempt {attempt + 1}: {e}", exc_info=True)
+            logger.critical(f"Unexpected non-retryable error during init_db attempt {attempt + 1}: {e}", exc_info=True) # Use critical for unexpected failure
             raise # Re-raise unexpected errors immediately
 
     # This part is reached only if the loop completes without returning (all retries failed)
