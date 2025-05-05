@@ -98,15 +98,16 @@ def run_migrations_online() -> None:
     connectable = context.config.attributes.get("connection", None)
 
     if connectable is None:
-            # Standard CLI execution: No external connection provided.
-            # Use the async engine setup
-            asyncio.run(run_async_migrations())
-        else:
-            # Invoked via run_sync: Connection provided.
-            # Run migrations synchronously using the existing connection.
-            do_run_migrations(connectable)
+        # Standard CLI execution: No external connection provided.
+        # Use the async engine setup
+        asyncio.run(run_async_migrations())
+    else:
+        # Invoked via run_sync: Connection provided.
+        # Run migrations synchronously using the existing connection.
+        do_run_migrations(connectable)
 
 if context.is_offline_mode():
     run_migrations_offline()
+
 else:
     run_migrations_online()
