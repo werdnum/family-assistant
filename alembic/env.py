@@ -56,7 +56,11 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    # Pass the script location from the main config object
+    # This is necessary when env.py is run via run_sync, as the context
+    # might not automatically inherit all settings.
+    script_location = config.get_main_option("script_location")
+    context.configure(connection=connection, target_metadata=target_metadata, version_table_schema=target_metadata.schema, include_schemas=True, script_location=script_location)
 
     with context.begin_transaction():
         context.run_migrations()
