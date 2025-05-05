@@ -109,12 +109,15 @@ async def init_db():
             # Use run_sync on the async engine's connection to perform the check
             logger.info("Inspecting database for alembic_version table...")
             async with engine.connect() as conn:
-                def inspector_sync(sync_conn):
+                def inspector_sync(sync_conn) -> tuple[bool, list[str]]:
+                    """Checks for alembic_version table and returns found tables."""
                     inspector = inspect(sync_conn)
-                    return inspector.has_table("alembic_version")
-                has_version_table = await conn.run_sync(inspector_sync)
-            logger.info(f"Alembic version table found: {has_version_table}")
+                    found_tables = inspector.get_table_names()
+                    has_table = "alembic_version" in found_tables
+                    return has_table, found_tables
+                has_version_table, found_tables_list = await conn.run_sync(inspector_sync)
 
+            logger.info(f"Alembic version table found: {has_version_table}")
             if has_version_table:
                 # Database is already managed by Alembic, upgrade it.
                 logger.info("Alembic version table found. Upgrading database to 'head'...")
@@ -123,6 +126,7 @@ async def init_db():
                 logger.info("Alembic upgrade to 'head' completed.")
             else:
                 # Database is new or not managed by Alembic, create tables and stamp.
+                logger.info(f"Tables found by inspector: {found_tables_list}")
                 logger.info("Alembic version table not found. Performing initial schema creation and stamping...")
 
                 # Create all tables defined in SQLAlchemy metadata
