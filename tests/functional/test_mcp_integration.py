@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 # --- Test Configuration ---
 TEST_CHAT_ID = 65432
+TEST_USER_ID = 19876  # Added user ID
 TEST_USER_NAME = "MCPTester"
 
 # --- Time Conversion Details ---
@@ -116,6 +117,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     # --- Define Rules for Mock LLM ---
     mcp_tool_call_id = f"call_mcp_time_{test_run_id}"
 
+    user_message_id = 101 # Added message ID for the user request
     # Rule 1: Match request to convert time
     def time_conversion_matcher(messages, tools, tool_choice):
         last_text = get_last_message_text(messages).lower()
@@ -244,6 +246,8 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
                 interface_type="test",  # Added interface type
                 conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
                 trigger_content_parts=user_request_trigger,
+                trigger_interface_message_id=str(user_message_id), # Added missing argument
+                trigger_interface_message_id=str(user_message_id), # Added missing argument
                 user_name=TEST_USER_NAME,
             )
         )
@@ -306,6 +310,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     # --- Define Rules for Mock LLM (Identical to stdio test) ---
     mcp_tool_call_id = f"call_mcp_time_sse_{test_run_id}"
+    user_message_id = 201 # Added message ID for the SSE test user request
 
     # Rule 1: Match request to convert time
     def time_conversion_matcher(messages, tools, tool_choice):
@@ -432,6 +437,8 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
                 interface_type="test",  # Added interface type
                 conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
                 trigger_content_parts=user_request_trigger,
+                trigger_interface_message_id=str(user_message_id), # Added missing argument
+                trigger_interface_message_id=str(user_message_id), # Added missing argument
                 user_name=TEST_USER_NAME,
             )
         )

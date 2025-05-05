@@ -43,7 +43,8 @@ logger = logging.getLogger(__name__)
 TEST_NOTE_TITLE_BASE = "Smoketest Note"
 TEST_NOTE_CONTENT = "This is the content for the smoke test."
 TEST_CHAT_ID = 12345  # Dummy chat ID
-TEST_USER_NAME = "TestUser"
+TEST_USER_ID = 98765 # Added User ID
+TEST_USER_NAME = "NotesTestUser"
 # TEST_MODEL_NAME is no longer needed for the mock
 
 
@@ -59,6 +60,8 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     6. Verify the mock's response includes the note content without a tool call.
     """
     # --- Setup ---
+    user_message_id_add = 171 # Message ID for adding the note
+    user_message_id_retrieve = 235 # Message ID for retrieving the note
     test_note_title = f"{TEST_NOTE_TITLE_BASE} {uuid.uuid4()}"
     test_tool_call_id = f"call_{uuid.uuid4()}"  # Pre-generate ID for the rule
     logger.info(f"\n--- Running Rule-Based Mock Test: Add/Retrieve Note ---")
@@ -174,6 +177,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 interface_type="test",  # Added interface type
                 conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
                 trigger_content_parts=add_note_trigger,
+                trigger_interface_message_id=str(user_message_id_add), # Added missing argument
                 user_name=TEST_USER_NAME,
                 # model_name argument removed
             )
@@ -238,6 +242,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 conversation_id=str(TEST_CHAT_ID),  # Added missing conversation ID
                 application=mock_application,
                 trigger_content_parts=retrieve_note_trigger,
+                trigger_interface_message_id=str(user_message_id_retrieve), # Added missing argument
                 user_name=TEST_USER_NAME,
                 # model_name argument removed
             )
