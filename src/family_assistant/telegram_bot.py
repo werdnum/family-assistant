@@ -451,7 +451,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         request_confirmation_callback=confirmation_callback_partial,
                     )
                     # Add turn_id to all generated messages before saving
-                        turn_id_for_saving = None
+                    turn_id_for_saving = None
                     if generated_turn_messages:
                         turn_id_for_saving = generated_turn_messages[0].get("turn_id")
 
