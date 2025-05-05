@@ -96,7 +96,7 @@ async def test_confirmation_accepted(
 
     # --- Mock Tool Execution ---
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
-        mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
+    mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
 
         # Act
         await fix.handler.message_handler(update, context)
