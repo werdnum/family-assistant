@@ -383,7 +383,7 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
     """Serves the main page listing all notes."""
     notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
-        "index.html.j2", # Use consistent naming if preferred
+        "index.html", # Use consistent naming if preferred
         {
             "request": request,
             "notes": notes,
@@ -398,7 +398,7 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
 async def add_note_form(request: Request):
     """Serves the form to add a new note."""
     return templates.TemplateResponse(
-        "edit_note.html.j2", {"request": request, "note": None, "is_new": True, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
+        "edit_note.html", {"request": request, "note": None, "is_new": True, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
     )
 
 
@@ -411,7 +411,7 @@ async def edit_note_form(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
-        "edit_note.html.j2", {"request": request, "note": note, "is_new": False, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
+        "edit_note.html", {"request": request, "note": note, "is_new": False, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
     )
 
 
@@ -548,7 +548,7 @@ async def view_message_history(
         }
 
         return templates.TemplateResponse(
-            "message_history.html.j2",
+            "message_history.html",
             {"request": request, "paged_items": paged_items, "pagination": pagination_info}, # Pass paginated items and info
             {
                 "request": request,
@@ -592,7 +592,7 @@ async def view_tools(request: Request):
 
             rendered_tools.append(tool_copy)
         return templates.TemplateResponse(
-            "tools.html.j2",
+            "tools.html",
             {
                 "request": request,
                 "tools": rendered_tools,
@@ -611,7 +611,7 @@ async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get
     try:
         tasks = await get_all_tasks(db_context, limit=200)  # Pass context, fetch tasks
         return templates.TemplateResponse(
-            "tasks.html.j2",
+            "tasks.html",
             {
                 "request": request,
                 "tasks": tasks,
@@ -746,7 +746,7 @@ async def vector_search_form(
         # Continue without pre-populated dropdowns
 
     return templates.TemplateResponse(
-        "vector_search.html.j2",
+        "vector_search.html",
         {
             "request": request,
             "results": None,
@@ -961,7 +961,7 @@ async def handle_vector_search(
             error = "Could not load filter options from database."
 
     return templates.TemplateResponse(
-        "vector_search.html.j2",
+        "vector_search.html",
         {
             "request": request,
             "results": results,
@@ -1350,7 +1350,7 @@ async def serve_documentation(request: Request, filename: str):
         available_docs = _scan_user_docs()
 
         return templates.TemplateResponse(
-            "doc_page.html.j2",
+            "doc_page.html",
             {
                 "request": request,
                 "content": content_html,
