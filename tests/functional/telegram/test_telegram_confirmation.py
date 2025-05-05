@@ -117,44 +117,38 @@ async def test_confirmation_accepted(
         fix.mock_bot.send_message.return_value = mock_final_message
 
         # --- Create Mock Update/Context ---
-        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
-        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
+        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id) # noqa: E501
+        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service}) # noqa: E501
 
-        # Act
-        # 3. Patch the processing service to use the confirming wrapper for this call
+        # Act & Assert within patch contexts
         # This patch needs to be nested *inside* the mock_execute_original patch
         # because the handler call will trigger the tool execution.
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            # Act: Call the handler within the context where the tools_provider is patched
             await fix.handler.message_handler(update, context)
+
             # Close the wrapper after use (optional but good practice)
             # Moving it here ensures it's closed after the handler call within the patch context.
             await confirming_wrapper.close()
 
-        # Assertions now happen *inside* the mock_execute_original patch block
-        # 3. Patch the processing service to use the confirming wrapper for this call
-        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
-            await fix.handler.message_handler(update, context)
+            # Assert: Perform assertions *after* the handler call but *within* the patch context
+            # to ensure mocks are checked correctly.
+            with soft_assertions():
+                # 1. Confirmation Manager was called because the tool was configured to require it
+                fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+                # Check args
+                conf_args, conf_kwargs = fix.mock_confirmation_manager.request_confirmation.call_args # noqa: F841
+                assert_that(conf_kwargs.get("tool_name")).is_equal_to(TOOL_NAME_SENSITIVE)
+                assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content}) # noqa: E501
 
-            # Close the wrapper after use (optional but good practice)
-            await confirming_wrapper.close()
-
-        # Assert (moved inside the 'with patch' block to access mock_execute_wrapped)
-        with soft_assertions():
-            # 1. Confirmation Manager was called because the tool was configured to require it
-            fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
-            # Check args
-            conf_args, conf_kwargs = fix.mock_confirmation_manager.request_confirmation.call_args
-            assert_that(conf_kwargs.get("tool_name")).is_equal_to(TOOL_NAME_SENSITIVE)
-            assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content})
-
-            # 2. Wrapped Tool Provider's execute_tool was called (meaning confirmation passed)
-            mock_execute_original.assert_awaited_once() # Check it was called
-            # Check arguments passed to the wrapped tool
-            call_args_tuple, call_kwargs_dict = mock_execute_original.await_args
-            called_name = call_args_tuple[0] if call_args_tuple else call_kwargs_dict.get("name")
-            called_arguments = call_args_tuple[1] if len(call_args_tuple) > 1 else call_kwargs_dict.get("arguments")
-            assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
-            assert_that(called_arguments).is_equal_to({"title": test_note_title, "content": test_note_content})
+                # 2. Original Tool Provider's execute_tool was called (meaning confirmation passed)
+                mock_execute_original.assert_awaited_once() # Check it was called
+                # Check arguments passed to the original tool
+                call_args_tuple, call_kwargs_dict = mock_execute_original.await_args
+                called_name = call_args_tuple[0] if call_args_tuple else call_kwargs_dict.get("name")
+                called_arguments = call_args_tuple[1] if len(call_args_tuple) > 1 else call_kwargs_dict.get("arguments") # noqa: E501
+                assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
+                assert_that(called_arguments).is_equal_to({"title": test_note_title, "content": test_note_content}) # noqa: E501
 
             # 3. LLM was called twice (request tool, process result)
             assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
@@ -242,33 +236,27 @@ async def test_confirmation_rejected(
         fix.tools_provider, 'execute_tool', new_callable=AsyncMock
     ) as mock_execute_original:
         # --- Create Mock Update/Context ---
-        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
-        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
+        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id) # noqa: E501
+        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service}) # noqa: E501
 
-        # Act
-        # 3. Patch the processing service to use the confirming wrapper for this call
+        # Act & Assert within patch contexts
         # This patch needs to be nested *inside* the mock_execute_original patch
         # because the handler call will trigger the tool execution.
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            # Act
             await fix.handler.message_handler(update, context)
+
             # Close the wrapper after use (optional but good practice)
             # Moving it here ensures it's closed after the handler call within the patch context.
             await confirming_wrapper.close()
-        # Patch processing service to use the confirming wrapper
-        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
-            await fix.handler.message_handler(update, context)
-            # Close the wrapper after use (optional but good practice)
-            # Moving it here ensures it's closed after the handler call within the patch context.
-            await confirming_wrapper.close()
-        await fix.handler.message_handler(update, context)
 
-        # Assert
-        with soft_assertions():
-            # 1. Confirmation Manager was called
-            fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+            # Assert
+            with soft_assertions():
+                # 1. Confirmation Manager was called
+                fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
 
-            # 2. Wrapped tool provider was NOT called
-            mock_execute_original.assert_not_awaited()
+                # 2. Original tool provider was NOT called
+                mock_execute_original.assert_not_awaited()
 
             # 3. LLM was called twice (request tool, process cancellation result)
             assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
@@ -356,36 +344,29 @@ async def test_confirmation_timed_out(
         fix.tools_provider, 'execute_tool', new_callable=AsyncMock
     ) as mock_execute_original:
         # --- Create Mock Update/Context ---
-        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
-        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
+        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id) # noqa: E501
+        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service}) # noqa: E501
 
-        # Act
-        # 3. Patch the processing service to use the confirming wrapper for this call
+        # Act & Assert within patch contexts
         # This patch needs to be nested *inside* the mock_execute_original patch
         # because the handler call will trigger the tool execution.
         with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            # Act
             await fix.handler.message_handler(update, context)
-            # Close the wrapper after use (optional but good practice)
-            # Moving it here ensures it's closed after the handler call within the patch context.
-            await confirming_wrapper.close()
-        # Patch processing service to use the confirming wrapper
-        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
-            await fix.handler.message_handler(update, context)
-            # Close the wrapper after use (optional but good practice)
-            # Moving it here ensures it's closed after the handler call within the patch context.
-            await confirming_wrapper.close()
-        await fix.handler.message_handler(update, context)
 
-        # Assert
-        with soft_assertions():
-            # 1. Confirmation Manager was called (and raised TimeoutError)
-            fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
-            # 2. Wrapped tool provider was NOT called
-            mock_execute_original.assert_not_awaited()
+            # Close the wrapper after use (optional but good practice)
+            # Moving it here ensures it's closed after the handler call within the patch context.
+            await confirming_wrapper.close()
+
+            # Assert
+            with soft_assertions():
+                # 1. Confirmation Manager was called (and raised TimeoutError)
+                fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+                # 2. Original tool provider was NOT called
+                mock_execute_original.assert_not_awaited()
 
             # 3. LLM was called twice (request tool, process timeout/cancellation result)
             assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
-
             # 4. Final timeout message sent to user (matching rule_final_timeout)
             fix.mock_bot.send_message.assert_awaited_once()
             args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
