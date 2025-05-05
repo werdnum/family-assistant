@@ -12,6 +12,7 @@ from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 from family_assistant.llm import LLMInterface, LLMOutput
+import telegramify_markdown # Import the library
 from assertpy import assert_that, soft_assertions # Import assert_that and soft_assertions
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.message_history import get_recent_history
@@ -135,8 +136,9 @@ async def test_simple_text_message(
         assert_that(kwargs["chat_id"]).described_as("send_message chat_id").is_equal_to(user_chat_id)
 
         assert_that(kwargs).described_as("send_message kwargs").contains_key("text")
-        # Expect the MarkdownV2 escaped version of the text
-        assert_that(kwargs["text"]).described_as("send_message text").is_equal_to("Hello TestUser\\! This is the LLM response\\.")
+        # Calculate the expected escaped text using the library
+        expected_escaped_text = telegramify_markdown.markdownify(llm_response_text)
+        assert_that(kwargs["text"]).described_as("send_message text").is_equal_to(expected_escaped_text)
 
         assert_that(kwargs).described_as("send_message kwargs").contains_key("reply_to_message_id")
         assert_that(kwargs["reply_to_message_id"]).described_as("send_message reply_to_message_id").is_equal_to(user_message_id)
