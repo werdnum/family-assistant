@@ -96,6 +96,7 @@ async def init_db():
     max_retries = 5
     base_delay = 1.0
     engine = get_engine()  # Get engine from db_base
+    last_exception = None  # Variable to store the last exception
     for attempt in range(max_retries):
         try:
             logger.info(f"Checking database state (attempt {attempt+1})...")
@@ -205,10 +206,12 @@ async def init_db():
         except DBAPIError as e:
             # Specifically handle DBAPI errors (like connection issues)
             logger.warning(f"Database API error during init_db (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+            last_exception = e
             if attempt == max_retries - 1:
                 logger.error(f"Max retries exceeded for init_db due to DBAPIError: {e}", exc_info=True)
             else:
                 delay = base_delay * (2**attempt) + random.uniform(0, base_delay * 0.5)
+                # Sleep before next attempt
                 await asyncio.sleep(delay)
         except Exception as e:
             # Catch any other exception during init (e.g., from Alembic commands)
@@ -216,12 +219,16 @@ async def init_db():
             if attempt == max_retries - 1:
                 logger.error(f"Max retries exceeded for init_db due to error: {e}", exc_info=True)
             else:
+                # Sleep before next attempt
                 delay = base_delay * (2**attempt) + random.uniform(0, base_delay * 0.5)
                 await asyncio.sleep(delay)
 
     # This part is reached only if the loop completes without returning (all retries failed)
-    logger.critical("Database initialization failed after all retries.")
-    raise RuntimeError("Database initialization failed after multiple retries")
+    logger.critical(
+        f"Database initialization failed after all retries. Last error: {last_exception}",
+        exc_info=last_exception  # Pass the last exception for traceback logging
+    )
+    raise RuntimeError(f"Database initialization failed after multiple retries. Last error: {last_exception}")
 
 # --- Exports ---
 # Re-export functions and tables from specific modules to maintain the facade
