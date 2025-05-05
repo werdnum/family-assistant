@@ -17,24 +17,25 @@ from tests.mocks.mock_llm import RuleBasedMockLLMClient  # Or use AsyncMock
 from family_assistant.llm import LLMInterface, LLMOutput # Import LLMOutput
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
+# Correct imports for tools - they are in family_assistant.tools, not telegram_bot
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    ConfirmingToolsProvider,
+    LocalToolsProvider,
+    ToolExecutionContext,
+    AVAILABLE_FUNCTIONS as local_tool_functions,
+    TOOLS_DEFINITION as local_tools_definition,
+    calendar_integration,
+    ToolConfirmationRequired,
+    ToolConfirmationFailed,
+)
 from family_assistant.telegram_bot import (
     BatchProcessor,
     TelegramConfirmationUIManager, # Import the real UIManager
-    CompositeToolsProvider,
     ConfirmationUIManager,
     NoBatchMessageBatcher,
     TelegramService,
-    TelegramUpdateHandler,
-    CompositeToolsProvider,
-    ConfirmingToolsProvider, # Import Confirming provider
-    AVAILABLE_FUNCTIONS as local_tool_functions, # Import tool implementations
-    LocalToolsProvider,
-    ToolExecutionContext,
-    TOOLS_DEFINITION as local_tools_definition, # Import tool definitions
-    # Import a tool that requires confirmation
-    calendar_integration, # Import the module
-    # _format_event_details_for_confirmation, # No longer needed for confirming provider setup
-    ToolConfirmationRequired, ToolConfirmationFailed # Exceptions
+    TelegramUpdateHandler, # Keep this as it's from telegram_bot
 )
 
 # Define a named tuple to hold the fixture results for easier access

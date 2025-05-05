@@ -105,50 +105,52 @@ async def test_confirmation_accepted(
     # Patch the *original* provider's execute_tool (the one from the fixture)
     # This is what the confirming wrapper will call internally.
     # The 'with' block was missing indentation for its content.
+    # Fix: Ensure the block below is indented correctly.
     with patch.object(
         fix.tools_provider, 'execute_tool', new_callable=AsyncMock
     ) as mock_execute_original:
-        # expected *string* result from add_or_update_note tool.
-        mock_execute_original.return_value = f"Note '{test_note_title}' added/updated successfully."
+        # Start of indented block for the 'with patch.object(...)'
+            # expected *string* result from add_or_update_note tool.
+            mock_execute_original.return_value = f"Note '{test_note_title}' added/updated successfully."
 
-        # --- Mock Bot Response ---
-        # Mock the final message sent by the bot after successful tool execution
-        mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
-        fix.mock_bot.send_message.return_value = mock_final_message
+            # --- Mock Bot Response ---
+            # Mock the final message sent by the bot after successful tool execution
+            mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
+            fix.mock_bot.send_message.return_value = mock_final_message
 
-        # --- Create Mock Update/Context ---
-        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id) # noqa: E501
-        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service}) # noqa: E501
+            # --- Create Mock Update/Context ---
+            update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id) # noqa: E501
+            context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service}) # noqa: E501
 
-        # Act & Assert within patch contexts
-        # This patch needs to be nested *inside* the mock_execute_original patch
-        # because the handler call will trigger the tool execution.
-        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
-            # Act: Call the handler within the context where the tools_provider is patched
-            await fix.handler.message_handler(update, context)
+            # Act & Assert within patch contexts
+            # This patch needs to be nested *inside* the mock_execute_original patch
+            # because the handler call will trigger the tool execution.
+            with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+                # Act: Call the handler within the context where the tools_provider is patched
+                await fix.handler.message_handler(update, context)
 
-            # Close the wrapper after use (optional but good practice)
-            # Moving it here ensures it's closed after the handler call within the patch context.
-            await confirming_wrapper.close()
+                # Close the wrapper after use (optional but good practice)
+                # Moving it here ensures it's closed after the handler call within the patch context.
+                await confirming_wrapper.close()
 
-            # Assert: Perform assertions *after* the handler call but *within* the patch context
-            # to ensure mocks are checked correctly.
-            with soft_assertions():
-                # 1. Confirmation Manager was called because the tool was configured to require it
-                fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
-                # Check args
-                conf_args, conf_kwargs = fix.mock_confirmation_manager.request_confirmation.call_args # noqa: F841
-                assert_that(conf_kwargs.get("tool_name")).is_equal_to(TOOL_NAME_SENSITIVE)
-                assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content}) # noqa: E501
+                # Assert: Perform assertions *after* the handler call but *within* the patch context
+                # to ensure mocks are checked correctly.
+                with soft_assertions():
+                    # 1. Confirmation Manager was called because the tool was configured to require it
+                    fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+                    # Check args
+                    conf_args, conf_kwargs = fix.mock_confirmation_manager.request_confirmation.call_args # noqa: F841
+                    assert_that(conf_kwargs.get("tool_name")).is_equal_to(TOOL_NAME_SENSITIVE)
+                    assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content}) # noqa: E501
 
-                # 2. Original Tool Provider's execute_tool was called (meaning confirmation passed)
-                mock_execute_original.assert_awaited_once() # Check it was called
-                # Check arguments passed to the original tool
-                call_args_tuple, call_kwargs_dict = mock_execute_original.await_args
-                called_name = call_args_tuple[0] if call_args_tuple else call_kwargs_dict.get("name")
-                called_arguments = call_args_tuple[1] if len(call_args_tuple) > 1 else call_kwargs_dict.get("arguments") # noqa: E501
-                assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
-                assert_that(called_arguments).is_equal_to({"title": test_note_title, "content": test_note_content}) # noqa: E501
+                    # 2. Original Tool Provider's execute_tool was called (meaning confirmation passed)
+                    mock_execute_original.assert_awaited_once() # Check it was called
+                    # Check arguments passed to the original tool
+                    call_args_tuple, call_kwargs_dict = mock_execute_original.await_args
+                    called_name = call_args_tuple[0] if call_args_tuple else call_kwargs_dict.get("name")
+                    called_arguments = call_args_tuple[1] if len(call_args_tuple) > 1 else call_kwargs_dict.get("arguments") # noqa: E501
+                    assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
+                    assert_that(called_arguments).is_equal_to({"title": test_note_title, "content": test_note_content}) # noqa: E501
 
             # 3. LLM was called twice (request tool, process result)
             assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
@@ -233,8 +235,9 @@ async def test_confirmation_rejected(
     # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
     with patch.object(
-        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
+        fix.tools_provider, 'execute_tool', new_callable=AsyncMock # Indent here
     ) as mock_execute_original:
+    # Start of indented block
         # --- Create Mock Update/Context ---
         update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id) # noqa: E501
         context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service}) # noqa: E501
@@ -341,8 +344,9 @@ async def test_confirmation_timed_out(
     # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
     with patch.object(
-        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
+        fix.tools_provider, 'execute_tool', new_callable=AsyncMock # Indent here
     ) as mock_execute_original:
+    # Start of indented block
         # --- Create Mock Update/Context ---
         update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id) # noqa: E501
         context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service}) # noqa: E501
