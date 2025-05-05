@@ -92,21 +92,20 @@ async def run_async_migrations() -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
 
+    # --- Context-aware migration logic ---
     # Check if Alembic is being run with an existing connection
     # This typically happens when invoked via engine.connect().run_sync()
     connectable = context.config.attributes.get("connection", None)
 
     try:
         if connectable is None:
-            # No external connection provided (e.g., CLI execution)
+            # Standard CLI execution: No external connection provided.
             # Use the async engine setup
             asyncio.run(run_async_migrations())
         else:
-            # Connection provided, run migrations synchronously using it
+            # Invoked via run_sync: Connection provided.
+            # Run migrations synchronously using the existing connection.
             do_run_migrations(connectable)
-    else:
-        # Fallback or error handling if needed, though connectable should cover online mode
-        logger.warning("Could not determine how to run online migrations.") # Use logger if defined
 
 if context.is_offline_mode():
     run_migrations_offline()
