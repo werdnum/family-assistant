@@ -32,7 +32,7 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
     *   Instantiate and configure the mock LLM client for the specific scenario (e.g., return text, request a specific tool call).
     *   Instantiate the real `ProcessingService` with the mock LLM.
     *   Instantiate mock `Application` and `Bot`, configuring the `Bot`'s mocked methods.
-    *   Instantiate the `TelegramUpdateHandler` with the real `ProcessingService`, test `get_db_context_func`, and mocked Telegram components.
+    *   Instantiate the `TelegramUpdateHandler` with the real `ProcessingService`, the `DatabaseContext` provided by the fixture (implicitly via the patched engine), and mocked Telegram components.
     *   Create the specific mock `Update` and `Context` representing the user input for the scenario.
 2.  **Act:**
     *   Call the relevant handler method (e.g., `await handler.message_handler(mock_update, mock_context)`).
@@ -49,9 +49,6 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 *   **Message Batching:** Send multiple messages quickly -> Verify they are processed as one batch.
 *   **Tool Usage (Simulated):**
     *   User message -> Mock LLM requests `add_or_update_note` -> Verify `ProcessingService` executes tool -> **Verify confirmation message sent via mock Bot.** -> **Follow-up:** Ask bot about the note -> Mock LLM expects note content in context / provides it -> Verify bot responds with correct content.
-*   **Reply Context:** User replies to a previous message -> Verify `replied_to_interface_id` is passed to `ProcessingService` -> Verify mock LLM receives history including the replied-to message and its context -> Verify bot's response is sent as a reply to the correct user message (`reply_to_message_id` in `send_message` call).
-*   **Error Handling:**
-    *   Simulate error during `ProcessingService.generate_llm_response_for_chat` (via mock LLM or by mocking a tool execution to raise error) -> Verify error message sent via mock Bot. -> Send subsequent message -> Verify mock LLM does *not* receive the traceback from the failed turn in its history context (unless designed to).
     *   User message -> Mock LLM requests `schedule_future_callback` -> Verify `ProcessingService` executes tool -> **Verify confirmation message sent via mock Bot.** (Task creation not directly verifiable via bot API or standard LLM context).
 *   **Reply Context:** User replies to a previous message -> Verify `replied_to_interface_id` is passed to `ProcessingService` -> Verify mock LLM receives history including the replied-to message and its context -> Verify bot's response is sent as a reply to the correct user message (`reply_to_message_id` in `send_message` call).
 *   **Error Handling:**
@@ -70,7 +67,6 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 *   **Primary (History Context):** Focus on the **`messages` argument passed to the mocked `LLMInterface`**. Verify that the correct system prompt, user input, and formatted message history (including roles, content, tool calls/responses) were provided as context for the LLM's generation. This validates the storage and retrieval logic indirectly.
 ## 7. Prerequisites/Assumptions
 *   Reliable `pytest` fixtures exist for setting up and tearing down a test database instance (`AsyncEngine`), defaulting to SQLite (`test_db_engine`).
-*   The test environment can instantiate the real `ProcessingService` and its dependencies (like `ToolsProvider`), potentially loading configuration and prompts.
 *   A suitable mock LLM client implementation is available (`RuleBasedMockLLMClient`, `PlaybackLLMClient`, or standard mocks).
 ## 8. Potential Future Improvements (Refactoring)
 
