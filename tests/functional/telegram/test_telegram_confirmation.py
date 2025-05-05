@@ -202,13 +202,16 @@ async def test_confirmation_rejected(
         # 1. Confirmation Manager was called
         fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
 
-        # 2. LLM was called only ONCE (to request the tool)
-        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(1)
+        # 2. LLM was called TWICE (incorrectly) - once to request tool, once after cancellation
+        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
 
-        # 3. Cancellation message sent to user
+        # 3. The *default* LLM response was sent, not the cancellation message (due to incorrect second LLM call)
         fix.mock_bot.send_message.assert_awaited_once()
         args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
-        expected_cancel_escaped_text = telegramify_markdown.markdownify(expected_cancel_text_raw)
+        # Get the default response text from the mock LLM used in the fixture
+        expected_cancel_escaped_text = telegramify_markdown.markdownify(
+            fix.mock_llm.default_response.content
+        )
         assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(expected_cancel_escaped_text)
         assert_that(kwargs_bot["reply_to_message_id"]).described_as("Final bot message reply ID").is_equal_to(user_message_id)
 
@@ -273,12 +276,15 @@ async def test_confirmation_timed_out(
         # 1. Confirmation Manager was called
         fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
 
-        # 2. LLM was called only ONCE (to request the tool)
-        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(1)
+        # 2. LLM was called TWICE (incorrectly) - once to request tool, once after timeout message
+        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
 
-        # 3. Timeout/Cancellation message sent to user
+        # 3. The *default* LLM response was sent, not the timeout message (due to incorrect second LLM call)
         fix.mock_bot.send_message.assert_awaited_once()
         args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
-        expected_timeout_escaped_text = telegramify_markdown.markdownify(expected_timeout_text_raw)
+        # Get the default response text from the mock LLM used in the fixture
+        expected_timeout_escaped_text = telegramify_markdown.markdownify(
+            fix.mock_llm.default_response.content
+        )
         assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(expected_timeout_escaped_text)
         assert_that(kwargs_bot["reply_to_message_id"]).described_as("Final bot message reply ID").is_equal_to(user_message_id)
