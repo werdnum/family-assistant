@@ -9,8 +9,6 @@ from dateutil import rrule
 from dateutil.parser import isoparse
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
 from alembic import command as alembic_command
-from alembic.script import ScriptDirectory
-from alembic.runtime.environment import EnvironmentContext
 
 # Import base components using absolute package paths
 from family_assistant.storage.base import metadata, get_engine, engine
@@ -116,42 +114,35 @@ async def init_db():
                         return context.get_current_revision()
 
                 # --- Check current revision ---
-                current_revision = await conn.run_sync(check_revision_sync)
-                logger.info(f"Current Alembic revision: {current_revision}")
+                # Try upgrading first. If it fails, assume DB needs initial setup.
+                try:
+                    logger.info("Attempting Alembic upgrade to 'head'...")
+                    await conn.run_sync(alembic_command.upgrade, alembic_cfg, "head")
+                    logger.info("Database is up-to-date or migrated via Alembic.")
 
-                if current_revision is None:
-                    logger.info("No Alembic revision found. Creating tables and stamping 'head'...")
+                # Catch Exception for broader compatibility, specific DBAPI errors vary.
+                # The most common failure on a new DB is the alembic_version table missing.
+                except Exception as upgrade_err:
+                    # Log the specific error for debugging, but treat it as needing init
+                    logger.warning(f"Alembic upgrade failed (attempting initial setup): {upgrade_err}")
+
+                    logger.info("Creating tables from SQLAlchemy metadata...")
                     # Create all tables defined in SQLAlchemy metadata
                     await conn.run_sync(metadata.create_all)
+
+                    logger.info("Stamping database with Alembic 'head'...")
                     # Stamp the database with the latest Alembic revision
                     await conn.run_sync(alembic_command.stamp, alembic_cfg, "head")
-                    logger.info("Database schema created and stamped with Alembic 'head'.")
+                    logger.info("Database schema created and stamped.")
+
                     # Also initialize vector DB parts if enabled (only on initial creation)
                     if VECTOR_STORAGE_ENABLED:
                         try:
                             async with DatabaseContext(engine=engine) as vector_init_context:
                                 await init_vector_db(db_context=vector_init_context)
+                            logger.info("Vector DB components initialized.")
                         except Exception as vec_e:
                             logger.error(f"Failed to initialize vector database components after initial creation: {vec_e}", exc_info=True)
-                            raise
-                else:
-                    logger.info("Existing Alembic revision found. Running migrations to 'head'...")
-                    await conn.run_sync(alembic_command.upgrade, alembic_cfg, "head")
-                    logger.info("Database migrated to Alembic 'head'.")
-
-                return  # Success
-        except DBAPIError as e:
-            logger.warning(
-                f"DBAPIError during init_db (attempt {attempt + 1}/{max_retries}): {e}. Retrying..."
-            )
-            if attempt == max_retries - 1:
-                logger.error("Max retries exceeded for init_db. Raising error.")
-                raise
-            delay = base_delay * (2**attempt) + random.uniform(0, base_delay * 0.5)
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(f"Non-retryable error in init_db: {e}", exc_info=True)
-            raise
 
     logger.critical("Database initialization failed after all retries.")
     raise RuntimeError("Database initialization failed after multiple retries")
