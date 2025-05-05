@@ -68,11 +68,15 @@ async def run_async_migrations() -> None:
 
     """
 
-    cfg = config.get_section(config.config_ini_section, {})
-    cfg.update(
-        {
-            "sqlalchemy.url": os.getenv("DATABASE_URL"),
-        }
+    # Get database URL from environment variable, similar to base.py
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is not set.")
+
+    # Prepare the configuration dictionary for the engine
+    cfg = config.get_section(config.config_ini_section, {}) # Get existing alembic config section
+    cfg["sqlalchemy.url"] = db_url # Explicitly set the URL from env var
+
     )
     connectable = async_engine_from_config(
         cfg,
