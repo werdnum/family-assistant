@@ -33,7 +33,9 @@ def create_mock_context(
     """Creates a mock CallbackContext."""
     context = ContextTypes.DEFAULT_TYPE(application=MagicMock(), chat_id=123, user_id=12345)
     context._bot = bot  # Assign the mock bot
-    context.bot_data = bot_data if bot_data is not None else {}
+    # Do not reassign bot_data, update it instead
+    if bot_data:
+        context.bot_data.update(bot_data)
     # Mock other attributes if needed
     return context
 
