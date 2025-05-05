@@ -1,5 +1,6 @@
 import asyncio
 from logging.config import fileConfig
+import logging
 import os
 
 from sqlalchemy import pool
@@ -9,6 +10,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 from family_assistant.storage import metadata
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -62,8 +66,15 @@ def do_run_migrations(connection: Connection) -> None:
     script_location = config.get_main_option("script_location")
     context.configure(connection=connection, target_metadata=target_metadata, version_table_schema=target_metadata.schema, include_schemas=True, script_location=script_location)
 
-    with context.begin_transaction():
-        context.run_migrations()
+    logger.info("Starting database migrations...")
+    try:
+        with context.begin_transaction():
+            logger.info(f"Running migrations within transaction for target: {context.get_revision_argument()}")
+            context.run_migrations()
+        logger.info("Database migrations completed successfully.")
+    except Exception as e:
+        logger.exception(f"Error running migrations: {e}")
+        raise # Re-raise the exception after logging
 
 
 async def run_async_migrations() -> None:
@@ -75,6 +86,7 @@ async def run_async_migrations() -> None:
     # Get database URL from environment variable, similar to base.py
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
+        logger.error("DATABASE_URL environment variable is not set.")
         raise ValueError("DATABASE_URL environment variable is not set.")
 
     # Prepare the configuration dictionary for the engine
@@ -87,10 +99,16 @@ async def run_async_migrations() -> None:
         poolclass=pool.NullPool,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
+    logger.info("Connecting to database for migrations...")
+    try:
+        async with connectable.connect() as connection:
+            logger.info("Connection established, running migrations synchronously.")
+            await connection.run_sync(do_run_migrations)
+        await connectable.dispose()
+        logger.info("Database connection closed after migrations.")
+    except Exception as e:
+        logger.exception(f"Failed to connect or run migrations: {e}")
+        raise # Re-raise the exception after logging
 
 
 def run_migrations_online() -> None:
@@ -102,13 +120,16 @@ def run_migrations_online() -> None:
     connectable = context.config.attributes.get("connection", None)
 
     if connectable is None:
+        logger.info("Running migrations in 'online' mode using asyncio.")
         # Standard CLI execution: No external connection provided.
         # Use the async engine setup
         asyncio.run(run_async_migrations())
     else:
+        logger.info("Running migrations in 'online' mode using provided connection.")
         # Invoked via run_sync: Connection provided.
         # Run migrations synchronously using the existing connection.
         do_run_migrations(connectable)
+        logger.info("Migrations finished using provided connection.")
 
 if context.is_offline_mode():
     run_migrations_offline()
