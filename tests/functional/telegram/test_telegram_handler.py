@@ -2,9 +2,10 @@ import asyncio
 import contextlib
 import logging
 from datetime import datetime, timezone
+import uuid # Add import
+import json # Add import
 from unittest.mock import AsyncMock, MagicMock, call  # Import call
 from datetime import timedelta # Import timedelta from datetime
-from typing import Any, Callable, Dict, List, Optional # Remove timedelta from typing import
 
 import pytest
 import pytest_asyncio # Keep this import if other fixtures need it
@@ -148,3 +149,164 @@ async def test_simple_text_message(
 
         assert_that(kwargs).described_as("send_message kwargs").contains_key("reply_markup").is_not_none()
         assert_that(kwargs["reply_markup"]).described_as("send_message reply_markup") # Just check it exists and isn't None
+
+
+@pytest.mark.asyncio
+async def test_add_note_tool_usage(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+):
+    """
+    Tests the flow where user asks to add a note, LLM requests the tool,
+    confirmation is granted, the tool executes, and the note is saved.
+    """
+    # Arrange
+    fix = telegram_handler_fixture
+    user_chat_id = 123
+    user_id = 12345
+    user_message_id = 201
+    assistant_final_message_id = 202 # ID for the final confirmation message
+    test_note_title = f"Telegram Tool Test Note {uuid.uuid4()}"
+    test_note_content = "Content added via Telegram handler test."
+    user_text = f"Please remember this note. Title: {test_note_title}. Content: {test_note_content}"
+    tool_call_id = f"call_{uuid.uuid4()}" # ID for the LLM's tool request
+    llm_tool_request_text = "Okay, I can add that note for you." # Optional text alongside tool call
+    llm_final_confirmation_text = f"Okay, I've saved the note titled '{test_note_title}'."
+
+    # --- Mock LLM Rules ---
+    # Rule 1: Match Add Note Request -> Respond with Tool Call
+    def add_note_matcher(messages, tools, tool_choice):
+        last_text = get_last_message_text(messages).lower()
+        # Basic check, adjust if needed for more robustness
+        return f"title: {test_note_title}".lower() in last_text and "remember this note" in last_text
+
+    add_note_tool_call = LLMOutput(
+        content=llm_tool_request_text, # Optional text
+        tool_calls=[
+            {
+                "id": tool_call_id,
+                "type": "function",
+                "function": {
+                    "name": "add_or_update_note",
+                    "arguments": json.dumps( # Use json.dumps
+                        {"title": test_note_title, "content": test_note_content}
+                    ),
+                },
+            }
+        ],
+    )
+    rule_add_note_request: Rule = (add_note_matcher, add_note_tool_call)
+
+    # Rule 2: Match Tool Result -> Respond with Final Confirmation
+    # This matcher looks for a 'tool' role message with the correct tool_call_id
+    def tool_result_matcher(messages, tools, tool_choice):
+        if not messages: return False
+        # Check previous messages too, as history might be added before tool result
+        for msg in reversed(messages):
+            if msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id:
+                logger.debug(f"Tool result matcher found tool message: {msg}")
+                return True
+        logger.debug(f"Tool result matcher did NOT find tool message with id {tool_call_id} in {messages}")
+        return False
+
+    final_confirmation_response = LLMOutput(
+        content=llm_final_confirmation_text, tool_calls=None
+    )
+    rule_final_confirmation: Rule = (tool_result_matcher, final_confirmation_response)
+
+    fix.mock_llm.rules = [rule_add_note_request, rule_final_confirmation] # Order matters if matchers overlap
+
+    # --- Mock Confirmation Manager ---
+    fix.mock_confirmation_manager.request_confirmation.return_value = True # Grant confirmation
+
+    # --- Mock Bot Response ---
+    mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
+    # Assume send_message is called only for the *final* confirmation in this flow
+    fix.mock_bot.send_message.return_value = mock_final_message
+
+    # --- Create Mock Update/Context ---
+    update = create_mock_update(user_text, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id)
+    context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
+
+    # Act
+    await fix.handler.message_handler(update, context)
+
+    # Assert
+    with soft_assertions():
+        # 1. Confirmation Manager Call
+        fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+        args_conf, kwargs_conf = fix.mock_confirmation_manager.request_confirmation.call_args
+        assert_that(kwargs_conf).described_as("Confirmation Manager kwargs").contains_key("chat_id").is_equal_to(user_chat_id)
+        assert_that(kwargs_conf).described_as("Confirmation Manager kwargs").contains_key("tool_name").is_equal_to("add_or_update_note")
+        assert_that(kwargs_conf).described_as("Confirmation Manager kwargs").contains_key("tool_args").is_equal_to({"title": test_note_title, "content": test_note_content})
+
+        # 2. LLM Calls
+        # Expect two calls: first triggers tool, second processes result
+        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
+
+        # Check first LLM call (triggers tool)
+        llm_call_1_args = fix.mock_llm._calls[0]
+        messages_to_llm_1 = llm_call_1_args.get("messages")
+        assert_that(messages_to_llm_1[-2]["content"]).described_as("Triggering user message in LLM call 1").is_equal_to(user_text)
+
+        # Check second LLM call (processes tool result)
+        llm_call_2_args = fix.mock_llm._calls[1]
+        messages_to_llm_2 = llm_call_2_args.get("messages")
+        tool_result_msg_in_llm_input = next((msg for msg in reversed(messages_to_llm_2) if msg.get("role") == "tool"), None)
+        assert_that(tool_result_msg_in_llm_input).described_as("Tool result message in LLM call 2 input").is_not_none()
+        assert_that(tool_result_msg_in_llm_input.get("tool_call_id")).described_as("Tool result message tool_call_id").is_equal_to(tool_call_id)
+        assert_that(tool_result_msg_in_llm_input.get("content")).described_as("Tool result message content").contains(f"Note '{test_note_title}' added/updated successfully.")
+
+        # 3. Bot API Call (Final Response)
+        fix.mock_bot.send_message.assert_awaited_once() # Check it was called exactly once for the final message
+        args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
+        expected_final_escaped_text = telegramify_markdown.markdownify(llm_final_confirmation_text)
+        assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(expected_final_escaped_text)
+        assert_that(kwargs_bot["reply_to_message_id"]).described_as("Final bot message reply ID").is_equal_to(user_message_id)
+
+        # 4. Database State (Note)
+        async with await fix.get_db_context_func() as db:
+            from family_assistant.storage.notes import get_note_by_title # Import locally
+            note = await get_note_by_title(db, test_note_title)
+            assert_that(note).described_as(f"Note '{test_note_title}' in DB").is_not_none()
+            assert_that(note["content"]).described_as("Note content in DB").is_equal_to(test_note_content)
+
+        # 5. Database State (Message History)
+        async with await fix.get_db_context_func() as db:
+            history = await get_recent_history(
+                db_context=db, interface_type="telegram", conversation_id=str(user_chat_id),
+                limit=10, max_age=timedelta(minutes=5)
+            )
+            history.sort(key=lambda x: x.get('internal_id', 0))
+
+            assert_that(history).described_as("Message history length").is_length(4) # user, assistant_tool_request, tool_response, assistant_final
+
+            user_msg_db, assistant_req_db, tool_res_db, assistant_final_db = history
+
+            assert_that(user_msg_db["role"]).is_equal_to("user")
+            assert_that(user_msg_db["content"]).is_equal_to(user_text)
+            assert_that(user_msg_db["interface_message_id"]).is_equal_to(str(user_message_id))
+            assert_that(user_msg_db["turn_id"]).is_none()
+            thread_root_id = user_msg_db.get("thread_root_id")
+
+            assert_that(assistant_req_db["role"]).is_equal_to("assistant")
+            assert_that(assistant_req_db["content"]).is_equal_to(llm_tool_request_text)
+            assert_that(assistant_req_db["tool_calls"][0]["id"]).is_equal_to(tool_call_id)
+            assert_that(assistant_req_db["tool_calls"][0]["function"]["name"]).is_equal_to("add_or_update_note")
+            turn_id = assistant_req_db["turn_id"]
+            assert_that(turn_id).is_not_none()
+            assert_that(assistant_req_db["thread_root_id"]).is_equal_to(thread_root_id)
+            assert_that(assistant_req_db["interface_message_id"]).is_none()
+
+            assert_that(tool_res_db["role"]).is_equal_to("tool")
+            assert_that(tool_res_db["tool_call_id"]).is_equal_to(tool_call_id)
+            assert_that(tool_res_db["content"]).contains(f"Note '{test_note_title}' added/updated successfully.")
+            assert_that(tool_res_db["turn_id"]).is_equal_to(turn_id)
+            assert_that(tool_res_db["thread_root_id"]).is_equal_to(thread_root_id)
+            assert_that(tool_res_db["interface_message_id"]).is_none()
+
+            assert_that(assistant_final_db["role"]).is_equal_to("assistant")
+            assert_that(assistant_final_db["content"]).is_equal_to(llm_final_confirmation_text)
+            assert_that(assistant_final_db["tool_calls"]).is_none()
+            assert_that(assistant_final_db["turn_id"]).is_equal_to(turn_id)
+            assert_that(assistant_final_db["thread_root_id"]).is_equal_to(thread_root_id)
+            assert_that(assistant_final_db["interface_message_id"]).is_equal_to(str(assistant_final_message_id))
