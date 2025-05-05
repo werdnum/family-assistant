@@ -5,6 +5,7 @@ import asyncio
 import os # Added for path manipulation
 import random
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy import inspect, create_engine as create_sync_engine # Import inspect and sync engine creator
 from dateutil import rrule
 from dateutil.parser import isoparse
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
@@ -104,52 +105,57 @@ async def init_db():
             # Set the sqlalchemy.url for Alembic using the engine's URL
             alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
 
-            # Try upgrading first using asyncio.to_thread.
-            # Alembic manages its own transaction/connection via the config.
-            try:
-                logger.info("Attempting Alembic upgrade to 'head'...")
-                # Use asyncio.to_thread instead of conn.run_sync
+            # --- Check for alembic_version table using inspect ---
+            db_url_str = engine.url.render_as_string(hide_password=False)
+
+            def check_version_table_sync(sync_db_url: str) -> bool:
+                """Synchronous function to check for alembic_version table."""
+                sync_engine = create_sync_engine(sync_db_url)
+                try:
+                    with sync_engine.connect() as sync_conn:
+                        inspector = inspect(sync_conn)
+                        return inspector.has_table("alembic_version")
+                finally:
+                    sync_engine.dispose()
+
+            has_version_table = await asyncio.to_thread(check_version_table_sync, db_url_str)
+
+            if has_version_table:
+                logger.info("Alembic version table found. Upgrading database to 'head'...")
+                # Run Alembic migrations to upgrade to head
                 await asyncio.to_thread(alembic_command.upgrade, alembic_cfg, "head")
-                logger.info("Database is up-to-date or migrated via Alembic.")
+                logger.info("Alembic upgrade to 'head' completed.")
+            else:
+                logger.info("Alembic version table not found. Performing initial schema creation and stamping...")
 
-            # Catch Exception for broader compatibility, specific DBAPI errors vary.
-            # The most common failure on a new DB is the alembic_version table missing.
-            except Exception as upgrade_err:
-                # Log the specific error for debugging, but treat it as needing init
-                logger.warning(f"Alembic upgrade failed (likely new DB, attempting initial setup): {upgrade_err}")
-
-                # Use engine.begin() specifically for metadata.create_all
+                # Create all tables defined in SQLAlchemy metadata
                 logger.info("Creating tables from SQLAlchemy metadata...")
                 async with engine.begin() as conn:
-                    # Create all tables defined in SQLAlchemy metadata
                     await conn.run_sync(metadata.create_all)
                 logger.info("Tables created.")
 
-                # Stamp the database using asyncio.to_thread after table creation
+                # Stamp the database with the latest revision
+                logger.info("Stamping database with Alembic 'head'...")
                 try:
-                    logger.info("Stamping database with Alembic 'head'...")
-                    # Use asyncio.to_thread instead of conn.run_sync
                     await asyncio.to_thread(alembic_command.stamp, alembic_cfg, "head")
                     logger.info("Database schema stamped.")
                 except Exception as stamp_err:
-                    logger.error(f"Failed to stamp database after creation: {stamp_err}", exc_info=True)
-                    raise  # Re-raise stamping error, as it indicates a problem
+                     logger.error(f"Failed to stamp database after creation: {stamp_err}", exc_info=True)
+                     raise # Re-raise stamping error
 
                 # Initialize vector DB parts if enabled (only on initial creation)
                 if VECTOR_STORAGE_ENABLED:
                     logger.info("Initializing vector DB components...")
                     try:
-                        # Use a separate context for vector init, as the main conn might be closed
+                        # Use a separate context for vector init
                         async with DatabaseContext(engine=engine) as vector_init_context:
                             await init_vector_db(db_context=vector_init_context)
                         logger.info("Vector DB components initialized.")
                     except Exception as vec_e:
                         logger.error(f"Failed to initialize vector database components after initial creation: {vec_e}", exc_info=True)
-                        # Decide if this failure should prevent startup or just be logged
-                        # For now, let's re-raise to prevent startup if vector init fails
-                        raise
+                        raise # Re-raise vector init error
 
-            # If upgrade or creation/stamp/vector init was successful
+            # If upgrade or creation/stamp sequence was successful
             logger.info("Database initialization successful.")
             return  # Exit the function successfully
 
