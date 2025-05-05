@@ -497,11 +497,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
 
                 async with self._typing_notifications(context, chat_id):
-                    # Create the partial function for the confirmation callback
-                    confirmation_callback_partial = functools.partial(
-                        self.confirmation_manager.request_confirmation, # Target manager's method
-                        chat_id=chat_id,
-                    )
+                    # Define an explicit wrapper function for the confirmation callback
+                    # This captures `self` (for `self.confirmation_manager`) and `chat_id` from the outer scope
+                    async def confirmation_callback_wrapper(
+                        prompt_text: str, tool_name: str, tool_args: Dict[str, Any], timeout: float
+                    ) -> bool:
+                        return await self.confirmation_manager.request_confirmation(
+                            chat_id=chat_id, # Use captured chat_id
+                            prompt_text=prompt_text,
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            timeout=timeout,
+                        )
+                    # Use the wrapper function as the callback
                     (
                         generated_turn_messages,  # New return type
                         final_reasoning_info,  # Capture final reasoning info
@@ -515,7 +523,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         user_name=user_name,
                         replied_to_interface_id=replied_to_interface_id,  # Pass replied_to ID
                         # Pass the partially applied confirmation request callback
-                        request_confirmation_callback=confirmation_callback_partial,
+                        request_confirmation_callback=confirmation_callback_wrapper, # Pass the wrapper
                     )
                     # Add turn_id to all generated messages before saving
                     turn_id_for_saving = None
