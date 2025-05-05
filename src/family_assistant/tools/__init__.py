@@ -1030,7 +1030,6 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                     "calendar_url",
                 ],  # Require UID and URL, at least one 'new_' field should be provided logically
             },
-            "requires_confirmation": True,
         },
     },
     {
