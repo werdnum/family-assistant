@@ -97,11 +97,6 @@ async def test_confirmation_accepted(
     # --- Mock Tool Execution ---
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
         mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
-        fix.mock_bot.send_message.return_value = mock_final_message
-
-        # --- Create Mock Update/Context ---
-        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
-        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
 
         # Act
         await fix.handler.message_handler(update, context)
@@ -174,8 +169,21 @@ async def test_confirmation_rejected(
         }]
     )
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
-    fix.mock_llm.rules = [rule_request_tool] # Only this rule is needed
 
+    # 2. LLM rule to handle the cancellation message from the tool provider
+    def cancel_result_matcher(messages, tools, tool_choice):
+        return any(
+            msg.get("role") == "tool"
+            and msg.get("tool_call_id") == tool_call_id
+            and tool_cancel_result_text in msg.get("content", "")
+            for msg in messages
+        )
+    final_cancel_output = LLMOutput(content=llm_final_cancel_text)
+    rule_final_cancel: Rule = (cancel_result_matcher, final_cancel_output)
+
+    fix.mock_llm.rules = [rule_request_tool, rule_final_cancel]
+    # --- Configure Confirmation for this test ---
+    fix.tools_provider.tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
     # --- Mock Confirmation Manager ---
     # Simulate user REJECTING the confirmation prompt
     fix.mock_confirmation_manager.request_confirmation.return_value = False
@@ -254,8 +262,21 @@ async def test_confirmation_timed_out(
         }]
     )
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
-    fix.mock_llm.rules = [rule_request_tool]
 
+    # 2. LLM rule to handle the timeout/cancellation message from the tool provider
+    def timeout_result_matcher(messages, tools, tool_choice):
+        return any(
+            msg.get("role") == "tool"
+            and msg.get("tool_call_id") == tool_call_id
+            and tool_timeout_result_text in msg.get("content", "")
+            for msg in messages
+        )
+    final_timeout_output = LLMOutput(content=llm_final_timeout_text)
+    rule_final_timeout: Rule = (timeout_result_matcher, final_timeout_output)
+
+    fix.mock_llm.rules = [rule_request_tool, rule_final_timeout]
+    # --- Configure Confirmation for this test ---
+    fix.tools_provider.tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
     # --- Mock Confirmation Manager ---
     # Simulate TIMEOUT during the confirmation request
     fix.mock_confirmation_manager.request_confirmation.side_effect = asyncio.TimeoutError
