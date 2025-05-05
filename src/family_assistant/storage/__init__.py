@@ -101,14 +101,23 @@ async def init_db():
             logger.info(f"Checking database state (attempt {attempt+1})...")
 
             # --- Alembic Configuration ---
-            # Assume alembic.ini is in the project root, 3 levels up from this file's directory
-            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-            alembic_ini_path = os.path.join(project_root, "alembic.ini")
-            alembic_script_location = os.path.join(project_root, "alembic") # Path to the actual script directory
+            # Get the config file path from env var, or default to project root relative path
+            alembic_ini_env_var = os.getenv("ALEMBIC_CONFIG")
+            if alembic_ini_env_var and os.path.exists(alembic_ini_env_var):
+                alembic_ini_path = alembic_ini_env_var
+                logger.info(f"Using Alembic config from environment variable: {alembic_ini_path}")
+            else:
+                # Fallback: Assume alembic.ini is in the project root (3 levels up)
+                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                alembic_ini_path = os.path.join(project_root, "alembic.ini")
+                logger.warning(f"ALEMBIC_CONFIG env var not set or invalid. Falling back to default: {alembic_ini_path}")
+
             alembic_cfg = AlembicConfig(alembic_ini_path)
             # Set the sqlalchemy.url for Alembic using the engine's URL
             alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
-            # Removed explicit setting of script_location; rely on alembic.ini and ALEMBIC_CONFIG env var
+            # Explicitly set script_location relative to the INI file's directory
+            alembic_script_location = os.path.join(os.path.dirname(alembic_ini_path), "alembic")
+            alembic_cfg.set_main_option("script_location", alembic_script_location)
 
             # --- Check for alembic_version table using inspect ---
             # Use run_sync on the async engine's connection to perform the check
