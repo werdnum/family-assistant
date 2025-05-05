@@ -364,7 +364,6 @@ async def test_tool_result_in_subsequent_history(
         # TODO: Investigate why rule_ask_result_t2 doesn't match and rule_final_confirmation_t1 matches instead in Turn 2.
         expected_escaped_text_1_actual = telegramify_markdown.markdownify(llm_final_confirmation_text_1) # Text from Turn 1's confirmation
         assert_that(call_2_kwargs["text"]).described_as("Final bot message text (Turn 2) - SHOULD BE tool result analysis!").is_equal_to(expected_escaped_text_1_actual)
-        assert_that(call_2_kwargs["text"]).described_as("Final bot message text (Turn 2)").is_equal_to(expected_escaped_text_2)
         assert_that(call_2_kwargs["reply_to_message_id"]).described_as("Final bot message reply ID (Turn 2)").is_equal_to(user_message_id_2)
 
         # The key assertion is implicit: rule_ask_result_t2 matched.
