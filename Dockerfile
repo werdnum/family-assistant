@@ -73,7 +73,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_TOOL_BIN_DIR=/uv/bin \
     UV_TOOL_DIR=/uv/tools \
-    ALEMBIC_CONFIG=/app/alembic.ini \
     UV_CACHE_DIR=/uv-cache
 
 # Update PATH separately
