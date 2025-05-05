@@ -29,7 +29,6 @@ To verify the correct end-to-end behavior of the `TelegramUpdateHandler` class, 
 1.  **Arrange:**
     *   Depend on the database fixture (`pg_vector_db_engine`).
     *   Depend on the **default database fixture (`test_db_engine`)**.
-    *   Instantiate and configure the mock LLM client for the specific scenario (e.g., return text, request a specific tool call).
     *   Instantiate the real `ProcessingService` with the mock LLM.
     *   Instantiate mock `Application` and `Bot`, configuring the `Bot`'s mocked methods.
     *   Instantiate the chosen `MessageBatcher` implementation (e.g., `NoBatchMessageBatcher` for simplicity, passing the handler instance) and assign it to `handler.message_batcher`.
