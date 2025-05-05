@@ -5,9 +5,11 @@ import asyncio
 import os # Added for path manipulation
 import random
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy import inspect # Import inspect
+from sqlalchemy import inspect, Table, Column, String, MetaData as SqlaMetaData, insert # Import inspect and table creation components
 from dateutil import rrule
 from dateutil.parser import isoparse
+# from alembic.script import ScriptDirectory # No longer needed for manual stamping
+# from alembic import command as alembic_command # Already imported
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
 from alembic import command as alembic_command
 
