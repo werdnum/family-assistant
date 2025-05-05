@@ -28,11 +28,13 @@ from tests.mocks.mock_llm import Rule, get_last_message_text
 
 
 def create_mock_context(
-    bot: AsyncMock, bot_data: Optional[Dict[Any, Any]] = None
+    mock_application: AsyncMock, # Pass the application mock
+    bot_data: Optional[Dict[Any, Any]] = None
 ) -> ContextTypes.DEFAULT_TYPE:
     """Creates a mock CallbackContext."""
-    context = ContextTypes.DEFAULT_TYPE(application=MagicMock(), chat_id=123, user_id=12345)
-    context._bot = bot  # Assign the mock bot
+    # Use the provided application mock, which should have .bot set
+    context = ContextTypes.DEFAULT_TYPE(application=mock_application, chat_id=123, user_id=12345)
+    context._bot = mock_application.bot # Explicitly assign the bot from the mock application
     # Do not reassign bot_data, update it instead
     if bot_data:
         context.bot_data.update(bot_data)
@@ -99,7 +101,8 @@ async def test_simple_text_message(
 
     # Create mock Update and Context
     update = create_mock_update(user_text, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id)
-    context = create_mock_context(fix.mock_bot, bot_data={"processing_service": fix.processing_service})
+    # Pass the mock_application associated with the mock_telegram_service from the fixture
+    context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
 
     # Act
     await fix.handler.message_handler(update, context)
