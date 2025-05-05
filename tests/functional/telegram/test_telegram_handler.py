@@ -12,7 +12,7 @@ from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 from family_assistant.llm import LLMInterface, LLMOutput
-from assertpy import assert_that # Import assert_that
+from assertpy import assert_that, soft_assertions # Import assert_that and soft_assertions
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.message_history import get_recent_history
 
@@ -109,34 +109,38 @@ async def test_simple_text_message(
     await fix.handler.message_handler(update, context)
 
     # Assert
-    # 1. LLM Call Verification (Input to the LLM) - Check it was called once
-    assert_that(fix.mock_llm._calls).is_length(1)
+    with soft_assertions():
+        # 1. LLM Call Verification
+        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(1)
 
-    # Verify the structure and content of the message list passed to LLM
-    last_call_args = fix.mock_llm._calls[0]
-    messages_to_llm = last_call_args.get("messages")
+        # Verify the structure and content of the message list passed to LLM
+        last_call_args = fix.mock_llm._calls[0]
+        messages_to_llm = last_call_args.get("messages")
 
-    assert_that(messages_to_llm).is_instance_of(list).is_not_empty()
-    # Check the last message specifically
-    assert_that(messages_to_llm[-1]).is_instance_of(dict)
-    assert_that(messages_to_llm[-1]).contains_key("role")
-    assert_that(messages_to_llm[-1]["role"]).is_equal_to("user")
-    assert_that(messages_to_llm[-1]).contains_key("content")
-    assert_that(messages_to_llm[-1]["content"]).is_equal_to(user_text)
+        assert_that(messages_to_llm).described_as("Messages passed to LLM").is_instance_of(list).is_not_empty()
 
-    # 2. Bot API Call Verification (Output to user)
-    fix.mock_bot.send_message.assert_awaited_once()
-    # Check specific arguments using call_args
-    args, kwargs = fix.mock_bot.send_message.call_args
+        # Compare the last message (user input) directly
+        # Note: If comparing the whole list, need to account for dynamic system prompt content (e.g., timestamp)
+        expected_last_message = {"role": "user", "content": user_text}
+        assert_that(messages_to_llm[-1]).described_as("Last message to LLM").is_equal_to(expected_last_message)
 
-    # Use assert_that for kwargs dictionary checks
-    assert_that(kwargs).contains_key("chat_id")
-    assert_that(kwargs["chat_id"]).is_equal_to(user_chat_id)
-    assert_that(kwargs).contains_key("text")
-    assert_that(kwargs["text"]).contains(llm_response_text) # Check if expected text is part of actual text
-    assert_that(kwargs).contains_key("reply_to_message_id")
-    assert_that(kwargs["reply_to_message_id"]).is_equal_to(user_message_id)
-    assert_that(kwargs).contains_key("parse_mode")
-    assert_that(kwargs["parse_mode"]).is_not_none()
-    assert_that(kwargs).contains_key("reply_markup")
-    assert_that(kwargs["reply_markup"]).is_not_none()
+        # 2. Bot API Call Verification (Output to user)
+        fix.mock_bot.send_message.assert_awaited_once()
+        # Check specific arguments using call_args
+        args, kwargs = fix.mock_bot.send_message.call_args
+
+        # Use chained assertions and descriptive names for kwargs
+        assert_that(kwargs).described_as("send_message kwargs").contains_key("chat_id")
+        assert_that(kwargs["chat_id"]).described_as("send_message chat_id").is_equal_to(user_chat_id)
+
+        assert_that(kwargs).described_as("send_message kwargs").contains_key("text")
+        assert_that(kwargs["text"]).described_as("send_message text").contains(llm_response_text)
+
+        assert_that(kwargs).described_as("send_message kwargs").contains_key("reply_to_message_id")
+        assert_that(kwargs["reply_to_message_id"]).described_as("send_message reply_to_message_id").is_equal_to(user_message_id)
+
+        assert_that(kwargs).described_as("send_message kwargs").contains_key("parse_mode").is_not_none()
+        assert_that(kwargs["parse_mode"]).described_as("send_message parse_mode") # Just check it exists and isn't None
+
+        assert_that(kwargs).described_as("send_message kwargs").contains_key("reply_markup").is_not_none()
+        assert_that(kwargs["reply_markup"]).described_as("send_message reply_markup") # Just check it exists and isn't None
