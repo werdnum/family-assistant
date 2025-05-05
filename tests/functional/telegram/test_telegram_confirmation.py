@@ -3,12 +3,12 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch # Import ANY
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 import telegramify_markdown
 from assertpy import assert_that, soft_assertions
-from telegram import Chat, ForceReply, Message, Update, User
+from telegram import Chat, Message, Update, User
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
@@ -23,6 +23,7 @@ from tests.functional.telegram.test_telegram_handler import (
 
 # Import mock LLM helpers
 from tests.mocks.mock_llm import Rule, get_last_message_text
+from family_assistant.tools import ConfirmingToolsProvider # Import confirming provider
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +87,18 @@ async def test_confirmation_accepted(
 
     fix.mock_llm.rules = [rule_request_tool, rule_final_success]
 
-    # --- Configure Confirmation for this test ---
-    # Explicitly tell the provider to require confirmation for the note tool
-    fix.tools_provider.tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
+    # --- Configure Confirmation (New Approach) ---
+    # 1. Create the confirming provider wrapper for this test
+    confirming_wrapper = ConfirmingToolsProvider(
+        wrapped_provider=fix.tools_provider, # Wrap the provider from the fixture
+        calendar_config=None # Not needed for this tool
+    )
+    # 2. Configure which tools require confirmation *on the wrapper*
+    confirming_wrapper._tools_requiring_confirmation = {TOOL_NAME_SENSITIVE} # Set directly for testing
 
     # --- Mock Confirmation Manager ---
     # Simulate user ACCEPTING the confirmation prompt
     fix.mock_confirmation_manager.request_confirmation.return_value = True
-
     # --- Mock Tool Execution ---
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
     # Patch the *wrapped* provider's execute_tool to capture the call
@@ -101,20 +106,40 @@ async def test_confirmation_accepted(
         fix.wrapped_tools_provider, 'execute_tool', new_callable=AsyncMock
     ) as mock_execute_wrapped:
         # Simulate the tool execution succeeding after confirmation, returning the
+    # Patch the *original* provider's execute_tool (the one from the fixture)
+    # This is what the confirming wrapper will call internally.
+    with patch.object(
+        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_original:
         # expected *string* result from add_or_update_note tool.
-        mock_execute_wrapped.return_value = f"Note '{test_note_title}' added/updated successfully."
-
+        mock_execute_original.return_value = f"Note '{test_note_title}' added/updated successfully."
         # --- Mock Bot Response ---
         # Mock the final message sent by the bot after successful tool execution
         mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
         fix.mock_bot.send_message.return_value = mock_final_message
 
+
+    # --- Mock Tool Execution (Should NOT be called) ---
+    # Patch the *wrapped* provider's execute_tool to fail if called
+    # Patch the *original* provider's execute_tool
+    with patch.object(
+        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_original:
         # --- Create Mock Update/Context ---
         update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
         context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
 
         # Act
-        await fix.handler.message_handler(update, context)
+        # Patch processing service to use the confirming wrapper
+        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            await fix.handler.message_handler(update, context)
+            await confirming_wrapper.close()
+        # 3. Patch the processing service to use the confirming wrapper for this call
+        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            await fix.handler.message_handler(update, context)
+
+            # Close the wrapper after use (optional but good practice)
+            await confirming_wrapper.close()
 
         # Assert (moved inside the 'with patch' block to access mock_execute_wrapped)
         with soft_assertions():
@@ -126,9 +151,9 @@ async def test_confirmation_accepted(
             assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content})
 
             # 2. Wrapped Tool Provider's execute_tool was called (meaning confirmation passed)
-            mock_execute_wrapped.assert_awaited_once() # Check it was called
+            mock_execute_original.assert_awaited_once() # Check it was called
             # Check arguments passed to the wrapped tool
-            call_args_tuple, call_kwargs_dict = mock_execute_wrapped.await_args
+            call_args_tuple, call_kwargs_dict = mock_execute_original.await_args
             called_name = call_args_tuple[0] if call_args_tuple else call_kwargs_dict.get("name")
             called_arguments = call_args_tuple[1] if len(call_args_tuple) > 1 else call_kwargs_dict.get("arguments")
             assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
@@ -196,8 +221,13 @@ async def test_confirmation_rejected(
     rule_final_cancel: Rule = (cancel_result_matcher, final_cancel_output)
 
     fix.mock_llm.rules = [rule_request_tool, rule_final_cancel]
-    # --- Configure Confirmation for this test ---
-    fix.tools_provider.tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
+    # --- Configure Confirmation (New Approach) ---
+    confirming_wrapper = ConfirmingToolsProvider(
+        wrapped_provider=fix.tools_provider,
+        calendar_config=None
+    )
+    confirming_wrapper._tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
+
     # --- Mock Confirmation Manager ---
     # Simulate user REJECTING the confirmation prompt
     fix.mock_confirmation_manager.request_confirmation.return_value = False
@@ -208,14 +238,30 @@ async def test_confirmation_rejected(
 
     # --- Mock Tool Execution (Should NOT be called) ---
     # Patch the *wrapped* provider's execute_tool to fail if called
+    # Patch the *original* provider's execute_tool
     with patch.object(
-        fix.wrapped_tools_provider, 'execute_tool', new_callable=AsyncMock
-    ) as mock_execute_wrapped:
+        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_original:
+
+    # --- Mock Tool Execution (Should NOT be called) ---
+    # Patch the *wrapped* provider's execute_tool to fail if called
+    # Patch the *original* provider's execute_tool
+    with patch.object(
+        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_original:
         # --- Create Mock Update/Context ---
         update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
         context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
 
         # Act
+        # Patch processing service to use the confirming wrapper
+        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            await fix.handler.message_handler(update, context)
+            await confirming_wrapper.close()
+        # Patch processing service to use the confirming wrapper
+        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            await fix.handler.message_handler(update, context)
+            await confirming_wrapper.close()
         await fix.handler.message_handler(update, context)
 
         # Assert
@@ -224,7 +270,7 @@ async def test_confirmation_rejected(
             fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
 
             # 2. Wrapped tool provider was NOT called
-            mock_execute_wrapped.assert_not_awaited()
+            mock_execute_original.assert_not_awaited()
 
             # 3. LLM was called twice (request tool, process cancellation result)
             assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
@@ -288,8 +334,13 @@ async def test_confirmation_timed_out(
     rule_final_timeout: Rule = (timeout_result_matcher, final_timeout_output)
 
     fix.mock_llm.rules = [rule_request_tool, rule_final_timeout]
-    # --- Configure Confirmation for this test ---
-    fix.tools_provider.tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
+    # --- Configure Confirmation (New Approach) ---
+    confirming_wrapper = ConfirmingToolsProvider(
+        wrapped_provider=fix.tools_provider,
+        calendar_config=None
+    )
+    confirming_wrapper._tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
+
     # --- Mock Confirmation Manager ---
     # Simulate TIMEOUT during the confirmation request
     fix.mock_confirmation_manager.request_confirmation.side_effect = asyncio.TimeoutError
@@ -300,22 +351,38 @@ async def test_confirmation_timed_out(
 
     # --- Mock Tool Execution (Should NOT be called) ---
     # Patch the *wrapped* provider's execute_tool to fail if called
+    # Patch the *original* provider's execute_tool
     with patch.object(
-        fix.wrapped_tools_provider, 'execute_tool', new_callable=AsyncMock
-    ) as mock_execute_wrapped:
+        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_original:
+
+    # --- Mock Tool Execution (Should NOT be called) ---
+    # Patch the *wrapped* provider's execute_tool to fail if called
+    # Patch the *original* provider's execute_tool
+    with patch.object(
+        fix.tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_original:
         # --- Create Mock Update/Context ---
         update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
         context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
 
         # Act
+        # Patch processing service to use the confirming wrapper
+        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            await fix.handler.message_handler(update, context)
+            await confirming_wrapper.close()
+        # Patch processing service to use the confirming wrapper
+        with patch.object(fix.processing_service, 'tools_provider', confirming_wrapper):
+            await fix.handler.message_handler(update, context)
+            await confirming_wrapper.close()
         await fix.handler.message_handler(update, context)
 
         # Assert
         with soft_assertions():
-            # 1. Confirmation Manager was called
+            # 1. Confirmation Manager was called (and raised TimeoutError)
             fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
             # 2. Wrapped tool provider was NOT called
-            mock_execute_wrapped.assert_not_awaited()
+            mock_execute_original.assert_not_awaited()
 
             # 3. LLM was called twice (request tool, process timeout/cancellation result)
             assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
