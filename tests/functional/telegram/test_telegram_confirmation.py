@@ -71,14 +71,15 @@ async def test_confirmation_accepted(
         }]
     )
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
+    # Define expected tool success message based on mock return value
+    expected_tool_success_result = f"Note '{test_note_title}' added/updated successfully."
 
     # 2. Tool result received -> LLM gives final success message
     def success_result_matcher(messages, tools, tool_choice):
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
-            # Check content to ensure it's the *actual success message* string from the real tool
-            and "Success" in msg.get("content", "")
+            and msg.get("content") == expected_tool_success_result # Match exact success message
             for msg in messages
         )
 
@@ -110,7 +111,7 @@ async def test_confirmation_accepted(
     ) as mock_execute_original:
         # Start of indented block for the 'with patch.object(...)'
             # expected *string* result from add_or_update_note tool.
-            mock_execute_original.return_value = f"Note '{test_note_title}' added/updated successfully."
+            mock_execute_original.return_value = expected_tool_success_result
 
             # --- Mock Bot Response ---
             # Mock the final message sent by the bot after successful tool execution
@@ -181,7 +182,9 @@ async def test_confirmation_rejected(
     tool_call_id = f"call_reject_{uuid.uuid4()}"
     llm_request_tool_text = "Okay, I can add that note."
     # Message returned by ConfirmingToolsProvider on rejection
-    tool_cancel_result_text = f"Okay, I will not run the tool `{TOOL_NAME_SENSITIVE}`."
+    # This needs to match the *actual* string from ConfirmingToolsProvider
+    tool_cancel_result_text = f"OK. Action cancelled by user for tool '{TOOL_NAME_SENSITIVE}'."
+
     # Final message from LLM after seeing the cancellation
     llm_final_cancel_text = "Okay, I have cancelled the request."
 
@@ -289,8 +292,8 @@ async def test_confirmation_timed_out(
     tool_call_id = f"call_timeout_{uuid.uuid4()}"
     llm_request_tool_text = "Okay, I can add that note."
     # Message returned by ConfirmingToolsProvider on timeout (same as rejection)
-    tool_timeout_result_text = f"Okay, I will not run the tool `{TOOL_NAME_SENSITIVE}`."
-    # Final message from LLM after seeing the timeout/cancellation
+    # This needs to match the *actual* string from ConfirmingToolsProvider for timeout
+    tool_timeout_result_text = f"Action cancelled: Confirmation request for tool '{TOOL_NAME_SENSITIVE}' timed out."    # Final message from LLM after seeing the timeout/cancellation
     llm_final_timeout_text = "Okay, the request timed out and was cancelled."
 
     def request_delete_matcher(messages, tools, tool_choice):
