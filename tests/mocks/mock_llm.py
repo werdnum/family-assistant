@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # --- Generic Rule-Based Mock LLM Implementation ---
 
 # Define type aliases for clarity
-# Matcher takes (messages, tools, tool_choice) and returns bool
+# Matcher takes (messages, tools, tool_choice) -> bool
 MatcherFunction = Callable[
     [List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Optional[str]], bool
 ]
@@ -77,6 +77,9 @@ class RuleBasedMockLLMClient(LLMInterface):
         else:
             self.default_response = default_response
             logger.debug("RuleBasedMockLLMClient using provided default response.")
+        # Add call recording
+        self._calls: List[Dict[str, Any]] = []
+        self.generate_response = self._generate_response_wrapper(self.generate_response) # Wrap for recording
         logger.info(f"RuleBasedMockLLMClient initialized with {len(rules)} rules.")
 
     async def generate_response(
@@ -88,6 +91,17 @@ class RuleBasedMockLLMClient(LLMInterface):
         """
         Evaluates rules against the input and returns the corresponding output.
         """
+        # Original logic starts here, this method will be wrapped
+        # Record the call *before* executing logic
+        call_data = {
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        # We'll record the call in the wrapper instead
+        # self._calls.append(call_data)
+        # logger.debug(f"Recorded call {self.call_count()}. Args: {call_data}")
+
         logger.debug(f"RuleBasedMockLLM evaluating {len(self.rules)} rules...")
         for i, (matcher, response) in enumerate(self.rules):
             try:
@@ -112,6 +126,25 @@ class RuleBasedMockLLMClient(LLMInterface):
             messages,
         )
         return self.default_response
+
+    # Wrapper to record calls
+    def _generate_response_wrapper(self, original_method):
+        async def wrapper(*args, **kwargs):
+            # Positional args: self, messages
+            # Keyword args: tools, tool_choice
+            messages = args[1] if len(args) > 1 else kwargs.get("messages")
+            tools = kwargs.get("tools")
+            tool_choice = kwargs.get("tool_choice", "auto")
+
+            call_data = {
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice,
+            }
+            self._calls.append(call_data)
+            logger.debug(f"Recorded call {self.call_count()}. Args keys: {call_data.keys()}")
+            return await original_method(*args, **kwargs)
+        return wrapper
 
 
 # --- Helper function to extract text from messages ---
