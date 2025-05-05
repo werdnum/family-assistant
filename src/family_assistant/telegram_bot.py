@@ -224,7 +224,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     @contextlib.asynccontextmanager
     # --- Confirmation Handling Logic - Moved back into TelegramUpdateHandler ---
 
-    @contextlib.asynccontextmanager
     async def _typing_notifications(
         self,
         context: ContextTypes.DEFAULT_TYPE,
