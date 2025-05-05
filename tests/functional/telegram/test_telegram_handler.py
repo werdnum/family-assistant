@@ -204,8 +204,8 @@ async def test_add_note_tool_usage(
 
     fix.mock_llm.rules = [rule_add_note_request, rule_final_confirmation] # Order matters if matchers overlap
 
-    # --- Mock Confirmation Manager ---
-    fix.mock_confirmation_manager.request_confirmation.return_value = True # Grant confirmation
+    # --- Mock Confirmation Manager (Not needed for add_note) ---
+    # fix.mock_confirmation_manager.request_confirmation.return_value = True # Grant confirmation
 
     # --- Mock Bot Response ---
     mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
@@ -221,12 +221,8 @@ async def test_add_note_tool_usage(
 
     # Assert
     with soft_assertions():
-        # 1. Confirmation Manager Call
-        fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
-        args_conf, kwargs_conf = fix.mock_confirmation_manager.request_confirmation.call_args
-        assert_that(kwargs_conf).described_as("Confirmation Manager kwargs").contains_key("chat_id").is_equal_to(user_chat_id)
-        assert_that(kwargs_conf).described_as("Confirmation Manager kwargs").contains_key("tool_name").is_equal_to("add_or_update_note")
-        assert_that(kwargs_conf).described_as("Confirmation Manager kwargs").contains_key("tool_args").is_equal_to({"title": test_note_title, "content": test_note_content})
+        # 1. Confirmation Manager Call (Should NOT be called for add_note)
+        fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
 
         # 2. LLM Calls
         # Expect two calls: first triggers tool, second processes result
