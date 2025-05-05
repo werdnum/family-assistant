@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, timedelta # Add timedelta import
 from unittest.mock import AsyncMock, MagicMock, call  # Import call
 
 import pytest
@@ -162,4 +162,3 @@ async def test_simple_text_message(
     assert assistant_msg["thread_root_id"] is None # Should inherit from user message
     assert assistant_msg["tool_calls"] is None
     assert assistant_msg["error_traceback"] is None
-
