@@ -109,9 +109,10 @@ async def test_simple_text_message(
 
     # Assert
     # 1. LLM Call Verification (Input to the LLM) - Check it was called once
-    fix.mock_llm.generate_response.assert_awaited_once()
-    call_args, call_kwargs = fix.mock_llm.generate_response.call_args
-    messages_to_llm = call_kwargs.get("messages")
+    # Use the call recording mechanism of the mock client
+    assert len(fix.mock_llm._calls) == 1, "Expected LLM to be called exactly once"
+    last_call_args = fix.mock_llm._calls[0]
+    messages_to_llm = last_call_args.get("messages")
     assert isinstance(messages_to_llm, list), "Messages passed to LLM should be a list"
     assert len(messages_to_llm) >= 2 # Should include system prompt and user message
     assert messages_to_llm[-1]["role"] == "user"
