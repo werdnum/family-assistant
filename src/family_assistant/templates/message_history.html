@@ -38,33 +38,37 @@
                 </div>
                 <div class="message-content">
                     <div class="message-content-text">{{ message.content }}</div> <!-- Wrap text content -->
-                    {# Display tool *requests* made by the assistant #}
-                    {% if message.role == 'assistant' and message.tool_calls %}
+                    {# Display tool *requests* made by the assistant. Iterate over tool_calls_info #}
+                    {% if message.role == 'assistant' and message.tool_calls_info %}
                     <details class="tool-info-details">
-                        <summary>Tool Calls Requested ({{ message.tool_calls|length }})</summary> {# Updated field name #}
+                        {# Use tool_calls_info which seems to hold the detailed dicts #}
+                        <summary>Tool Calls Requested ({{ message.tool_calls_info|length }})</summary>
                         <div class="tool-info-content">
-                            {% for tool_call in message.tool_calls %} {# Updated field name #}
+                            {% for tool_call in message.tool_calls_info %} {# Iterate over tool_calls_info #}
                             <div class="tool-call-item">
-                                <strong>Function:</strong> {{ tool_call.function.name }}<br> {# Adjusted structure based on common LLM output #}
-                                <strong>Call ID:</strong> {{ tool_call.id }}<br> {# Adjusted structure #}
+                                {# Safely access dictionary keys #}
+                                <strong>Function:</strong> {{ tool_call.get('function_name', 'N/A') }}<br>
+                                <strong>Call ID:</strong> {{ tool_call.get('call_id', 'N/A') }}<br>
                                 <strong>Arguments:</strong>
-                                <div id="tool-args-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}" class="json-editor-container"></div>
-
-                                <strong>Call ID:</strong> {{ tool_call.call_id }}<br>
-                                <strong>Arguments:</strong>
-                                <div id="tool-args-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}" class="json-editor-container"></div>
-                                <strong>Response:</strong>
-                                <div id="tool-resp-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}" class="json-editor-container"></div>
+                                {# Target div for JSON editor (matches JS) #}
+                                <div id="tool-args-{{ conversation_key }}-{{ message.internal_id }}-{{ loop.index }}" class="json-editor-container"></div>
+                                {# Removed duplicate/incorrect block displaying call_id, args, response #}
                             </div>
                             {% if not loop.last %}<hr class="tool-separator">{% endif %}
                             {% endfor %}
                         </div>
                     </details>
                     {% endif %}
+                    {# Display tool *results* from tool messages #}
+                    {% if message.role == 'tool' and message.tool_calls_info %}
+                        {# Similar structure can be added here if needed to display tool results explicitly #}
+                        {# For now, the result is usually part of message.content for 'tool' roles #}
+                    {% endif %}
                     {% if message.reasoning_info %}
                     <details class="reasoning-info-details">
                         <summary>Reasoning/Usage Info</summary>
-                        <div id="reasoning-{{ chat_id }}-{{ message.message_id }}" class="json-editor-container reasoning-info-content"></div>
+                         {# Target div for JSON editor (matches JS) - use internal_id for uniqueness #}
+                        <div id="reasoning-{{ conversation_key }}-{{ message.internal_id }}" class="json-editor-container reasoning-info-content"></div>
                     </details>
                     {% endif %}
                     {% if message.error_traceback %}
@@ -78,10 +82,10 @@
             {% endfor %}
         </div>
         {% else %}
-        <p>No messages found for this chat.</p>
+        <p>No messages found for this conversation.</p> {# Updated message #}
         {% endfor %}
     {% else %}
-        <p>No message history found for any chat.</p>
+        <p>No message history found.</p> {# Updated message #}
     {% endif %}
 </main>
 
@@ -96,7 +100,8 @@
     function initializeEditor(targetId, jsonData) {
         const target = document.getElementById(targetId);
         if (!target) {
-            console.error(`Element with ID ${targetId} not found.`);
+            // Don't log error if element is simply not present (e.g. no tool calls)
+            // console.error(`Element with ID ${targetId} not found.`);
             return;
         }
         // Ensure jsonData is an object or attempt parsing if it's a string
@@ -114,6 +119,13 @@
              console.warn(`Invalid data type for ${targetId}, displaying as text:`, jsonData);
              content.text = String(jsonData); // Display as string representation
         }
+
+        // Avoid initializing if no content
+        if (content.json === undefined && content.text === undefined) {
+            target.textContent = '(No data)'; // Or leave empty
+            return;
+        }
+
 
         try {
             new createJSONEditor({
@@ -133,14 +145,17 @@
         }
     }
 
-    {% for chat_id, messages in history_by_chat.items() %}
+    // Use conversation_key and internal_id for unique IDs
+    {% for conversation_key, messages in history_by_chat.items() %}
         {% for message in messages %}
             {% if message.role == 'assistant' and message.tool_calls_info %}{% for tool_call in message.tool_calls_info %}
-            initializeEditor('tool-args-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}', {{ tool_call.arguments | tojson | safe }});
-            initializeEditor('tool-resp-{{ chat_id }}-{{ message.message_id }}-{{ loop.index }}', {{ tool_call.response_content | tojson | safe }}); // Assuming response is JSON or string
+            {# Initialize editor for arguments using unique ID #}
+            initializeEditor('tool-args-{{ conversation_key }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.arguments | tojson | safe }});
+            {# Removed initialization for tool response editor within assistant message block #}
             {% endfor %}{% endif %}
             {% if message.reasoning_info %}
-            initializeEditor('reasoning-{{ chat_id }}-{{ message.message_id }}', {{ message.reasoning_info | tojson | safe }});
+             {# Initialize editor for reasoning using unique ID #}
+            initializeEditor('reasoning-{{ conversation_key }}-{{ message.internal_id }}', {{ message.reasoning_info | tojson | safe }});
             {% endif %}
         {% endfor %}
     {% endfor %}
