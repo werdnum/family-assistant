@@ -195,7 +195,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     def __init__(
         self,
         telegram_service: "TelegramService",  # Accept the service instance
-        application: Application,
         allowed_user_ids: List[int],
         developer_chat_id: Optional[int],
         processing_service: "ProcessingService",  # Use string quote for forward reference
@@ -219,6 +218,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self.telegram_service = telegram_service  # Store the service instance
 
         # application is accessed via telegram_service.application if needed
+        # self.application = application # Removed assignment
         self.allowed_user_ids = allowed_user_ids
         self.developer_chat_id = developer_chat_id
         self.processing_service = processing_service  # Store the service instance
@@ -502,7 +502,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         processing_error_traceback,  # Capture traceback directly
                     ) = await self.processing_service.generate_llm_response_for_chat(
                         db_context=db_context,  # Pass db context
-                        application=self.application,
+                        application=self.telegram_service.application, # Access via service
                         interface_type=interface_type,  # Pass identifiers
                         conversation_id=conversation_id,  # Pass identifiers
                         trigger_content_parts=trigger_content_parts,
