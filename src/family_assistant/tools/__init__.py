@@ -1025,7 +1025,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                         "description": "Optional. Set to true if the event should become an all-day event, false if it should become timed. Requires appropriate new_start/end_time.",
                     },
                 },
-                "required": [
+                "required": [ # TODO: Logically, at least one 'new_' field is needed, but schema doesn't enforce
                     "uid",
                     "calendar_url",
                 ],  # Require UID and URL, at least one 'new_' field should be provided logically
@@ -1053,7 +1053,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                 },
                 "required": ["uid", "calendar_url"],
             },
-            "requires_confirmation": True,
+            # "requires_confirmation": True, # Flag removed, configured via provider init
         },
     },
 ]
@@ -1333,29 +1333,25 @@ class ConfirmingToolsProvider(ToolsProvider):
     def __init__(
         self,
         wrapped_provider: ToolsProvider,
+        tools_requiring_confirmation: Set[str], # Explicitly pass the set of names
         confirmation_timeout: float = DEFAULT_CONFIRMATION_TIMEOUT,
         calendar_config: Optional[Dict[str, Any]] = None,  # Needed for fetching details
     ):
         self.wrapped_provider = wrapped_provider
+        self._tools_requiring_confirmation = tools_requiring_confirmation # Store the provided set
         self.confirmation_timeout = confirmation_timeout
         self.calendar_config = calendar_config  # Store calendar config
         self._tool_definitions: Optional[List[Dict[str, Any]]] = None
-        self._tools_requiring_confirmation: Set[str] = set()
+        # Remove internal tracking flag, rely on external config
         logger.info(
-            f"ConfirmingToolsProvider initialized, wrapping {type(wrapped_provider).__name__}. Timeout: {confirmation_timeout}s."
+            f"ConfirmingToolsProvider initialized, wrapping {type(wrapped_provider).__name__}. "
+            f"Tools requiring confirmation: {self._tools_requiring_confirmation}. Timeout: {confirmation_timeout}s."
         )
 
     async def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        # Fetch definitions from the wrapped provider and identify tools needing confirmation
+        # Fetch definitions from the wrapped provider. No longer needs to identify tools here.
         if self._tool_definitions is None:
             definitions = await self.wrapped_provider.get_tool_definitions()
-            self._tools_requiring_confirmation = set()
-            for tool_def in definitions:
-                func_def = tool_def.get("function", {})
-                if func_def.get("requires_confirmation"):
-                    name = func_def.get("name")
-                    if name:
-                        self._tools_requiring_confirmation.add(name)
             self._tool_definitions = definitions
             logger.info(
                 f"ConfirmingToolsProvider identified {len(self._tools_requiring_confirmation)} tools requiring confirmation: {self._tools_requiring_confirmation}"
