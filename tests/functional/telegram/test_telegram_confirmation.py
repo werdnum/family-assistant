@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 # --- Constants for Test ---
 USER_CHAT_ID = 123
 USER_ID = 12345
-TOOL_NAME_SENSITIVE = "add_or_update_note" # Tool requiring confirmation for this test
+# Use add_or_update_note, but configure it dynamically in tests
+TOOL_NAME_SENSITIVE = "add_or_update_note"
 
 
 @pytest.mark.asyncio
@@ -44,14 +45,13 @@ async def test_confirmation_accepted(
     fix = telegram_handler_fixture
     user_message_id = 401
     assistant_final_message_id = 402
-    # Update test data for adding a note
+    # Test data for adding a note (confirmed scenario)
     test_note_title = f"Confirmed Note Add {uuid.uuid4()}"
     test_note_content = "This note required confirmation."
     user_text = f"Please add this note: Title={test_note_title}, Content={test_note_content}"
     tool_call_id = f"call_accept_{uuid.uuid4()}"
     llm_request_tool_text = "Okay, I can add that note for you."
     llm_final_success_text = f"Okay, I have added the note titled '{test_note_title}'."
-    tool_success_result_text = f"Note '{test_note_title}' added/updated successfully." # Adjust expected tool result text
 
     # --- Mock LLM Rules ---
     # 1. User asks -> LLM requests sensitive tool
@@ -64,8 +64,8 @@ async def test_confirmation_accepted(
             "id": tool_call_id, "type": "function",
             "function": {
                 "name": TOOL_NAME_SENSITIVE,
-                # Update arguments for add_or_update_note
-                "arguments": json.dumps({"title": test_note_title, "content": test_note_content})
+                # Arguments for add_or_update_note
+                "arguments": json.dumps({"title": test_note_title, "content": test_note_content}),
             }
         }]
     )
@@ -76,8 +76,8 @@ async def test_confirmation_accepted(
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
-            # Check content to ensure it's the success message
-            and tool_success_result_text in msg.get("content", "")
+            # Check content to ensure it's the *actual success message* from the real tool
+            and "Success" in msg.get("content", "")
             for msg in messages
         )
 
@@ -86,18 +86,16 @@ async def test_confirmation_accepted(
 
     fix.mock_llm.rules = [rule_request_tool, rule_final_success]
 
+    # --- Configure Confirmation for this test ---
+    # Explicitly tell the provider to require confirmation for the note tool
+    fix.tools_provider.tools_requiring_confirmation = {TOOL_NAME_SENSITIVE}
+
     # --- Mock Confirmation Manager ---
     # Simulate user ACCEPTING the confirmation prompt
     fix.mock_confirmation_manager.request_confirmation.return_value = True
 
     # --- Mock Tool Execution ---
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
-    with patch.object(
-        fix.wrapped_tools_provider, 'execute_tool',
-        new_callable=AsyncMock, return_value=tool_success_result_text # Simulate tool success
-    ) as mock_execute_wrapped:
-
-        # --- Mock Bot Response ---
         mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
         fix.mock_bot.send_message.return_value = mock_final_message
 
@@ -110,17 +108,14 @@ async def test_confirmation_accepted(
 
         # Assert
         with soft_assertions():
-            # 1. Confirmation Manager was called
+            # 1. Confirmation Manager was called because the tool was configured to require it
             fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
             # Check args if needed (prompt text, tool name, tool args)
             conf_args, conf_kwargs = fix.mock_confirmation_manager.request_confirmation.call_args
             assert_that(conf_kwargs.get("tool_name")).is_equal_to(TOOL_NAME_SENSITIVE)
-            # Update expected arguments for add_or_update_note
             assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content})
 
             # 2. Wrapped Tool Provider's execute_tool was called (meaning confirmation passed)
-            # Check the call happened without strict context matching
-            mock_execute_wrapped.assert_awaited_once()
             # Manually check the arguments we care about from the call args
             call_args_tuple, call_kwargs_dict = mock_execute_wrapped.await_args
             # Expected call signature: execute_tool(self, name, arguments, context) - self is implicit
@@ -128,7 +123,6 @@ async def test_confirmation_accepted(
             called_arguments = call_args_tuple[1] if len(call_args_tuple) > 1 else call_kwargs_dict.get("arguments")
             assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
             assert_that(called_arguments).is_equal_to(
-                # Update expected arguments for add_or_update_note
                 {"title": test_note_title, "content": test_note_content})
 
             # 3. LLM was called twice (request tool, process result)
@@ -160,11 +154,11 @@ async def test_confirmation_rejected(
     user_text = f"Add note: Title={test_note_title}, Content={test_note_content}"
     tool_call_id = f"call_reject_{uuid.uuid4()}"
     llm_request_tool_text = "Okay, I can add that note."
-    # Message sent by ConfirmingToolsProvider on cancellation
-    expected_cancel_text_raw = f"Okay, I will not run the tool `{TOOL_NAME_SENSITIVE}`."
+    # Message returned by ConfirmingToolsProvider on rejection
+    tool_cancel_result_text = f"Okay, I will not run the tool `{TOOL_NAME_SENSITIVE}`."
+    # Final message from LLM after seeing the cancellation
+    llm_final_cancel_text = "Okay, I have cancelled the request."
 
-    # --- Mock LLM Rules ---
-    # Only need the rule to request the tool
     def request_delete_matcher(messages, tools, tool_choice):
         return user_text in get_last_message_text(messages)
 
@@ -174,8 +168,8 @@ async def test_confirmation_rejected(
             "id": tool_call_id, "type": "function",
             "function": {
                 "name": TOOL_NAME_SENSITIVE,
-                # Update arguments for add_or_update_note
-                "arguments": json.dumps({"title": test_note_title, "content": test_note_content})
+                # Arguments for add_or_update_note
+                "arguments": json.dumps({"title": test_note_title, "content": test_note_content}),
             }
         }]
     )
@@ -190,6 +184,12 @@ async def test_confirmation_rejected(
     mock_cancel_message = AsyncMock(spec=Message, message_id=assistant_cancel_message_id)
     fix.mock_bot.send_message.return_value = mock_cancel_message
 
+    # --- Mock Tool Execution (Should NOT be called) ---
+    # Patch the *wrapped* provider's execute_tool to fail if called
+    with patch.object(
+        fix.wrapped_tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_wrapped:
+
     # --- Create Mock Update/Context ---
     update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
     context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
@@ -202,16 +202,16 @@ async def test_confirmation_rejected(
         # 1. Confirmation Manager was called
         fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
 
-        # 2. LLM was called TWICE (incorrectly) - once to request tool, once after cancellation
+        # 2. Wrapped tool provider was NOT called
+        mock_execute_wrapped.assert_not_awaited()
+
+        # 3. LLM was called twice (request tool, process cancellation result)
         assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
 
-        # 3. The *default* LLM response was sent, not the cancellation message (due to incorrect second LLM call)
+        # 4. Final cancellation message sent to user (matching rule_final_cancel)
         fix.mock_bot.send_message.assert_awaited_once()
         args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
-        # Get the default response text from the mock LLM used in the fixture
-        expected_cancel_escaped_text = telegramify_markdown.markdownify(
-            fix.mock_llm.default_response.content
-        )
+        expected_cancel_escaped_text = telegramify_markdown.markdownify(llm_final_cancel_text)
         assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(expected_cancel_escaped_text)
         assert_that(kwargs_bot["reply_to_message_id"]).described_as("Final bot message reply ID").is_equal_to(user_message_id)
 
@@ -234,11 +234,11 @@ async def test_confirmation_timed_out(
     user_text = f"Add note: Title={test_note_title}, Content={test_note_content}"
     tool_call_id = f"call_timeout_{uuid.uuid4()}"
     llm_request_tool_text = "Okay, I can add that note."
-    # Message sent by ConfirmingToolsProvider on timeout/cancellation
-    expected_timeout_text_raw = f"Okay, I will not run the tool `{TOOL_NAME_SENSITIVE}`."
+    # Message returned by ConfirmingToolsProvider on timeout (same as rejection)
+    tool_timeout_result_text = f"Okay, I will not run the tool `{TOOL_NAME_SENSITIVE}`."
+    # Final message from LLM after seeing the timeout/cancellation
+    llm_final_timeout_text = "Okay, the request timed out and was cancelled."
 
-    # --- Mock LLM Rules ---
-    # Only need the rule to request the tool
     def request_delete_matcher(messages, tools, tool_choice):
         return user_text in get_last_message_text(messages)
 
@@ -248,8 +248,8 @@ async def test_confirmation_timed_out(
             "id": tool_call_id, "type": "function",
             "function": {
                 "name": TOOL_NAME_SENSITIVE,
-                # Update arguments for add_or_update_note
-                "arguments": json.dumps({"title": test_note_title, "content": test_note_content})
+                # Arguments for add_or_update_note
+                "arguments": json.dumps({"title": test_note_title, "content": test_note_content}),
             }
         }]
     )
@@ -264,6 +264,12 @@ async def test_confirmation_timed_out(
     mock_timeout_message = AsyncMock(spec=Message, message_id=assistant_timeout_message_id)
     fix.mock_bot.send_message.return_value = mock_timeout_message
 
+    # --- Mock Tool Execution (Should NOT be called) ---
+    # Patch the *wrapped* provider's execute_tool to fail if called
+    with patch.object(
+        fix.wrapped_tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_wrapped:
+
     # --- Create Mock Update/Context ---
     update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
     context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
@@ -275,16 +281,18 @@ async def test_confirmation_timed_out(
     with soft_assertions():
         # 1. Confirmation Manager was called
         fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+        # 2. Wrapped tool provider was NOT called
+        mock_execute_wrapped.assert_not_awaited()
 
-        # 2. LLM was called TWICE (incorrectly) - once to request tool, once after timeout message
+        # 3. LLM was called twice (request tool, process timeout/cancellation result)
         assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
 
-        # 3. The *default* LLM response was sent, not the timeout message (due to incorrect second LLM call)
+        # 4. Final timeout message sent to user (matching rule_final_timeout)
         fix.mock_bot.send_message.assert_awaited_once()
         args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
         # Get the default response text from the mock LLM used in the fixture
         expected_timeout_escaped_text = telegramify_markdown.markdownify(
-            fix.mock_llm.default_response.content
+            llm_final_timeout_text
         )
         assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(expected_timeout_escaped_text)
         assert_that(kwargs_bot["reply_to_message_id"]).described_as("Final bot message reply ID").is_equal_to(user_message_id)
