@@ -115,9 +115,8 @@ async def init_db():
             alembic_cfg = AlembicConfig(alembic_ini_path)
             # Set the sqlalchemy.url for Alembic using the engine's URL
             alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
-            # Explicitly set script_location relative to the INI file's directory
-            alembic_script_location = os.path.join(os.path.dirname(alembic_ini_path), "alembic")
-            alembic_cfg.set_main_option("script_location", alembic_script_location)
+            # Removed explicit setting of script_location. AlembicConfig should resolve
+            # the relative path 'alembic' from alembic.ini based on alembic_ini_path.
 
             # --- Check for alembic_version table using inspect ---
             # Use run_sync on the async engine's connection to perform the check
