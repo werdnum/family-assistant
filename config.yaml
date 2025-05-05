@@ -16,5 +16,13 @@ llm_parameters:
   #   temperature: 0.75
   #   top_k: 50
 
+# Tools requiring explicit user confirmation before execution.
+# Provide a list of tool names (strings).
+# This list is overridden by the TOOLS_REQUIRING_CONFIRMATION environment variable if set.
+tools_requiring_confirmation:
+  # - delete_calendar_event
+  # - modify_calendar_event
+  # - tool_that_posts_online
+
 # Other future configurations can go here
 # e.g., web_server_port: 8080
