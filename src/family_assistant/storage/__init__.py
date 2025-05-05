@@ -105,15 +105,6 @@ async def init_db():
                 # Set the sqlalchemy.url for Alembic using the engine's URL
                 alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
 
-                # --- Function to check current revision (run synchronously) ---
-                def check_revision_sync(sync_conn):
-                    script = ScriptDirectory.from_config(alembic_cfg)
-                    with EnvironmentContext(
-                        alembic_cfg, script, opts={'connection': sync_conn}
-                    ) as context:
-                        return context.get_current_revision()
-
-                # --- Check current revision ---
                 # Try upgrading first. If it fails, assume DB needs initial setup.
                 try:
                     logger.info("Attempting Alembic upgrade to 'head'...")
