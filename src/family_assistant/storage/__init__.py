@@ -135,12 +135,18 @@ async def init_db():
                     await conn.run_sync(metadata.create_all)
                 logger.info("Tables created.")
 
-                # Stamp the database with the latest revision
-                logger.info("Stamping database with Alembic 'head'...")
                 try:
+                    # Explicitly ensure the alembic_version table exists
+                    logger.info("Ensuring Alembic version table exists...")
+                    await asyncio.to_thread(alembic_command.ensure_version, alembic_cfg)
+                    logger.info("Alembic version table ensured.")
+
+                    # Stamp the database with the latest revision
+                    logger.info("Stamping database with Alembic 'head'...")
                     await asyncio.to_thread(alembic_command.stamp, alembic_cfg, "head")
                     logger.info("Database schema stamped.")
                 except Exception as stamp_err:
+                     # Covers errors from both ensure_version and stamp
                      logger.error(f"Failed to stamp database after creation: {stamp_err}", exc_info=True)
                      raise # Re-raise stamping error
 
