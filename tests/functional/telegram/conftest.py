@@ -105,15 +105,10 @@ async def telegram_handler_fixture(
     # Create a deep copy to avoid modifying the original definition list
     import copy
     test_local_tools_definition = copy.deepcopy(local_tools_definition)
-    # Mark 'add_or_update_note' as requiring confirmation for testing
-    for tool_def in test_local_tools_definition:
-        if tool_def.get("function", {}).get("name") == "add_or_update_note":
-            tool_def["function"]["requires_confirmation"] = True
-            break
 
     # Instantiate with actual local tools
     local_tools_provider = LocalToolsProvider(
-        definitions=test_local_tools_definition, # Use the MODIFIED definitions
+        definitions=test_local_tools_definition, # Use the UNMODIFIED definitions for this fixture
         implementations=test_local_tool_functions, # Use potentially extended functions
         embedding_generator=None, # Add mock/real embedding generator if needed by tools
         calendar_config=None, # Add accepted calendar_config argument
