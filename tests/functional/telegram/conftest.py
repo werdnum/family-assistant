@@ -19,6 +19,8 @@ from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.telegram_bot import (
     BatchProcessor,
+    # Import necessary tools components
+    AVAILABLE_FUNCTIONS as local_tool_functions,
     ConfirmationUIManager,
     NoBatchMessageBatcher,
     TelegramService,
@@ -28,6 +30,7 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
     ToolExecutionContext,
+    TOOLS_DEFINITION as local_tools_definition, # Import tool definitions
 )
 
 # Define a named tuple to hold the fixture results for easier access
@@ -85,9 +88,10 @@ async def telegram_handler_fixture(
     # 2. Instantiate Real Components with Mocks
     # Configure ToolsProvider (using Local for simplicity initially)
     # Ensure tools don't rely on external services not mocked
+    # Instantiate with actual local tools
     local_tools_provider = LocalToolsProvider(
-        definitions=[], # Provide required definitions (empty list for now)
-        implementations={}, # Provide required implementations (empty dict for now)
+        definitions=local_tools_definition, # Use imported definitions
+        implementations=local_tool_functions, # Use imported functions
         embedding_generator=None, # Add mock/real embedding generator if needed by tools
         calendar_config=None, # Add accepted calendar_config argument
     )
