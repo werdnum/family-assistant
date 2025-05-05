@@ -96,7 +96,6 @@ async def telegram_handler_fixture(
         llm_client=mock_llm,
         tools_provider=tools_provider,
         prompts={},  # Add mock/real prompts if needed
-        config={},  # Add necessary config
     )
 
     # Function to get DB context for the specific test engine
