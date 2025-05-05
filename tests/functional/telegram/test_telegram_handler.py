@@ -342,8 +342,9 @@ async def test_tool_result_in_subsequent_history(
     assert_that(fix.mock_llm._calls).described_as("LLM Calls after Turn 1").is_length(2)
     assert_that(fix.mock_bot.send_message.await_count).described_as("Bot Sends after Turn 1").is_equal_to(1)
     # Retrieve the args/kwargs for the first call
+    expected_escaped_text_1 = telegramify_markdown.markdownify(llm_final_confirmation_text_1)
     call_1_args, call_1_kwargs = fix.mock_bot.send_message.call_args_list[0]
-    assert_that(call_1_kwargs["text"]).contains(llm_final_confirmation_text_1)
+    assert_that(call_1_kwargs["text"]).described_as("Bot message text (Turn 1)").is_equal_to(expected_escaped_text_1)
 
     # --- Act (Turn 2) ---
     update_2 = create_mock_update(user_text_2, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id_2)
