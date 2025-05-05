@@ -116,15 +116,9 @@ async def init_db():
             # Set the sqlalchemy.url for Alembic using the engine's URL
             alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
 
-            # Explicitly resolve and set the script_location based on the INI file's directory
-            # This is necessary because Alembic might not correctly resolve the relative path
-            # defined in the INI when the config is loaded programmatically.
-            ini_directory = os.path.dirname(alembic_ini_path)
-            # Get the relative script location from the config (defaults to 'alembic' if somehow missing)
-            relative_script_location = alembic_cfg.get_main_option("script_location", "alembic")
-            absolute_script_location = os.path.abspath(os.path.join(ini_directory, relative_script_location))
-            logger.info(f"Setting absolute script_location for Alembic: {absolute_script_location}")
-            alembic_cfg.set_main_option("script_location", absolute_script_location)
+            # Rely on the script_location set in alembic.ini (now absolute)
+            # No need to calculate or override it here.
+            logger.info(f"Using script_location from Alembic config: {alembic_cfg.get_main_option('script_location')}")
 
             # --- Check for alembic_version table using inspect ---
             # Use run_sync on the async engine's connection to perform the check
