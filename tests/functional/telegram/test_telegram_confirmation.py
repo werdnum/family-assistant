@@ -96,29 +96,42 @@ async def test_confirmation_accepted(
 
     # --- Mock Tool Execution ---
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
-    mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
+    # Patch the *wrapped* provider's execute_tool to capture the call
+    with patch.object(
+        fix.wrapped_tools_provider, 'execute_tool', new_callable=AsyncMock
+    ) as mock_execute_wrapped:
+        # Simulate the tool execution succeeding after confirmation
+        mock_execute_wrapped.return_value = {"result": f"Success: Note '{test_note_title}' added."}
 
-    # Act
-    await fix.handler.message_handler(update, context)
+        # --- Mock Bot Response ---
+        # Mock the final message sent by the bot after successful tool execution
+        mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
+        fix.mock_bot.send_message.return_value = mock_final_message
 
-    # Assert
+        # --- Create Mock Update/Context ---
+        update = create_mock_update(user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id)
+        context = create_mock_context(fix.mock_telegram_service.application, bot_data={"processing_service": fix.processing_service})
+
+        # Act
+        await fix.handler.message_handler(update, context)
+
+        # Assert (moved inside the 'with patch' block to access mock_execute_wrapped)
         with soft_assertions():
             # 1. Confirmation Manager was called because the tool was configured to require it
             fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
-            # Check args if needed (prompt text, tool name, tool args)
+            # Check args
             conf_args, conf_kwargs = fix.mock_confirmation_manager.request_confirmation.call_args
             assert_that(conf_kwargs.get("tool_name")).is_equal_to(TOOL_NAME_SENSITIVE)
             assert_that(conf_kwargs.get("tool_args")).is_equal_to({"title": test_note_title, "content": test_note_content})
 
             # 2. Wrapped Tool Provider's execute_tool was called (meaning confirmation passed)
-            # Manually check the arguments we care about from the call args
+            mock_execute_wrapped.assert_awaited_once() # Check it was called
+            # Check arguments passed to the wrapped tool
             call_args_tuple, call_kwargs_dict = mock_execute_wrapped.await_args
-            # Expected call signature: execute_tool(self, name, arguments, context) - self is implicit
             called_name = call_args_tuple[0] if call_args_tuple else call_kwargs_dict.get("name")
             called_arguments = call_args_tuple[1] if len(call_args_tuple) > 1 else call_kwargs_dict.get("arguments")
             assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
-            assert_that(called_arguments).is_equal_to(
-                {"title": test_note_title, "content": test_note_content})
+            assert_that(called_arguments).is_equal_to({"title": test_note_title, "content": test_note_content})
 
             # 3. LLM was called twice (request tool, process result)
             assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
