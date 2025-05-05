@@ -15,6 +15,8 @@ from fastapi.responses import (
     RedirectResponse,
     JSONResponse,
 )  # Added JSONResponse
+from starlette.middleware import Middleware  # Added Middleware
+from starlette.middleware.sessions import SessionMiddleware
 from fastapi.templating import Jinja2Templates
 from fastapi import Query # Added Query for pagination parameters
 from typing import List, Dict, Optional, Any  # Added Any
@@ -24,6 +26,8 @@ import uuid  # Added import
 import pathlib  # Import pathlib for finding template/static dirs
 import telegram.error  # Import telegram errors for specific checking in health check
 import aiofiles  # For reading docs
+from starlette.config import Config  # For reading env vars
+from authlib.integrations.starlette_client import OAuth  # For OIDC
 from markdown_it import MarkdownIt  # For rendering docs
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -90,12 +94,6 @@ MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests"  # TODO: Consider making this
 # Load server URL from environment variable (used in templates)
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 
-app = FastAPI(
-    title="Family Assistant Web Interface",
-    docs_url="/api/docs",  # URL for Swagger UI
-    redoc_url="/api/redoc",  # URL for ReDoc
-)
-
 
 # --- Determine base path for templates and static files ---
 # This assumes web_server.py is at src/family_assistant/web_server.py
@@ -150,6 +148,50 @@ except NameError:
 
 # Markdown renderer instance
 md_renderer = MarkdownIt("gfm-like")  # Use GitHub Flavored Markdown preset
+
+# --- Auth Configuration ---
+# Load config from environment variables or .env file
+config = Config() # Removed .env assumption, reads directly from env
+
+# OIDC configuration
+OIDC_CLIENT_ID = config("OIDC_CLIENT_ID", default=None)
+OIDC_CLIENT_SECRET = config("OIDC_CLIENT_SECRET", default=None)
+OIDC_DISCOVERY_URL = config("OIDC_DISCOVERY_URL", default=None)
+SESSION_SECRET_KEY = config("SESSION_SECRET_KEY", default=None) # Needed for session middleware
+
+# Check if OIDC is configured
+AUTH_ENABLED = bool(
+    OIDC_CLIENT_ID and OIDC_CLIENT_SECRET and OIDC_DISCOVERY_URL and SESSION_SECRET_KEY
+)
+
+oauth = None
+middleware = []
+
+if AUTH_ENABLED:
+    logger.info("OIDC Authentication is ENABLED.")
+    if not SESSION_SECRET_KEY:
+        logger.error("SESSION_SECRET_KEY is not set. Auth cannot be enabled.")
+        AUTH_ENABLED = False # Disable if secret key is missing
+    else:
+        # Add session middleware *first*
+        middleware.append(
+            Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY)
+        )
+        # Initialize Authlib OAuth client
+        oauth = OAuth(config)
+        # Register the OIDC provider (e.g., Keycloak)
+        oauth.register(
+            name='oidc_provider', # Can be any name, used internally
+            client_id=OIDC_CLIENT_ID,
+            client_secret=OIDC_CLIENT_SECRET,
+            server_metadata_url=OIDC_DISCOVERY_URL,
+            client_kwargs={
+                'scope': 'openid email profile', # Standard scopes
+                # Add any provider-specific kwargs here if needed
+            }
+        )
+else:
+    logger.info("OIDC Authentication is DISABLED (required environment variables not set).")
 
 
 # --- Dependency for Database Context ---
@@ -208,6 +250,60 @@ async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
 md_renderer = MarkdownIt("gfm-like")  # Use GitHub Flavored Markdown preset
 
 
+# --- Authentication Middleware/Dependency ---
+
+# Define paths that should be publicly accessible (no login required)
+PUBLIC_PATHS = [
+    re.compile(r"^/login$"),
+    re.compile(r"^/logout$"),
+    re.compile(r"^/auth$"),
+    re.compile(r"^/webhook(/.*)?$"),
+    re.compile(r"^/api(/.*)?$"), # Covers /api/docs, /api/redoc, /api/tools/* etc.
+    re.compile(r"^/health$"),
+    re.compile(r"^/static(/.*)?$"),
+    re.compile(r"^/favicon.ico$"),
+]
+
+async def require_login_middleware(request: Request, call_next):
+    """Middleware to enforce login for protected routes if AUTH_ENABLED."""
+    if not AUTH_ENABLED:
+        # If auth is disabled, proceed without checking
+        return await call_next(request)
+
+    # Check if the path is explicitly public
+    for pattern in PUBLIC_PATHS:
+        if pattern.match(request.url.path):
+            return await call_next(request)
+
+    # All other paths are considered protected if auth is enabled
+    user = request.session.get('user')
+    if not user:
+        # Store the intended destination URL to redirect after successful login
+        request.session['redirect_after_login'] = str(request.url)
+        logger.debug(f"No user session for protected path {request.url.path}, redirecting.")
+        # Use url_for to generate the login URL robustly
+        return RedirectResponse(url=request.url_for('login'), status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+    # User is logged in, proceed to the requested endpoint
+    return await call_next(request)
+
+# Add the auth middleware if enabled (must be after SessionMiddleware)
+if AUTH_ENABLED:
+    middleware.append(
+        Middleware( # Use Starlette's Middleware class to wrap the function
+            require_login_middleware # Pass the async function directly
+        )
+    )
+
+# --- FastAPI App Initialization ---
+app = FastAPI(
+    title="Family Assistant Web Interface",
+    docs_url="/api/docs",  # URL for Swagger UI (part of /api/, public)
+    redoc_url="/api/redoc", # URL for ReDoc (part of /api/, public)
+    middleware=middleware, # Add configured middleware
+)
+
+
 # --- Pydantic model for search results (optional but good practice) ---
 class SearchResultItem(BaseModel):
     embedding_id: int
@@ -236,7 +332,51 @@ class DocumentUploadResponse(BaseModel):
     task_enqueued: bool
 
 
-# --- Routes ---
+# --- Auth Routes (only added if AUTH_ENABLED) ---
+if AUTH_ENABLED and oauth:
+    @app.route('/login')
+    async def login(request: Request):
+        """Redirects the user to the OIDC provider for authentication."""
+        # Construct the redirect URI for the callback endpoint
+        # Ensure the scheme matches what's expected by the OIDC provider (http/https)
+        # Use request.url.scheme or configure explicitly if behind proxy
+        redirect_uri = request.url_for('auth')
+        # Check if running behind a proxy and need to force HTTPS
+        if request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https":
+             # Ensure redirect_uri uses https if the request indicates it
+             redirect_uri = redirect_uri.replace("http://", "https://", 1)
+
+        logger.debug(f"Initiating login redirect to OIDC provider. Callback URL: {redirect_uri}")
+        return await oauth.oidc_provider.authorize_redirect(request, redirect_uri)
+
+    @app.route('/auth') # Callback URL
+    async def auth(request: Request):
+        """Handles the callback from the OIDC provider after authentication."""
+        try:
+            token = await oauth.oidc_provider.authorize_access_token(request)
+            user_info = token.get('userinfo') # OIDC standard claim
+            if user_info:
+                request.session['user'] = dict(user_info) # Store user info in session
+                logger.info(f"User logged in successfully: {user_info.get('email') or user_info.get('sub')}")
+                # Redirect to originally requested URL or homepage
+                redirect_url = request.session.pop('redirect_after_login', '/')
+                return RedirectResponse(url=redirect_url)
+            else:
+                logger.warning("OIDC callback successful but no userinfo found in token.")
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not fetch user information.")
+        except Exception as e:
+            logger.error(f"Error during OIDC authentication callback: {e}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Authentication failed: {e}")
+
+    @app.route('/logout')
+    async def logout(request: Request):
+        """Clears the user session."""
+        request.session.pop('user', None)
+        logger.info("User logged out.")
+        # Redirect to home, which will trigger login again if protected
+        return RedirectResponse(url='/')
+
+# --- Application Routes ---
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -244,10 +384,12 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
     """Serves the main page listing all notes."""
     notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
-        "index.html",
+        "index.html.j2", # Use consistent naming if preferred
         {
             "request": request,
             "notes": notes,
+            "user": request.session.get("user"), # Pass user info to template
+            "auth_enabled": AUTH_ENABLED, # Indicate if auth is on
             "server_url": SERVER_URL,
         },  # Pass SERVER_URL
     )
@@ -257,7 +399,7 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
 async def add_note_form(request: Request):
     """Serves the form to add a new note."""
     return templates.TemplateResponse(
-        "edit_note.html", {"request": request, "note": None, "is_new": True}
+        "edit_note.html.j2", {"request": request, "note": None, "is_new": True, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
     )
 
 
@@ -270,7 +412,7 @@ async def edit_note_form(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
-        "edit_note.html", {"request": request, "note": note, "is_new": False}
+        "edit_note.html.j2", {"request": request, "note": note, "is_new": False, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
     )
 
 
@@ -407,8 +549,14 @@ async def view_message_history(
         }
 
         return templates.TemplateResponse(
-            "message_history.html",
+            "message_history.html.j2",
             {"request": request, "paged_items": paged_items, "pagination": pagination_info}, # Pass paginated items and info
+            {
+                "request": request,
+                "paged_items": paged_items,
+                "pagination": pagination_info,
+                "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,
+            },
         )
     except Exception as e:
         logger.error(f"Error fetching message history: {e}", exc_info=True)
@@ -445,7 +593,13 @@ async def view_tools(request: Request):
 
             rendered_tools.append(tool_copy)
         return templates.TemplateResponse(
-            "tools.html", {"request": request, "tools": rendered_tools}
+            "tools.html.j2",
+            {
+                "request": request,
+                "tools": rendered_tools,
+                "user": request.session.get("user"),
+                "auth_enabled": AUTH_ENABLED,
+            },
         )
     except Exception as e:
         logger.error(f"Error fetching tool definitions: {e}", exc_info=True)
@@ -458,13 +612,15 @@ async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get
     try:
         tasks = await get_all_tasks(db_context, limit=200)  # Pass context, fetch tasks
         return templates.TemplateResponse(
-            "tasks.html",
+            "tasks.html.j2",
             {
                 "request": request,
                 "tasks": tasks,
                 # Add json filter to Jinja environment if not default
                 # Pass 'tojson' filter if needed explicitly, or handle in template
                 # jinja_env.filters['tojson'] = json.dumps # Example
+                "user": request.session.get("user"),
+                "auth_enabled": AUTH_ENABLED,
             },
         )
     except Exception as e:
@@ -591,7 +747,7 @@ async def vector_search_form(
         # Continue without pre-populated dropdowns
 
     return templates.TemplateResponse(
-        "vector_search.html",
+        "vector_search.html.j2",
         {
             "request": request,
             "results": None,
@@ -601,6 +757,8 @@ async def vector_search_form(
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys to template
+            "user": request.session.get("user"),
+            "auth_enabled": AUTH_ENABLED,
         },
     )
 
@@ -804,7 +962,7 @@ async def handle_vector_search(
             error = "Could not load filter options from database."
 
     return templates.TemplateResponse(
-        "vector_search.html",
+        "vector_search.html.j2",
         {
             "request": request,
             "results": results,
@@ -814,6 +972,8 @@ async def handle_vector_search(
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys
+            "user": request.session.get("user"),
+            "auth_enabled": AUTH_ENABLED,
         },
     )
 
@@ -1191,7 +1351,7 @@ async def serve_documentation(request: Request, filename: str):
         available_docs = _scan_user_docs()
 
         return templates.TemplateResponse(
-            "doc_page.html",
+            "doc_page.html.j2",
             {
                 "request": request,
                 "content": content_html,
@@ -1199,6 +1359,8 @@ async def serve_documentation(request: Request, filename: str):
                 "available_docs": available_docs,
                 "server_url": SERVER_URL,
             },
+            {
+                "request": request, "content": content_html, "title": filename, "available_docs": available_docs, "server_url": SERVER_URL, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,},
         )
     except Exception as e:
         logger.error(
