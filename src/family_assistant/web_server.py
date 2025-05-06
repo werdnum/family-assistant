@@ -359,8 +359,8 @@ if AUTH_ENABLED and oauth:
         redirect_uri = request.url_for('auth')
         # Check if running behind a proxy and need to force HTTPS
         if request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https":
-             # Ensure redirect_uri uses https if the request indicates it
-             redirect_uri = redirect_uri.replace("http://", "https://", 1)
+             # Ensure redirect_uri uses https if the request indicates it.
+             redirect_uri = redirect_uri.replace(scheme="https")
 
         logger.debug(f"Initiating login redirect to OIDC provider. Callback URL: {redirect_uri}")
         return await oauth.oidc_provider.authorize_redirect(request, redirect_uri)
