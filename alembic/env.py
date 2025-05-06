@@ -64,10 +64,12 @@ def do_run_migrations(connection: Connection) -> None:
     # This is necessary when env.py is run via run_sync, as the context
     # might not automatically inherit all settings.
     script_location = config.get_main_option("script_location")
-    context.configure(connection=connection, target_metadata=target_metadata, version_table_schema=target_metadata.schema, include_schemas=True, script_location=script_location)
 
     dialect_name = connection.dialect.name
-    logger.info(f"Starting database migrations... Detected dialect: {dialect_name}")
+    logger.info(f"do_run_migrations: Starting... Dialect: {dialect_name}, Connection: {connection!r}")
+    logger.info(f"do_run_migrations: Configuring context with script_location: {script_location}")
+    context.configure(connection=connection, target_metadata=target_metadata, version_table_schema=target_metadata.schema, include_schemas=True, script_location=script_location)
+    logger.info(f"do_run_migrations: Context configured. Revision argument: {context.get_revision_argument()}")
     try:
         # SQLite does not support transactional DDL, so run migrations outside a transaction block.
         if dialect_name == "sqlite":
