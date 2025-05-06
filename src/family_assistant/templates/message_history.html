@@ -24,61 +24,39 @@
 <main>
     {% if paged_items %}
         {% for conversation_key, messages in paged_items %} {# Iterate over paginated items #}
+        {% set turns = messages %} {# Rename var for clarity #}
         <div class="chat-group">
-            <div class="chat-header">Conversation: {{ conversation_key }}</div> {# Updated header #}
-            {% for message in messages | reverse %} {# Apply reverse filter here #}
-            <div class="message {{ message.role }}-message">
-                <div class="message-meta">
-                    {{ message.role.capitalize() }} - {{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S %Z') }}
-                    {# Display Interface ID if available, otherwise Internal ID #}
-                    (ID: {% if message.interface_message_id %}{{ message.interface_message_id }}{% else %}Internal #{{ message.internal_id }}{% endif %})
-                    {# Optionally display Turn ID and Thread Root ID for debugging/context #}
-                    {% if message.turn_id %}<br>Turn: {{ message.turn_id }}{% endif %}
-                    {% if message.thread_root_id %}<br>Thread Root: {{ message.thread_root_id }}{% endif %}
-                </div>
-                <div class="message-content">
-                    <div class="message-content-text">{{ message.content }}</div> <!-- Wrap text content -->
-                    {# Display tool *requests* made by the assistant. Iterate over tool_calls_info #}
-                    {% if message.role == 'assistant' and message.tool_calls_info %}
-                    <details class="tool-info-details">
-                        {# Use tool_calls_info which seems to hold the detailed dicts #}
-                        <summary>Tool Calls Requested ({{ message.tool_calls_info|length }})</summary>
-                        <div class="tool-info-content">
-                            {% for tool_call in message.tool_calls_info %} {# Iterate over tool_calls_info #}
-                            <div class="tool-call-item">
-                                {# Safely access dictionary keys #}
-                                <strong>Function:</strong> {{ tool_call.get('function_name', 'N/A') }}<br>
-                                <strong>Call ID:</strong> {{ tool_call.get('call_id', 'N/A') }}<br>
-                                <strong>Arguments:</strong>
-                                {# Target div for JSON editor (matches JS) #}
-                                <div id="tool-args-{{ conversation_key }}-{{ message.internal_id }}-{{ loop.index }}" class="json-editor-container"></div>
-                                {# Removed duplicate/incorrect block displaying call_id, args, response #}
-                            </div>
-                            {% if not loop.last %}<hr class="tool-separator">{% endif %}
+            <div class="chat-header">Conversation: {{ conversation_key }}</div>
+            {% for turn in turns %}
+                <div class="turn-group">
+                    {# --- Display User Message (if exists) --- #}
+                    {% if turn.user_message %}
+                        {% set message = turn.user_message %}
+                        {% include 'partials/message_display.html' %}
+                    {% else %}
+                        <div class="message system-message"><div class="message-meta">System/Orphan Turn Start (ID: {{ turn.turn_id or 'None' }})</div></div>
+                    {% endif %}
+
+                    {# --- Display Final Assistant Message (if exists and different from user msg) --- #}
+                    {% if turn.final_assistant_message and turn.final_assistant_message != turn.user_message %}
+                        {% set message = turn.final_assistant_message %}
+                        {% include 'partials/message_display.html' %}
+                    {% elif turn.user_message and not turn.final_assistant_message and (turn.trace_messages | length) > 1 %}
+                         {# Indicate if no assistant response was generated for a user msg #}
+                         <div class="message system-message"><div class="message-meta">No final assistant response found for this turn (ID: {{ turn.turn_id or 'None' }}).</div></div>
+                    {% endif %}
+
+                    {# --- Collapsible Trace --- #}
+                    <details class="turn-trace">
+                        <summary>Show full trace ({{ turn.trace_messages | length }} message{{ 's' if turn.trace_messages | length != 1 else '' }}, Turn ID: {{ turn.turn_id or 'None' }})</summary>
+                        <div class="turn-trace-content">
+                            {% for message in turn.trace_messages %}
+                                {# Render each message within the trace using the partial #}
+                                {% include 'partials/message_display.html' %}
                             {% endfor %}
                         </div>
                     </details>
-                    {% endif %}
-                    {# Display tool *results* from tool messages #}
-                    {% if message.role == 'tool' and message.tool_calls_info %}
-                        {# Similar structure can be added here if needed to display tool results explicitly #}
-                        {# For now, the result is usually part of message.content for 'tool' roles #}
-                    {% endif %}
-                    {% if message.reasoning_info %}
-                    <details class="reasoning-info-details">
-                        <summary>Reasoning/Usage Info</summary>
-                         {# Target div for JSON editor (matches JS) - use internal_id for uniqueness #}
-                        <div id="reasoning-{{ conversation_key }}-{{ message.internal_id }}" class="json-editor-container reasoning-info-content"></div>
-                    </details>
-                    {% endif %}
-                    {% if message.error_traceback %}
-                    <details class="error-traceback-details">
-                        <summary class="error-summary">Processing Error Occurred</summary>
-                        <pre class="error-traceback-content">{{ message.error_traceback }}</pre>
-                    </details>
-                    {% endif %}
                 </div>
-            </div>
             {% endfor %}
         </div>
         {% else %}
@@ -164,11 +142,11 @@
 
     // Use conversation_key and internal_id for unique IDs
     {% for conversation_key, messages in paged_items %} {# Use paginated items here too #}
-        {% for message in messages %} {# No need to reverse here, just for loops #}
+    {% set turns = messages %} {# Rename for clarity #}
+        {% for turn in turns %}{% for message in turn.trace_messages %} {# Iterate through ALL trace messages for JS init #}
             {% if message.role == 'assistant' and message.tool_calls_info %}{% for tool_call in message.tool_calls_info %}
-            {# Initialize editor for arguments using unique ID #}
-            initializeEditor('tool-args-{{ conversation_key }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.arguments | tojson | safe }});
-            {# Removed initialization for tool response editor within assistant message block #}
+            {# Initialize editor for arguments using unique ID from partial #}
+            initializeEditor('tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.arguments | tojson | safe }});
             {% endfor %}{% endif %}
             {% if message.reasoning_info %}
              {# Initialize editor for reasoning using unique ID #}
@@ -176,6 +154,7 @@
             {% endif %}
         {% endfor %}
     {% endfor %}
+    {% endfor %} {# End paged_items loop #}
 
 </script>
 </body>

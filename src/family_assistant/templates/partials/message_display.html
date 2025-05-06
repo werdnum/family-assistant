@@ -1,0 +1,49 @@
+{# Partial template for displaying a single message dict #}
+{# Expects 'message' and 'conversation_key' variables in context #}
+<div class="message {{ message.role }}-message">
+    <div class="message-meta">
+        {{ message.role.capitalize() }} - {{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S %Z') }}
+        {# Display Interface ID if available, otherwise Internal ID #}
+        (ID: {% if message.interface_message_id %}{{ message.interface_message_id }}{% else %}#{{ message.internal_id }}{% endif %})
+        {# Optionally display Turn ID and Thread Root ID for debugging/context #}
+        {% if message.turn_id %}<br>Turn: {{ message.turn_id }}{% endif %}
+        {% if message.thread_root_id %}<br>Thread Root: {{ message.thread_root_id }}{% endif %}
+    </div>
+    <div class="message-content">
+        <div class="message-content-text">{{ message.content }}</div> <!-- Wrap text content -->
+        {# Display tool *requests* made by the assistant. Iterate over tool_calls_info #}
+        {% if message.role == 'assistant' and message.tool_calls_info %}
+        <details class="tool-info-details">
+            {# Use tool_calls_info which seems to hold the detailed dicts #}
+            <summary>Tool Calls Requested ({{ message.tool_calls_info|length }})</summary>
+            <div class="tool-info-content">
+                {% for tool_call in message.tool_calls_info %} {# Iterate over tool_calls_info #}
+                <div class="tool-call-item">
+                    {# Safely access dictionary keys #}
+                    <strong>Function:</strong> {{ tool_call.get('function_name', 'N/A') }}<br>
+                    <strong>Call ID:</strong> {{ tool_call.get('call_id', 'N/A') }}<br>
+                    <strong>Arguments:</strong>
+                    {# Target div for JSON editor (matches JS) - Use turn_id + internal_id + loop index for uniqueness #}
+                    <div id="tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}" class="json-editor-container"></div>
+                </div>
+                {% if not loop.last %}<hr class="tool-separator">{% endif %}
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
+        {% if message.reasoning_info %}
+        <details class="reasoning-info-details">
+            <summary>Reasoning/Usage Info</summary>
+             {# Target div for JSON editor (matches JS) - use turn_id + internal_id for uniqueness #}
+            <div id="reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}" class="json-editor-container reasoning-info-content"></div>
+        </details>
+        {% endif %}
+        {% if message.error_traceback %}
+        <details class="error-traceback-details">
+            <summary class="error-summary">Processing Error Occurred</summary>
+            <pre class="error-traceback-content">{{ message.error_traceback }}</pre>
+        </details>
+        {% endif %}
+    </div>
+</div>
+
