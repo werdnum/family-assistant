@@ -286,13 +286,6 @@ async def require_login_middleware(request: Request, call_next):
     # User is logged in, proceed to the requested endpoint
     return await call_next(request)
 
-# --- Add Authentication Middleware to the list if enabled ---
-# This needs to be done *after* SessionMiddleware is added and *before* FastAPI app init
-if AUTH_ENABLED:
-    # IMPORTANT: Add this *after* SessionMiddleware in the list
-    middleware.append(
-        Middleware(require_login_middleware) # Wrap the async function
-    )
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -302,6 +295,11 @@ app = FastAPI(
     middleware=middleware, # Add configured middleware
 )
 
+# --- Add Authentication Middleware (after app initialization) ---
+# This ensures it wraps the SessionMiddleware correctly.
+if AUTH_ENABLED:
+    app.middleware("http")(require_login_middleware)
+    logger.info("Authentication middleware (require_login_middleware) applied.")
 
 # --- Mount Static Files (after app initialization) ---
 if 'static_dir' in locals() and static_dir.is_dir():
