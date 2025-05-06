@@ -20,7 +20,10 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None and not logger.handlers:
+# Only configure logging if a config file is set AND the root logger has no handlers,
+# indicating that the main application hasn't configured logging yet.
+if config.config_file_name is not None and not logging.root.handlers:
+    logger.info(f"Alembic env.py: Configuring logging from {config.config_file_name} as root logger has no handlers.")
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
