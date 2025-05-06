@@ -22,35 +22,43 @@
 </header>
 
 <main>
-    {% if paged_items %}
-        {% for conversation_key, messages in paged_items %} {# Iterate over paginated items #}
-        {% set turns = messages %} {# Rename var for clarity #}
+    {% if paged_conversations %}
+        {% for conversation_key, turns_list in paged_conversations %} {# Iterate over paginated conversations #}
         <div class="chat-group">
             <div class="chat-header">Conversation: {{ conversation_key }}</div>
-            {% for turn in turns %}
+            {% for turn_display_obj in turns_list %}
                 <div class="turn-group">
-                    {# --- Display User Message (if exists) --- #}
-                    {% if turn.user_message %}
-                        {% set message = turn.user_message %}
+                    {# --- Display Initiating User Message (if exists for this turn object) --- #}
+                    {% if turn_display_obj.initiating_user_message %}
+                        {% set message = turn_display_obj.initiating_user_message %}
                         {% include 'partials/message_display.html' %}
-                    {% else %}
-                        <div class="message system-message"><div class="message-meta">System/Orphan Turn Start (ID: {{ turn.turn_id or 'None' }})</div></div>
                     {% endif %}
 
-                    {# --- Display Final Assistant Message (if exists and different from user msg) --- #}
-                    {% if turn.final_assistant_message and turn.final_assistant_message != turn.user_message %}
-                        {% set message = turn.final_assistant_message %}
+                    {# --- Display Final Assistant Response (if exists for this turn object AND different from initiating message) --- #}
+                    {% if turn_display_obj.final_assistant_response and turn_display_obj.final_assistant_response != turn_display_obj.initiating_user_message %}
+                        {% set message = turn_display_obj.final_assistant_response %}
                         {% include 'partials/message_display.html' %}
-                    {% elif turn.user_message and not turn.final_assistant_message and (turn.trace_messages | length) > 1 %}
-                         {# Indicate if no assistant response was generated for a user msg #}
-                         <div class="message system-message"><div class="message-meta">No final assistant response found for this turn (ID: {{ turn.turn_id or 'None' }}).</div></div>
+                    {% endif %}
+
+                    {# --- System message if a turn_id group has neither primary user nor assistant message to show --- #}
+                    {# This might happen if a turn_id is valid but has no user (expected for some turns) and no final assistant response #}
+                    {# (e.g. only tool messages or intermediate assistant messages without content in the group) #}
+                    {% if not turn_display_obj.initiating_user_message and not turn_display_obj.final_assistant_response %}
+                        <div class="message system-message">
+                            <div class="message-meta">Intermediate processing (Turn ID: {{ turn_display_obj.turn_id or 'None' }})</div>
+                        </div>
+                    {% elif turn_display_obj.initiating_user_message and not turn_display_obj.final_assistant_response and turn_display_obj.initiating_user_message.role == 'user' and (turn_display_obj.all_messages_in_group | length) > 1 %}
+                         {# User message was shown, but no distinct final assistant response for this turn #}
+                         <div class="message system-message">
+                            <div class="message-meta">No distinct final assistant response generated for this user input (Turn ID: {{ turn_display_obj.turn_id or 'None' }}). See trace.</div>
+                        </div>
                     {% endif %}
 
                     {# --- Collapsible Trace --- #}
                     <details class="turn-trace">
-                        <summary>Show full trace ({{ turn.trace_messages | length }} message{{ 's' if turn.trace_messages | length != 1 else '' }}, Turn ID: {{ turn.turn_id or 'None' }})</summary>
+                        <summary>Show full trace ({{ turn_display_obj.all_messages_in_group | length }} message{{ 's' if turn_display_obj.all_messages_in_group | length != 1 else '' }}, Turn ID: {{ turn_display_obj.turn_id or 'None' }})</summary>
                         <div class="turn-trace-content">
-                            {% for message in turn.trace_messages %}
+                            {% for message in turn_display_obj.all_messages_in_group %}
                                 {# Render each message within the trace using the partial #}
                                 {% include 'partials/message_display.html' %}
                             {% endfor %}
@@ -59,8 +67,8 @@
                 </div>
             {% endfor %}
         </div>
-        {% else %}
-        <p>No messages found for this conversation.</p> {# Updated message #}
+        {% else %} {# Corresponds to if paged_conversations loop #}
+        <p>No messages found in this conversation group.</p>
         {% endfor %}
     {% else %}
         <p>No message history found.</p> {# Updated message #}
@@ -141,20 +149,25 @@
     }
 
     // Use conversation_key and internal_id for unique IDs
-    {% for conversation_key, messages in paged_items %} {# Use paginated items here too #}
-    {% set turns = messages %} {# Rename for clarity #}
-        {% for turn in turns %}{% for message in turn.trace_messages %} {# Iterate through ALL trace messages for JS init #}
-            {% if message.role == 'assistant' and message.tool_calls_info %}{% for tool_call in message.tool_calls_info %}
+    {% for conversation_key, turns_list in paged_conversations %}
+        {% for turn_display_obj in turns_list %}
+            {% for message in turn_display_obj.all_messages_in_group %} {# Iterate through ALL messages in the group for JS init #}
+            {# Tool Calls #}
+            {% if message.role == 'assistant' and message.tool_calls %} {# Use 'tool_calls' as parsed in web_server.py #}
+                {% for tool_call in message.tool_calls %}
             {# Initialize editor for arguments using unique ID from partial #}
-            initializeEditor('tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.arguments | tojson | safe }});
-            {% endfor %}{% endif %}
+            {# Ensure arguments are accessed correctly from the parsed structure #}
+            initializeEditor('tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.get('function', {}).get('arguments') | tojson | safe }});
+                {% endfor %}
+            {% endif %}
+            {# Reasoning Info #}
             {% if message.reasoning_info %}
              {# Initialize editor for reasoning using unique ID #}
-            initializeEditor('reasoning-{{ conversation_key }}-{{ message.internal_id }}', {{ message.reasoning_info | tojson | safe }});
+            initializeEditor('reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}', {{ message.reasoning_info | tojson | safe }});
             {% endif %}
+            {% endfor %} {# End message in all_messages_in_group loop #}
         {% endfor %}
-    {% endfor %}
-    {% endfor %} {# End paged_items loop #}
+    {% endfor %} {# End paged_conversations loop #}
 
 </script>
 </body>
