@@ -168,9 +168,10 @@ async def _run_alembic_command(engine: AsyncEngine, config: AlembicConfig, comma
             """Wrapper to run alembic commands with existing connection."""
             # Make the connection available to env.py via config attributes
             cfg.attributes["connection"] = sync_conn
-            logger.debug(f"Executing alembic_command.{command_name}(...) using connection {sync_conn!r}")
+            logger.info(f"Executing alembic_command.{command_name}(...) using connection {sync_conn!r}")
             try:
                 cmd_func(cfg, *cmd_args)
+                logger.info(f"Alembic command '{command_name}' executed successfully with args ({command_args_str}).")
             except Exception as e: # Catch any exception from the command itself
                  logger.error(f"Error executing Alembic command '{command_name}' inside run_sync: {e!r}", exc_info=True)
                  raise # Re-raise to be caught by the outer try block
@@ -290,6 +291,9 @@ async def init_db():
             last_exception = e  # Update last_exception for generic errors too
             if attempt == max_retries - 1:
                 logger.error(f"Max retries exceeded for init_db due to error: {e}", exc_info=True)
+        # finally:
+        #     logger.info(f"init_db end iteration {attempt}")
+
 
         # If it wasn't the last attempt and an exception occurred, wait and retry
         if attempt < max_retries - 1 and last_exception:
