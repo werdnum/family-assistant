@@ -230,6 +230,7 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
         )
     return generator
 
+# --- Authentication Middleware Function ---
 
 # Dependency function to retrieve the ToolsProvider instance from app state
 async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
@@ -249,9 +250,6 @@ async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
 
 # Markdown renderer instance
 md_renderer = MarkdownIt("gfm-like")  # Use GitHub Flavored Markdown preset
-
-
-# --- Authentication Middleware/Dependency ---
 
 # Define paths that should be publicly accessible (no login required)
 PUBLIC_PATHS = [
@@ -288,6 +286,13 @@ async def require_login_middleware(request: Request, call_next):
     # User is logged in, proceed to the requested endpoint
     return await call_next(request)
 
+# --- Add Authentication Middleware to the list if enabled ---
+# This needs to be done *after* SessionMiddleware is added and *before* FastAPI app init
+if AUTH_ENABLED:
+    # IMPORTANT: Add this *after* SessionMiddleware in the list
+    middleware.append(
+        Middleware(require_login_middleware) # Wrap the async function
+    )
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -297,10 +302,6 @@ app = FastAPI(
     middleware=middleware, # Add configured middleware
 )
 
-# --- Add Authentication Middleware (after app initialization) ---
-if AUTH_ENABLED:
-    # Use the decorator to apply the middleware function correctly
-    app.middleware("http")(require_login_middleware)
 
 # --- Mount Static Files (after app initialization) ---
 if 'static_dir' in locals() and static_dir.is_dir():
