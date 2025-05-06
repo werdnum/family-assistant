@@ -565,12 +565,10 @@ async def view_message_history(
 
         return templates.TemplateResponse(
             "message_history.html",
-            {"request": request, "paged_items": paged_items, "pagination": pagination_info}, # Pass paginated items and info
             {
                 "request": request,
                 "paged_items": paged_items,
                 "pagination": pagination_info, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,
-                "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,
             },
         )
     except Exception as e:
