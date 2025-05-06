@@ -69,20 +69,25 @@ def do_run_migrations(connection: Connection) -> None:
     logger.info(f"do_run_migrations: Starting... Dialect: {dialect_name}, Connection: {connection!r}")
     logger.info(f"do_run_migrations: Configuring context with script_location: {script_location}")
     context.configure(connection=connection, target_metadata=target_metadata, version_table_schema=target_metadata.schema, include_schemas=True, script_location=script_location)
-    # Only log revision argument if it exists (e.g., for upgrade/downgrade, not stamp/ensure_version)
-    revision_argument = context.context_opts.get('destination_rev', None)
-    if revision_argument:
+
+    # Safely get revision argument for logging
+    try:
+        revision_argument = context.get_revision_argument()
         logger.info(f"do_run_migrations: Context configured. Destination Revision: {revision_argument}")
-    else:
+    except KeyError:
         logger.info("do_run_migrations: Context configured. (No destination revision applicable for this command)")
+        revision_argument = "(N/A for this command)" # Placeholder for logs below
+
     try:
         # SQLite does not support transactional DDL, so run migrations outside a transaction block.
         if dialect_name == "sqlite":
-            logger.info(f"Running SQLite migrations (non-transactional DDL) for target: {context.get_revision_argument()}")
+            # Use the safely retrieved or placeholder revision_argument
+            logger.info(f"Running SQLite migrations (non-transactional DDL) for target: {revision_argument}")
             context.run_migrations()
         else:
             with context.begin_transaction():
-                logger.info(f"Running migrations within transaction for target: {context.get_revision_argument()}")
+                # Use the safely retrieved or placeholder revision_argument
+                logger.info(f"Running migrations within transaction for target: {revision_argument}")
                 context.run_migrations()
         logger.info("Database migrations completed successfully.")
     except Exception as e:
