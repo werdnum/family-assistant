@@ -554,7 +554,11 @@ async def view_message_history(
             # Handle potential None turn_id by giving it a very early timestamp for sorting
             sorted_turn_ids = sorted(
                 grouped_by_turn_id.keys(),
-                key=lambda tid: grouped_by_turn_id[tid][0]['timestamp'] if tid is not None and grouped_by_turn_id[tid] else datetime.min.replace(tzinfo=timezone.utc)
+                key=lambda tid: (
+                    (lambda ts: ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc))(
+                        grouped_by_turn_id[tid][0]['timestamp']
+                    )
+                ) if tid is not None and grouped_by_turn_id[tid] else datetime.min.replace(tzinfo=timezone.utc)
             )
 
             for turn_id in sorted_turn_ids:
