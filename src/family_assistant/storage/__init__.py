@@ -216,6 +216,7 @@ async def init_db():
         except Exception as e:
             # Catch any other exception during init (e.g., from Alembic commands)
             logger.warning(f"Error during database initialization (attempt {attempt + 1}/{max_retries}): {e}", exc_info=True)
+            last_exception = e  # Update last_exception for generic errors too
             if attempt == max_retries - 1:
                 logger.error(f"Max retries exceeded for init_db due to error: {e}", exc_info=True)
             else:
