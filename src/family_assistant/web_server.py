@@ -535,21 +535,68 @@ async def view_message_history(
     try:
         history_by_chat = await get_grouped_message_history(db_context)
 
+        # --- Process into Turns using turn_id ---
+        turns_by_chat = {}
+        for conversation_key, messages in history_by_chat.items():
+            # Ensure messages are sorted chronologically (assuming get_grouped_message_history returns them sorted)
+            conversation_turns = []
+            grouped_by_turn_id = {}
+
+            # Group messages by turn_id (including None)
+            for msg in messages:
+                turn_id = msg.get('turn_id') # Can be None
+                if turn_id not in grouped_by_turn_id:
+                    grouped_by_turn_id[turn_id] = []
+                grouped_by_turn_id[turn_id].append(msg)
+
+            # Process each group into a turn object
+            # Sort turns by the timestamp of their *first* message
+            # Handle potential None turn_id by giving it a very early timestamp for sorting
+            sorted_turn_ids = sorted(
+                grouped_by_turn_id.keys(),
+                key=lambda tid: grouped_by_turn_id[tid][0]['timestamp'] if tid is not None else datetime.min.replace(tzinfo=timezone.utc)
+            )
+
+            for turn_id in sorted_turn_ids:
+                turn_messages = grouped_by_turn_id[turn_id]
+                user_message = None
+                final_assistant_message = None
+
+                # Find first user message (often the one with turn_id=None that starts the interaction)
+                # or just the first message if no user message in this group
+                if turn_messages:
+                     user_candidates = [m for m in turn_messages if m['role'] == 'user']
+                     user_message = user_candidates[0] if user_candidates else turn_messages[0] # Fallback to first message
+
+                # Find the last assistant message in this turn group
+                assistant_candidates = [m for m in turn_messages if m['role'] == 'assistant']
+                if assistant_candidates:
+                    final_assistant_message = assistant_candidates[-1] # Get the last one
+
+                conversation_turns.append({
+                    "turn_id": turn_id, # Store the turn_id itself
+                    "user_message": user_message,
+                    "final_assistant_message": final_assistant_message,
+                    "trace_messages": turn_messages # Keep all messages for the trace
+                })
+            turns_by_chat[conversation_key] = conversation_turns
+
         # --- Pagination Logic ---
         # Convert dict items to a list for slicing. Note: Dict order is not guaranteed
         # before Python 3.7, but generally insertion order from 3.7+.
         # If a specific order of *conversations* is needed (e.g., by most recent message),
         # more complex sorting would be required here *before* pagination.
-        all_items = list(history_by_chat.items())
+        # Paginate based on the processed turns_by_chat
+        all_items = list(turns_by_chat.items())
         total_conversations = len(all_items)
         total_pages = (total_conversations + per_page - 1) // per_page
 
         # Ensure page number is valid
         current_page = min(page, total_pages) if total_pages > 0 else 1
-
         start_index = (current_page - 1) * per_page
         end_index = start_index + per_page
         paged_items = all_items[start_index:end_index]
+
 
         # Pagination metadata for the template
         pagination_info = {
