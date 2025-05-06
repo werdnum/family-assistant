@@ -145,9 +145,9 @@ async def init_db():
                         cfg.attributes["connection"] = sync_conn
                         alembic_command.upgrade(cfg, revision)
                     try:
-                        logger.info(f"Attempting to run Alembic upgrade to '{revision}' via run_sync...")
-                        await conn.run_sync(sync_upgrade_command, alembic_cfg, revision)
-                        logger.info(f"Alembic upgrade to '{revision}' completed successfully via run_sync.")
+                        logger.info(f"Attempting to run Alembic upgrade to 'head' via run_sync...")
+                        await conn.run_sync(sync_upgrade_command, alembic_cfg, "head") # Pass "head" explicitly
+                        logger.info(f"Alembic upgrade to 'head' completed successfully via run_sync.")
                     except KeyError as ke:
                         logger.error(f"Caught KeyError during Alembic upgrade: Args={ke.args}, Repr={repr(ke)}", exc_info=True)
                         raise # Re-raise the KeyError
