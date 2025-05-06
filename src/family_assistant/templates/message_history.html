@@ -75,7 +75,7 @@
     {% endif %}
 </main>
 
-{% if pagination and pagination.total_pages > 1 %}
+{% if pagination and pagination.total_pages and pagination.total_pages > 1 %}
 <nav class="pagination">
     {% if pagination.has_prev %}
     <a href="?page={{ pagination.prev_num }}&per_page={{ pagination.per_page }}">&laquo; Previous</a>
