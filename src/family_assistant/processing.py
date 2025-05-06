@@ -496,7 +496,7 @@ class ProcessingService:
         # --- Refactored Parameters ---
         interface_type: str,
         conversation_id: str,
-        turn_id: str,  # Added turn_id parameter
+        turn_id: Optional[str] = None,  # Made turn_id optional
         trigger_content_parts: List[Dict[str, Any]],
         trigger_interface_message_id: Optional[str], # Added trigger message ID
         user_name: str,
@@ -524,6 +524,10 @@ class ProcessingService:
         Returns:
             A tuple: (List of generated turn messages, Final reasoning info dict or None, Error traceback string or None).
         """
+        # If turn_id is not provided, generate one.
+        if turn_id is None:
+            turn_id = str(uuid.uuid4())
+            logger.info(f"turn_id not provided, generated new one: {turn_id}")
         try:
             raw_history_messages = (
                 await storage.get_recent_history(  # Use storage directly with context
