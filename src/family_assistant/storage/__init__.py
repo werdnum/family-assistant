@@ -6,7 +6,7 @@ import os # Added for path manipulation
 import random
 import traceback
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy import inspect, Table, Column, String, MetaData as SqlaMetaData, insert # Import inspect and table creation components
+from sqlalchemy import inspect, Table, Column, String, MetaData as SqlaMetaData, insert, text # Import inspect, text and table creation components
 from dateutil import rrule
 from dateutil.parser import isoparse
 # from alembic.script import ScriptDirectory # No longer needed for manual stamping
@@ -137,6 +137,27 @@ async def init_db():
             logger.info(f"Alembic version table found: {has_version_table}")
             if has_version_table:
                 # Database is already managed by Alembic, upgrade it.
+
+                # --- Query and log current revision BEFORE upgrade ---
+                logger.info("Querying current revision from alembic_version table BEFORE upgrade...")
+                async with engine.connect() as conn_check:
+                    def sync_check_revision(sync_conn) -> Optional[str]:
+                        inspector = inspect(sync_conn)
+                        if "alembic_version" in inspector.get_table_names():
+                            try:
+                                result = sync_conn.execute(text("SELECT version_num FROM alembic_version"))
+                                row = result.scalar_one_or_none() # Fetch one scalar value or None
+                                return row
+                            except Exception as query_err:
+                                logger.error(f"Error querying alembic_version table: {query_err}", exc_info=True)
+                                return None
+                        else:
+                             logger.warning("Alembic version table disappeared unexpectedly before querying revision.")
+                             return None # Should not happen in this branch
+                    current_revision = await conn_check.run_sync(sync_check_revision)
+                    logger.info(f"Current Alembic revision in DB before upgrade attempt: {current_revision or 'Could not determine'}")
+                # --- End Query ---
+
                 logger.info("Alembic version table found. Upgrading database to 'head'...")
                 # Use run_sync for the upgrade command
                 async with engine.connect() as conn:
