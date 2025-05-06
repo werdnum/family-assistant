@@ -160,12 +160,17 @@ AUTH_ENABLED = bool(
 oauth = None
 middleware = []
 
+# Always add SessionMiddleware if the secret key is set,
+# as routes might try to access request.session even if auth is disabled.
+if SESSION_SECRET_KEY:
+    middleware.append(
+        Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY)
+    )
+    logger.info("SessionMiddleware added (SESSION_SECRET_KEY is set).")
+
 if AUTH_ENABLED:
     logger.info("OIDC Authentication is ENABLED.")
-    if not SESSION_SECRET_KEY:
-        logger.error("SESSION_SECRET_KEY is not set. Auth cannot be enabled.")
-        AUTH_ENABLED = False # Disable if secret key is missing
-    else:
+    if oauth is None: # Initialize OAuth only if auth is fully enabled
         # Add session middleware *first*
         middleware.append(
             Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY)
@@ -184,7 +189,12 @@ if AUTH_ENABLED:
             }
         )
 else:
-    logger.info("OIDC Authentication is DISABLED (required environment variables not set).")
+    if not SESSION_SECRET_KEY:
+        logger.warning("SessionMiddleware NOT added (SESSION_SECRET_KEY is not set). Accessing request.session will fail.")
+    if not (OIDC_CLIENT_ID and OIDC_CLIENT_SECRET and OIDC_DISCOVERY_URL):
+        logger.info("OIDC Authentication is DISABLED (OIDC environment variables not set).")
+    elif not SESSION_SECRET_KEY:
+        logger.warning("OIDC Authentication is DISABLED (SESSION_SECRET_KEY is not set, required for sessions).")
 
 
 # --- Dependency for Database Context ---
