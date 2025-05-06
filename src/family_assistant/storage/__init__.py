@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 import asyncio
 import os # Added for path manipulation
 import random
+import traceback
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy import inspect, Table, Column, String, MetaData as SqlaMetaData, insert # Import inspect and table creation components
 from dateutil import rrule
@@ -253,7 +254,7 @@ async def init_db():
         f"Database initialization failed after all retries. Last error: {last_exception}",
         exc_info=last_exception  # Pass the last exception for traceback logging
     )
-    raise RuntimeError(f"Database initialization failed after multiple retries. Last error: {last_exception}")
+    raise RuntimeError(f"Database initialization failed after multiple retries. Last error: {last_exception!r} with traceback " + "\n".join(traceback.format_exception(last_exception)))
 
 # --- Exports ---
 # Re-export functions and tables from specific modules to maintain the facade
