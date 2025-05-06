@@ -16,7 +16,7 @@ from fastapi.responses import (
     RedirectResponse,
     JSONResponse,
 )  # Added JSONResponse
-from starlette.middleware import Middleware  # Added Middleware
+from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.templating import Jinja2Templates
 from fastapi import Query # Added Query for pagination parameters
@@ -25,6 +25,7 @@ from datetime import datetime, timezone, date  # Added date
 import json
 import uuid  # Added import
 import pathlib  # Import pathlib for finding template/static dirs
+import zoneinfo # Added zoneinfo for timezone handling
 import telegram.error  # Import telegram errors for specific checking in health check
 import aiofiles  # For reading docs
 from starlette.config import Config  # For reading env vars
@@ -533,6 +534,15 @@ async def view_message_history(
 ):
     """Serves the page displaying message history."""
     try:
+        # Get the configured timezone from app state
+        app_config = getattr(request.app.state, "config", {})
+        config_timezone_str = app_config.get("timezone", "UTC") # Default to UTC if not found
+        try:
+            config_tz = zoneinfo.ZoneInfo(config_timezone_str)
+        except zoneinfo.ZoneInfoNotFoundError:
+            logger.warning(f"Configured timezone '{config_timezone_str}' not found, defaulting to UTC for history view.")
+            config_tz = zoneinfo.ZoneInfo("UTC")
+
         history_by_chat = await get_grouped_message_history(db_context)
 
         # --- Process into Turns using turn_id ---
@@ -555,10 +565,10 @@ async def view_message_history(
             sorted_turn_ids = sorted(
                 grouped_by_turn_id.keys(),
                 key=lambda tid: (
-                    (lambda ts: ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc))(
+                    (lambda ts: ts.replace(tzinfo=config_tz) if ts.tzinfo is None else ts.astimezone(config_tz))(
                         grouped_by_turn_id[tid][0]['timestamp']
                     )
-                ) if tid is not None and grouped_by_turn_id[tid] else datetime.min.replace(tzinfo=timezone.utc)
+                ) if tid is not None and grouped_by_turn_id[tid] else datetime.min.replace(tzinfo=config_tz)
             )
 
             for turn_id in sorted_turn_ids:
