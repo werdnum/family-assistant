@@ -175,28 +175,34 @@ async def handle_llm_callback(
 
         # Call the ProcessingService.
         # NOTE: process_message returns the LIST of generated messages for the turn,
-        # not just the final content string.
+        # not just the final content string. We are now calling generate_llm_response_for_chat
         (
             generated_messages, # This is List[Dict[str, Any]]
-            tool_call_info,
-        ) = await processing_service.process_message(  # Assuming old return for now  # Use service from context
+            final_reasoning_info, # Capture reasoning
+            processing_error_traceback, # Capture error
+        ) = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,
-            messages=messages_for_llm,
             application=application,
             interface_type=interface_type,
             conversation_id=conversation_id,
+            turn_id=callback_turn_id, # Pass the generated turn_id
+            trigger_content_parts=[{"type": "text", "text": trigger_text}], # Pass the trigger text as content part
+            trigger_interface_message_id=None, # System trigger, no direct interface ID
+            user_name="System", # Callback initiated by system
+            replied_to_interface_id=None, # Not a reply in this context
             # No confirmation callback needed for system-triggered callbacks
             request_confirmation_callback=None,
         )
+        # The generated_messages already have turn_id and other metadata set by generate_llm_response_for_chat
+        # Find the final assistant message to send back to the user
+        final_llm_content_to_send = None
+        if generated_messages:
+            for msg in reversed(generated_messages):
+                if msg.get("content") and msg.get("role") == "assistant":
+                    final_llm_content_to_send = msg["content"]
+                    break
 
-        # Extract the content of the final assistant message from the list
-        final_assistant_message = next(
-            (m for m in reversed(generated_messages) if m.get("role") == "assistant"),
-            None,
-        )
-        llm_response_content = final_assistant_message.get("content") if final_assistant_message else None
-
-        if llm_response_content:
+        if final_llm_content_to_send:
             # Send the LLM's response back to the chat
             # Determine target chat_id based on interface type
             target_chat_id: Union[int, str]
@@ -205,7 +211,7 @@ async def handle_llm_callback(
             else:
                 target_chat_id = conversation_id  # Keep as string for other interfaces
 
-            formatted_response = format_llm_response_for_telegram(llm_response_content)
+            formatted_response = format_llm_response_for_telegram(final_llm_content_to_send)
             sent_message = await application.bot.send_message(  # type: ignore
                 chat_id=(
                     int(conversation_id)
@@ -220,42 +226,39 @@ async def handle_llm_callback(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
             )
 
-            # Store the callback trigger and response in history
-            try:
-                # Save trigger message
+            # History saving is now handled by generate_llm_response_for_chat and its caller (TelegramService)
+            # However, for system-triggered callbacks, the initial trigger message needs to be saved here.
+            # The messages returned by generate_llm_response_for_chat will be saved by the main loop,
+            # but that doesn't include the *initial* system trigger for the callback.
+
+            # Let's ensure the initial system trigger for the callback is saved.
+            # This was already done *before* calling generate_llm_response_for_chat.
+
+            # If the sent_message (assistant's response) needs its interface_message_id updated in the DB:
+            if sent_message:
+                # Find the corresponding assistant message in generated_messages to update its interface_message_id
+                # This assumes the last 'assistant' message in generated_messages is the one sent.
+                assistant_msg_to_update = next(
+                    (m for m in reversed(generated_messages) if m.get("role") == "assistant" and m.get("internal_id")),
+                    None
+                )
+                if assistant_msg_to_update and assistant_msg_to_update.get("internal_id"):
+                    await storage.update_message_interface_id(
+                        db_context=db_context,
+                        internal_id=assistant_msg_to_update["internal_id"],
+                        interface_message_id=str(sent_message.message_id),
+                    )
+                else:
+                    logger.warning(f"Could not find saved assistant message to update interface_id for callback to {interface_type}:{conversation_id}")
+
+            # Save the *generated* messages (tool calls, assistant responses) from the LLM interaction
+            for msg_dict_to_save in generated_messages:
+                # Ensure all required fields are present or defaulted for add_message_to_history
+                # msg_dict_to_save is already populated by generate_llm_response_for_chat
                 await storage.add_message_to_history(
                     db_context=db_context,
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    interface_message_id=None,  # No interface ID for trigger
-                    turn_id=callback_turn_id,  # Associate with this turn
-                    thread_root_id=None,  # Callbacks likely don't belong to a user thread
-                    timestamp=datetime.now(timezone.utc),
-                    role="system",
-                    content=trigger_text,
+                    **msg_dict_to_save # Pass directly as it's prepared by generate_llm_response_for_chat
                 )
-                # Use the actual sent message ID if available and makes sense, else pseudo-ID
-                response_interface_id = (
-                    str(sent_message.message_id) if sent_message else None
-                )
-                await storage.add_message_to_history(
-                    db_context=db_context,
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    interface_message_id=response_interface_id,  # Store actual ID if sent
-                    turn_id=callback_turn_id,  # Associate with this turn
-                    thread_root_id=None,  # Callbacks likely don't belong to a user thread
-                    timestamp=datetime.now(timezone.utc),
-                    role="assistant",
-                    content=llm_response_content,
-                    tool_calls=tool_call_info,  # Use correct key
-                    reasoning_info=None,  # process_message doesn't return reasoning_info
-                )
-            except Exception as db_err:
-                logger.error(
-                    f"Failed to store callback history for {interface_type}:{conversation_id}: {db_err}",
-                    exc_info=True,
-                )            
 
         else:
             # Handle case where the turn completed but the final assistant message had no content
@@ -276,7 +279,11 @@ async def handle_llm_callback(
                 text="Sorry, I couldn't process the scheduled callback.",
             )
             # Raise an error to mark the task as failed if no response was generated
-            raise RuntimeError("LLM failed to generate response content for callback.")
+            # Check if there was a processing_error_traceback first
+            if processing_error_traceback:
+                raise RuntimeError(f"LLM callback failed. Traceback: {processing_error_traceback}")
+            else:
+                raise RuntimeError("LLM failed to generate response content for callback.")
 
     except Exception as e:
         # Catch errors during the generate_llm_response_for_chat call or sending/saving messages

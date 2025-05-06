@@ -496,6 +496,7 @@ class ProcessingService:
         # --- Refactored Parameters ---
         interface_type: str,
         conversation_id: str,
+        turn_id: str,  # Added turn_id parameter
         trigger_content_parts: List[Dict[str, Any]],
         trigger_interface_message_id: Optional[str], # Added trigger message ID
         user_name: str,
@@ -514,6 +515,7 @@ class ProcessingService:
             interface_type: Identifier for the interaction interface.
             conversation_id: Identifier for the conversation.
             trigger_content_parts: List of content parts for the triggering message.
+            turn_id: The pre-generated ID for this entire interaction turn.
             trigger_interface_message_id: The interface-specific ID of the triggering message.
             user_name: The user name to format into the system prompt.
             replied_to_interface_id: Optional interface-specific ID of the message being replied to.
@@ -740,7 +742,7 @@ class ProcessingService:
         }
         messages.append(trigger_message)
         # logger.debug(f"Appended trigger message to LLM history: {trigger_message}") # Removed to avoid logging potentially large content
-        turn_id = str(uuid.uuid4())  # Generate turn ID here
+        # turn_id is now passed as a parameter
 
         # --- Call Processing Logic ---
         # Tool definitions are now fetched inside process_message
