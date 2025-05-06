@@ -178,7 +178,7 @@ async def init_db():
                             # Make the connection available to env.py
                             cfg.attributes["connection"] = sync_conn # Restored line
                             try:
-                                logger.info("Executing alembic_command.ensure_version...")
+                                logger.info("Executing alembic_command.ensure_version... Config details: sqlalchemy.url=%s, script_location=%s", cfg.get_main_option("sqlalchemy.url"), cfg.get_main_option("script_location"))
                                 alembic_command.ensure_version(cfg) # Restored command
                             except KeyError as ke:
                                 logger.error(f"Caught KeyError during ensure_version: Args={ke.args}, Repr={repr(ke)}", exc_info=True)
@@ -193,7 +193,7 @@ async def init_db():
                             # Make the connection available to env.py
                             cfg.attributes["connection"] = sync_conn # Restored line
                             try:
-                                logger.info(f"Executing alembic_command.stamp with revision='{revision}'...")
+                                logger.info(f"Executing alembic_command.stamp with revision='{revision}'. Config details: sqlalchemy.url=%s, script_location=%s", cfg.get_main_option("sqlalchemy.url"), cfg.get_main_option("script_location"))
                                 alembic_command.stamp(cfg, revision) # Restored command
                             except KeyError as ke:
                                 logger.error(f"Caught KeyError during stamp: Args={ke.args}, Repr={repr(ke)}", exc_info=True)
