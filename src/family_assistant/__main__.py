@@ -84,7 +84,6 @@ from family_assistant.storage import (
     init_db,
     get_all_notes,
     add_message_to_history,
-    init_db,
     # get_all_notes, # Will be called with context
     # add_message_to_history, # Will be called with context
     # get_recent_history, # Will be called with context
