@@ -177,7 +177,12 @@ async def init_db():
                             """Wrapper to run alembic ensure_version with existing connection.""" # Restored docstring
                             # Make the connection available to env.py
                             cfg.attributes["connection"] = sync_conn # Restored line
-                            alembic_command.ensure_version(cfg) # Restored command
+                            try:
+                                logger.info("Executing alembic_command.ensure_version...")
+                                alembic_command.ensure_version(cfg) # Restored command
+                            except KeyError as ke:
+                                logger.error(f"Caught KeyError during ensure_version: Args={ke.args}, Repr={repr(ke)}", exc_info=True)
+                                raise
                         await conn.run_sync(sync_ensure_version_command, alembic_cfg) # Restored call
                         logger.info("ensure_version command completed.") # Restored log
 
@@ -187,7 +192,12 @@ async def init_db():
                             """Wrapper to run alembic stamp with existing connection.""" # Restored docstring
                             # Make the connection available to env.py
                             cfg.attributes["connection"] = sync_conn # Restored line
-                            alembic_command.stamp(cfg, revision) # Restored command
+                            try:
+                                logger.info(f"Executing alembic_command.stamp with revision='{revision}'...")
+                                alembic_command.stamp(cfg, revision) # Restored command
+                            except KeyError as ke:
+                                logger.error(f"Caught KeyError during stamp: Args={ke.args}, Repr={repr(ke)}", exc_info=True)
+                                raise
                         await conn.run_sync(sync_stamp_command, alembic_cfg, "head") # Restored call
                         logger.info("stamp command completed.") # Restored log
                         logger.info("Database schema stamped.") # Restored log
