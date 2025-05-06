@@ -496,10 +496,10 @@ class ProcessingService:
         # --- Refactored Parameters ---
         interface_type: str,
         conversation_id: str,
-        turn_id: Optional[str] = None,  # Made turn_id optional
         trigger_content_parts: List[Dict[str, Any]],
         trigger_interface_message_id: Optional[str], # Added trigger message ID
         user_name: str,
+        turn_id: Optional[str] = None,  # Made turn_id optional, moved after non-defaults
         replied_to_interface_id: Optional[str] = None,  # Added for reply context
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
         request_confirmation_callback: Optional[
