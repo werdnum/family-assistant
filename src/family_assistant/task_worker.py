@@ -156,22 +156,24 @@ async def handle_llm_callback(
     try:
         # Construct the trigger message content for the LLM
         trigger_text = f"System Callback Trigger:\n\nThe time is now {current_time_str}.\nYour scheduled context was:\n---\n{callback_context}\n---"
-        # Prepare message history for the service call
-        # TODO: Should we retrieve actual history here? For now, just send the trigger.
-        # A more robust implementation might fetch recent history for better context.
-        messages_for_llm = [
-            {
-                "role": "system",
-                "content": "You are processing a scheduled callback.",
-            },  # Minimal system prompt
-            {"role": "user", "content": trigger_text},  # Treat trigger as user input
-        ]
-
-        # Tool definitions are fetched within process_message now
-        # all_tools = local_tools_definition + mcp_tools # Removed
 
         # Generate a turn ID for this callback execution
         callback_turn_id = str(uuid.uuid4())
+
+        # Save the initial system trigger message for the callback to history
+        callback_trigger_timestamp = datetime.now(timezone.utc)
+        await storage.add_message_to_history(
+            db_context=db_context,
+            interface_type=interface_type, # Should be "system_callback" or similar
+            conversation_id=conversation_id,
+            interface_message_id=None, # System-generated, no direct interface ID
+            turn_id=callback_turn_id, # Assign the generated turn_id
+            thread_root_id=None, # Callbacks currently don't maintain prior thread root
+            timestamp=callback_trigger_timestamp,
+            role="system", # Role for the trigger message
+            content=trigger_text,
+        )
+        logger.info(f"Saved system trigger message for callback {callback_turn_id} to history.")
 
         # Call the ProcessingService.
         # NOTE: process_message returns the LIST of generated messages for the turn,
@@ -226,15 +228,8 @@ async def handle_llm_callback(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
             )
 
-            # History saving is now handled by generate_llm_response_for_chat and its caller (TelegramService)
-            # However, for system-triggered callbacks, the initial trigger message needs to be saved here.
-            # The messages returned by generate_llm_response_for_chat will be saved by the main loop,
-            # but that doesn't include the *initial* system trigger for the callback.
-
-            # Let's ensure the initial system trigger for the callback is saved.
-            # This was already done *before* calling generate_llm_response_for_chat.
-
-            # If the sent_message (assistant's response) needs its interface_message_id updated in the DB:
+            # The initial system trigger message for the callback was saved above.
+            # Now, if the assistant's response was sent, update its interface_message_id.
             if sent_message:
                 # Find the corresponding assistant message in generated_messages to update its interface_message_id
                 # This assumes the last 'assistant' message in generated_messages is the one sent.
@@ -252,7 +247,8 @@ async def handle_llm_callback(
                     logger.warning(f"Could not find saved assistant message to update interface_id for callback to {interface_type}:{conversation_id}")
 
             # Save the *generated* messages (tool calls, assistant responses) from the LLM interaction
-            for msg_dict_to_save in generated_messages:
+            # These messages already have turn_id, interface_type, conversation_id, and timestamp populated by generate_llm_response_for_chat
+            for msg_dict_to_save in generated_messages: # Iterate over the list of dicts
                 # Ensure all required fields are present or defaulted for add_message_to_history
                 # msg_dict_to_save is already populated by generate_llm_response_for_chat
                 await storage.add_message_to_history(
@@ -261,8 +257,7 @@ async def handle_llm_callback(
                 )
 
         else:
-            # Handle case where the turn completed but the final assistant message had no content
-            # Need interface_type and conversation_id here
+            # Case: No final_llm_content_to_send. This could be due to a processing error or empty LLM response.
             interface_type = exec_context.interface_type
             conversation_id = exec_context.conversation_id
 
@@ -282,7 +277,7 @@ async def handle_llm_callback(
             # Check if there was a processing_error_traceback first
             if processing_error_traceback:
                 raise RuntimeError(f"LLM callback failed. Traceback: {processing_error_traceback}")
-            else:
+            else: # No specific error from processing, but also no content
                 raise RuntimeError("LLM failed to generate response content for callback.")
 
     except Exception as e:

@@ -12,15 +12,15 @@
     <div class="message-content">
         <div class="message-content-text">{{ message.content }}</div> <!-- Wrap text content -->
         {# Display tool *requests* made by the assistant. Iterate over tool_calls_info #}
-        {% if message.role == 'assistant' and message.tool_calls_info %}
+        {% if message.role == 'assistant' and message.tool_calls %} {# Changed from tool_calls_info to tool_calls #}
         <details class="tool-info-details">
             {# Use tool_calls_info which seems to hold the detailed dicts #}
-            <summary>Tool Calls Requested ({{ message.tool_calls_info|length }})</summary>
+            <summary>Tool Calls Requested ({{ message.tool_calls|length }})</summary> {# Changed from tool_calls_info #}
             <div class="tool-info-content">
-                {% for tool_call in message.tool_calls_info %} {# Iterate over tool_calls_info #}
+                {% for tool_call in message.tool_calls %} {# Changed from tool_calls_info to tool_calls #}
                 <div class="tool-call-item">
                     {# Safely access dictionary keys #}
-                    <strong>Function:</strong> {{ tool_call.get('function_name', 'N/A') }}<br>
+                    <strong>Function:</strong> {{ tool_call.get('function', {}).get('name', 'N/A') }}<br> {# Access nested name #}
                     <strong>Call ID:</strong> {{ tool_call.get('call_id', 'N/A') }}<br>
                     <strong>Arguments:</strong>
                     {# Target div for JSON editor (matches JS) - Use turn_id + internal_id + loop index for uniqueness #}

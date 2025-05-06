@@ -549,19 +549,45 @@ async def view_message_history(
         turns_by_chat = {}
         for conversation_key, messages in history_by_chat.items():
             # Ensure messages are sorted chronologically (assuming get_grouped_message_history returns them sorted)
+
+            # --- Pre-parse JSON string fields in messages ---
+            for msg in messages:
+                for field_name in ['tool_calls', 'reasoning_info']: # 'tool_calls' was 'tool_calls_info' from DB
+                    field_val = msg.get(field_name)
+                    if isinstance(field_val, str):
+                        if field_val.lower() == "null": # Handle string "null"
+                            msg[field_name] = None
+                        else:
+                            try:
+                                msg[field_name] = json.loads(field_val)
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to parse JSON string for {field_name} in msg {msg.get('internal_id')}: {field_val[:100]}")
+                                # Keep original string or set to an error placeholder if preferred
+                                # msg[field_name] = {"error": "failed to parse JSON", "original_value": field_val}
+
+                # Further parse 'arguments' within tool_calls if it's a JSON string
+                if msg.get('tool_calls') and isinstance(msg['tool_calls'], list):
+                    for tool_call_item in msg['tool_calls']:
+                        if isinstance(tool_call_item, dict) and 'function' in tool_call_item and \
+                           isinstance(tool_call_item['function'], dict):
+                            func_args_str = tool_call_item['function'].get('arguments')
+                            if isinstance(func_args_str, str):
+                                try:
+                                    tool_call_item['function']['arguments'] = json.loads(func_args_str)
+                                except json.JSONDecodeError:
+                                    logger.warning(
+                                        f"Failed to parse function arguments JSON string within tool_calls for msg {msg.get('internal_id')}: {func_args_str[:100]}"
+                                    )
+                                    # Keep original string if parsing fails
+
             conversation_turns = []
             grouped_by_turn_id = {}
 
-            # Group messages by turn_id (including None)
             for msg in messages:
                 turn_id = msg.get('turn_id') # Can be None
                 if turn_id not in grouped_by_turn_id:
                     grouped_by_turn_id[turn_id] = []
                 grouped_by_turn_id[turn_id].append(msg)
-
-            # Process each group into a turn object
-            # Sort turns by the timestamp of their *first* message
-            # Handle potential None turn_id by giving it a very early timestamp for sorting
             sorted_turn_ids = sorted(
                 grouped_by_turn_id.keys(),
                 key=lambda tid: (
@@ -572,26 +598,36 @@ async def view_message_history(
             )
 
             for turn_id in sorted_turn_ids:
-                turn_messages = grouped_by_turn_id[turn_id]
-                user_message = None
-                final_assistant_message = None
+                turn_messages_for_current_id = grouped_by_turn_id[turn_id]
 
-                # Find first user message (often the one with turn_id=None that starts the interaction)
-                # or just the first message if no user message in this group
-                if turn_messages:
-                     user_candidates = [m for m in turn_messages if m['role'] == 'user']
-                     user_message = user_candidates[0] if user_candidates else turn_messages[0] # Fallback to first message
+                # Find the initiating message (user or system) for this turn_id group
+                # The first message in a sorted group (by timestamp) should be the trigger if it's user/system
+                trigger_candidates = [m for m in turn_messages_for_current_id if m['role'] in ('user', 'system')]
+                initiating_user_msg_for_turn = trigger_candidates[0] if trigger_candidates else None
 
-                # Find the last assistant message in this turn group
-                assistant_candidates = [m for m in turn_messages if m['role'] == 'assistant']
-                if assistant_candidates:
-                    final_assistant_message = assistant_candidates[-1] # Get the last one
+                # Find the final assistant response for this turn_id group
+                # It should be the last assistant message with actual content.
+                assistant_candidates = [m for m in turn_messages_for_current_id if m['role'] == 'assistant']
+                contentful_assistant_msgs = [m for m in assistant_candidates if m.get('content')]
+                if contentful_assistant_msgs:
+                    final_assistant_msg_for_turn = contentful_assistant_msgs[-1]
+                elif assistant_candidates: # Fallback to the very last assistant message in the group (might have only tool_calls)
+                    final_assistant_msg_for_turn = assistant_candidates[-1]
+                else:
+                    final_assistant_msg_for_turn = None
+
+                # Ensure the initiating message isn't also the final assistant message if they are the same object
+                # This can happen if a turn only has one assistant message that also serves as a trigger (e.g. for a callback)
+                # However, our logic now assigns turn_id to user triggers, so this is less likely.
+                if final_assistant_msg_for_turn is initiating_user_msg_for_turn and final_assistant_msg_for_turn is not None:
+                    if final_assistant_msg_for_turn['role'] == 'user': # If it's a user message, it can't be the "final assistant response"
+                        final_assistant_msg_for_turn = None
 
                 conversation_turns.append({
                     "turn_id": turn_id, # Store the turn_id itself
-                    "user_message": user_message,
-                    "final_assistant_message": final_assistant_message,
-                    "trace_messages": turn_messages # Keep all messages for the trace
+                    "initiating_user_message": initiating_user_msg_for_turn,
+                    "final_assistant_response": final_assistant_msg_for_turn,
+                    "all_messages_in_group": turn_messages_for_current_id
                 })
             turns_by_chat[conversation_key] = conversation_turns
 
@@ -628,8 +664,8 @@ async def view_message_history(
             "message_history.html",
             {
                 "request": request,
-                "paged_items": paged_items,
-                "pagination": pagination_info, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,
+                "paged_conversations": paged_items, # Renamed for clarity in template
+                "pagination": pagination_info, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED, # Pass auth info
             },
         )
     except Exception as e:
