@@ -47,7 +47,7 @@
                         <div class="message system-message">
                             <div class="message-meta">Intermediate processing (Turn ID: {{ turn_display_obj.turn_id or 'None' }})</div>
                         </div>
-                    {% elif turn_display_obj.initiating_user_message and not turn_display_obj.final_assistant_response and turn_display_obj.initiating_user_message.get('role') == 'user' and (turn_display_obj.all_messages_in_group | length) > 1 %}
+                    {% elif turn_display_obj.initiating_user_message and not turn_display_obj.final_assistant_response and turn_display_obj.initiating_user_message.get('role') == 'user' %}
                          {# User message was shown, but no distinct final assistant response for this turn #}
                          <div class="message system-message">
                             <div class="message-meta">No distinct final assistant response generated for this user input (Turn ID: {{ turn_display_obj.turn_id or 'None' }}). See trace.</div>
