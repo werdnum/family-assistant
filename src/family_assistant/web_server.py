@@ -202,7 +202,25 @@ else:
 #         raise HTTPException(status_code=500, detail="Embedding generator not configured")
 #     return generator
 # Dependency function to retrieve the embedding generator from app state
+
 async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
+    """Retrieves the configured EmbeddingGenerator instance from app state."""
+    generator = getattr(request.app.state, "embedding_generator", None)
+    if not generator:
+        logger.error("Embedding generator not found in app state.")
+        # Raise HTTPException so FastAPI returns a proper error response
+        raise HTTPException(
+            status_code=500, detail="Embedding generator not configured or available."
+        )
+    if not isinstance(generator, EmbeddingGenerator):
+        logger.error(
+            f"Object in app state is not an EmbeddingGenerator: {type(generator)}"
+        )
+        raise HTTPException(
+            status_code=500, detail="Invalid embedding generator configuration."
+        )
+    return generator
+
 # --- Dependency Functions ---
 async def get_db() -> DatabaseContext:
     """FastAPI dependency to get a DatabaseContext."""
