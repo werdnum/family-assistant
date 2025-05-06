@@ -392,7 +392,7 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
         {
             "request": request,
             "notes": notes,
-            "user": request.session.get("user"), # Pass user info to template
+            "user": request.session.get("user") if SESSION_SECRET_KEY else None, # Pass user info conditionally
             "auth_enabled": AUTH_ENABLED, # Indicate if auth is on
             "server_url": SERVER_URL,
         },  # Pass SERVER_URL
@@ -403,7 +403,7 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
 async def add_note_form(request: Request):
     """Serves the form to add a new note."""
     return templates.TemplateResponse(
-        "edit_note.html", {"request": request, "note": None, "is_new": True, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
+        "edit_note.html", {"request": request, "note": None, "is_new": True, "user": request.session.get("user") if SESSION_SECRET_KEY else None, "auth_enabled": AUTH_ENABLED,}
     )
 
 
@@ -416,7 +416,7 @@ async def edit_note_form(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
-        "edit_note.html", {"request": request, "note": note, "is_new": False, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
+        "edit_note.html", {"request": request, "note": note, "is_new": False, "user": request.session.get("user") if SESSION_SECRET_KEY else None, "auth_enabled": AUTH_ENABLED,}
     )
 
 
@@ -558,7 +558,7 @@ async def view_message_history(
             {
                 "request": request,
                 "paged_items": paged_items,
-                "pagination": pagination_info,
+                "pagination": pagination_info, "user": request.session.get("user") if SESSION_SECRET_KEY else None, "auth_enabled": AUTH_ENABLED,
                 "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,
             },
         )
@@ -601,7 +601,7 @@ async def view_tools(request: Request):
             {
                 "request": request,
                 "tools": rendered_tools,
-                "user": request.session.get("user"),
+                "user": request.session.get("user") if SESSION_SECRET_KEY else None,
                 "auth_enabled": AUTH_ENABLED,
             },
         )
@@ -622,7 +622,7 @@ async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get
                 "tasks": tasks,
                 # Add json filter to Jinja environment if not default
                 # Pass 'tojson' filter if needed explicitly, or handle in template
-                # jinja_env.filters['tojson'] = json.dumps # Example
+                # jinja_env.filters['tojson'] = json.dumps # Example # NoQA: E265
                 "user": request.session.get("user"),
                 "auth_enabled": AUTH_ENABLED,
             },
@@ -761,7 +761,7 @@ async def vector_search_form(
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys to template
-            "user": request.session.get("user"),
+            "user": request.session.get("user") if SESSION_SECRET_KEY else None,
             "auth_enabled": AUTH_ENABLED,
         },
     )
@@ -976,7 +976,7 @@ async def handle_vector_search(
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys
-            "user": request.session.get("user"),
+            "user": request.session.get("user") if SESSION_SECRET_KEY else None,
             "auth_enabled": AUTH_ENABLED,
         },
     )
@@ -1363,8 +1363,7 @@ async def serve_documentation(request: Request, filename: str):
                 "available_docs": available_docs,
                 "server_url": SERVER_URL,
             },
-            {
-                "request": request, "content": content_html, "title": filename, "available_docs": available_docs, "server_url": SERVER_URL, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,},
+            {"request": request, "content": content_html, "title": filename, "available_docs": available_docs, "server_url": SERVER_URL, "user": request.session.get("user") if SESSION_SECRET_KEY else None, "auth_enabled": AUTH_ENABLED,},
         )
     except Exception as e:
         logger.error(
