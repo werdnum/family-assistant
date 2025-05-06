@@ -1,5 +1,4 @@
 import pytest
-import uuid
 import asyncio
 import logging
 import json
@@ -38,6 +37,7 @@ from tests.mocks.mock_llm import (
     MatcherFunction,
     get_last_message_text,
 )
+import uuid # Added for turn_id
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +210,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
                 application=mock_application,  # Pass mock application
                 interface_type="test",
                 conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
+                turn_id=str(uuid.uuid4()), # Added turn_id
                 trigger_content_parts=schedule_request_trigger,
                 trigger_interface_message_id=str(user_message_id_schedule), # Added missing argument
                 user_name=TEST_USER_NAME,

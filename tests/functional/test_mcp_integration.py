@@ -1,5 +1,4 @@
 import pytest
-import uuid
 import asyncio
 import logging
 import json
@@ -11,7 +10,7 @@ import subprocess
 import time
 
 # Import necessary components from the application
-from family_assistant.storage.context import DatabaseContext, get_db_contextimport uuid # Added for turn_id
+from family_assistant.storage.context import DatabaseContext, get_db_context
 
 from family_assistant.processing import ProcessingService
 from family_assistant.llm import LLMInterface, LLMOutput
@@ -24,6 +23,7 @@ from family_assistant.tools import (
     ToolExecutionContext,
 )
 from family_assistant import storage  # For direct task checking
+import uuid # Added for turn_id
 
 import socket
 from unittest.mock import MagicMock, AsyncMock  # Keep mocks for LLM
@@ -247,6 +247,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
                 application=MagicMock(),
                 interface_type="test",
                 conversation_id=str(TEST_CHAT_ID),
+                turn_id=str(uuid.uuid4()), # Added turn_id
                 trigger_content_parts=user_request_trigger,
                 trigger_interface_message_id=user_message_id,
                 user_name=TEST_USER_NAME,
@@ -437,6 +438,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
                 application=MagicMock(),
                 interface_type="test",
                 conversation_id=str(TEST_CHAT_ID),
+                turn_id=str(uuid.uuid4()), # Added turn_id
                 trigger_content_parts=user_request_trigger,
                 trigger_interface_message_id=user_message_id,
                 user_name=TEST_USER_NAME,

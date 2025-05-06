@@ -1,5 +1,4 @@
 import pytest
-import uuid
 import asyncio
 import logging
 import json  # Added json import
@@ -35,6 +34,7 @@ from family_assistant.tools import (
 
 # Import storage functions for assertion (will use the patched engine)
 # from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
+import uuid # Added for turn_id
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +176,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 application=mock_application,
                 interface_type="test",  # Added interface type
                 conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
+                turn_id=str(uuid.uuid4()), # Added turn_id
                 trigger_content_parts=add_note_trigger,
                 trigger_interface_message_id=str(user_message_id_add), # Added missing argument
                 user_name=TEST_USER_NAME,
@@ -241,6 +242,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
                 interface_type="test",  # Added missing interface type
                 conversation_id=str(TEST_CHAT_ID),  # Added missing conversation ID
                 application=mock_application,
+                turn_id=str(uuid.uuid4()), # Added turn_id
                 trigger_content_parts=retrieve_note_trigger,
                 trigger_interface_message_id=str(user_message_id_retrieve), # Added missing argument
                 user_name=TEST_USER_NAME,
