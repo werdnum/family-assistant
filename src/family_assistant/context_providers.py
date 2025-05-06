@@ -1,5 +1,5 @@
 import logging
-from typing import Protocol, List, Dict, Any, Optional
+from typing import Protocol, List, Dict, Any, Optional, Callable, Awaitable
 
 # Import necessary types and modules from your project.
 # These are based on the previously discussed files and common patterns in your project.
@@ -40,15 +40,16 @@ class ContextProvider(Protocol):
 class NotesContextProvider(ContextProvider):
     """Provides context from stored notes."""
 
-    def __init__(self, db_context: DatabaseContext, prompts: PromptsType):
+    def __init__(self, get_db_context_func: Callable[[], Awaitable[DatabaseContext]], prompts: PromptsType):
         """
         Initializes the NotesContextProvider.
 
         Args:
-            db_context: The database context for accessing notes.
+            get_db_context_func: An async function that returns a DatabaseContext.
             prompts: A dictionary containing prompt templates for formatting.
         """
-        self._db_context = db_context
+        # self._db_context = db_context # Old way
+        self._get_db_context_func = get_db_context_func
         self._prompts = prompts
 
     @property
@@ -58,37 +59,38 @@ class NotesContextProvider(ContextProvider):
     async def get_context_fragments(self) -> List[str]:
         fragments: List[str] = []
         try:
-            all_notes = await storage.get_all_notes(db_context=self._db_context)
-            if all_notes:
-                notes_list_str = ""
-                note_item_format = self._prompts.get(
-                    "note_item_format", "- {title}: {content}"  # Default format
-                )
-                for note in all_notes:
-                    notes_list_str += (
-                        note_item_format.format(
-                            title=note["title"], content=note["content"]
-                        )
-                        + "\n"
+            async with await self._get_db_context_func() as db_context: # Get context per call
+                all_notes = await storage.get_all_notes(db_context=db_context)
+                if all_notes:
+                    notes_list_str = ""
+                    note_item_format = self._prompts.get(
+                        "note_item_format", "- {title}: {content}"  # Default format
                     )
+                    for note in all_notes:
+                        notes_list_str += (
+                            note_item_format.format(
+                                title=note["title"], content=note["content"]
+                            )
+                            + "\n"
+                        )
 
-                notes_context_header_template = self._prompts.get(
-                    "notes_context_header", "Relevant notes:\n{notes_list}"
+                    notes_context_header_template = self._prompts.get(
+                        "notes_context_header", "Relevant notes:\n{notes_list}"
+                    )
+                    formatted_notes_context = notes_context_header_template.format(
+                        notes_list=notes_list_str.strip()
+                    ).strip()
+                    # Ensure not adding an empty string if formatting results in it
+                    if formatted_notes_context:
+                        fragments.append(formatted_notes_context)
+                else:
+                    # Only add "no notes" message if it's defined and non-empty
+                    no_notes_message = self._prompts.get("no_notes")
+                    if no_notes_message:  # Check if the message exists and is not empty
+                        fragments.append(no_notes_message)
+                logger.debug(
+                    f"[{self.name}] Formatted {len(all_notes)} notes into {len(fragments)} fragment(s)."
                 )
-                formatted_notes_context = notes_context_header_template.format(
-                    notes_list=notes_list_str.strip()
-                ).strip()
-                # Ensure not adding an empty string if formatting results in it
-                if formatted_notes_context:
-                    fragments.append(formatted_notes_context)
-            else:
-                # Only add "no notes" message if it's defined and non-empty
-                no_notes_message = self._prompts.get("no_notes")
-                if no_notes_message:  # Check if the message exists and is not empty
-                    fragments.append(no_notes_message)
-            logger.debug(
-                f"[{self.name}] Formatted {len(all_notes)} notes into {len(fragments)} fragment(s)."
-            )
         except Exception as e:
             logger.error(
                 f"[{self.name}] Failed to get notes context: {e}", exc_info=True
@@ -96,7 +98,6 @@ class NotesContextProvider(ContextProvider):
             # As per protocol, return empty list on error, error is logged.
             return []
         return fragments
-
 
 class CalendarContextProvider(ContextProvider):
     """Provides context from calendar events."""

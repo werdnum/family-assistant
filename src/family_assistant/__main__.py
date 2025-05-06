@@ -75,6 +75,12 @@ from family_assistant.tools import (
     _scan_user_docs,
 )  # Import the scanner function from tools package
 
+# --- NEW: Import ContextProvider and its implementations ---
+from family_assistant.context_providers import (
+    NotesContextProvider,
+    CalendarContextProvider,
+)
+
 # Import the FastAPI app
 from family_assistant.web_server import app as fastapi_app
 
@@ -606,12 +612,27 @@ async def main_async(
     )
     logger.info("Stored ToolsProvider instance in FastAPI app state.")
 
+    # --- Instantiate Context Providers ---
+    notes_provider = NotesContextProvider(
+        get_db_context_func=get_db_context, # Pass the factory function
+        prompts=config["prompts"],
+    )
+    calendar_provider = CalendarContextProvider(
+        calendar_config=config["calendar_config"],
+        timezone_str=config["timezone"],
+        prompts=config["prompts"],
+    )
+    # List of all active context providers
+    all_context_providers = [notes_provider, calendar_provider]
+    logger.info(f"Initialized {len(all_context_providers)} context providers: {[p.name for p in all_context_providers]}")
+
     # --- Instantiate Processing Service ---
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=confirming_provider,  # Use the confirming provider wrapper
         prompts=config["prompts"],
-        calendar_config=config["calendar_config"],
+        context_providers=all_context_providers, # Pass the list of providers
+        calendar_config=config["calendar_config"], # Still pass calendar_config for ToolExecutionContext
         timezone_str=config["timezone"],
         max_history_messages=config["max_history_messages"],
         history_max_age_hours=config["history_max_age_hours"],
