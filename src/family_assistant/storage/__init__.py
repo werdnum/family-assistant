@@ -142,7 +142,7 @@ async def init_db():
                     def sync_upgrade_command(sync_conn, cfg, revision):
                         """Wrapper to run alembic upgrade with existing connection."""
                         # Make the connection available to env.py
-                        # cfg.attributes["connection"] = sync_conn # Connection now set before run_sync
+                        cfg.attributes["connection"] = sync_conn # Connection now set before run_sync
                         alembic_command.upgrade(cfg, revision)
                     try:
                         logger.info(f"Attempting to run Alembic upgrade to 'head' via run_sync...")
@@ -176,7 +176,7 @@ async def init_db():
                         def sync_ensure_version_command(sync_conn, cfg): # Restored function
                             """Wrapper to run alembic ensure_version with existing connection.""" # Restored docstring
                             # Make the connection available to env.py
-                            # cfg.attributes["connection"] = sync_conn # Connection now set before run_sync
+                            cfg.attributes["connection"] = sync_conn # Connection now set before run_sync
                             try:
                                 logger.info("Executing alembic_command.ensure_version... Config details: sqlalchemy.url=%s, script_location=%s", cfg.get_main_option("sqlalchemy.url"), cfg.get_main_option("script_location"))
                                 alembic_command.ensure_version(cfg) # Restored command
@@ -191,7 +191,7 @@ async def init_db():
                         def sync_stamp_command(sync_conn, cfg, revision): # Restored function
                             """Wrapper to run alembic stamp with existing connection.""" # Restored docstring
                             # Make the connection available to env.py
-                            # cfg.attributes["connection"] = sync_conn # Connection now set before run_sync
+                            cfg.attributes["connection"] = sync_conn # Connection now set before run_sync
                             try:
                                 logger.info(f"Executing alembic_command.stamp with revision='{revision}'. Config details: sqlalchemy.url=%s, script_location=%s", cfg.get_main_option("sqlalchemy.url"), cfg.get_main_option("script_location"))
                                 alembic_command.stamp(cfg, revision) # Restored command
