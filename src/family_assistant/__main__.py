@@ -168,6 +168,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         "prompts": {},
         "tools_requiring_confirmation": [], # Default empty list
         "mcp_config": {"mcpServers": {}},  # Default empty MCP config
+        "server_url": "http://localhost:8000",  # Default server URL
     }
     logger.info("Initialized config with code defaults.")
 
@@ -207,8 +208,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     )
     config_data["embedding_dimensions"] = int(
         os.getenv("EMBEDDING_DIMENSIONS", str(config_data["embedding_dimensions"]))
-    )  # Load SERVER_URL
+    )
     config_data["timezone"] = os.getenv("TIMEZONE", config_data["timezone"])
+    config_data["server_url"] = os.getenv("SERVER_URL", config_data["server_url"])  # Load SERVER_URL
     config_data["litellm_debug"] = os.getenv(
         "LITELLM_DEBUG", str(config_data["litellm_debug"])
     ).lower() in ("true", "1", "yes")
@@ -324,7 +326,12 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         {
             k: v
             for k, v in config_data.items()
-            if k not in ["telegram_token", "openrouter_api_key", "database_url"]
+            if k
+            not in [
+                "telegram_token",
+                "openrouter_api_key",
+                "database_url",
+            ]  # Exclude secrets
         }
     )
     if (
@@ -609,6 +616,7 @@ async def main_async(
         timezone_str=config["timezone"],
         max_history_messages=config["max_history_messages"],
         history_max_age_hours=config["history_max_age_hours"],
+        server_url=config["server_url"],  # Pass server URL
     )
     logger.info(f"ProcessingService initialized with configuration.")
 
