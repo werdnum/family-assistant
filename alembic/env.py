@@ -69,7 +69,12 @@ def do_run_migrations(connection: Connection) -> None:
     logger.info(f"do_run_migrations: Starting... Dialect: {dialect_name}, Connection: {connection!r}")
     logger.info(f"do_run_migrations: Configuring context with script_location: {script_location}")
     context.configure(connection=connection, target_metadata=target_metadata, version_table_schema=target_metadata.schema, include_schemas=True, script_location=script_location)
-    logger.info(f"do_run_migrations: Context configured. Revision argument: {context.get_revision_argument()}")
+    # Only log revision argument if it exists (e.g., for upgrade/downgrade, not stamp/ensure_version)
+    revision_argument = context.context_opts.get('destination_rev', None)
+    if revision_argument:
+        logger.info(f"do_run_migrations: Context configured. Destination Revision: {revision_argument}")
+    else:
+        logger.info("do_run_migrations: Context configured. (No destination revision applicable for this command)")
     try:
         # SQLite does not support transactional DDL, so run migrations outside a transaction block.
         if dialect_name == "sqlite":
