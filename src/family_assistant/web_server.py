@@ -10,6 +10,7 @@ from fastapi import (
     Response, # Added Query for pagination parameters
     status,
 )  # Added status
+from starlette.types import ASGIApp, Receive, Scope, Send # For middleware class
 from fastapi.responses import (
     HTMLResponse,
     RedirectResponse,
@@ -195,17 +196,6 @@ else:
         logger.warning("OIDC Authentication is DISABLED (SESSION_SECRET_KEY is not set, required for sessions).")
 
 
-# --- Dependency for Database Context ---
-async def get_db() -> DatabaseContext:
-    """FastAPI dependency to get a DatabaseContext."""
-    async with await get_db_context() as db_context:
-        yield db_context
-
-
-# --- Placeholder for Embedding Generator Dependency ---
-# NOTE: Replace this with your actual dependency injection logic.
-# How is the embedding generator configured and made available?
-# Example: If it's stored in app.state after creation in main.py:
 # async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
 #     generator = request.app.state.embedding_generator
 #     if not generator:
@@ -213,6 +203,13 @@ async def get_db() -> DatabaseContext:
 #     return generator
 # Dependency function to retrieve the embedding generator from app state
 async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
+# --- Dependency Functions ---
+async def get_db() -> DatabaseContext:
+    """FastAPI dependency to get a DatabaseContext."""
+    # Uses the engine configured in storage/base.py by default.
+    async with await get_db_context() as db_context:
+        yield db_context
+
     """Retrieves the configured EmbeddingGenerator instance from app state."""
     generator = getattr(request.app.state, "embedding_generator", None)
     if not generator:
@@ -229,8 +226,6 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
             status_code=500, detail="Invalid embedding generator configuration."
         )
     return generator
-
-# --- Authentication Middleware Function ---
 
 # Dependency function to retrieve the ToolsProvider instance from app state
 async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
@@ -263,29 +258,49 @@ PUBLIC_PATHS = [
     re.compile(r"^/favicon.ico$"),
 ]
 
-async def require_login_middleware(request: Request, call_next):
-    """Middleware to enforce login for protected routes if AUTH_ENABLED."""
-    if not AUTH_ENABLED:
-        # If auth is disabled, proceed without checking
-        return await call_next(request)
+# Define AuthMiddleware class
+class AuthMiddleware:
+    def __init__(self, app: ASGIApp, public_paths: List[re.Pattern], auth_enabled: bool):
+        self.app = app
+        self.public_paths = public_paths
+        self.auth_enabled = auth_enabled
+        logger.info(f"AuthMiddleware initialized (auth_enabled={self.auth_enabled})")
 
-    # Check if the path is explicitly public
-    for pattern in PUBLIC_PATHS:
-        if pattern.match(request.url.path):
-            return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if not self.auth_enabled or scope["type"] != "http":
+            # If auth is disabled or not an HTTP request, proceed without checking
+            await self.app(scope, receive, send)
+            return
 
-    # All other paths are considered protected if auth is enabled
-    user = request.session.get('user')
-    if not user:
-        # Store the intended destination URL to redirect after successful login
-        request.session['redirect_after_login'] = str(request.url)
-        logger.debug(f"No user session for protected path {request.url.path}, redirecting.")
-        # Use url_for to generate the login URL robustly
-        return RedirectResponse(url=request.url_for('login'), status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        request = Request(scope, receive=receive) # Need receive here for url_for
 
-    # User is logged in, proceed to the requested endpoint
-    return await call_next(request)
+        # Check if the path is explicitly public
+        for pattern in self.public_paths:
+            if pattern.match(request.url.path):
+                await self.app(scope, receive, send)
+                return
 
+        # All other paths are considered protected if auth is enabled
+        # SessionMiddleware MUST have run before this if SESSION_SECRET_KEY is set
+        # Otherwise request.session below will fail the assertion
+        user = request.session.get('user')
+        if not user:
+            # Store the intended destination URL to redirect after successful login
+            request.session['redirect_after_login'] = str(request.url)
+            logger.debug(f"No user session for protected path {request.url.path}, redirecting to login.")
+            # Use url_for to generate the login URL robustly
+            redirect_response = RedirectResponse(url=request.url_for('login'), status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+            await redirect_response(scope, receive, send)
+            return
+
+        # User is logged in, proceed to the underlying app
+        await self.app(scope, receive, send)
+
+# --- Add AuthMiddleware to the list if enabled ---
+if AUTH_ENABLED:
+    # IMPORTANT: Add this *after* SessionMiddleware in the list (added earlier)
+    middleware.append(Middleware(AuthMiddleware, public_paths=PUBLIC_PATHS, auth_enabled=AUTH_ENABLED))
+    logger.info("AuthMiddleware added to the application middleware stack.")
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -295,11 +310,6 @@ app = FastAPI(
     middleware=middleware, # Add configured middleware
 )
 
-# --- Add Authentication Middleware (after app initialization) ---
-# This ensures it wraps the SessionMiddleware correctly.
-if AUTH_ENABLED:
-    app.middleware("http")(require_login_middleware)
-    logger.info("Authentication middleware (require_login_middleware) applied.")
 
 # --- Mount Static Files (after app initialization) ---
 if 'static_dir' in locals() and static_dir.is_dir():
@@ -392,7 +402,7 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
         {
             "request": request,
             "notes": notes,
-            "user": request.session.get("user") if SESSION_SECRET_KEY else None, # Pass user info conditionally
+            "user": request.session.get("user"), # Pass user info (will be None if not logged in or no session)
             "auth_enabled": AUTH_ENABLED, # Indicate if auth is on
             "server_url": SERVER_URL,
         },  # Pass SERVER_URL
@@ -403,7 +413,7 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
 async def add_note_form(request: Request):
     """Serves the form to add a new note."""
     return templates.TemplateResponse(
-        "edit_note.html", {"request": request, "note": None, "is_new": True, "user": request.session.get("user") if SESSION_SECRET_KEY else None, "auth_enabled": AUTH_ENABLED,}
+        "edit_note.html", {"request": request, "note": None, "is_new": True, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
     )
 
 
@@ -416,7 +426,7 @@ async def edit_note_form(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
-        "edit_note.html", {"request": request, "note": note, "is_new": False, "user": request.session.get("user") if SESSION_SECRET_KEY else None, "auth_enabled": AUTH_ENABLED,}
+        "edit_note.html", {"request": request, "note": note, "is_new": False, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
     )
 
 
@@ -558,7 +568,7 @@ async def view_message_history(
             {
                 "request": request,
                 "paged_items": paged_items,
-                "pagination": pagination_info, "user": request.session.get("user") if SESSION_SECRET_KEY else None, "auth_enabled": AUTH_ENABLED,
+                "pagination": pagination_info, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,
                 "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,
             },
         )
@@ -601,7 +611,7 @@ async def view_tools(request: Request):
             {
                 "request": request,
                 "tools": rendered_tools,
-                "user": request.session.get("user") if SESSION_SECRET_KEY else None,
+                "user": request.session.get("user"),
                 "auth_enabled": AUTH_ENABLED,
             },
         )
@@ -622,7 +632,7 @@ async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get
                 "tasks": tasks,
                 # Add json filter to Jinja environment if not default
                 # Pass 'tojson' filter if needed explicitly, or handle in template
-                # jinja_env.filters['tojson'] = json.dumps # Example # NoQA: E265
+                # jinja_env.filters['tojson'] = json.dumps # Example # NoQA: E265 # NoQA: E265
                 "user": request.session.get("user"),
                 "auth_enabled": AUTH_ENABLED,
             },
@@ -761,7 +771,7 @@ async def vector_search_form(
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys to template
-            "user": request.session.get("user") if SESSION_SECRET_KEY else None,
+            "user": request.session.get("user"),
             "auth_enabled": AUTH_ENABLED,
         },
     )
@@ -976,7 +986,7 @@ async def handle_vector_search(
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys
-            "user": request.session.get("user") if SESSION_SECRET_KEY else None,
+            "user": request.session.get("user"),
             "auth_enabled": AUTH_ENABLED,
         },
     )
@@ -1363,7 +1373,7 @@ async def serve_documentation(request: Request, filename: str):
                 "available_docs": available_docs,
                 "server_url": SERVER_URL,
             },
-            {"request": request, "content": content_html, "title": filename, "available_docs": available_docs, "server_url": SERVER_URL, "user": request.session.get("user") if SESSION_SECRET_KEY else None, "auth_enabled": AUTH_ENABLED,},
+            {"request": request, "content": content_html, "title": filename, "available_docs": available_docs, "server_url": SERVER_URL, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,},
         )
     except Exception as e:
         logger.error(
@@ -1381,3 +1391,33 @@ if __name__ == "__main__":
     # Example placeholder:
     # app.state.embedding_generator = MockEmbeddingGenerator({}, default_embedding=[0.0]*10)
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+
+
+# --- Main Entry Point Setup (for __main__.py) ---
+# Keep this function definition if __main__.py imports and uses it
+# Otherwise, it can be removed if __main__.py directly uses the 'app' instance
+# def get_web_app():
+#     """Returns the configured FastAPI application instance."""
+#
+#     # --- Determine base path for templates and static files ---
+#     # (Keep the logic for finding paths here if needed for configuration)
+#     try:
+#         current_file_dir = pathlib.Path(__file__).parent.resolve()
+#         package_root_dir = current_file_dir
+#         templates_dir = package_root_dir / "templates"
+#         static_dir = package_root_dir / "static"
+#     except NameError:
+#         templates_dir = "src/family_assistant/templates"
+#         static_dir = pathlib.Path("src/family_assistant/static")
+#
+#     # --- Configure Templates ---
+#     templates = Jinja2Templates(directory=templates_dir)
+#     templates.env.filters["tojson"] = json.dumps
+#
+#     # --- Mount Static Files (now done after app init) ---
+#     # if static_dir.is_dir():
+#     #     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+#     # else:
+#     #     logger.error(f"Static directory '{static_dir}' not found. Static files will not be served.")
+#
+#     return app
