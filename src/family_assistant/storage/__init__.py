@@ -144,9 +144,19 @@ async def init_db():
                         # Make the connection available to env.py
                         cfg.attributes["connection"] = sync_conn
                         alembic_command.upgrade(cfg, revision)
-                    await conn.run_sync(sync_upgrade_command, alembic_cfg, "head")
+                    try:
+                        logger.info(f"Attempting to run Alembic upgrade to '{revision}' via run_sync...")
+                        await conn.run_sync(sync_upgrade_command, alembic_cfg, revision)
+                        logger.info(f"Alembic upgrade to '{revision}' completed successfully via run_sync.")
+                    except KeyError as ke:
+                        logger.error(f"Caught KeyError during Alembic upgrade: Args={ke.args}, Repr={repr(ke)}", exc_info=True)
+                        raise # Re-raise the KeyError
+                    except Exception as e:
+                        # Catch any other potential error during the upgrade command itself
+                        logger.error(f"Caught unexpected Exception during Alembic upgrade: Type={type(e)}, Repr={repr(e)}", exc_info=True)
+                        raise # Re-raise other exceptions
+                    # logger.info("Alembic upgrade command completed via run_sync.") # Moved inside try block
                     logger.info("Alembic upgrade command completed via run_sync.")
-
             else:
                 # Database is new or not managed by Alembic, create tables and stamp.
                 logger.info(f"Tables found by inspector: {found_tables_list}")
