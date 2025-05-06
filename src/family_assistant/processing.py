@@ -39,7 +39,7 @@ from telegram.ext import Application
 from .storage.context import DatabaseContext
 
 # Import storage and calendar integration for context building
-from family_assistant import storage
+from family_assistant import storage # calendar_integration import removed as context is handled by provider
 
 # --- NEW: Import ContextProvider ---
 from .context_providers import ContextProvider
@@ -62,9 +62,8 @@ class ProcessingService:
         llm_client: LLMInterface,
         tools_provider: ToolsProvider,
         prompts: Dict[str, str],
-        context_providers: List[ContextProvider], # NEW: List of context providers
         calendar_config: Dict[str, Any],
-        context_providers: List[ContextProvider], # NEW: List of context providers
+        context_providers: List[ContextProvider], # NEW: List of context providers (corrected to be single)
         timezone_str: str,
         max_history_messages: int,
         server_url: Optional[str],  # Added server_url
@@ -77,9 +76,8 @@ class ProcessingService:
             llm_client: An object implementing the LLMInterface protocol.
             tools_provider: An object implementing the ToolsProvider protocol.
             prompts: Dictionary containing loaded prompts.
-            context_providers: A list of initialized context provider objects.
             calendar_config: Dictionary containing calendar configuration.
-            context_providers: A list of initialized context provider objects.
+            context_providers: A list of initialized context provider objects. # Corrected docstring
             timezone_str: The configured timezone string (e.g., "Europe/London").
             max_history_messages: Max number of history messages to fetch.
             server_url: The base URL of the web server.
@@ -88,7 +86,6 @@ class ProcessingService:
         self.llm_client = llm_client
         self.tools_provider = tools_provider
         self.prompts = prompts
-        self.context_providers = context_providers
         self.calendar_config = calendar_config # Still needed for ToolExecutionContext
         self.context_providers = context_providers
         self.timezone_str = timezone_str
@@ -98,30 +95,6 @@ class ProcessingService:
         )  # Default if not provided
         self.history_max_age_hours = history_max_age_hours
         # Store the confirmation callback function if provided at init? No, get from context.
-
-        # calendar_config is still needed for ToolExecutionContext
-        # It should be passed during __main__ setup to both CalendarContextProvider
-        # and to ProcessingService if tools need it directly.
-        # For now, assuming tools get it via ToolExecutionContext which gets it from
-        # local_tools_provider.py which receives it from __main__.py.
-        # If ProcessingService itself needs calendar_config (e.g. to pass to ToolExecutionContext
-        # for tools *it* constructs or for other direct uses), it should be an init param.
-        # Current ToolExecutionContext gets calendar_config from LocalToolsProvider,
-        # which gets it from __main__.py.
-        # The ToolExecutionContext passed to tools_provider.execute_tool already contains calendar_config.
-        # So ProcessingService itself might not need to store calendar_config directly if its only
-        # use was for context generation (now delegated) or populating ToolExecutionContext (handled by caller of execute_tool).
-        # Let's verify where self.calendar_config is used:
-        # - In generate_llm_response_for_chat for old calendar context -> REMOVED
-        # - In process_message for ToolExecutionContext:
-        #   tool_execution_context = ToolExecutionContext(
-        #       ...
-        #       calendar_config=self.calendar_config, # This line!
-        #       ...
-        #   )
-        # So, `self.calendar_config` IS needed. It should remain an init parameter.
-        # The initial thought to remove it from __init__ was incorrect if it's used as above.
-        # The `context_providers` list is a *new* parameter, `calendar_config` is existing and retained.
 
     async def _aggregate_context_from_providers(self) -> str:
         """Gathers context fragments from all registered providers."""
@@ -674,16 +647,60 @@ class ProcessingService:
                 "%Y-%m-%d %H:%M:%S UTC"
             )
 
-        # --- NEW: Aggregate context from providers ---
-        # This replaces the direct fetching of calendar and notes context.
-        # Note: NotesContextProvider will need a way to access db_context.
-        # This is handled by how NotesContextProvider is modified/instantiated.
+        # --- NEW: Aggregate context from providers --- This replaces the direct fetching of calendar and notes context.
         aggregated_other_context_str = ""
         try:
             aggregated_other_context_str = await self._aggregate_context_from_providers()
         except Exception as agg_err:
             logger.error(f"Failed to aggregate context from providers: {agg_err}", exc_info=True)
             aggregated_other_context_str = "Error retrieving extended context."
+
+        # --- Call Processing Logic ---
+        # Tool definitions are now fetched inside process_message
+        try:  # Marked line 625
+            generated_turn_messages: List[Dict[str, Any]] = []
+            final_reasoning_info: Optional[Dict[str, Any]] = None
+            generated_turn_messages, final_reasoning_info = (
+                await self.process_message(  # Call the other method in this class
+                    db_context=db_context,  # Pass context
+                    messages=messages, # messages list now includes history and is ready for system prompt
+                    interface_type=interface_type, 
+                    conversation_id=conversation_id, 
+                    application=application,
+                    request_confirmation_callback=request_confirmation_callback,
+                )
+            )
+            # Add context info (turn_id, etc.) to each generated message *before* returning # Marked line 641
+            timestamp_now = datetime.now(timezone.utc)  # Marked line 642
+            for msg_dict in generated_turn_messages:
+                msg_dict["turn_id"] = turn_id
+                msg_dict["interface_type"] = interface_type
+                msg_dict["conversation_id"] = conversation_id
+                msg_dict["timestamp"] = (
+                    timestamp_now  # Approximate timestamp for the whole turn
+                )
+                msg_dict["thread_root_id"] = (
+                    thread_root_id_for_saving  # Use determined root ID
+                )
+                # interface_message_id will be None initially for agent messages
+                msg_dict["interface_message_id"] = None
+
+            # Return the list of fully populated turn messages, reasoning info, and None for error
+            return generated_turn_messages, final_reasoning_info, None
+        # Moved exception handling outside the process_message call
+        except Exception as e:  # Marked line 650
+            # Return None for content/tools/reasoning, but include the traceback
+            error_traceback = traceback.format_exc()
+            return (
+                [],
+                None,
+                error_traceback,
+            )  # Return empty list, None reasoning, traceback
+
+        # --- System Prompt and final message preparation happens *before* calling self.process_message ---
+        # This was misplaced in the provided file structure. It should be done on the 'messages' list
+        # that is then passed to self.process_message.
+        # The `messages` list at this point contains the history. Now add system prompt and trigger message.
 
         final_system_prompt = system_prompt_template.format(
             user_name=user_name,
@@ -699,10 +716,6 @@ class ProcessingService:
             logger.warning("Generated empty system prompt.")
 
         # --- Add the triggering message content ---
-        # Note: For callbacks, the role might ideally be 'system' or a specific 'callback' role,
-        # but using 'user' is often necessary for the LLM to properly attend to it as the primary input.
-        # If LLM behavior is odd, consider experimenting with the role here.
-        # Simplify content if it's just a single text part, otherwise keep the list structure
         trigger_content: Union[str, List[Dict[str, Any]]]
         if (
             isinstance(trigger_content_parts, list)
@@ -712,26 +725,17 @@ class ProcessingService:
             and "text" in trigger_content_parts[0]
         ):
             trigger_content = trigger_content_parts[0]["text"]
-            logger.debug("Simplified single text part content to string.")
         else:
-            trigger_content = (
-                trigger_content_parts  # Keep as list for multi-part/non-text
-            )
-            logger.debug("Keeping trigger content as list (multi-part or non-text).")
+            trigger_content = trigger_content_parts
 
         trigger_message = {
-            "role": "user",  # Treat trigger as user input for processing flow
-            "content": trigger_content,  # Add the actual content here
+            "role": "user",
+            "content": trigger_content,
         }
         messages.append(trigger_message)
-        # logger.debug(f"Appended trigger message to LLM history: {trigger_message}") # Removed to avoid logging potentially large content
-        # turn_id is now passed as a parameter
 
-        # --- Call Processing Logic ---
-        # Tool definitions are now fetched inside process_message
-        try:  # Marked line 625
-            generated_turn_messages: List[Dict[str, Any]] = []
-            final_reasoning_info: Optional[Dict[str, Any]] = None
+        # --- Now, call the processing logic with the fully prepared messages list ---
+        try:
             generated_turn_messages, final_reasoning_info = (
                 await self.process_message(  # Call the other method in this class
                     db_context=db_context,  # Pass context

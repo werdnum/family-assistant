@@ -20,10 +20,9 @@ system_prompt: |
   # Context
   Current time: {current_time}
 
-  {calendar_context}
-  The web interface is available at: {server_url}
+  {aggregated_other_context}
 
-  {notes_context}
+  The web interface is available at: {server_url}
 
 # --- Calendar Formatting ---
 # Header for the calendar section. Use {today_tomorrow_events} and {next_two_weeks_events}.
