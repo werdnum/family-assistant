@@ -40,8 +40,9 @@ from .storage.context import DatabaseContext
 
 # Import storage and calendar integration for context building
 from family_assistant import storage
-from family_assistant import calendar_integration
 
+# --- NEW: Import ContextProvider ---
+from .context_providers import ContextProvider
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,9 @@ class ProcessingService:
         llm_client: LLMInterface,
         tools_provider: ToolsProvider,
         prompts: Dict[str, str],
+        context_providers: List[ContextProvider], # NEW: List of context providers
         calendar_config: Dict[str, Any],
+        context_providers: List[ContextProvider], # NEW: List of context providers
         timezone_str: str,
         max_history_messages: int,
         server_url: Optional[str],  # Added server_url
@@ -74,7 +77,9 @@ class ProcessingService:
             llm_client: An object implementing the LLMInterface protocol.
             tools_provider: An object implementing the ToolsProvider protocol.
             prompts: Dictionary containing loaded prompts.
+            context_providers: A list of initialized context provider objects.
             calendar_config: Dictionary containing calendar configuration.
+            context_providers: A list of initialized context provider objects.
             timezone_str: The configured timezone string (e.g., "Europe/London").
             max_history_messages: Max number of history messages to fetch.
             server_url: The base URL of the web server.
@@ -83,7 +88,9 @@ class ProcessingService:
         self.llm_client = llm_client
         self.tools_provider = tools_provider
         self.prompts = prompts
-        self.calendar_config = calendar_config
+        self.context_providers = context_providers
+        self.calendar_config = calendar_config # Still needed for ToolExecutionContext
+        self.context_providers = context_providers
         self.timezone_str = timezone_str
         self.max_history_messages = max_history_messages
         self.server_url = (
@@ -92,14 +99,42 @@ class ProcessingService:
         self.history_max_age_hours = history_max_age_hours
         # Store the confirmation callback function if provided at init? No, get from context.
 
-        # Removed _execute_function_call method (if it was previously here)
-        self.calendar_config = calendar_config
-        self.timezone_str = timezone_str
-        self.max_history_messages = max_history_messages
-        self.server_url = (
-            server_url or "http://localhost:8000"
-        )  # Default if not provided
-        self.history_max_age_hours = history_max_age_hours
+        # calendar_config is still needed for ToolExecutionContext
+        # It should be passed during __main__ setup to both CalendarContextProvider
+        # and to ProcessingService if tools need it directly.
+        # For now, assuming tools get it via ToolExecutionContext which gets it from
+        # local_tools_provider.py which receives it from __main__.py.
+        # If ProcessingService itself needs calendar_config (e.g. to pass to ToolExecutionContext
+        # for tools *it* constructs or for other direct uses), it should be an init param.
+        # Current ToolExecutionContext gets calendar_config from LocalToolsProvider,
+        # which gets it from __main__.py.
+        # The ToolExecutionContext passed to tools_provider.execute_tool already contains calendar_config.
+        # So ProcessingService itself might not need to store calendar_config directly if its only
+        # use was for context generation (now delegated) or populating ToolExecutionContext (handled by caller of execute_tool).
+        # Let's verify where self.calendar_config is used:
+        # - In generate_llm_response_for_chat for old calendar context -> REMOVED
+        # - In process_message for ToolExecutionContext:
+        #   tool_execution_context = ToolExecutionContext(
+        #       ...
+        #       calendar_config=self.calendar_config, # This line!
+        #       ...
+        #   )
+        # So, `self.calendar_config` IS needed. It should remain an init parameter.
+        # The initial thought to remove it from __init__ was incorrect if it's used as above.
+        # The `context_providers` list is a *new* parameter, `calendar_config` is existing and retained.
+
+    async def _aggregate_context_from_providers(self) -> str:
+        """Gathers context fragments from all registered providers."""
+        all_fragments: List[str] = []
+        for provider in self.context_providers:
+            try:
+                fragments = await provider.get_context_fragments()
+                if fragments:  # Only add if provider returned something
+                    all_fragments.extend(fragments)
+            except Exception as e:
+                logger.error(f"Error getting context from provider '{provider.name}': {e}", exc_info=True)
+        # Join all non-empty fragments, separated by double newlines for clarity
+        return "\n\n".join(filter(None, all_fragments)).strip()
 
     # Removed _execute_function_call method (if it was previously here)
 
@@ -322,7 +357,7 @@ class ProcessingService:
                         processing_service=self,  # Pass self
                     )
 
-                    # Initialize tool response content and error traceback
+                    # Initialize tool response content and error traceback for this call
                     tool_response_content = None
                     tool_error_traceback = None
 
@@ -639,77 +674,21 @@ class ProcessingService:
                 "%Y-%m-%d %H:%M:%S UTC"
             )
 
-        calendar_context_str = ""
-        if self.calendar_config:  # Use self.calendar_config
-            try:
-                # Pass timezone string to fetch_upcoming_events
-                upcoming_events = await calendar_integration.fetch_upcoming_events(
-                    calendar_config=self.calendar_config,  # Use self.calendar_config
-                    timezone_str=self.timezone_str,  # Pass timezone
-                )
-                # Pass timezone string to format_events_for_prompt
-                today_events_str, future_events_str = (
-                    calendar_integration.format_events_for_prompt(
-                        events=upcoming_events,
-                        prompts=self.prompts,  # Use self.prompts
-                        timezone_str=self.timezone_str,  # Pass timezone
-                    )
-                )
-                calendar_header_template = self.prompts.get(  # Use self.prompts
-                    "calendar_context_header",
-                    "{today_tomorrow_events}\n{next_two_weeks_events}",
-                )
-                calendar_context_str = calendar_header_template.format(
-                    today_tomorrow_events=today_events_str,
-                    next_two_weeks_events=future_events_str,
-                ).strip()
-            except Exception as cal_err:
-                logger.error(
-                    f"Failed to fetch or format calendar events: {cal_err}",
-                    exc_info=True,
-                )
-                calendar_context_str = (
-                    f"Error retrieving calendar events: {str(cal_err)}"
-                )
-        else:
-            calendar_context_str = "Calendar integration not configured."
-
-        notes_context_str = ""
+        # --- NEW: Aggregate context from providers ---
+        # This replaces the direct fetching of calendar and notes context.
+        # Note: NotesContextProvider will need a way to access db_context.
+        # This is handled by how NotesContextProvider is modified/instantiated.
+        aggregated_other_context_str = ""
         try:
-            all_notes = await storage.get_all_notes(
-                db_context=db_context
-            )  # Use storage directly with context
-            if all_notes:
-                notes_list_str = ""
-                note_item_format = self.prompts.get(
-                    "note_item_format", "- {title}: {content}"
-                )  # Use self.prompts
-                for note in all_notes:
-                    notes_list_str += (
-                        note_item_format.format(
-                            title=note["title"], content=note["content"]
-                        )
-                        + "\n"
-                    )
-                notes_context_header_template = self.prompts.get(  # Use self.prompts
-                    "notes_context_header", "Relevant notes:\n{notes_list}"
-                )
-                notes_context_str = notes_context_header_template.format(
-                    notes_list=notes_list_str.strip()
-                )
-            else:
-                notes_context_str = self.prompts.get(
-                    "no_notes", "No notes available."
-                )  # Use self.prompts
-        except Exception as note_err:
-            logger.error(f"Failed to get notes for context: {note_err}", exc_info=True)
-            notes_context_str = "Error retrieving notes."
+            aggregated_other_context_str = await self._aggregate_context_from_providers()
+        except Exception as agg_err:
+            logger.error(f"Failed to aggregate context from providers: {agg_err}", exc_info=True)
+            aggregated_other_context_str = "Error retrieving extended context."
 
         final_system_prompt = system_prompt_template.format(
             user_name=user_name,
             current_time=current_time_str,
-            calendar_context=calendar_context_str,
-            notes_context=notes_context_str,
+            aggregated_other_context=aggregated_other_context_str, # Use new aggregated context
             server_url=self.server_url,  # Add server URL
         ).strip()
 
@@ -757,7 +736,7 @@ class ProcessingService:
                 await self.process_message(  # Call the other method in this class
                     db_context=db_context,  # Pass context
                     messages=messages,
-                    interface_type=interface_type,
+                    interface_type=interface_type, # Pass interface_type
                     conversation_id=conversation_id,  # Pass conversation_id
                     application=application,
                     request_confirmation_callback=request_confirmation_callback,
