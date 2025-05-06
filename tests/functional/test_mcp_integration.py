@@ -11,7 +11,8 @@ import subprocess
 import time
 
 # Import necessary components from the application
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import DatabaseContext, get_db_contextimport uuid # Added for turn_id
+
 from family_assistant.processing import ProcessingService
 from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.tools import (
