@@ -171,10 +171,8 @@ if SESSION_SECRET_KEY:
 if AUTH_ENABLED:
     logger.info("OIDC Authentication is ENABLED.")
     if oauth is None: # Initialize OAuth only if auth is fully enabled
-        # Add session middleware *first*
-        middleware.append(
-            Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY)
-        )
+        # Session middleware is already added above if SESSION_SECRET_KEY is set.
+        # No need to add it again here.
         # Initialize Authlib OAuth client
         oauth = OAuth(config)
         # Register the OIDC provider (e.g., Keycloak)
