@@ -290,13 +290,6 @@ async def require_login_middleware(request: Request, call_next):
     # User is logged in, proceed to the requested endpoint
     return await call_next(request)
 
-# Add the auth middleware if enabled (must be after SessionMiddleware)
-if AUTH_ENABLED:
-    middleware.append(
-        Middleware( # Use Starlette's Middleware class to wrap the function
-            require_login_middleware # Pass the async function directly
-        )
-    )
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -305,6 +298,11 @@ app = FastAPI(
     redoc_url="/api/redoc", # URL for ReDoc (part of /api/, public)
     middleware=middleware, # Add configured middleware
 )
+
+# --- Add Authentication Middleware (after app initialization) ---
+if AUTH_ENABLED:
+    # Use the decorator to apply the middleware function correctly
+    app.middleware("http")(require_login_middleware)
 
 # --- Mount Static Files (after app initialization) ---
 if 'static_dir' in locals() and static_dir.is_dir():
