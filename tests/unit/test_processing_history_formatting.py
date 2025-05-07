@@ -34,6 +34,7 @@ def processing_service() -> ProcessingService:
         tools_provider=MockToolsProvider(),
         prompts={},  # Not used by _format_history_for_llm
         calendar_config={},  # Not used
+        context_providers=[], # Added missing argument
         timezone_str="UTC",  # Not used
         max_history_messages=10,  # Not used
         server_url="http://test.com",  # Not used
