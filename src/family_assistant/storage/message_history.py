@@ -200,7 +200,9 @@ async def get_recent_history(
         # Store candidate messages in a dictionary by internal_id for easy merging
         # These are newest first at this stage.
         all_messages_dict: Dict[int, Dict[str, Any]] = {
-            row_mapping._mapping["internal_id"]: dict(row_mapping) for row_mapping in candidate_rows_result
+            # Use public item access for 'internal_id' instead of relying on ._mapping internal attribute
+            row_mapping["internal_id"]: dict(row_mapping)
+            for row_mapping in candidate_rows_result
         }
 
         # Step 2: Collect unique turn_ids from candidate messages
