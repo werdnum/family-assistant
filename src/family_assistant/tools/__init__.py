@@ -886,7 +886,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "add_calendar_event",
-            "description": "Adds a new event to the primary family calendar (requires CalDAV configuration). Use this to schedule appointments, reminders with duration, or block out time.",
+            "description": "Adds a new event to the primary family calendar (requires CalDAV configuration). Can create single or recurring events. Use this to schedule appointments, reminders with duration, or block out time.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -910,6 +910,10 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                         "type": "boolean",
                         "description": "Set to true if this is an all-day event, false or omit if it has specific start/end times. Determines if start/end times are treated as dates or datetimes.",
                         "default": False,
+                    },
+                    "recurrence_rule": {
+                        "type": "string",
+                        "description": "Optional. An RRULE string (RFC 5545) to make this a recurring event (e.g., 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20251231T235959Z'). If omitted, the event is a single instance.",
                     },
                 },
                 "required": ["summary", "start_time", "end_time"],
