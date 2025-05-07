@@ -579,11 +579,13 @@ async def add_calendar_event_tool(
     end_time: str,
     description: Optional[str] = None,
     all_day: bool = False,
+    recurrence_rule: Optional[str] = None,  # Added RRULE parameter
 ) -> str:
     """
     Adds an event to the first configured CalDAV calendar.
+    Can create recurring events if an RRULE string is provided.
     """
-    logger.info(f"Executing add_calendar_event_tool: {summary}")
+    logger.info(f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}")
     calendar_config = exec_context.calendar_config
     caldav_config = calendar_config.get("caldav")
 
@@ -646,6 +648,9 @@ async def add_calendar_event_tool(
         )  # Use ZoneInfo for UTC
         if description:
             vevent.add("description").value = description
+        if recurrence_rule:
+            vevent.add("rrule").value = recurrence_rule
+            logger.info(f"Adding recurrence rule to event: {recurrence_rule}")
 
         event_data = cal.serialize()
         logger.debug(f"Generated VEVENT data:\n{event_data}")
