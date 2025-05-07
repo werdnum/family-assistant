@@ -180,23 +180,59 @@ async def get_recent_history(
                 message_history_table.c.error_traceback,  # Added
                 message_history_table.c.tool_call_id,  # Added
             )
-            # Filter by new conversation identifiers
+        ]
+
+        # Step 1: Initial fetch of candidate messages based on limit and max_age
+        stmt_candidates = (
+            select(*selected_columns)
             .where(message_history_table.c.interface_type == interface_type)
             .where(message_history_table.c.conversation_id == conversation_id)
             .where(message_history_table.c.timestamp >= cutoff_time)
-            # Order by timestamp desc, then by internal_id desc for stability
             .order_by(
                 message_history_table.c.timestamp.desc(),
                 message_history_table.c.internal_id.desc() # Add this secondary sort
             )
             .limit(limit)
         )
-        rows = await db_context.fetch_all(
-            cast(Select[Any], stmt)
-        )  # Cast for type checker
-        # Convert rows to dicts and reverse to get chronological order
-        formatted_rows = [dict(row) for row in reversed(rows)]
-        return formatted_rows
+        candidate_rows_result = await db_context.fetch_all(cast(Select[Any], stmt_candidates))
+        # Store candidate messages in a dictionary by internal_id for easy merging
+        # These are newest first at this stage.
+        all_messages_dict: Dict[int, Dict[str, Any]] = {
+            row_mapping._mapping["internal_id"]: dict(row_mapping) for row_mapping in candidate_rows_result
+        }
+
+        # Step 2: Collect unique turn_ids from candidate messages
+        turn_ids_to_expand = {
+            msg["turn_id"] for msg in all_messages_dict.values() if msg.get("turn_id")
+        }
+
+        # Step 3: Fetch full turns for these turn_ids
+        if turn_ids_to_expand:
+            logger.debug(f"Expanding history for turn_ids: {turn_ids_to_expand}")
+            stmt_expand_turns = (
+                select(*selected_columns)
+                .where(message_history_table.c.interface_type == interface_type)
+                .where(message_history_table.c.conversation_id == conversation_id)
+                .where(message_history_table.c.turn_id.in_(turn_ids_to_expand))
+                # We fetch all messages for these turns, even if some parts of the turn
+                # are older than cutoff_time, as one part of the turn met the criteria.
+            )
+            expanded_turn_rows_result = await db_context.fetch_all(cast(Select[Any], stmt_expand_turns))
+
+            for row_mapping in expanded_turn_rows_result:
+                msg_dict = dict(row_mapping)
+                # Add or update in all_messages_dict. This handles duplicates if a message
+                # was in both candidate set and expanded set.
+                all_messages_dict[msg_dict["internal_id"]] = msg_dict
+
+        # Step 4: Combine and Finalize
+        # Convert dict values to list
+        final_message_list = list(all_messages_dict.values())
+
+        # Sort chronologically (oldest first for the final list)
+        final_message_list.sort(key=lambda x: (x["timestamp"], x["internal_id"]))
+
+        return final_message_list
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in get_recent_history({interface_type}, {conversation_id}): {e}",
