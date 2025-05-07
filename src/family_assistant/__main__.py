@@ -158,6 +158,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     config_data: Dict[str, Any] = {
         "telegram_token": None,
         "openrouter_api_key": None,
+        "gemini_api_key": None, # For direct Gemini usage
         "allowed_user_ids": [],
         "developer_chat_id": None,
         "model": "openrouter/google/gemini-2.5-pro-preview-03-25",  # Default model
@@ -201,8 +202,12 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     config_data["telegram_token"] = os.getenv(
         "TELEGRAM_BOT_TOKEN", config_data["telegram_token"]
     )
+    # Allow API keys to be None if not set in env, they are validated later
     config_data["openrouter_api_key"] = os.getenv(
-        "OPENROUTER_API_KEY", config_data["openrouter_api_key"]
+        "OPENROUTER_API_KEY", config_data.get("openrouter_api_key")
+    )
+    config_data["gemini_api_key"] = os.getenv(
+        "GEMINI_API_KEY", config_data.get("gemini_api_key")
     )
     config_data["database_url"] = os.getenv("DATABASE_URL", config_data["database_url"])
 
@@ -335,6 +340,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
             not in [
                 "telegram_token",
                 "openrouter_api_key",
+                "gemini_api_key",
                 "database_url",
             ]  # Exclude secrets
         }
@@ -463,21 +469,38 @@ async def main_async(
     # global application # Removed
     logger.info(f"Using model: {config['model']}")
     # mcp_provider = None # No longer needed, composite provider is the main one
-
     # --- Validate Essential Config ---
-    # Secrets should have been loaded by load_config() from env vars
     if not config.get("telegram_token"):
         raise ValueError(
             "Telegram Bot Token is missing (check env var TELEGRAM_BOT_TOKEN)."
         )
-    if not config.get("openrouter_api_key"):
-        raise ValueError(
-            "OpenRouter API Key is missing (check env var OPENROUTER_API_KEY)."
-        )
 
-    # Set OpenRouter API key for LiteLLM (if using LiteLLMClient)
-    # This might be redundant if LiteLLM picks it up automatically, but explicit is okay.
-    os.environ["OPENROUTER_API_KEY"] = config["openrouter_api_key"]
+    # API Key Validation based on selected model
+    selected_model = config.get("model", "")
+    if selected_model.startswith("gemini/"):
+        # For Gemini, litellm primarily uses GEMINI_API_KEY from the environment.
+        # config.get("gemini_api_key") would be if it was loaded into config_data and intended for direct use.
+        if not os.getenv("GEMINI_API_KEY"):
+            raise ValueError(
+                "Gemini API Key is missing. Please set the GEMINI_API_KEY environment variable."
+            )
+        logger.info("Gemini model selected. Will use GEMINI_API_KEY from environment for LiteLLM.")
+    elif selected_model.startswith("openrouter/"):
+        if not config.get("openrouter_api_key"):
+            raise ValueError(
+                "OpenRouter API Key is missing (check env var OPENROUTER_API_KEY or config file)."
+            )
+        # Set OpenRouter API key for LiteLLM if it's managed via config_data.
+        # LiteLLM also checks for OPENROUTER_API_KEY env var independently.
+        if config.get("openrouter_api_key"):
+             os.environ["OPENROUTER_API_KEY"] = config["openrouter_api_key"]
+        logger.info("OpenRouter model selected. OPENROUTER_API_KEY will be used by LiteLLM.")
+    # Add elif blocks for other providers like "openai/" -> OPENAI_API_KEY if needed
+    else:
+        logger.warning(
+            f"No specific API key validation implemented for model: {selected_model}. "
+            "Ensure necessary API keys (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY) are set in the environment if required by the model provider for LiteLLM."
+        )
 
     # --- LLM Client Instantiation ---
     llm_client: LLMInterface = LiteLLMClient(
