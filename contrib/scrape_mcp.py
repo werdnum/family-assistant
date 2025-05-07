@@ -2,9 +2,9 @@
 # /// script
 # requires-python = ">=3.8"
 # dependencies = [
-#   "httpx",
+#   "httpx>=0.25.0", # Specify a recent version for better feature support
 #   "playwright",
-#   "markitdown[html]>=0.1.0",
+#   "markitdown[all]>=0.1.1", # Updated for broader file support and specific version
 #   "mcp.server>=0.1.0", # MCP server library
 # ]
 # ///
@@ -18,13 +18,14 @@ import asyncio
 import io
 import sys
 import argparse
-import json
-from typing import Sequence
+from typing import Sequence, Dict, Any, Tuple, Optional
+from urllib.parse import urlparse
+import os
 
 # --- MCP Imports ---
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
+from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource # ImageContent is used
 from mcp.shared.exceptions import McpError
 
 # --- Scraping Imports ---
@@ -41,7 +42,7 @@ except ImportError:
     PlaywrightError = Exception # Define for except blocks
     PlaywrightTimeoutError = Exception # Define for except blocks
     async_playwright = None # Define for checks
-    print("Warning: Playwright library not found. Scraping will rely on basic HTTP GET.", file=sys.stderr)
+    print("Warning: Playwright library not found. HTML Scraping will rely on basic HTTP GET and markitdown conversion.", file=sys.stderr)
     print("Install using a PEP 723 runner or 'pip install \"markitdown[html]>=0.1.0\" playwright'", file=sys.stderr)
     print("Then run: python -m playwright install --with-deps chromium", file=sys.stderr)
 
@@ -60,10 +61,15 @@ except Exception:
     __version__ = "0.0.0" # Fallback version
 
 APP_NAME = "MCPWebScraperAsync"
-APP_VERSION = "1.1.0" # Incremented version
+APP_VERSION = "1.2.0" # Incremented version for new features
 WEBSITE_URL = "https://github.com/example/mcp-web-scraper" # Replace if you have one
 mcp_scraper_user_agent = f"{APP_NAME}/{APP_VERSION} (MCPTool/{__version__}; +{WEBSITE_URL})"
+
+IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml", "image/bmp"]
+VERBATIM_TEXT_MIME_TYPES = ["application/json", "text/plain", "text/csv", "application/xml", "text/xml", "application/javascript", "text/css"]
+HTML_MIME_TYPE = "text/html"
 # --- End Constants ---
+
 
 
 # --- Async Scraper Class ---
@@ -84,70 +90,119 @@ class AsyncScraper:
         # Initialize MarkItDown converter (sync, will run in thread)
         self.md_converter = MarkItDown()
 
-    async def scrape(self, url: str) -> str | None:
+    async def _convert_bytes_to_markdown(self, content_bytes: bytes, filename: Optional[str]) -> Optional[str]:
+        """Helper to convert bytes to Markdown using MarkItDown in a thread."""
+        if not content_bytes:
+            return None
+
+        def convert_sync():
+            stream = io.BytesIO(content_bytes)
+            # Provide filename to markitdown for type detection if possible
+            effective_filename = filename or "unknown_file"
+            try:
+                self.print_error(f"MarkItDown: Attempting conversion for {effective_filename}")
+                result = self.md_converter.convert_stream(stream, filename=effective_filename)
+                if result and result.text_content:
+                    self.print_error(f"MarkItDown: Conversion successful for {effective_filename}")
+                    return result.text_content
+                else:
+                    self.print_error(f"MarkItDown: Conversion resulted in empty content for {effective_filename}")
+                    return None
+            except Exception as e_convert:
+                self.print_error(f"MarkItDown: convert_stream failed for {effective_filename}: {e_convert}")
+                return None
+
+        markdown_text = await asyncio.to_thread(convert_sync)
+        return markdown_text
+
+    async def scrape(self, url: str) -> Dict[str, Any]:
         """
-        Asynchronously scrapes a URL, attempts conversion to Markdown if HTML,
-        otherwise returns raw content.
+        Asynchronously retrieves content from a URL and processes it based on type.
+        Returns a dictionary with "type" and "content" (or "content_bytes", "mime_type").
+        Possible types: "markdown", "text", "image", "error".
 
         Args:
             url (str): The URL to scrape.
 
         Returns:
-            str | None: The Markdown content if conversion is successful,
-                        raw content if not HTML, or None on failure.
+            Dict[str, Any]: Processed content or error information.
         """
-        content: str | None = None
-        mime_type: str | None = None
+        self.print_error(f"Initiating scrape for URL: {url}")
+        raw_bytes, content_type_header, final_url, encoding = await self._scrape_with_httpx(url)
 
-        if self.playwright_available:
-            self.print_error(f"Attempting scrape with Async Playwright: {url}")
-            content, mime_type = await self._scrape_with_playwright(url)
-            if content is None and not self.playwright_available:
-                 # Playwright might have failed permanently (e.g., browser launch)
-                 self.print_error("Async Playwright failed, falling back to async HTTP GET.")
-                 content, mime_type = await self._scrape_with_httpx(url)
-            elif content is None:
-                 # Playwright failed for this specific URL
-                 self.print_error("Async Playwright scraping returned no content, trying async HTTP GET.")
-                 content, mime_type = await self._scrape_with_httpx(url)
+        if raw_bytes is None:
+            self.print_error(f"Failed to retrieve content using httpx from {url}")
+            return {"type": "error", "message": f"Failed to retrieve content from URL: {url} using basic HTTP GET."}
 
-        else:
-            self.print_error(f"Attempting scrape with async httpx: {url}")
-            content, mime_type = await self._scrape_with_httpx(url)
+        mime_type = (content_type_header.split(";")[0].strip().lower() if content_type_header else "")
+        self.print_error(f"httpx fetch successful. Final URL: {final_url}, MIME type: '{mime_type}', Encoding: {encoding}, Size: {len(raw_bytes)} bytes")
 
-        if content is None:
-            self.print_error(f"Failed to retrieve content from {url}")
-            return None
+        parsed_final_url = urlparse(final_url)
+        filename_hint = os.path.basename(parsed_final_url.path) or "webresource"
 
-        # Check if the content is likely HTML
-        if mime_type and "html" in mime_type.lower():
-            self.print_error(f"Detected HTML content-type ({mime_type}), attempting Markdown conversion.")
+        # 1. Image Handling
+        if mime_type in IMAGE_MIME_TYPES:
+            self.print_error(f"Detected image MIME type: {mime_type}. Returning raw image bytes.")
+            return {"type": "image", "content_bytes": raw_bytes, "mime_type": mime_type}
+
+        # 2. Verbatim Text Handling (JSON, plain text, etc.)
+        if mime_type in VERBATIM_TEXT_MIME_TYPES:
+            self.print_error(f"Detected verbatim text MIME type: {mime_type}. Returning decoded text.")
             try:
-                # MarkItDown conversion is synchronous, run it in a thread
-                def convert_sync():
-                    html_bytes = content.encode('utf-8', errors='replace')
-                    html_stream = io.BytesIO(html_bytes)
-                    result = self.md_converter.convert_stream(html_stream, filename="webpage.html")
-                    return result.text_content if result and result.text_content else None
-
-                markdown_result = await asyncio.to_thread(convert_sync)
-
-                if markdown_result:
-                    self.print_error("Markdown conversion successful.")
-                    return markdown_result
-                else:
-                    self.print_error("Markdown conversion resulted in empty content. Returning original HTML.")
-                    return content # Return original HTML if conversion yields nothing
-
+                decoded_text = raw_bytes.decode(encoding or 'utf-8', errors='replace')
+                return {"type": "text", "content": decoded_text, "mime_type": mime_type}
             except Exception as e:
-                self.print_error(f"MarkItDown conversion failed: {e}")
-                self.print_error("Returning raw HTML content instead.")
-                return content # Return raw HTML on conversion error
-        else:
-            self.print_error(f"Content-type is '{mime_type}' or unknown, returning raw content.")
-            return content # Return raw content if not HTML
+                self.print_error(f"Error decoding verbatim text for {url}: {e}")
+                return {"type": "error", "message": f"Error decoding content for {url}: {e}"}
 
-    async def _scrape_with_playwright(self, url: str) -> tuple[str | None, str | None]:
+        # 3. HTML Handling (potentially with Playwright, then MarkItDown)
+        if mime_type == HTML_MIME_TYPE:
+            self.print_error(f"Detected HTML MIME type for {url}.")
+            html_source_bytes: Optional[bytes] = None
+            source_description = ""
+
+            if self.playwright_available:
+                self.print_error(f"Attempting JS rendering with Async Playwright for {url}")
+                playwright_html_str, _ = await self._scrape_with_playwright(url) # Use original URL for Playwright
+                if playwright_html_str:
+                    self.print_error(f"Playwright successfully rendered HTML for {url}")
+                    # Playwright page.content() returns str, assume it handled decoding.
+                    html_source_bytes = playwright_html_str.encode('utf-8', errors='replace') # Encode to bytes for MarkItDown
+                    source_description = "Playwright-rendered HTML"
+                else:
+                    self.print_error(f"Playwright rendering failed for {url}. Falling back to httpx-fetched HTML.")
+                    html_source_bytes = raw_bytes
+                    source_description = "httpx-fetched HTML (Playwright failed)"
+            else: # Playwright not available
+                self.print_error(f"Playwright not available. Using httpx-fetched HTML for {url}")
+                html_source_bytes = raw_bytes
+                source_description = "httpx-fetched HTML (Playwright not available)"
+
+            if html_source_bytes:
+                self.print_error(f"Converting {source_description} to Markdown using MarkItDown for {url}")
+                markdown_content = await self._convert_bytes_to_markdown(html_source_bytes, filename_hint + ".html")
+                if markdown_content:
+                    return {"type": "markdown", "content": markdown_content}
+                else:
+                    # Fallback for HTML: if MarkItDown fails, return the raw HTML text.
+                    self.print_error(f"Markdown conversion of HTML ({source_description}) failed. Returning raw HTML text for {url}.")
+                    decoded_html_fallback = html_source_bytes.decode(encoding or 'utf-8', errors='replace')
+                    return {"type": "text", "content": decoded_html_fallback, "mime_type": HTML_MIME_TYPE}
+
+        # 4. General MarkItDown Conversion (PDF, DOCX, etc., or fallback)
+        self.print_error(f"Attempting general MarkItDown conversion for {filename_hint} (MIME: {mime_type or 'unknown'}) from {url}")
+        markdown_content = await self._convert_bytes_to_markdown(raw_bytes, filename=filename_hint)
+        if markdown_content:
+            return {"type": "markdown", "content": markdown_content}
+        else:
+            self.print_error(f"General MarkItDown conversion failed for {filename_hint} from {url}.")
+            # If MarkItDown fails for non-HTML, and it's not a known verbatim type, it's an error.
+            # Could also consider returning raw bytes as EmbeddedResource if MCP spec allows/client handles.
+            # For now, let's error if not already handled and conversion fails.
+            return {"type": "error", "message": f"Failed to convert content from {url} (type: {mime_type or 'unknown'}) to Markdown."}
+
+
+    async def _scrape_with_playwright(self, url: str) -> Tuple[Optional[str], Optional[str]]:
         """Internal: Scrapes using Playwright Async API."""
         if not async_playwright:
             self.playwright_available = False
@@ -224,28 +279,30 @@ class AsyncScraper:
 
         return content, mime_type
 
-    async def _scrape_with_httpx(self, url: str) -> tuple[str | None, str | None]:
-        """Internal: Scrapes using httpx AsyncClient."""
+    async def _scrape_with_httpx(self, url: str) -> Tuple[Optional[bytes], Optional[str], str, Optional[str]]:
+        """
+        Internal: Fetches content using httpx AsyncClient.
+        Returns (raw_bytes, content_type_header, final_url, encoding).
+        """
         headers = {"User-Agent": f"Mozilla/5.0 ({mcp_scraper_user_agent})"}
         try:
-            # Use async client
             async with httpx.AsyncClient(
                 headers=headers, verify=self.verify_ssl, follow_redirects=True, timeout=15.0
             ) as client:
                 response = await client.get(url)
                 response.raise_for_status() # Raise exception for 4xx/5xx status codes
-                # Decode explicitly, httpx might guess wrong sometimes
-                content = response.content.decode(response.encoding or 'utf-8', errors='replace')
-                content_type = response.headers.get("content-type", "")
-                mime_type = content_type.split(";")[0].strip().lower()
-                return content, mime_type
+                raw_bytes = response.content
+                content_type_header = response.headers.get("content-type")
+                final_url = str(response.url)
+                encoding = response.encoding # httpx's detected encoding
+                return raw_bytes, content_type_header, final_url, encoding
         except httpx.HTTPStatusError as http_err:
             self.print_error(f"HTTP error occurred for {url}: {http_err.response.status_code} {http_err.response.reason_phrase}")
         except httpx.RequestError as req_err:
              self.print_error(f"HTTP request error occurred for {url}: {req_err}")
         except Exception as err:
             self.print_error(f"An unexpected error occurred during async httpx request for {url}: {err}")
-        return None, None
+        return None, None, url, None # Return original URL on failure here
 # --- End Async Scraper Class ---
 
 
@@ -289,8 +346,9 @@ async def serve(verify_ssl: bool = True) -> None:
                 name="scrape_url",
                 description=(
                     "Scrapes a web URL using Playwright's async API to render JavaScript, "
-                    "and returns the content as Markdown. Useful for reading web pages, "
-                    "especially those requiring JS execution."
+                    "converts various document types (HTML, PDF, Office docs) to Markdown, "
+                    "returns images directly, and passes through text formats like JSON. "
+                    "Useful for fetching and processing diverse web content."
                 ),
                 inputSchema={
                     "type": "object",
@@ -308,7 +366,7 @@ async def serve(verify_ssl: bool = True) -> None:
     @server.call_tool()
     async def call_tool(
         name: str, arguments: dict
-    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    ) -> Sequence[TextContent | ImageContent]: # Removed EmbeddedResource for now
         """Handles the 'scrape_url' tool call using the AsyncScraper."""
         if name != "scrape_url":
             raise McpError(f"Unknown tool: {name}")
@@ -320,23 +378,29 @@ async def serve(verify_ssl: bool = True) -> None:
         print(f"MCP: Received request to scrape URL: {url}", file=sys.stderr)
 
         try:
-            # Directly await the async scrape method
-            markdown_content = await scraper.scrape(url)
+            result = await scraper.scrape(url)
+            result_type = result.get("type")
 
-            if markdown_content is not None:
-                print(f"MCP: Scraping successful for: {url}", file=sys.stderr)
-                # Limit content size slightly for safety? Maybe later.
-                # if len(markdown_content) > 50000:
-                #     markdown_content = markdown_content[:50000] + "\n... (content truncated)"
-                return [TextContent(type="text", text=markdown_content)]
+            if result_type == "markdown":
+                print(f"MCP: Successfully converted content to Markdown for: {url}", file=sys.stderr)
+                return [TextContent(type="text", text=result["content"])]
+            elif result_type == "text":
+                print(f"MCP: Successfully retrieved text content ({result.get('mime_type')}) for: {url}", file=sys.stderr)
+                return [TextContent(type="text", text=result["content"])]
+            elif result_type == "image":
+                print(f"MCP: Successfully retrieved image content ({result.get('mime_type')}) for: {url}", file=sys.stderr)
+                return [ImageContent(type="image", content=result["content_bytes"], media_type=result["mime_type"])]
+            elif result_type == "error":
+                error_message = result.get("message", "Unknown error during scraping.")
+                print(f"MCP: Scraping/processing error for {url}: {error_message}", file=sys.stderr)
+                raise McpError(error_message)
             else:
-                print(f"MCP: Scraping failed for: {url}", file=sys.stderr)
-                # Raise an error that the client can interpret
-                raise McpError(f"Failed to scrape or convert content from URL: {url}")
+                unknown_error = f"Unknown result type '{result_type}' from scraper for {url}."
+                print(f"MCP: {unknown_error}", file=sys.stderr)
+                raise McpError(unknown_error)
 
         except Exception as e:
             print(f"MCP: Error during scraping/conversion for {url}: {e}", file=sys.stderr)
-            # Propagate error to the client
             raise McpError(f"Error processing scrape request for {url}: {str(e)}")
 
     # --- Run the server ---
