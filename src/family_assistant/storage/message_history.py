@@ -184,8 +184,11 @@ async def get_recent_history(
             .where(message_history_table.c.interface_type == interface_type)
             .where(message_history_table.c.conversation_id == conversation_id)
             .where(message_history_table.c.timestamp >= cutoff_time)
-            # Order by internal_id for strict insertion order tie-breaking
-            .order_by(message_history_table.c.timestamp.desc())
+            # Order by timestamp desc, then by internal_id desc for stability
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc() # Add this secondary sort
+            )
             .limit(limit)
         )
         rows = await db_context.fetch_all(
@@ -303,6 +306,7 @@ async def get_grouped_message_history(
             # Group by (interface_type, conversation_id) tuple
             message_history_table.c.conversation_id,
             message_history_table.c.timestamp,  # Order chronologically within group
+            message_history_table.c.internal_id # Add for stable chronological order
         )
         rows = await db_context.fetch_all(
             cast(Select[Any], stmt)
