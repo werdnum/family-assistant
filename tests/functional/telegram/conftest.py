@@ -121,6 +121,7 @@ async def telegram_handler_fixture(
         calendar_config={},
         timezone_str="UTC",
         max_history_messages=10,
+        context_providers=[], # Added missing argument
         server_url="http://test-server:8000", # Placeholder URL for tests
         history_max_age_hours=24,
     )

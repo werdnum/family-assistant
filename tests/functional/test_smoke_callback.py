@@ -158,6 +158,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
+        context_providers=[], # Added missing argument
         history_max_age_hours=dummy_history_age,
         server_url=None,  # Added missing argument
     )

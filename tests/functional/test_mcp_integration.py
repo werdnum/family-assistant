@@ -228,6 +228,8 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
+        context_providers=[], # Added missing argument
+        context_providers=[], # Added missing argument
         history_max_age_hours=dummy_history_age,
         server_url=None,
     )
@@ -418,6 +420,8 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
+        context_providers=[], # Added missing argument
+        context_providers=[], # Added missing argument
         history_max_age_hours=dummy_history_age,
         server_url=None,
     )
