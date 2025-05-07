@@ -160,12 +160,15 @@ async def get_recent_history(
     limit: int,
     max_age: timedelta,
 ) -> List[Dict[str, Any]]:
-    """Retrieves recent messages for a conversation, including tool call info."""
+    """Retrieves recent messages for a conversation, including tool call info.
+    If a message included by limit/max_age belongs to a turn, all other messages
+    from that turn for the same conversation are also included, even if they
+    would otherwise be outside the limit/max_age.
+    """
     try:
         cutoff_time = datetime.now(timezone.utc) - max_age
-        stmt = (
+        selected_columns = [
             select(
-                # Select all relevant columns based on the new schema
                 message_history_table.c.internal_id,
                 message_history_table.c.interface_type,
                 message_history_table.c.conversation_id,
@@ -175,10 +178,10 @@ async def get_recent_history(
                 message_history_table.c.timestamp,
                 message_history_table.c.role,
                 message_history_table.c.content,
-                message_history_table.c.tool_calls,  # Renamed
-                message_history_table.c.reasoning_info,  # Added
-                message_history_table.c.error_traceback,  # Added
-                message_history_table.c.tool_call_id,  # Added
+                message_history_table.c.tool_calls,
+                message_history_table.c.reasoning_info,
+                message_history_table.c.error_traceback,
+                message_history_table.c.tool_call_id,
             )
         ]
 
