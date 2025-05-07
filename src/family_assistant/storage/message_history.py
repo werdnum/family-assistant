@@ -167,22 +167,21 @@ async def get_recent_history(
     """
     try:
         cutoff_time = datetime.now(timezone.utc) - max_age
+        # Define the columns to select for consistency
         selected_columns = [
-            select(
-                message_history_table.c.internal_id,
-                message_history_table.c.interface_type,
-                message_history_table.c.conversation_id,
-                message_history_table.c.interface_message_id,
-                message_history_table.c.turn_id,
-                message_history_table.c.thread_root_id,
-                message_history_table.c.timestamp,
-                message_history_table.c.role,
-                message_history_table.c.content,
-                message_history_table.c.tool_calls,
-                message_history_table.c.reasoning_info,
-                message_history_table.c.error_traceback,
-                message_history_table.c.tool_call_id,
-            )
+            message_history_table.c.internal_id,
+            message_history_table.c.interface_type,
+            message_history_table.c.conversation_id,
+            message_history_table.c.interface_message_id,
+            message_history_table.c.turn_id,
+            message_history_table.c.thread_root_id,
+            message_history_table.c.timestamp,
+            message_history_table.c.role,
+            message_history_table.c.content,
+            message_history_table.c.tool_calls,
+            message_history_table.c.reasoning_info,
+            message_history_table.c.error_traceback,
+            message_history_table.c.tool_call_id,
         ]
 
         # Step 1: Initial fetch of candidate messages based on limit and max_age

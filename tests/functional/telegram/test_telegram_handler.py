@@ -320,8 +320,8 @@ async def test_tool_result_in_subsequent_history(
     # Set rules (order matters for non-overlapping matchers, but explicit here)
     fix.mock_llm.rules = [
         rule_add_note_request_t1,
-        rule_final_confirmation_t1,
         rule_ask_result_t2,
+        rule_final_confirmation_t1, # More general rule checked last
     ]
 
     # --- Mock Bot Responses ---
@@ -357,13 +357,10 @@ async def test_tool_result_in_subsequent_history(
 
         # Check the *second* call to send_message
         call_2_args, call_2_kwargs = fix.mock_bot.send_message.call_args_list[1]
-        # --- Expected behavior assertion (currently failing) ---
-        # expected_escaped_text_2 = telegramify_markdown.markdownify(llm_response_text_2)
-        # assert_that(call_2_kwargs["text"]).described_as("Final bot message text (Turn 2)").is_equal_to(expected_escaped_text_2)
-        # --- Assertion reflecting ACTUAL behavior (due to potential bug in history context / rule matching) ---
-        # TODO: Investigate why rule_ask_result_t2 doesn't match and rule_final_confirmation_t1 matches instead in Turn 2.
-        expected_escaped_text_1_actual = telegramify_markdown.markdownify(llm_final_confirmation_text_1) # Text from Turn 1's confirmation
-        assert_that(call_2_kwargs["text"]).described_as("Final bot message text (Turn 2) - SHOULD BE tool result analysis!").is_equal_to(expected_escaped_text_1_actual)
+        # --- Expected behavior assertion ---
+        expected_escaped_text_2 = telegramify_markdown.markdownify(llm_response_text_2)
+        assert_that(call_2_kwargs["text"]).described_as("Final bot message text (Turn 2)").is_equal_to(expected_escaped_text_2)
+
         assert_that(call_2_kwargs["reply_to_message_id"]).described_as("Final bot message reply ID (Turn 2)").is_equal_to(user_message_id_2)
 
         # The key assertion is implicit: rule_ask_result_t2 matched.
