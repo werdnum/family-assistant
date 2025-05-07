@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import logging
 import json  # Added json import
+import contextlib # Added contextlib import
 from sqlalchemy import text  # To query DB directly for assertion
 from typing import List, Dict, Any, Optional, Callable, Tuple  # Added typing imports
 from unittest.mock import MagicMock  # For mocking Application
