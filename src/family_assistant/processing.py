@@ -653,49 +653,7 @@ class ProcessingService:
             aggregated_other_context_str = await self._aggregate_context_from_providers()
         except Exception as agg_err:
             logger.error(f"Failed to aggregate context from providers: {agg_err}", exc_info=True)
-            aggregated_other_context_str = "Error retrieving extended context."
-
-        # --- Call Processing Logic ---
-        # Tool definitions are now fetched inside process_message
-        try:  # Marked line 625
-            generated_turn_messages: List[Dict[str, Any]] = []
-            final_reasoning_info: Optional[Dict[str, Any]] = None
-            generated_turn_messages, final_reasoning_info = (
-                await self.process_message(  # Call the other method in this class
-                    db_context=db_context,  # Pass context
-                    messages=messages, # messages list now includes history and is ready for system prompt
-                    interface_type=interface_type, 
-                    conversation_id=conversation_id, 
-                    application=application,
-                    request_confirmation_callback=request_confirmation_callback,
-                )
-            )
-            # Add context info (turn_id, etc.) to each generated message *before* returning # Marked line 641
-            timestamp_now = datetime.now(timezone.utc)  # Marked line 642
-            for msg_dict in generated_turn_messages:
-                msg_dict["turn_id"] = turn_id
-                msg_dict["interface_type"] = interface_type
-                msg_dict["conversation_id"] = conversation_id
-                msg_dict["timestamp"] = (
-                    timestamp_now  # Approximate timestamp for the whole turn
-                )
-                msg_dict["thread_root_id"] = (
-                    thread_root_id_for_saving  # Use determined root ID
-                )
-                # interface_message_id will be None initially for agent messages
-                msg_dict["interface_message_id"] = None
-
-            # Return the list of fully populated turn messages, reasoning info, and None for error
-            return generated_turn_messages, final_reasoning_info, None
-        # Moved exception handling outside the process_message call
-        except Exception as e:  # Marked line 650
-            # Return None for content/tools/reasoning, but include the traceback
-            error_traceback = traceback.format_exc()
-            return (
-                [],
-                None,
-                error_traceback,
-            )  # Return empty list, None reasoning, traceback
+            aggregated_other_context_str = "Error retrieving extended context." # Keep fallback
 
         # --- System Prompt and final message preparation happens *before* calling self.process_message ---
         # This was misplaced in the provided file structure. It should be done on the 'messages' list
