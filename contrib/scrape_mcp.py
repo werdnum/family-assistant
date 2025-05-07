@@ -420,7 +420,15 @@ async def serve(verify_ssl: bool = True) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run an MCP server that provides an async web scraping tool using Playwright.",
+    parser = argparse.ArgumentParser(
+        description="Run an MCP server that provides an async web scraping tool using Playwright, or scrape a single URL to stdout.",
         epilog="Connect this server to an MCP client (like Claude Desktop)."
+    )
+    parser.add_argument(
+        "url",
+        nargs="?",
+        type=str,
+        help="Optional URL to scrape directly to stdout. If not provided, runs as an MCP server.",
     )
     parser.add_argument(
         "--no-verify-ssl",
@@ -428,18 +436,59 @@ if __name__ == "__main__":
         dest="verify_ssl",
         help="Disable SSL certificate verification during scraping.",
     )
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        help="Optional: In standalone mode, save image output to this file instead of stdout. Other content types are still printed to stdout.",
+    )
     args = parser.parse_args()
 
     try:
-        # Pass the command-line argument to the serve function
-        asyncio.run(serve(verify_ssl=args.verify_ssl))
+        if args.url:
+            # Standalone mode
+            async def standalone_scrape():
+                print(f"STANDALONE: Scraping URL: {args.url}", file=sys.stderr)
+                scraper = AsyncScraper(verify_ssl=args.verify_ssl)
+                # Perform playwright check for standalone mode as well for informative messages
+                await check_playwright_async()
+                result = await scraper.scrape(args.url)
+                result_type = result.get("type")
+
+                if result_type == "markdown" or result_type == "text":
+                    print(result["content"], end="") # Print directly to stdout
+                elif result_type == "image":
+                    if args.output_file:
+                        try:
+                            with open(args.output_file, "wb") as f:
+                                f.write(result["content_bytes"])
+                            print(f"STANDALONE: Image content ({result.get('mime_type')}) saved to {args.output_file}", file=sys.stderr)
+                        except IOError as e:
+                            print(f"STANDALONE: Error writing image to file {args.output_file}: {e}", file=sys.stderr)
+                            # Fallback to stdout if file write fails? Or just error out?
+                            # For now, just error out for the file operation.
+                            sys.exit(1)
+                    else:
+                        # Write raw bytes to stdout. User can redirect if needed.
+                        sys.stdout.buffer.write(result["content_bytes"])
+                        sys.stdout.flush()
+                        print(f"\nSTANDALONE: Image content ({result.get('mime_type')}) written to stdout.", file=sys.stderr)
+                elif result_type == "error":
+                    print(f"STANDALONE: Error: {result.get('message', 'Unknown scraping error.')}", file=sys.stderr)
+                    sys.exit(1)
+                else:
+                    print(f"STANDALONE: Error: Unknown result type '{result_type}' from scraper.", file=sys.stderr)
+                    sys.exit(1)
+            asyncio.run(standalone_scrape())
+        else:
+            # MCP server mode
+            asyncio.run(serve(verify_ssl=args.verify_ssl))
     except KeyboardInterrupt:
-        print("\nMCP Server interrupted by user. Exiting.", file=sys.stderr)
+        print("\nProcess interrupted by user. Exiting.", file=sys.stderr)
         sys.exit(0)
     except Exception as e:
-        # Catch potential top-level errors during asyncio.run()
-        print(f"\nMCP Server encountered a fatal error during startup/runtime: {e}", file=sys.stderr)
+        print(f"\nProcess encountered a fatal error: {e}", file=sys.stderr)
         # Print traceback for debugging if possible
         import traceback
         traceback.print_exc(file=sys.stderr)
+
         sys.exit(1)
