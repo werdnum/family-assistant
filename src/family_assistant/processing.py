@@ -536,6 +536,9 @@ class ProcessingService:
         if turn_id is None:
             turn_id = str(uuid.uuid4())
             logger.info(f"turn_id not provided, generated new one: {turn_id}")
+        logger.debug(
+            f"generate_llm_response_for_chat called with max_history_messages={self.max_history_messages}, history_max_age_hours={self.history_max_age_hours}"
+        )
         try:
             raw_history_messages = (
                 await storage.get_recent_history(  # Use storage directly with context
@@ -554,6 +557,13 @@ class ProcessingService:
                 exc_info=True,
             )
             raw_history_messages = []  # Continue with empty history on error
+        logger.debug(
+            f"Raw history messages fetched ({len(raw_history_messages)}):"
+        )
+        for i, msg in enumerate(raw_history_messages):
+            logger.debug(
+                f"  RawHist[{i}]: internal_id={msg.get('internal_id')}, role={msg.get('role')}, content_snippet='{str(msg.get('content'))[:50]}...', ts={msg.get('timestamp')}"
+            )
 
         # --- Filter out the triggering message from the fetched history ---
         filtered_history_messages = []
@@ -561,12 +571,22 @@ class ProcessingService:
             for msg in raw_history_messages:
                 if msg.get("interface_message_id") != trigger_interface_message_id:
                     filtered_history_messages.append(msg)
-            logger.debug(f"Filtered history: {len(raw_history_messages)} -> {len(filtered_history_messages)} messages after removing trigger ID {trigger_interface_message_id}")
+            logger.debug(
+                f"Filtered history: {len(raw_history_messages)} -> {len(filtered_history_messages)} messages after removing trigger ID {trigger_interface_message_id}"
+            )
         else:
             filtered_history_messages = raw_history_messages # No trigger ID to filter by
+        logger.debug(
+            f"Filtered history messages ({len(filtered_history_messages)}):"
+        )
+        for i, msg in enumerate(filtered_history_messages):
+            logger.debug(
+                f"  FiltHist[{i}]: internal_id={msg.get('internal_id')}, role={msg.get('role')}, content_snippet='{str(msg.get('content'))[:50]}...', ts={msg.get('timestamp')}"
+            )
 
         # Format the raw history using the new helper method
         initial_messages_for_llm = self._format_history_for_llm(filtered_history_messages)
+        logger.debug(f"Initial messages for LLM after formatting ({len(initial_messages_for_llm)}): {json.dumps(initial_messages_for_llm, default=str)}")
 
         # --- Handle Reply Thread Context ---
         thread_root_id_for_saving: Optional[int] = (
