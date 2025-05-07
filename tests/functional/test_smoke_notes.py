@@ -32,6 +32,11 @@ from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
 
+# Import ContextProvider and NotesContextProvider
+from family_assistant.context_providers import (
+    NotesContextProvider,
+)
+
 # Import storage functions for assertion (will use the patched engine)
 # from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
 import uuid # Added for turn_id
@@ -142,6 +147,16 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     dummy_max_history = 5
     dummy_history_age = 24
 
+    # --- Instantiate Context Providers ---
+    # Function to get DB context for the specific test engine
+    async def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[DatabaseContext]:
+        return await get_db_context(engine=test_db_engine)
+
+    notes_provider = NotesContextProvider(
+        get_db_context_func=get_test_db_context_func,
+        prompts=dummy_prompts,
+    )
+
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
@@ -149,7 +164,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
-        context_providers=[], # Added missing argument
+        context_providers=[notes_provider], # Pass the notes provider
         history_max_age_hours=dummy_history_age,
         server_url=None,  # Added missing argument
     )
