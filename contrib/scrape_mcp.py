@@ -419,8 +419,6 @@ async def serve(verify_ssl: bool = True) -> None:
 # --- Main Execution ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run an MCP server that provides an async web scraping tool using Playwright.",
-    parser = argparse.ArgumentParser(
         description="Run an MCP server that provides an async web scraping tool using Playwright, or scrape a single URL to stdout.",
         epilog="Connect this server to an MCP client (like Claude Desktop)."
     )
