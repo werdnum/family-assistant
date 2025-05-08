@@ -272,50 +272,53 @@ async def test_indexing_pipeline_e2e(
 
         # --- Assert ---
         # Verify embeddings in DB
-        stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id)
-        stored_embeddings_rows = await db_context_for_pipeline.fetch_all(stmt_verify_embeddings) # Use the same context or a new one
+        # Use a new context for assertions as the previous one is closed
+        async with await get_db_context(engine=pg_vector_db_engine) as db_context_for_asserts:
 
-        assert_that(stored_embeddings_rows).described_as("Expected at least title and one chunk embedding").is_length_greater_than_or_equal_to(2)
+            stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id)
+            stored_embeddings_rows = await db_context_for_asserts.fetch_all(stmt_verify_embeddings)
 
-        title_embedding_found = False
-        chunk_embeddings_found = 0
-        expected_chunk_texts = [ # Based on chunker logic and test content/size
-            "Apples are red. Bananas are", # Chunk 1
-            "anas are yellow. Oranges are", # Chunk 2 (overlap "anas ")
-            "ges are orange and tasty." # Chunk 3 (overlap "ges a")
-        ]
+            assert_that(stored_embeddings_rows).described_as("Expected at least title and one chunk embedding").is_length_greater_than_or_equal_to(2)
 
-        for row_proxy in stored_embeddings_rows:
-            row = dict(row_proxy) # Convert RowProxy to dict for easier access
-            assert_that(row["embedding_model"]).is_equal_to(TEST_EMBEDDING_MODEL_NAME)
-            if row["embedding_type"] == "title":
-                assert_that(row["content"]).is_equal_to(doc_title)
-                title_embedding_found = True
-            elif row["embedding_type"] == "raw_text_chunk":
-                assert_that(expected_chunk_texts).contains(row["content"])
-                chunk_embeddings_found += 1
+            title_embedding_found = False
+            chunk_embeddings_found = 0
+            expected_chunk_texts = [ # Based on chunker logic and test content/size
+                "Apples are red. Bananas are", # Chunk 1
+                "anas are yellow. Oranges are", # Chunk 2 (overlap "anas ")
+                "ges are orange and tasty." # Chunk 3 (overlap "ges a")
+            ]
 
-        assert_that(title_embedding_found).described_as("Title embedding not found").is_true()
-        assert_that(chunk_embeddings_found).described_as(
-            f"Expected {len(expected_chunk_texts)} chunk embeddings"
-        ).is_equal_to(len(expected_chunk_texts))
+            for row_proxy in stored_embeddings_rows:
+                row = dict(row_proxy) # Convert RowProxy to dict for easier access
+                assert_that(row["embedding_model"]).is_equal_to(TEST_EMBEDDING_MODEL_NAME)
+                if row["embedding_type"] == "title":
+                    assert_that(row["content"]).is_equal_to(doc_title)
+                    title_embedding_found = True
+                elif row["embedding_type"] == "raw_text_chunk":
+                    assert_that(expected_chunk_texts).contains(row["content"])
+                    chunk_embeddings_found += 1
 
-        # Verify search
-        query_text_for_chunk = "yellow bananas" # Should match chunk 2
-        query_vector_result = await mock_pipeline_embedding_generator.generate_embeddings([query_text_for_chunk])
-        query_embedding = query_vector_result.embeddings[0]
+            assert_that(title_embedding_found).described_as("Title embedding not found").is_true()
+            assert_that(chunk_embeddings_found).described_as(
+                f"Expected {len(expected_chunk_texts)} chunk embeddings"
+            ).is_equal_to(len(expected_chunk_texts))
 
-        search_results = await query_vectors(
-            db_context_for_pipeline, query_embedding, TEST_EMBEDDING_MODEL_NAME, limit=5
-        )
-        assert_that(search_results).described_as("Vector search results").is_not_empty()
+            # Verify search
+            query_text_for_chunk = "yellow bananas" # Should match chunk 2
+            query_vector_result = await mock_pipeline_embedding_generator.generate_embeddings([query_text_for_chunk])
+            query_embedding = query_vector_result.embeddings[0]
 
-        found_matching_chunk_in_search = False
-        for res in search_results:
-            if res["document_id"] == doc_db_id and "yellow. Oranges are" in res["embedding_source_content"]:
-                found_matching_chunk_in_search = True
-                break
-        assert_that(found_matching_chunk_in_search).described_as("Relevant chunk not found via vector search").is_true()
+            search_results = await query_vectors(
+                db_context_for_asserts, query_embedding, TEST_EMBEDDING_MODEL_NAME, limit=5
+            )
+            assert_that(search_results).described_as("Vector search results").is_not_empty()
+
+            found_matching_chunk_in_search = False
+            for res in search_results:
+                if res["document_id"] == doc_db_id and "yellow. Oranges are" in res["embedding_source_content"]:
+                    found_matching_chunk_in_search = True
+                    break
+            assert_that(found_matching_chunk_in_search).described_as("Relevant chunk not found via vector search").is_true()
 
         logger.info("Indexing pipeline E2E test passed.")
 
