@@ -19,7 +19,6 @@ from family_assistant.storage.vector import (
     DocumentEmbeddingRecord,
     Document as DocumentProtocol,
 )
-from family_assistant.storage import schema # To access tables for direct query
 from family_assistant.embeddings import MockEmbeddingGenerator, EmbeddingGenerator, EmbeddingResult
 from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
@@ -185,7 +184,7 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
         assert len(dispatched_task_payloads) > 0, "No embed_and_store_batch task was dispatched"
 
         # Verify embeddings in DB
-        stmt = schema.document_embeddings.select().where(schema.document_embeddings.c.document_id == doc_db_id)
+        stmt = DocumentEmbeddingRecord.__table__.select().where(DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id)
         stored_embeddings_rows = await db_context.fetch_all(stmt)
 
         assert len(stored_embeddings_rows) >= 2, "Expected at least title and one chunk embedding"
