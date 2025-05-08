@@ -129,7 +129,7 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
             dispatched_task_payloads.append(payload)
             logger.info(f"Mock enqueue_task: Intercepted {task_type} with payload for doc_id {payload.get('document_id')}")
             # Call the handler directly
-            async with get_db_context(engine=pg_vector_db_engine) as db_ctx_for_handler:
+            async with await get_db_context(engine=pg_vector_db_engine) as db_ctx_for_handler:
                 await handle_embed_and_store_batch(
                     db_context=db_ctx_for_handler,
                     payload=payload,
@@ -138,7 +138,7 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
         else:
             logger.warning(f"Mock enqueue_task: Received unhandled task_type {task_type}")
 
-    async with get_db_context(engine=pg_vector_db_engine) as db_context:
+    async with await get_db_context(engine=pg_vector_db_engine) as db_context:
         tool_exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-indexing-conv",
