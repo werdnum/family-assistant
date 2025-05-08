@@ -38,7 +38,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.dialects.postgresql.dml import OnConflictDoUpdate
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, aliased
 from sqlalchemy.sql import functions  # Import functions explicitly
 from sqlalchemy.sql.expression import ColumnElement
@@ -288,46 +288,41 @@ async def get_document_by_source_id(
 ) -> Optional[DocumentRecord]:
     """Retrieves a document ORM object by its source ID."""
     try:
-        # Use ORM select with the context's session if available, or execute directly
-        # For simplicity with context, using core select
         stmt = select(DocumentRecord).where(DocumentRecord.source_id == source_id)
-        # fetch_one returns a dict-like mapping, need to reconstruct ORM object if required
-        # Or, use context's session if it provided one (needs context enhancement)
-        # Let's stick to core API for now:
-        result_mapping = await db_context.fetch_one(stmt)
-        if result_mapping:
-            # Manually create ORM object (less ideal)
-            # record = DocumentRecord(**result_mapping) # This might fail with relationships etc.
-            # Alternative: If the API contract allows returning the dict, do that.
-            # For now, let's assume the ORM object is needed and this needs refinement
-            # or the context needs session support.
-            # Returning the raw mapping for now.
-            logger.warning(
-                "get_document_by_source_id returning raw mapping, not ORM object due to context limitations."
-            )
-            # To return ORM object, context needs session support or use Session directly.
-            # Let's fetch using sessionmaker for ORM compatibility
-            async_session = async_sessionmaker(
-                db_context.engine, expire_on_commit=False
-            )
-            async with async_session() as session:
-                result = await session.execute(stmt)
-                record = result.scalar_one_or_none()
-                if record:
-                    logger.debug(f"Found document with source_id {source_id}")
-                    return record
-                else:
-                    logger.debug(f"No document found with source_id {source_id}")
-                    return None
 
+        if db_context.conn is None:
+            logger.error("get_document_by_source_id called with a DatabaseContext that has no active connection.")
+            raise RuntimeError("DatabaseContext has no active connection.")
+
+        # Create an AsyncSession that will use the existing connection (and thus transaction)
+        # from the db_context. The session does not own the connection or transaction lifecycle.
+        async_session_instance = AsyncSession(bind=db_context.conn, expire_on_commit=False)
+        try:
+            # Execute the ORM statement using this session
+            result = await async_session_instance.execute(stmt)
+            record = result.scalar_one_or_none()
+        finally:
+            # Close the session; this does not close db_context.conn.
+            await async_session_instance.close()
+
+        if record:
+            logger.debug(f"Found document with source_id {source_id} using db_context's transaction.")
+            return record
         else:
-            logger.debug(f"No document found with source_id {source_id}")
+            logger.debug(f"No document found with source_id {source_id} using db_context's transaction.")
             return None
-    except SQLAlchemyError as e:
+
+    except SQLAlchemyError as e: # Catch database-specific errors
         logger.error(
             f"Database error retrieving document with source_id {source_id}: {e}",
             exc_info=True,
         )
+        raise
+    except Exception as e: # Catch other potential errors like RuntimeError from pre-checks
+        logger.error(
+            f"Unexpected error retrieving document with source_id {source_id}: {e}",
+            exc_info=True,
+            )
         raise
 
 
