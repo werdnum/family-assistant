@@ -4,6 +4,7 @@ Functional test for the basic document indexing pipeline.
 import pytest
 import asyncio
 import uuid
+import pytest_asyncio # For async fixtures
 import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Awaitable, Callable
@@ -100,20 +101,14 @@ class EmbeddingTaskHandlerWrapper:
         )
 
 
-@pytest.mark.asyncio
-async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
-    # Removed mocker fixture, as we are not using mocker.patch anymore
+@pytest_asyncio.fixture(scope="function")
+async def mock_pipeline_embedding_generator() -> MockEmbeddingGenerator:
     """
-    End-to-end test for a basic indexing pipeline:
-    1. Creates a document.
-    2. Runs it through TitleExtractor -> TextChunker -> EmbeddingDispatchProcessor.
-    3. Verifies embeddings for title and chunks are stored in the DB.
-    4. Verifies the content can be retrieved via vector search.
+    Provides a MockEmbeddingGenerator instance specifically for the pipeline test,
+    which dynamically populates its embedding_map.
     """
     # --- Arrange ---
-    doc_content = "Apples are red. Bananas are yellow. Oranges are orange and tasty."
-    doc_title = "Fruit Facts"
-    doc_source_id = f"test-doc-{uuid.uuid4()}"
+    # doc_content and doc_title are specific to the test logic, not the generator itself.
 
     # Mock Embedding Generator
     # It's important that different texts map to different (but consistent) vectors.
@@ -133,30 +128,84 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
                     self.embedding_map[text] = generate_simple_vector(text)
             return await super().generate_embeddings(texts)
 
-    mock_embed_generator = TestSpecificMockEmbeddingGenerator(
+    generator = TestSpecificMockEmbeddingGenerator(
         embedding_map=embedding_map, # Start with empty, will populate
         model_name=TEST_EMBEDDING_MODEL_NAME,
         default_embedding=[0.0] * TEST_EMBEDDING_DIMENSION
     )
+    return generator
 
-    # Setup TaskWorker
+
+@pytest_asyncio.fixture(scope="function")
+async def indexing_task_worker(
+    pg_vector_db_engine: AsyncEngine, # Depends on the DB engine
+    mock_pipeline_embedding_generator: MockEmbeddingGenerator # Depends on the mock generator
+):
+    """
+    Sets up and tears down a TaskWorker instance configured for indexing tasks.
+    Yields the worker, new_task_event, and shutdown_event.
+    """
     mock_application = MagicMock()
     worker = TaskWorker(
-        processing_service=None, # Not needed for handle_embed_and_store_batch
+        processing_service=None,
         application=mock_application,
         calendar_config={},
         timezone_str="UTC",
     )
+    embedding_task_executor = EmbeddingTaskHandlerWrapper(mock_pipeline_embedding_generator)
+    worker.register_task_handler("embed_and_store_batch", embedding_task_executor.handle_task)
 
-    embedding_task_executor = EmbeddingTaskHandlerWrapper(mock_embed_generator)
-    worker.register_task_handler(
-        "embed_and_store_batch",
-        embedding_task_executor.handle_task
-    )
+    worker_task_handle = None
+    shutdown_event = asyncio.Event()
+    new_task_event = asyncio.Event()
 
-    worker_task = None
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event() # Worker will wait on this
+    try:
+        worker_task_handle = asyncio.create_task(worker.run(new_task_event))
+        logger.info("Started background task worker for indexing_task_worker fixture.")
+        await asyncio.sleep(0.1) # Give worker time to start
+        yield worker, new_task_event, shutdown_event
+    finally:
+        if worker_task_handle:
+            logger.info("Stopping background task worker from indexing_task_worker fixture...")
+            shutdown_event.set()
+            try:
+                await asyncio.wait_for(worker_task_handle, timeout=5.0)
+                logger.info("Background task worker (fixture) stopped.")
+            except asyncio.TimeoutError:
+                logger.warning("Timeout stopping worker task (fixture). Cancelling.")
+                worker_task_handle.cancel()
+                try:
+                    await worker_task_handle
+                except asyncio.CancelledError:
+                    logger.info("Worker task (fixture) cancellation confirmed.")
+            except Exception as e:
+                logger.error(f"Error stopping worker task (fixture): {e}", exc_info=True)
+
+
+@pytest.mark.asyncio
+async def test_indexing_pipeline_e2e(
+    pg_vector_db_engine: AsyncEngine,
+    mock_pipeline_embedding_generator: MockEmbeddingGenerator, # Get the generator instance
+    indexing_task_worker: Tuple[TaskWorker, asyncio.Event, asyncio.Event] # Use the new fixture
+):
+    """
+    End-to-end test for a basic indexing pipeline:
+    1. Creates a document.
+    2. Runs it through TitleExtractor -> TextChunker -> EmbeddingDispatchProcessor.
+    3. Verifies embeddings for title and chunks are stored in the DB.
+    4. Verifies the content can be retrieved via vector search.
+    """
+    # --- Arrange ---
+    doc_content = "Apples are red. Bananas are yellow. Oranges are orange and tasty."
+    doc_title = "Fruit Facts"
+    doc_source_id = f"test-doc-{uuid.uuid4()}"
+
+    # Unpack worker and events from the fixture
+    _worker, test_new_task_event, _test_shutdown_event = indexing_task_worker
+
+    # Setup TaskWorker
+    # mock_application is now created inside the fixture if needed by the worker
+    # The worker itself is part of the `indexing_task_worker` fixture's return value
 
     # ToolExecutionContext for the pipeline run (uses real enqueue_task)
     # This db_context is for the pipeline's direct DB operations (like add_document)
@@ -167,17 +216,13 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
     indexing_task_ids: set[str] = set()
 
     try:
-        worker_task = asyncio.create_task(worker.run(test_new_task_event))
-        logger.info("Started background task worker for indexing test...")
-        await asyncio.sleep(0.1) # Give worker time to start
-
         async with db_context_for_pipeline: # Ensure this context is properly managed
             tool_exec_context = ToolExecutionContext(
                 interface_type="test",
                 conversation_id="test-indexing-conv",
                 db_context=db_context_for_pipeline,
                 calendar_config={},
-                application=mock_application, # Can be a mock or None if not used by pipeline steps
+                application=MagicMock(), # Provide a mock application object
             )
 
         # Create and store the document
@@ -254,7 +299,7 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
 
         # Verify search
         query_text_for_chunk = "yellow bananas" # Should match chunk 2
-        query_vector_result = await mock_embed_generator.generate_embeddings([query_text_for_chunk])
+        query_vector_result = await mock_pipeline_embedding_generator.generate_embeddings([query_text_for_chunk])
         query_embedding = query_vector_result.embeddings[0]
 
         search_results = await query_vectors(
@@ -272,22 +317,8 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
         logger.info("Indexing pipeline E2E test passed.")
 
     finally:
-        # Stop the worker
-        if worker_task:
-            logger.info("Stopping background task worker for indexing test...")
-            test_shutdown_event.set()
-            try:
-                await asyncio.wait_for(worker_task, timeout=5.0)
-                logger.info("Background task worker stopped.")
-            except asyncio.TimeoutError:
-                logger.warning("Timeout stopping worker task. Cancelling.")
-                worker_task.cancel()
-                try:
-                    await worker_task
-                except asyncio.CancelledError:
-                    logger.info("Worker task cancellation confirmed.")
-            except Exception as e:
-                logger.error(f"Error stopping worker task: {e}", exc_info=True)
+        # Worker lifecycle is now managed by the `indexing_task_worker` fixture's teardown
+
         # Clean up tasks
         if indexing_task_ids:
             try:
