@@ -37,9 +37,6 @@ class IndexableContent:
     ref: Optional[str] = None
     """Reference to original binary data if content is None (e.g., temporary file path)."""
 
-    ready_for_embedding: bool = False
-    """Flag indicating if this content item is ready for immediate embedding."""
-
 
 class ContentProcessor(Protocol):
     """
@@ -69,8 +66,9 @@ class ContentProcessor(Protocol):
 
         Returns:
             A list of IndexableContent items that need further processing
-            by subsequent stages in the pipeline. Processors are responsible for
-            setting the `ready_for_embedding` flag on items they deem ready.
+            by subsequent stages in the pipeline. Some processors (e.g., an
+            EmbeddingDispatchProcessor) may also use the provided `context`
+            to enqueue tasks, such as dispatching items for embedding.
         """
         ...
 
@@ -112,41 +110,19 @@ class IndexingPipeline:
             A list of IndexableContent items that have passed through all stages
             and may require further, non-pipeline processing, or represent the
             final state of content items that were not marked ready for embedding
-            by any processor. The primary outcome of the pipeline's execution is
-            the dispatching of `embed_and_store_batch` tasks by the pipeline itself
-            for items marked `ready_for_embedding=True`.
+            by any processor. Embedding tasks are dispatched by specialized
+            processors within the pipeline, not by the pipeline orchestrator itself.
         """
         items_for_next_stage: List[IndexableContent] = [initial_content]
-        all_items_ready_for_embedding: List[IndexableContent] = []
 
         for processor in self.processors:
             if not items_for_next_stage:  # No more items to process
                 break
 
-            processed_items_from_current_stage = await processor.process(
+            # Each processor returns the list of items to be passed to the next one.
+            # Specialized processors (e.g., for dispatching embeddings) will handle
+            # task enqueuing internally using the provided context.
+            items_for_next_stage = await processor.process(
                 items_for_next_stage, original_document, initial_content, context
             )
-
-            items_for_next_stage = []  # Reset for the next iteration
-            for item in processed_items_from_current_stage:
-                if item.ready_for_embedding:
-                    all_items_ready_for_embedding.append(item)
-                else:
-                    items_for_next_stage.append(item)
-
-        # After all processors, dispatch collected items ready for embedding.
-        if all_items_ready_for_embedding:
-            # This is where the IndexingPipeline would format and dispatch
-            # the 'embed_and_store_batch' task.
-            # For example (simplified, actual implementation needs more detail):
-            # texts_to_embed = [item.content for item in all_items_ready_for_embedding if item.content]
-            # metadata_list = [...] # Construct this based on item.embedding_type, item.metadata etc.
-            # document_id = original_document.id # Assuming Document has an id
-            #
-            # if texts_to_embed and hasattr(original_document, 'id'):
-            #     await context.enqueue_task("embed_and_store_batch", payload={...})
-            # else:
-            #     # Log warning or handle error if no content or document_id
-            pass  # Placeholder for dispatch logic
-
-        return items_for_next_stage # These are items that completed the pipeline and were not marked ready.
+        return items_for_next_stage # These are items that completed all pipeline stages.
