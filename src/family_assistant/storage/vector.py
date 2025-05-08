@@ -150,7 +150,7 @@ class DocumentEmbeddingRecord(Base):
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=functions.now()
     )
-    metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+    embedding_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )  # New metadata column
 
@@ -364,7 +364,7 @@ async def add_embedding(
         "embedding_model": embedding_model,
         "content": content,
         "content_hash": content_hash,
-        "metadata": embedding_doc_metadata,  # Store the new metadata
+        "embedding_metadata": embedding_doc_metadata,  # Store the new metadata
     }
 
     if db_context.engine.dialect.name != "postgresql":
