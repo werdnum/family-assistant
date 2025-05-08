@@ -417,9 +417,9 @@ async def test_vector_ranking(pg_vector_db_engine):
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor = TitleExtractor()
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
-    embedding_dispatcher_kw = EmbeddingDispatchProcessor( # Renamed for clarity if needed, or reuse
-        embedding_types_to_dispatch=["title", "content_chunk"], batch_size=10
-)
+    embedding_dispatcher_kw = EmbeddingDispatchProcessor(  # Renamed for clarity if needed, or reuse
+        embedding_types_to_dispatch=["title", "content_chunk"],
+    )
     test_pipeline_kw = IndexingPipeline( # Renamed for clarity
         processors=[title_extractor, text_chunker, embedding_dispatcher_kw],
         config={}
@@ -591,8 +591,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
     title_extractor_meta = TitleExtractor()
     text_chunker_meta = TextChunker(chunk_size=500, chunk_overlap=50)
     embedding_dispatcher_meta = EmbeddingDispatchProcessor(
-        embedding_types_to_dispatch=["title", "content_chunk"], batch_size=10
-)
+        embedding_types_to_dispatch=["title", "content_chunk"],)
     test_pipeline_meta = IndexingPipeline(
         processors=[title_extractor_meta, text_chunker_meta, embedding_dispatcher_meta],
         config={}
@@ -755,9 +754,9 @@ async def test_keyword_filtering(pg_vector_db_engine):
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor = TitleExtractor()
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
-    embedding_dispatcher_kw = EmbeddingDispatchProcessor( # Renamed for clarity if needed, or reuse
-        embedding_types_to_dispatch=["title", "content_chunk"], batch_size=10
-)
+    embedding_dispatcher_kw = EmbeddingDispatchProcessor(  # Renamed for clarity if needed, or reuse
+        embedding_types_to_dispatch=["title", "content_chunk"],
+    )
     test_pipeline_kw = IndexingPipeline( # Renamed for clarity
         processors=[title_extractor, text_chunker, embedding_dispatcher_kw],
         config={}
