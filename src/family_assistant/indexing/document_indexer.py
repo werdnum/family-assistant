@@ -36,9 +36,9 @@ class DocumentIndexer:
         Args:
             pipeline: An instance of IndexingPipeline. # Modified
         """
-        if not pipeline: # Modified
-            raise ValueError("IndexingPipeline instance is required.") # Modified
-        self.pipeline = pipeline # Modified
+        if not pipeline:
+            raise ValueError("IndexingPipeline instance is required.")
+        self.pipeline = pipeline
         logger.info(
             f"DocumentIndexer initialized with pipeline: {type(pipeline).__name__}"
         )
