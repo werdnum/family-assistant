@@ -278,7 +278,7 @@ async def test_indexing_pipeline_e2e(
             stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id)
             stored_embeddings_rows = await db_context_for_asserts.fetch_all(stmt_verify_embeddings)
 
-            assert_that(stored_embeddings_rows).described_as("Expected at least title and one chunk embedding").is_length_greater_than_or_equal_to(2)
+            assert_that(len(stored_embeddings_rows)).described_as("Expected at least title and one chunk embedding").is_greater_than_or_equal_to(2)
 
             title_embedding_found = False
             chunk_embeddings_found = 0
