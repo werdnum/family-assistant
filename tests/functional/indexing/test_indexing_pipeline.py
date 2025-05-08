@@ -282,10 +282,10 @@ async def test_indexing_pipeline_e2e(
 
             title_embedding_found = False
             chunk_embeddings_found = 0
-            expected_chunk_texts = [ # Based on chunker logic and test content/size
-                "Apples are red. Bananas are", # Chunk 1
-                "anas are yellow. Oranges are", # Chunk 2 (overlap "anas ")
-                "ges are orange and tasty." # Chunk 3 (overlap "ges a")
+            expected_chunk_texts = [
+                "Apples are red Bananas are yel",  # Chunk 1 from "Apples are red Bananas are yellow..."[0:30]
+                "low Oranges are orange and tas",  # Chunk 2 from "Apples are red Bananas are yellow..."[25:55]
+                "orange and tasty."                # Chunk 3 from "Apples are red Bananas are yellow..."[50:64]
             ]
 
             for row_proxy in stored_embeddings_rows:
@@ -304,18 +304,18 @@ async def test_indexing_pipeline_e2e(
             ).is_equal_to(len(expected_chunk_texts))
 
             # Verify search
-            query_text_for_chunk = "yellow bananas" # Should match chunk 2
+            query_text_for_chunk = "yellow and orange" # Should match the second chunk
             query_vector_result = await mock_pipeline_embedding_generator.generate_embeddings([query_text_for_chunk])
             query_embedding = query_vector_result.embeddings[0]
 
             search_results = await query_vectors(
                 db_context_for_asserts, query_embedding, TEST_EMBEDDING_MODEL_NAME, limit=5
             )
-            assert_that(search_results).described_as("Vector search results").is_not_empty()
+            assert_that(search_results).described_as(f"Vector search results for query '{query_text_for_chunk}'").is_not_empty()
 
             found_matching_chunk_in_search = False
             for res in search_results:
-                if res["document_id"] == doc_db_id and "yellow. Oranges are" in res["embedding_source_content"]:
+                if res["document_id"] == doc_db_id and res["embedding_source_content"] == expected_chunk_texts[1]: # "low Oranges are orange and tas"
                     found_matching_chunk_in_search = True
                     break
             assert_that(found_matching_chunk_in_search).described_as("Relevant chunk not found via vector search").is_true()
