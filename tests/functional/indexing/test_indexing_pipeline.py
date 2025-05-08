@@ -20,7 +20,7 @@ from family_assistant.storage.vector import (
     Document as DocumentProtocol,
 )
 from family_assistant.storage import schema # To access tables for direct query
-from family_assistant.embeddings import MockEmbeddingGenerator, EmbeddingGenerator
+from family_assistant.embeddings import MockEmbeddingGenerator, EmbeddingGenerator, EmbeddingResult
 from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
 from family_assistant.indexing.processors.text_processors import TextChunker
@@ -106,7 +106,7 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
     embedding_map = {} # Will be populated by the generator as it sees texts
 
     class TestSpecificMockEmbeddingGenerator(MockEmbeddingGenerator):
-        async def generate_embeddings(self, texts: List[str]) -> 'EmbeddingResult':
+        async def generate_embeddings(self, texts: List[str]) -> EmbeddingResult:
             # Ensure this returns unique vectors for unique texts during the test
             for text in texts:
                 if text not in self.embedding_map:
@@ -230,4 +230,3 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
         assert found_matching_chunk_in_search, "Relevant chunk not found via vector search"
 
     logger.info("Indexing pipeline E2E test passed.")
-
