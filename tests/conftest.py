@@ -18,6 +18,9 @@ import family_assistant.storage.tasks
 # Import vector storage init and context
 from family_assistant.storage.vector import init_vector_db # Corrected import path
 from family_assistant.storage.context import DatabaseContext
+# Import for task_worker_manager fixture
+from family_assistant.task_worker import TaskWorker
+from unittest.mock import MagicMock # Already imported, but good to note dependency
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
@@ -177,3 +180,49 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
 #     async with DatabaseContext(engine=pg_vector_db_engine) as db:
 #         # Use db.fetch_all, db.execute_with_retry, etc.
 #         ...
+
+
+@pytest_asyncio.fixture(scope="function")
+async def task_worker_manager():
+    """
+    Manages the lifecycle of a TaskWorker instance.
+
+    Yields a tuple: (TaskWorker instance, new_task_event, shutdown_event).
+    The TaskWorker is initialized with default parameters and has no handlers
+    registered by default. Tests using this fixture are responsible for
+    registering necessary handlers on the yielded worker instance.
+    """
+    mock_application = MagicMock()  # Generic mock, tests can replace if needed
+    worker = TaskWorker(
+        processing_service=None,  # Default, can be customized by tests
+        application=mock_application,
+        calendar_config={},  # Default
+        timezone_str="UTC",  # Default
+    )
+
+    worker_task_handle = None
+    shutdown_event = asyncio.Event()
+    new_task_event = asyncio.Event()
+
+    try:
+        worker_task_handle = asyncio.create_task(worker.run(new_task_event))
+        logger.info("Started background TaskWorker (fixture).")
+        await asyncio.sleep(0.1)  # Give worker time to start
+        yield worker, new_task_event, shutdown_event
+    finally:
+        if worker_task_handle:
+            logger.info("Stopping background TaskWorker (fixture)...")
+            shutdown_event.set()
+            new_task_event.set() # Wake up worker if it's waiting on this
+            try:
+                await asyncio.wait_for(worker_task_handle, timeout=5.0)
+                logger.info("Background TaskWorker (fixture) stopped gracefully.")
+            except asyncio.TimeoutError:
+                logger.warning("Timeout stopping TaskWorker (fixture). Cancelling.")
+                worker_task_handle.cancel()
+                try:
+                    await worker_task_handle
+                except asyncio.CancelledError:
+                    logger.info("TaskWorker (fixture) cancellation confirmed.")
+            except Exception as e:
+                logger.error(f"Error during TaskWorker (fixture) shutdown: {e}", exc_info=True)
