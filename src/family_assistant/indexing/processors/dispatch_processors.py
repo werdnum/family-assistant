@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Set
 
 from family_assistant.indexing.pipeline import IndexableContent, ContentProcessor
 from family_assistant.storage.vector import Document # Document protocol
+from family_assistant.storage.tasks import enqueue_task
 from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -83,12 +84,15 @@ class EmbeddingDispatchProcessor(ContentProcessor):
             # Generate a unique task ID for idempotency
             task_id = f"embed_batch_{document_id}_{uuid.uuid4()}"
 
-            await context.enqueue_task(
-                task_id=task_id, task_type="embed_and_store_batch", payload=task_payload
+            await enqueue_task(
+                db_context=context.db_context,
+                task_id=task_id,
+                task_type="embed_and_store_batch",
+                payload=task_payload,
+                notify_event=context.application.new_task_event if hasattr(context.application, "new_task_event") else None
             )
             logger.info(f"{self.name}: Dispatched {len(texts_to_embed_list)} items for embedding (task_id: {task_id}) for document ID {document_id}.")
         else:
             logger.debug(f"{self.name}: No valid content found in items selected for dispatch for document ID {document_id}.")
 
         return current_items # Pass all original items through to the next processor
-
