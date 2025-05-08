@@ -2,7 +2,7 @@
 Content processors focused on text manipulation, like chunking.
 """
 import logging
-from typing import List, Dict, Any, Sequence
+from typing import List, Dict, Any, Sequence, Optional
 
 from family_assistant.indexing.pipeline import IndexableContent, ContentProcessor
 from family_assistant.storage.vector import Document
