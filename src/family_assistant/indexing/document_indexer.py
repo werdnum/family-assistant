@@ -14,7 +14,7 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent # Added
 
 # Import the Document protocol from the correct location (though not directly used here, good practice)
-from family_assistant.storage.vector import Document
+from family_assistant.storage.vector import Document, get_document_by_id # Added import
 from family_assistant.tools import ToolExecutionContext  # Import the context class
 
 logger = logging.getLogger(__name__)
@@ -70,9 +70,8 @@ class DocumentIndexer:
         # Fetch the original DocumentRecord
         try:
             # Assuming a function like get_document_by_id exists.
-            # The returned object should conform to the Document protocol.
-            original_document_record = await storage.get_document_by_id(
-                db_context, document_id
+            original_document_record = await get_document_by_id( # Changed from storage.get_document_by_id
+                db_context, document_id # The returned object should conform to the Document protocol.
             )
             if not original_document_record:
                 raise ValueError(f"Document with ID {document_id} not found.")
