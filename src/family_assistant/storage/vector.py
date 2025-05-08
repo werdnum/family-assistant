@@ -326,6 +326,41 @@ async def get_document_by_source_id(
         raise
 
 
+async def get_document_by_id(
+    db_context: DatabaseContext, document_id: int # Added context and id
+) -> Optional[DocumentRecord]:
+    """Retrieves a document ORM object by its internal primary key ID."""
+    try:
+        stmt = select(DocumentRecord).where(DocumentRecord.id == document_id)
+
+        if db_context.conn is None:
+            logger.error("get_document_by_id called with a DatabaseContext that has no active connection.")
+            raise RuntimeError("DatabaseContext has no active connection.")
+
+        # Create an AsyncSession that will use the existing connection (and thus transaction)
+        # from the db_context. The session does not own the connection or transaction lifecycle.
+        async_session_instance = AsyncSession(bind=db_context.conn, expire_on_commit=False)
+        try:
+            # Execute the ORM statement using this session
+            result = await async_session_instance.execute(stmt)
+            record = result.scalar_one_or_none()
+        finally:
+            # Close the session; this does not close db_context.conn.
+            await async_session_instance.close()
+
+        if record:
+            logger.debug(f"Found document with ID {document_id} using db_context's transaction.")
+            return record
+        else:
+            logger.debug(f"No document found with ID {document_id} using db_context's transaction.")
+            return None
+    except SQLAlchemyError as e: # Catch database-specific errors
+        logger.error(f"Database error retrieving document with ID {document_id}: {e}", exc_info=True)
+        raise
+    except Exception as e: # Catch other potential errors like RuntimeError from pre-checks
+        logger.error(f"Unexpected error retrieving document with ID {document_id}: {e}", exc_info=True)
+        raise
+
 async def add_embedding(
     db_context: DatabaseContext,  # Added context
     document_id: int,
@@ -618,6 +653,7 @@ __all__ = [
     "init_vector_db",
     "add_document",
     "get_document_by_source_id",
+    "get_document_by_id",
     "add_embedding",
     "delete_document",
     "query_vectors",
