@@ -28,7 +28,7 @@ from family_assistant.indexing.email_indexer import (
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table, store_incoming_email
 from family_assistant.storage.tasks import tasks_table # Keep if used for direct inspection, though wait_for_tasks_to_complete is preferred
-from family_assistant.storage.vector import query_vectors
+from family_assistant.storage.vector import query_vectors, DocumentRecord, DocumentEmbeddingRecord # Added imports
 from family_assistant.tools import ToolExecutionContext
 
 # Import components needed for the E2E test
@@ -72,6 +72,51 @@ TEST_EMAIL_FORM_DATA = {
 
 TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/body
 
+
+# --- Debugging Helper ---
+async def dump_tables_on_failure(engine):
+    """Logs the content of relevant tables for debugging."""
+    logger.info("--- Dumping table contents on failure ---")
+    async with DatabaseContext(engine=engine) as db:
+        try:
+            # Dump tasks table
+            tasks_query = select(tasks_table)
+            all_tasks = await db.fetch_all(tasks_query)
+            logger.info("--- Tasks Table ---")
+            if all_tasks:
+                for task in all_tasks:
+                    logger.info(f"  Task: {dict(task)}")
+            else:
+                logger.info("  (empty)")
+
+            # Dump documents table
+            docs_query = select(DocumentRecord)
+            all_docs = await db.fetch_all(docs_query)
+            logger.info("--- Documents Table ---")
+            if all_docs:
+                for doc in all_docs:
+                    # Access columns directly if it's a RowMapping, or adapt if it returns ORM objects
+                    logger.info(f"  Document: {dict(doc)}") # Assuming RowMapping for simplicity
+            else:
+                logger.info("  (empty)")
+
+            # Dump document_embeddings table
+            embeds_query = select(DocumentEmbeddingRecord)
+            all_embeds = await db.fetch_all(embeds_query)
+            logger.info("--- Document Embeddings Table ---")
+            if all_embeds:
+                for embed in all_embeds:
+                    # Log relevant fields, potentially truncating the vector
+                    embed_dict = dict(embed)
+                    if 'embedding' in embed_dict and embed_dict['embedding'] is not None:
+                         embed_dict['embedding'] = f"Vector[{len(embed_dict['embedding'])}]" # Avoid logging huge vectors
+                    logger.info(f"  Embedding: {embed_dict}")
+            else:
+                logger.info("  (empty)")
+
+        except Exception as dump_exc:
+            logger.error(f"Failed to dump tables on failure: {dump_exc}", exc_info=True)
+    logger.info("--- End table dump ---")
 
 # --- Helper Function for Test Setup ---
 
@@ -258,68 +303,74 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     logger.info(f"Started background task worker {worker_id}...")
     await asyncio.sleep(0.1)  # Give worker time to start
+    test_failed = False
 
     try:
-        # --- Act: Ingest Email and Wait for Indexing ---
-        # Pass the event directly during ingestion
-        email_db_id, indexing_task_id = await _ingest_and_index_email(
-            pg_vector_db_engine,
-            TEST_EMAIL_FORM_DATA,
-            notify_event=test_new_task_event,  # Pass the worker's event
-        )
-
-        # Wait again to be sure (wait_for_tasks_to_complete handles completion check)
-        await wait_for_tasks_to_complete(
-            pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=10.0
-        )
-
-        # --- Act: Query Vectors ---
-        query_results = None
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(f"Querying vectors using text: '{TEST_QUERY_TEXT}'")
-            query_results = await query_vectors(
-                db,
-                query_embedding=query_embedding,  # Use the mock query embedding
-                embedding_model=TEST_EMBEDDING_MODEL,  # Must match the mock model name
-                limit=5,
-                filters={"source_type": "email"},  # Example filter
+        try:
+            # --- Act: Ingest Email and Wait for Indexing ---
+            # Pass the event directly during ingestion
+            email_db_id, indexing_task_id = await _ingest_and_index_email(
+                pg_vector_db_engine,
+                TEST_EMAIL_FORM_DATA,
+                notify_event=test_new_task_event,  # Pass the worker's event
             )
 
-        # --- Assert ---
-        assert query_results is not None, "query_vectors returned None"
-        assert len(query_results) > 0, "No results returned from vector query"
-        logger.info(f"Query returned {len(query_results)} result(s).")
+            # Wait again to be sure (wait_for_tasks_to_complete handles completion check)
+            await wait_for_tasks_to_complete(
+                pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=10.0
+            )
 
-        # Find the result corresponding to our document
-        found_result = None
-        for result in query_results:
-            if result.get("source_id") == TEST_EMAIL_MESSAGE_ID:
-                found_result = result
-                break
+            # --- Act: Query Vectors ---
+            query_results = None
+            async with DatabaseContext(engine=pg_vector_db_engine) as db:
+                logger.info(f"Querying vectors using text: '{TEST_QUERY_TEXT}'")
+                query_results = await query_vectors(
+                    db,
+                    query_embedding=query_embedding,  # Use the mock query embedding
+                    embedding_model=TEST_EMBEDDING_MODEL,  # Must match the mock model name
+                    limit=5,
+                    filters={"source_type": "email"},  # Example filter
+                )
 
-        assert (
-            found_result is not None
-        ), f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}"
-        logger.info(f"Found matching result: {found_result}")
+            # --- Assert ---
+            assert query_results is not None, "query_vectors returned None"
+            assert len(query_results) > 0, "No results returned from vector query"
+            logger.info(f"Query returned {len(query_results)} result(s).")
 
-        # Check distance (should be small since query embedding was close to body)
-        assert "distance" in found_result, "Result missing 'distance' field"
-        assert (
-            found_result["distance"] < 0.1
-        ), f"Distance should be small, but was {found_result['distance']}"
+            # Find the result corresponding to our document
+            found_result = None
+            for result in query_results:
+                if result.get("source_id") == TEST_EMAIL_MESSAGE_ID:
+                    found_result = result
+                    break
 
-        # Check other fields in the result
-        assert found_result.get("embedding_type") in ["content_chunk", "title"]
-        if found_result.get("embedding_type") == "content_chunk":
-            assert found_result.get("embedding_source_content") == TEST_EMAIL_BODY
-        else:
-            assert found_result.get("embedding_source_content") == TEST_EMAIL_SUBJECT
+            assert (
+                found_result is not None
+            ), f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}"
+            logger.info(f"Found matching result: {found_result}")
 
-        assert found_result.get("title") == TEST_EMAIL_SUBJECT
-        assert found_result.get("source_type") == "email"
+            # Check distance (should be small since query embedding was close to body)
+            assert "distance" in found_result, "Result missing 'distance' field"
+            assert (
+                found_result["distance"] < 0.1
+            ), f"Distance should be small, but was {found_result['distance']}"
 
-        logger.info("--- Email Indexing E2E Test Passed ---")
+            # Check other fields in the result
+            assert found_result.get("embedding_type") in ["content_chunk", "title"]
+            if found_result.get("embedding_type") == "content_chunk":
+                assert found_result.get("embedding_source_content") == TEST_EMAIL_BODY
+            else:
+                assert found_result.get("embedding_source_content") == TEST_EMAIL_SUBJECT
 
+            assert found_result.get("title") == TEST_EMAIL_SUBJECT
+            assert found_result.get("source_type") == "email"
+
+            logger.info("--- Email Indexing E2E Test Passed ---")
+
+        except Exception as e:
+            test_failed = True
+            logger.error(f"Test failed: {e}", exc_info=True)
+            raise # Re-raise the exception after logging
     finally:
         # Stop the worker
         logger.info(f"Stopping background task worker {worker_id}...")
@@ -327,6 +378,11 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
             logger.info(f"Background task worker {worker_id} stopped.")
+
+            # Dump tables if the test failed before this finally block
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+
         except asyncio.TimeoutError:
             logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
             worker_task.cancel()
@@ -490,6 +546,7 @@ async def test_vector_ranking(pg_vector_db_engine):
     await asyncio.sleep(0.1)
 
     all_task_ids = set()
+    test_failed = False
     try:
         _, task_id1 = await _ingest_and_index_email(
             pg_vector_db_engine, form_data1, notify_event=test_new_task_event
@@ -549,6 +606,10 @@ async def test_vector_ranking(pg_vector_db_engine):
         ), f"Medium email ({email2_msg_id}) was not ranked higher than farthest ({email3_msg_id})"
 
         logger.info("--- Vector Ranking Test Passed ---")
+    except Exception as e:
+        test_failed = True
+        logger.error(f"Test failed: {e}", exc_info=True)
+        raise
 
     finally:
         # Stop worker
@@ -556,6 +617,13 @@ async def test_vector_ranking(pg_vector_db_engine):
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+            # Dump tables if the test failed before this finally block
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
         except asyncio.TimeoutError:
             worker_task.cancel()
 
@@ -660,6 +728,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
     await asyncio.sleep(0.1)
 
     all_task_ids = set()
+    test_failed = False
     try:
         _, task_id1 = await _ingest_and_index_email(
             pg_vector_db_engine, form_data1, notify_event=test_new_task_event
@@ -717,13 +786,23 @@ async def test_metadata_filtering(pg_vector_db_engine):
         ), f"Document {email1_msg_id} (which should be filtered out) was found in results."
 
         logger.info("--- Metadata Filtering Test Passed ---")
-
+    except Exception as e:
+        test_failed = True
+        logger.error(f"Test failed: {e}", exc_info=True)
+        raise
     finally:
         # Stop worker
         logger.info(f"Stopping background task worker {worker_id}...")
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+            # Dump tables if the test failed before this finally block
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
         except asyncio.TimeoutError:
             worker_task.cancel()
 
@@ -822,6 +901,7 @@ async def test_keyword_filtering(pg_vector_db_engine):
     await asyncio.sleep(0.1)
 
     all_task_ids = set()
+    test_failed = False
     try:
         _, task_id1 = await _ingest_and_index_email(
             pg_vector_db_engine, form_data1, notify_event=test_new_task_event
@@ -887,13 +967,23 @@ async def test_keyword_filtering(pg_vector_db_engine):
             logger.info("Non-matching document correctly excluded from results.")
 
         logger.info("--- Keyword Filtering Test Passed ---")
-
+    except Exception as e:
+        test_failed = True
+        logger.error(f"Test failed: {e}", exc_info=True)
+        raise
     finally:
         # Stop worker
         logger.info(f"Stopping background task worker {worker_id}...")
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+            # Dump tables if the test failed before this finally block
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
         except asyncio.TimeoutError:
             worker_task.cancel()
 
