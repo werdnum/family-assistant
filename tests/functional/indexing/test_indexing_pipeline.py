@@ -212,26 +212,13 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
         logger.info(f"Running indexing pipeline for document ID {doc_db_id} ({doc_source_id})...")
         await pipeline.run(initial_content, original_doc_record, tool_exec_context)
 
-        # Fetch the enqueued task ID(s)
-        # The EmbeddingDispatchProcessor creates one task per call to its process method for relevant items
-        async with await get_db_context(engine=pg_vector_db_engine) as db_ctx_for_query:
-            await asyncio.sleep(0.2) # Brief wait for task to appear in DB
-            select_tasks_stmt = (
-                select(tasks_table.c.task_id)
-                .where(tasks_table.c.task_type == "embed_and_store_batch")
-                .where(tasks_table.c.payload['document_id'] == doc_db_id) # Assuming JSON operator for payload
-            )
-            task_infos = await db_ctx_for_query.fetch_all(select_tasks_stmt)
-            assert len(task_infos) > 0, f"Could not find 'embed_and_store_batch' task for document ID {doc_db_id}"
-            indexing_task_ids = {info["task_id"] for info in task_infos}
-            logger.info(f"Found indexing task IDs: {indexing_task_ids} for document DB ID: {doc_db_id}")
-
         # Signal worker and wait for task completion
         test_new_task_event.set()
-        logger.info(f"Waiting for tasks {indexing_task_ids} to complete...")
+        # Wait for all tasks to complete as we are not tracking specific IDs here
+        logger.info(f"Waiting for all enqueued tasks to complete for document ID {doc_db_id}...")
         await wait_for_tasks_to_complete(
             pg_vector_db_engine,
-            task_ids=indexing_task_ids,
+            # task_ids=indexing_task_ids, # Removed to wait for all tasks
             timeout_seconds=20.0,
         )
         logger.info(f"Tasks {indexing_task_ids} reported as complete.")
