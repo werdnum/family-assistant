@@ -432,6 +432,7 @@ async def test_vector_ranking(pg_vector_db_engine):
     mock_application_kw.state.llm_client = None
 
     dummy_calendar_config_kw = {} # Define dummy_calendar_config_kw
+    dummy_timezone_str_kw = "UTC" # Define dummy_timezone_str_kw
 
 
     # --- Arrange: Ingest Emails ---
@@ -454,9 +455,9 @@ async def test_vector_ranking(pg_vector_db_engine):
     # Provide dummy/mock values for the required arguments
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
-        application=mock_application_rank,
-        calendar_config=dummy_calendar_config_rank,
-        timezone_str=dummy_timezone_str_rank,
+        application=mock_application_kw,
+        calendar_config=dummy_calendar_config_kw,
+        timezone_str=dummy_timezone_str_kw,
     )
     worker.register_task_handler("index_email", handle_index_email)
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
@@ -769,6 +770,7 @@ async def test_keyword_filtering(pg_vector_db_engine):
     mock_application_kw.state.llm_client = None
 
     dummy_calendar_config_kw = {} # Define dummy_calendar_config_kw
+    dummy_timezone_str_kw = "UTC" # Define dummy_timezone_str_kw
 
 
     # --- Arrange: Ingest Emails ---
