@@ -2,10 +2,12 @@
 Functional test for the basic document indexing pipeline.
 """
 import pytest
+import asyncio
 import uuid
 import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Awaitable, Callable
+from unittest.mock import MagicMock
 
 import numpy as np
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -19,6 +21,8 @@ from family_assistant.storage.vector import (
     DocumentEmbeddingRecord,
     Document as DocumentProtocol,
 )
+from family_assistant.storage.tasks import tasks_table # For querying tasks
+from sqlalchemy import select # For selecting tasks
 from family_assistant.embeddings import MockEmbeddingGenerator, EmbeddingGenerator, EmbeddingResult
 from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
@@ -26,6 +30,8 @@ from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.processors.dispatch_processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.task_worker import TaskWorker # For running the task worker
+from tests.helpers import wait_for_tasks_to_complete # For waiting for task completion
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +86,23 @@ class MockDocumentImpl(DocumentProtocol):
         return self._metadata
 
 
+# Wrapper class to hold embedding_generator and provide a compliant task handler method
+class EmbeddingTaskHandlerWrapper:
+    def __init__(self, embedding_generator: EmbeddingGenerator):
+        self.embedding_generator = embedding_generator
+
+    async def handle_task(self, context: ToolExecutionContext, payload: Dict[str, Any]):
+        # Call the original handle_embed_and_store_batch, adapting arguments
+        await handle_embed_and_store_batch(
+            db_context=context.db_context, # Extract DatabaseContext from ToolExecutionContext
+            payload=payload,
+            embedding_generator=self.embedding_generator
+        )
+
+
 @pytest.mark.asyncio
 async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
+    # Removed mocker fixture, as we are not using mocker.patch anymore
     """
     End-to-end test for a basic indexing pipeline:
     1. Creates a document.
@@ -118,42 +139,53 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
         default_embedding=[0.0] * TEST_EMBEDDING_DIMENSION
     )
 
-    # Mock enqueue_task to call handle_embed_and_store_batch directly
-    dispatched_task_payloads: List[Dict[str, Any]] = []
+    # Setup TaskWorker
+    mock_application = MagicMock()
+    worker = TaskWorker(
+        processing_service=None, # Not needed for handle_embed_and_store_batch
+        application=mock_application,
+        calendar_config={},
+        timezone_str="UTC",
+    )
 
-    async def mock_enqueue_task(
-        task_id: str, task_type: str, payload: Optional[Dict[str, Any]] = None, **kwargs
-    ):
-        nonlocal dispatched_task_payloads
-        if task_type == "embed_and_store_batch" and payload:
-            dispatched_task_payloads.append(payload)
-            logger.info(f"Mock enqueue_task: Intercepted {task_type} with payload for doc_id {payload.get('document_id')}")
-            # Call the handler directly
-            async with await get_db_context(engine=pg_vector_db_engine) as db_ctx_for_handler:
-                await handle_embed_and_store_batch(
-                    db_context=db_ctx_for_handler,
-                    payload=payload,
-                    embedding_generator=mock_embed_generator,
-                )
-        else:
-            logger.warning(f"Mock enqueue_task: Received unhandled task_type {task_type}")
+    embedding_task_executor = EmbeddingTaskHandlerWrapper(mock_embed_generator)
+    worker.register_task_handler(
+        "embed_and_store_batch",
+        embedding_task_executor.handle_task
+    )
 
-    async with await get_db_context(engine=pg_vector_db_engine) as db_context:
-        tool_exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-indexing-conv",
-            db_context=db_context, # Use the outer context for pipeline
-            calendar_config={},
-            application=None,
-            enqueue_task_fn=mock_enqueue_task
-        )
+    worker_task = None
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event() # Worker will wait on this
+
+    # ToolExecutionContext for the pipeline run (uses real enqueue_task)
+    # This db_context is for the pipeline's direct DB operations (like add_document)
+    # and for the enqueue_task call within EmbeddingDispatchProcessor.
+    db_context_for_pipeline = await get_db_context(engine=pg_vector_db_engine)
+
+    # Initialize indexing_task_ids as an empty set
+    indexing_task_ids: set[str] = set()
+
+    try:
+        worker_task = asyncio.create_task(worker.run(test_new_task_event))
+        logger.info("Started background task worker for indexing test...")
+        await asyncio.sleep(0.1) # Give worker time to start
+
+        async with db_context_for_pipeline: # Ensure this context is properly managed
+            tool_exec_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test-indexing-conv",
+                db_context=db_context_for_pipeline,
+                calendar_config={},
+                application=mock_application, # Can be a mock or None if not used by pipeline steps
+            )
 
         # Create and store the document
         test_document_protocol = MockDocumentImpl(
             source_type="test", source_id=doc_source_id, title=doc_title
         )
-        doc_db_id = await add_document(db_context, test_document_protocol)
-        original_doc_record = await get_document_by_source_id(db_context, doc_source_id)
+        doc_db_id = await add_document(db_context_for_pipeline, test_document_protocol)
+        original_doc_record = await get_document_by_source_id(db_context_for_pipeline, doc_source_id)
         assert original_doc_record and original_doc_record.id == doc_db_id
 
         # Initial IndexableContent
@@ -180,12 +212,34 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
         logger.info(f"Running indexing pipeline for document ID {doc_db_id} ({doc_source_id})...")
         await pipeline.run(initial_content, original_doc_record, tool_exec_context)
 
-        # --- Assert ---
-        assert len(dispatched_task_payloads) > 0, "No embed_and_store_batch task was dispatched"
+        # Fetch the enqueued task ID(s)
+        # The EmbeddingDispatchProcessor creates one task per call to its process method for relevant items
+        async with await get_db_context(engine=pg_vector_db_engine) as db_ctx_for_query:
+            await asyncio.sleep(0.2) # Brief wait for task to appear in DB
+            select_tasks_stmt = (
+                select(tasks_table.c.task_id)
+                .where(tasks_table.c.task_type == "embed_and_store_batch")
+                .where(tasks_table.c.payload['document_id'] == doc_db_id) # Assuming JSON operator for payload
+            )
+            task_infos = await db_ctx_for_query.fetch_all(select_tasks_stmt)
+            assert len(task_infos) > 0, f"Could not find 'embed_and_store_batch' task for document ID {doc_db_id}"
+            indexing_task_ids = {info["task_id"] for info in task_infos}
+            logger.info(f"Found indexing task IDs: {indexing_task_ids} for document DB ID: {doc_db_id}")
 
+        # Signal worker and wait for task completion
+        test_new_task_event.set()
+        logger.info(f"Waiting for tasks {indexing_task_ids} to complete...")
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            task_ids=indexing_task_ids,
+            timeout_seconds=20.0,
+        )
+        logger.info(f"Tasks {indexing_task_ids} reported as complete.")
+
+        # --- Assert ---
         # Verify embeddings in DB
-        stmt = DocumentEmbeddingRecord.__table__.select().where(DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id)
-        stored_embeddings_rows = await db_context.fetch_all(stmt)
+        stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id)
+        stored_embeddings_rows = await db_context_for_pipeline.fetch_all(stmt_verify_embeddings) # Use the same context or a new one
 
         assert len(stored_embeddings_rows) >= 2, "Expected at least title and one chunk embedding"
 
@@ -217,7 +271,7 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
         query_embedding = query_vector_result.embeddings[0]
 
         search_results = await query_vectors(
-            db_context, query_embedding, TEST_EMBEDDING_MODEL_NAME, limit=5
+            db_context_for_pipeline, query_embedding, TEST_EMBEDDING_MODEL_NAME, limit=5
         )
         assert len(search_results) > 0, "Vector search returned no results"
 
@@ -228,4 +282,31 @@ async def test_indexing_pipeline_e2e(pg_vector_db_engine: AsyncEngine):
                 break
         assert found_matching_chunk_in_search, "Relevant chunk not found via vector search"
 
-    logger.info("Indexing pipeline E2E test passed.")
+        logger.info("Indexing pipeline E2E test passed.")
+
+    finally:
+        # Stop the worker
+        if worker_task:
+            logger.info("Stopping background task worker for indexing test...")
+            test_shutdown_event.set()
+            try:
+                await asyncio.wait_for(worker_task, timeout=5.0)
+                logger.info("Background task worker stopped.")
+            except asyncio.TimeoutError:
+                logger.warning("Timeout stopping worker task. Cancelling.")
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    logger.info("Worker task cancellation confirmed.")
+            except Exception as e:
+                logger.error(f"Error stopping worker task: {e}", exc_info=True)
+        # Clean up tasks
+        if indexing_task_ids:
+            try:
+                async with await get_db_context(engine=pg_vector_db_engine) as db_cleanup:
+                    delete_stmt = tasks_table.delete().where(tasks_table.c.task_id.in_(indexing_task_ids))
+                    await db_cleanup.execute_with_retry(delete_stmt)
+                    logger.info(f"Cleaned up test tasks: {indexing_task_ids}")
+            except Exception as cleanup_err:
+                logger.warning(f"Error during test task cleanup: {cleanup_err}")
