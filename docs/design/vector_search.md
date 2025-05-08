@@ -56,7 +56,8 @@ CREATE TABLE document_embeddings (
                                         -- Dimensions determined by the 'embedding_model'.
     embedding_model VARCHAR(100) NOT NULL, -- Identifier for the model used to generate the embedding
     content_hash TEXT,                  -- Optional: Hash of the content to detect changes
-    added_at TIMESTAMPTZ DEFAULT NOW(),
+    added_at TIMESTAMPTZ DEFAULT NOW(), -- When this embedding was added
+    embedding_metadata JSONB,           -- Metadata specific to this embedding (e.g., page_number from OCR)
 
     -- Composite unique key: Ensure only one embedding of a specific type exists for a specific chunk/document part.
     UNIQUE (document_id, chunk_index, embedding_type)
@@ -75,6 +76,7 @@ WITH (m = 16, ef_construction = 64); -- Tune M and ef_construction based on data
 -- Indexes to aid filtering during search
 CREATE INDEX idx_doc_embeddings_type_model ON document_embeddings (embedding_type, embedding_model);
 CREATE INDEX idx_doc_embeddings_document_chunk ON document_embeddings (document_id, chunk_index);
+-- CREATE INDEX idx_doc_embeddings_metadata ON document_embeddings USING GIN (embedding_metadata); -- Optional GIN index on embedding_metadata
 -- GIN expression index for full-text search directly on the 'content' column
 CREATE INDEX idx_doc_embeddings_content_fts_gin ON document_embeddings USING GIN (to_tsvector('english', content)) WHERE content IS NOT NULL;
 
@@ -103,6 +105,7 @@ While the `metadata` JSONB field is flexible, defining a consistent schema is cr
     *   `content`: The source text for text-based embeddings (e.g., the actual title text, the summary text, the chunk text). Can be `NULL` for non-text embeddings.
     *   `embedding`: The vector itself. The dimension needs to match the chosen embedding model.
     *   `embedding_model`: Tracks which model generated the vector, crucial for future migrations or checks.
+    *   `embedding_metadata`: Stores processor-specific metadata associated with this specific embedding (e.g., page number for an OCR chunk, source URL for a fetched chunk).
 *   **Indexes:**
 *   `chunk_index`: Groups embeddings. `0` typically represents document-level aspects (title, summary), while `1+` can represent sequential content chunks.
 *   **Indexes:**
@@ -178,7 +181,7 @@ The system supports multiple ways to ingest documents:
     *   `embedding_type` ('title', 'summary', 'content_chunk', 'ocr_text', etc.)
     *   `content` (the source text, if applicable)
     *   `embedding` (the vector)
-    *   `embedding_model` (identifier of the model used)
+    *   `embedding_model` (identifier of the model used), `embedding_metadata` (from processor).
     *   Store the generated `content_tsvector` along with other data. This can be done via a trigger or during the INSERT statement itself: `to_tsvector('english', content_text)`.
 
 ## 4. Querying Process
@@ -238,6 +241,7 @@ The system supports multiple ways to ingest documents:
         d.source_type,
         d.created_at,
         de.embedding_type,
+        de.embedding_metadata,
         de.content AS embedding_source_content, -- The text that was embedded (if applicable)
         vr.distance,
         vr.vec_rank, -- Include rank for RRF
