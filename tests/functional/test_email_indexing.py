@@ -13,8 +13,9 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 
-from family_assistant import storage
-from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event, handle_embed_and_store_batch
+from family_assistant import storage # Keep this import
+from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event
+from family_assistant.indexing.tasks import handle_embed_and_store_batch # Corrected import
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
