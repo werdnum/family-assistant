@@ -150,6 +150,9 @@ class DocumentEmbeddingRecord(Base):
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=functions.now()
     )
+    metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql")
+    )  # New metadata column
 
     document_record: Mapped["DocumentRecord"] = sa.orm.relationship(
         "DocumentRecord", back_populates="embeddings"
@@ -337,8 +340,22 @@ async def add_embedding(
     embedding_model: str,
     content: Optional[str] = None,
     content_hash: Optional[str] = None,
+    embedding_doc_metadata: Optional[Dict[str, Any]] = None,  # New parameter
 ) -> None:
-    """Adds an embedding record linked to a document, updating if it already exists."""
+    """
+    Adds an embedding record linked to a document, updating if it already exists.
+
+    Args:
+        db_context: The DatabaseContext to use for the operation.
+        document_id: ID of the parent document.
+        chunk_index: Index of this chunk within the document for this embedding type.
+        embedding_type: Type of embedding (e.g., 'title', 'content_chunk').
+        embedding: The vector embedding.
+        embedding_model: Name of the model used to generate the embedding.
+        content: Optional textual content of the chunk.
+        content_hash: Optional hash of the content.
+        embedding_doc_metadata: Optional metadata specific to this embedding.
+    """
     values_to_insert = {
         "document_id": document_id,
         "chunk_index": chunk_index,
@@ -347,6 +364,7 @@ async def add_embedding(
         "embedding_model": embedding_model,
         "content": content,
         "content_hash": content_hash,
+        "metadata": embedding_doc_metadata,  # Store the new metadata
     }
 
     if db_context.engine.dialect.name != "postgresql":
