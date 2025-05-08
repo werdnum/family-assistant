@@ -139,7 +139,7 @@ class EmailDocument(Document):
 
 
 # --- Dependencies (Set via set_indexing_dependencies) ---
-indexing_pipeline_instance: Optional[IndexingPipeline] = None # Correctly defined
+indexing_pipeline_instance: Optional[IndexingPipeline] = None
 
 # --- Task Handler Implementation ---
 async def handle_index_email(

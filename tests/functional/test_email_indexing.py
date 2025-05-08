@@ -417,22 +417,21 @@ async def test_vector_ranking(pg_vector_db_engine):
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor = TitleExtractor()
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
-    embedding_dispatcher = EmbeddingDispatchProcessor(
+    embedding_dispatcher_kw = EmbeddingDispatchProcessor( # Renamed for clarity if needed, or reuse
         embedding_types_to_dispatch=["title", "content_chunk"], batch_size=10
     )
-    test_pipeline_rank = IndexingPipeline(
-        processors=[title_extractor, text_chunker, embedding_dispatcher],
+    test_pipeline_kw = IndexingPipeline( # Renamed for clarity
+        processors=[title_extractor, text_chunker, embedding_dispatcher_kw],
         config={}
     )
-    set_indexing_dependencies(pipeline=test_pipeline_rank)
+    set_indexing_dependencies(pipeline=test_pipeline_kw)
 
     # Mock application for TaskWorker
-    mock_application_rank = MagicMock()
-    mock_application_rank.state.embedding_generator = mock_embedder
-    mock_application_rank.state.llm_client = None
+    mock_application_kw = MagicMock() # Define mock_application_kw
+    mock_application_kw.state.embedding_generator = mock_embedder
+    mock_application_kw.state.llm_client = None
 
-    dummy_calendar_config_rank = {}
-    dummy_timezone_str_rank = "UTC"
+    dummy_calendar_config_kw = {} # Define dummy_calendar_config_kw
 
 
     # --- Arrange: Ingest Emails ---
@@ -622,6 +621,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
 
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
+    dummy_calendar_config_meta = {} # Define dummy_calendar_config_meta
     dummy_timezone_str_meta = "UTC"
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
@@ -754,22 +754,21 @@ async def test_keyword_filtering(pg_vector_db_engine):
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor = TitleExtractor()
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
-    embedding_dispatcher = EmbeddingDispatchProcessor(
+    embedding_dispatcher_kw = EmbeddingDispatchProcessor( # Renamed for clarity if needed, or reuse
         embedding_types_to_dispatch=["title", "content_chunk"], batch_size=10
     )
-    test_pipeline_rank = IndexingPipeline(
-        processors=[title_extractor, text_chunker, embedding_dispatcher],
+    test_pipeline_kw = IndexingPipeline( # Renamed for clarity
+        processors=[title_extractor, text_chunker, embedding_dispatcher_kw],
         config={}
     )
-    set_indexing_dependencies(pipeline=test_pipeline_rank)
+    set_indexing_dependencies(pipeline=test_pipeline_kw)
 
     # Mock application for TaskWorker
-    mock_application_rank = MagicMock()
-    mock_application_rank.state.embedding_generator = mock_embedder
-    mock_application_rank.state.llm_client = None
+    mock_application_kw = MagicMock() # Define mock_application_kw
+    mock_application_kw.state.embedding_generator = mock_embedder
+    mock_application_kw.state.llm_client = None
 
-    dummy_calendar_config_rank = {}
-    dummy_timezone_str_rank = "UTC"
+    dummy_calendar_config_kw = {} # Define dummy_calendar_config_kw
 
 
     # --- Arrange: Ingest Emails ---
@@ -789,7 +788,7 @@ async def test_keyword_filtering(pg_vector_db_engine):
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application_kw,
-        calendar_config=dummy_calendar_config_kw,
+        calendar_config=dummy_calendar_config_kw, # Now defined
         timezone_str=dummy_timezone_str_kw,
     )
     worker.register_task_handler("index_email", handle_index_email)
