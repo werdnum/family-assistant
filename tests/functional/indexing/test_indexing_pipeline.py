@@ -6,6 +6,7 @@ import asyncio
 import uuid
 import pytest_asyncio # For async fixtures
 import logging
+from assertpy import assert_that # For better assertions
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Awaitable, Callable
 from unittest.mock import MagicMock
@@ -231,8 +232,8 @@ async def test_indexing_pipeline_e2e(
             )
             doc_db_id = await add_document(db_context_for_pipeline, test_document_protocol)
             original_doc_record = await get_document_by_source_id(db_context_for_pipeline, doc_source_id)
-            # Adjust assertion for raw mapping return type based on log warning
-            assert original_doc_record and original_doc_record["id"] == doc_db_id
+            assert_that(original_doc_record).is_not_none()
+            assert_that(original_doc_record["id"]).is_equal_to(doc_db_id)
 
             # Initial IndexableContent
             initial_content = IndexableContent(
@@ -274,7 +275,7 @@ async def test_indexing_pipeline_e2e(
         stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id)
         stored_embeddings_rows = await db_context_for_pipeline.fetch_all(stmt_verify_embeddings) # Use the same context or a new one
 
-        assert len(stored_embeddings_rows) >= 2, "Expected at least title and one chunk embedding"
+        assert_that(stored_embeddings_rows).described_as("Expected at least title and one chunk embedding").is_length_greater_than_or_equal_to(2)
 
         title_embedding_found = False
         chunk_embeddings_found = 0
@@ -286,17 +287,18 @@ async def test_indexing_pipeline_e2e(
 
         for row_proxy in stored_embeddings_rows:
             row = dict(row_proxy) # Convert RowProxy to dict for easier access
-            assert row["embedding_model"] == TEST_EMBEDDING_MODEL_NAME
+            assert_that(row["embedding_model"]).is_equal_to(TEST_EMBEDDING_MODEL_NAME)
             if row["embedding_type"] == "title":
-                assert row["content"] == doc_title
+                assert_that(row["content"]).is_equal_to(doc_title)
                 title_embedding_found = True
             elif row["embedding_type"] == "raw_text_chunk":
-                assert row["content"] in expected_chunk_texts
+                assert_that(expected_chunk_texts).contains(row["content"])
                 chunk_embeddings_found += 1
 
-        assert title_embedding_found, "Title embedding not found"
-        assert chunk_embeddings_found == len(expected_chunk_texts), \
-            f"Expected {len(expected_chunk_texts)} chunk embeddings, found {chunk_embeddings_found}"
+        assert_that(title_embedding_found).described_as("Title embedding not found").is_true()
+        assert_that(chunk_embeddings_found).described_as(
+            f"Expected {len(expected_chunk_texts)} chunk embeddings"
+        ).is_equal_to(len(expected_chunk_texts))
 
         # Verify search
         query_text_for_chunk = "yellow bananas" # Should match chunk 2
@@ -306,14 +308,14 @@ async def test_indexing_pipeline_e2e(
         search_results = await query_vectors(
             db_context_for_pipeline, query_embedding, TEST_EMBEDDING_MODEL_NAME, limit=5
         )
-        assert len(search_results) > 0, "Vector search returned no results"
+        assert_that(search_results).described_as("Vector search results").is_not_empty()
 
         found_matching_chunk_in_search = False
         for res in search_results:
             if res["document_id"] == doc_db_id and "yellow. Oranges are" in res["embedding_source_content"]:
                 found_matching_chunk_in_search = True
                 break
-        assert found_matching_chunk_in_search, "Relevant chunk not found via vector search"
+        assert_that(found_matching_chunk_in_search).described_as("Relevant chunk not found via vector search").is_true()
 
         logger.info("Indexing pipeline E2E test passed.")
 
