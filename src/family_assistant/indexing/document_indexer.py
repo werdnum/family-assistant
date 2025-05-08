@@ -11,10 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 # Use absolute imports
 from family_assistant import storage  # For DB operations (add_embedding)
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.embeddings import (
-    EmbeddingGenerator,
-    EmbeddingResult,
-)  # Protocol for embedding
+from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent # Added
 
 # Import the Document protocol from the correct location (though not directly used here, good practice)
 from family_assistant.storage.vector import Document
@@ -32,25 +29,26 @@ class DocumentIndexer:
     Takes dependencies via constructor.
     """
 
-    def __init__(self, embedding_generator: EmbeddingGenerator):
+    def __init__(self, pipeline: IndexingPipeline): # Modified
         """
         Initializes the DocumentIndexer.
 
         Args:
-            embedding_generator: An instance conforming to the EmbeddingGenerator protocol.
+            pipeline: An instance of IndexingPipeline. # Modified
         """
-        if not embedding_generator:
-            raise ValueError("EmbeddingGenerator instance is required.")
-        self.embedding_generator = embedding_generator
+        if not pipeline: # Modified
+            raise ValueError("IndexingPipeline instance is required.") # Modified
+        self.pipeline = pipeline # Modified
         logger.info(
-            f"DocumentIndexer initialized with embedding generator: {type(embedding_generator).__name__}"
+            f"DocumentIndexer initialized with pipeline: {type(pipeline).__name__}"
         )
 
     async def process_document(
         self, exec_context: ToolExecutionContext, payload: Dict[str, Any]
     ):
         """
-        Task handler method to process and index content parts provided for a document.
+        Task handler method to process and index content parts provided for a document
+        by running them through an indexing pipeline.
         Receives ToolExecutionContext from the TaskWorker.
         """
         # Extract db_context from the execution context
@@ -62,32 +60,40 @@ class DocumentIndexer:
             raise ValueError("Missing DatabaseContext dependency in context.")
 
         document_id = payload.get("document_id")
-        content_parts: Optional[Dict[str, str]] = payload.get(
-            "content_parts"
-        )  # e.g., {"title": "...", "content_chunk_0": "..."}
+        content_parts: Optional[Dict[str, str]] = payload.get("content_parts")
 
         if not document_id:
             raise ValueError(
                 "Missing 'document_id' in process_uploaded_document task payload."
             )
+
+        # Fetch the original DocumentRecord
+        try:
+            # Assuming a function like get_document_by_id exists.
+            # The returned object should conform to the Document protocol.
+            original_document_record = await storage.get_document_by_id(
+                db_context, document_id
+            )
+            if not original_document_record:
+                raise ValueError(f"Document with ID {document_id} not found.")
+        except SQLAlchemyError as e:
+            logger.error(f"Database error fetching document {document_id}: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to fetch document {document_id}") from e
+        except ValueError as e:
+            logger.error(str(e))
+            raise # Re-raise to mark task as failed if document not found
+
         if not content_parts:
             logger.warning(
                 f"No 'content_parts' found in payload for document ID {document_id}. Nothing to index."
             )
             return  # Nothing to do, task is successful
 
-        # Dependency is now self.embedding_generator
         logger.info(
-            f"Starting indexing for uploaded document ID: {document_id} with {len(content_parts)} content part(s)."
+            f"Preparing content parts for indexing pipeline for document ID: {document_id} with {len(content_parts)} part(s)."
         )
 
-        # --- 1. Prepare Texts for Embedding ---
-        # Extract texts and map keys to embedding types and chunk indices
-        texts_to_embed: List[str] = []
-        embedding_metadata: List[Dict[str, Any]] = (
-            []
-        )  # Store type and chunk index for each text
-
+        initial_items: List[IndexableContent] = []
         for key, text_content in content_parts.items():
             if not text_content or not isinstance(text_content, str):
                 logger.warning(
@@ -95,115 +101,59 @@ class DocumentIndexer:
                 )
                 continue
 
-            texts_to_embed.append(text_content)
-
-            # Determine embedding_type and chunk_index from the key (Inside the loop)
             embedding_type = key
-            chunk_index = 0  # Default for non-chunked types like 'title', 'summary'
+            # chunk_index = 0 # Default, not directly used for IndexableContent here unless stored in metadata
+            metadata_for_item = {"original_key": key}
+
             if key.startswith("content_chunk_"):
                 embedding_type = "content_chunk"
                 try:
-                    # Extract index from key like "content_chunk_0" -> 0
-                    chunk_index = int(key.split("_")[-1])  # Indent this line
+                    parsed_chunk_index = int(key.split("_")[-1])
+                    metadata_for_item["chunk_index"] = parsed_chunk_index
                 except (IndexError, ValueError):
                     logger.warning(
-                        f"Could not parse chunk index from key '{key}', defaulting to 0."
+                        f"Could not parse chunk index from key '{key}', not storing in metadata."
                     )
-                    chunk_index = 0  # Fallback
 
-            # Append metadata inside the loop
-            embedding_metadata.append(
-                {
-                    "original_key": key,
-                    "embedding_type": embedding_type,
-                    "chunk_index": chunk_index,
-                    "content": text_content,
-                }
+            item = IndexableContent(
+                content=text_content,
+                embedding_type=embedding_type,
+                mime_type="text/plain",
+                source_processor="DocumentIndexer.process_document",
+                metadata=metadata_for_item,
+                ref=None,
             )
-        # End of for loop
+            initial_items.append(item)
 
-        # Check if any valid texts were found (Outside the loop)
-        if not texts_to_embed:
+        if not initial_items:
             logger.warning(
-                f"No valid text content found to embed for document {document_id}. Skipping embedding generation."
+                f"No valid IndexableContent items created from content_parts for document {document_id}. Skipping pipeline run."
             )
-            return  # Correct indentation relative to method
+            return
 
-        # --- 2. Generate Embeddings --- Correct indentation for this block ---
-        logger.info(
-            f"Generating embeddings for {len(texts_to_embed)} text part(s) for document {document_id} using model {self.embedding_generator.model_name}..."
-        )
+        # Run the pipeline with the prepared items
         try:
-            embedding_result: EmbeddingResult = (
-                await self.embedding_generator.generate_embeddings(texts_to_embed)
+            logger.info(f"Running indexing pipeline for document {document_id} with {len(initial_items)} initial items.")
+            # Pass the list of items directly to the pipeline's run method.
+            # The pipeline's run method will determine how to handle initial_content_ref from this list.
+            await self.pipeline.run(
+                initial_items=initial_items,
+                original_document=original_document_record,
+                context=exec_context,
             )
         except Exception as e:
             logger.error(
-                f"Embedding generation failed for document {document_id}: {e}",
+                f"Indexing pipeline run failed for document {document_id}: {e}",
                 exc_info=True,
             )
             # Re-raise to mark the task as failed
             raise RuntimeError(
-                f"Embedding generation failed for document {document_id}"
+                f"Indexing pipeline failed for document {document_id}"
             ) from e
 
-        # Check embedding result length (Outside try/except, inside method)
-        if len(embedding_result.embeddings) != len(texts_to_embed):
-            logger.error(
-                f"Mismatch between number of texts ({len(texts_to_embed)}) and generated embeddings ({len(embedding_result.embeddings)}) for document {document_id}."
-            )
-            raise RuntimeError(
-                "Embedding generation returned unexpected number of results."
-            )
-
-        # --- 3. Store Embeddings --- Correct indentation for this block ---
-        embedding_model_name = embedding_result.model_name
-        stored_count = 0
-        for i, embedding_vector in enumerate(embedding_result.embeddings):
-            meta = embedding_metadata[i]
-            logger.debug(
-                f"Adding embedding: doc={document_id}, chunk={meta['chunk_index']}, type={meta['embedding_type']}, model={embedding_model_name}"
-            )
-            try:
-                # Use the extracted db_context here
-                await storage.add_embedding(
-                    db_context=db_context,  # Pass the extracted DatabaseContext
-                    document_id=document_id,
-                    chunk_index=meta["chunk_index"],
-                    embedding_type=meta["embedding_type"],  # Correct indentation
-                    embedding=embedding_vector,  # Correct indentation
-                    embedding_model=embedding_model_name,  # Correct indentation
-                    content=meta["content"],  # Correct indentation
-                    # content_hash=None # Optional: calculate hash if needed
-                )
-                stored_count += 1  # Indent this line
-            except SQLAlchemyError as e:
-                logger.error(
-                    f"Database error storing embedding for doc {document_id}, key {meta['original_key']}: {e}",
-                    exc_info=True,
-                )
-                # Decide whether to continue or fail the whole task.
-                # Let's fail the task if any embedding storage fails.
-                raise RuntimeError(
-                    f"Failed to store embedding for key {meta['original_key']}"
-                ) from e  # Indent this raise
-            except Exception as e:  # This except should align with the previous one
-                logger.error(
-                    f"Unexpected error storing embedding for doc {document_id}, key {meta['original_key']}: {e}",
-                    exc_info=True,
-                )
-                raise RuntimeError(
-                    f"Unexpected error storing embedding for key {meta['original_key']}"
-                ) from e
-        # End of for loop for storing embeddings
-
-        # Log success outside the loop, inside the method
         logger.info(
-            f"Successfully stored {stored_count} embeddings for document {document_id}."
+            f"Indexing pipeline successfully initiated for document {document_id}."
         )
         # Task completion is handled by the worker loop
-
-
-# Remove the global state and setter function (already outside the method)
 
 __all__ = ["DocumentIndexer"]
