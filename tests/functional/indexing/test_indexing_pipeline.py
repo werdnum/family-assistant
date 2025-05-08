@@ -233,7 +233,7 @@ async def test_indexing_pipeline_e2e(
             doc_db_id = await add_document(db_context_for_pipeline, test_document_protocol)
             original_doc_record = await get_document_by_source_id(db_context_for_pipeline, doc_source_id)
             assert_that(original_doc_record).is_not_none()
-            assert_that(original_doc_record["id"]).is_equal_to(doc_db_id)
+            assert_that(original_doc_record.id).is_equal_to(doc_db_id)
 
             # Initial IndexableContent
             initial_content = IndexableContent(
