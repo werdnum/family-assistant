@@ -15,18 +15,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
 from family_assistant import storage  # For DB operations (add_document, add_embedding)
+from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import (
     received_emails_table,
 )  # Import table definition
-from family_assistant.embeddings import (
-    EmbeddingGenerator,
-    EmbeddingResult,
-)  # Protocol for embedding
-from family_assistant.llm import LLMInterface  # Protocol for LLM (optional enrichment)
 
 # Import the Document protocol from the correct location
-from family_assistant.storage.vector import Document
+from family_assistant.storage.vector import Document, get_document_by_id
 from family_assistant.tools import ToolExecutionContext  # Import the context class
 
 logger = logging.getLogger(__name__)
@@ -144,8 +140,7 @@ class EmailDocument(Document):
 
 
 # --- Dependencies (Set via set_indexing_dependencies) ---
-embedding_generator_instance: Optional[EmbeddingGenerator] = None
-llm_client_instance: Optional[LLMInterface] = None  # Optional for enrichment
+indexing_pipeline_instance: Optional[IndexingPipeline] = None
 
 
 # --- Task Handler Implementation ---
@@ -168,9 +163,8 @@ async def handle_index_email(
     if not email_db_id:
         raise ValueError("Missing 'email_db_id' in index_email task payload.")
 
-    if not embedding_generator_instance:
-        raise RuntimeError("EmbeddingGenerator dependency not set for indexing.")
-        # Optionally check for llm_client_instance if enrichment is mandatory
+    if not indexing_pipeline_instance:
+        raise RuntimeError("IndexingPipeline dependency not set for email indexing.")
 
     logger.info(f"Starting indexing for email DB ID: {email_db_id}")
 
