@@ -13,18 +13,25 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 
-# Import components needed for the E2E test
 from family_assistant import storage
-from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event
+from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event, handle_embed_and_store_batch
 from family_assistant.embeddings import MockEmbeddingGenerator
+from family_assistant.indexing.pipeline import IndexingPipeline
+from family_assistant.indexing.processors.metadata_processors import TitleExtractor
+from family_assistant.indexing.processors.text_processors import TextChunker
+from family_assistant.indexing.processors.dispatch_processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.email_indexer import (
     handle_index_email,
     set_indexing_dependencies,
 )
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table, store_incoming_email
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import tasks_table # Keep if used for direct inspection, though wait_for_tasks_to_complete is preferred
 from family_assistant.storage.vector import query_vectors
+from family_assistant.tools import ToolExecutionContext
+
+# Import components needed for the E2E test
+
 
 # Import test helpers
 from tests.helpers import wait_for_tasks_to_complete
@@ -166,21 +173,48 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     mock_embedder = MockEmbeddingGenerator(
         embedding_map=embedding_map,
         model_name=TEST_EMBEDDING_MODEL,
-        default_embedding=np.zeros(
-            TEST_EMBEDDING_DIMENSION
-        ).tolist(),  # Default if needed
+        default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
+    )
+
+    # --- Arrange: Create Indexing Pipeline ---
+    # For testing, we need a basic pipeline that extracts title, chunks text, and dispatches for embedding.
+    title_extractor = TitleExtractor()
+    text_chunker = TextChunker(chunk_size=500, chunk_overlap=50) # Example chunker config
+    # Configure EmbeddingDispatchProcessor to dispatch common types
+    embedding_dispatcher = EmbeddingDispatchProcessor(
+        embedding_types_to_dispatch=["title", "content_chunk"], # Add other types if needed by test
+        batch_size=10 
+    )
+
+    test_pipeline = IndexingPipeline(
+        processors=[title_extractor, text_chunker, embedding_dispatcher],
+        config={} # No specific pipeline config for this test
     )
 
     # --- Arrange: Set Indexing Dependencies ---
-    set_indexing_dependencies(embedding_generator=mock_embedder, llm_client=None)
-    logger.info(f"Set mock embedding generator ({TEST_EMBEDDING_MODEL}) for indexing.")
+    set_indexing_dependencies(pipeline=test_pipeline)
+    logger.info(f"Set IndexingPipeline for email indexing.")
 
     # --- Arrange: Register Task Handler ---
     # Create a TaskWorker instance for this test and register the handler
     # Provide dummy/mock values for the required arguments
     mock_application = MagicMock()  # Mock the application object
-    dummy_calendar_config = {}
-    dummy_timezone_str = "UTC"
+    # The TaskWorker needs access to the embedding_generator for handle_embed_and_store_batch
+    # We can pass it via the processing_service or by making it available in app state
+    # For simplicity here, we'll assume the TaskWorker can get it or we mock the context
+
+    # Mock the processing service or ensure embedding_generator is in app_state for TaskWorker
+    # For this test, let's assume ToolExecutionContext will provide it when handle_embed_and_store_batch is called.
+    # The `embedding_generator` is passed to `handle_embed_and_store_batch` by the task worker loop
+    # from `ToolExecutionContext.embedding_generator`.
+    # So, the `ToolExecutionContext` created by the `TaskWorker` needs to have it.
+    # We can achieve this by ensuring the `application.state.embedding_generator` is set,
+    # as `TaskWorker`'s `_create_tool_execution_context` uses it.
+    mock_application.state.embedding_generator = mock_embedder
+    mock_application.state.llm_client = None # Or a mock LLM if any processor uses it
+
+    dummy_calendar_config = {} # Not used by email/embedding tasks
+    dummy_timezone_str = "UTC" # Not used by email/embedding tasks
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application,
@@ -188,6 +222,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
         timezone_str=dummy_timezone_str,
     )
     worker.register_task_handler("index_email", handle_index_email)
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
     logger.info("TaskWorker created and 'index_email' task handler registered.")
 
     # --- Act: Start Background Worker ---
@@ -379,9 +414,26 @@ async def test_vector_ranking(pg_vector_db_engine):
         TEST_EMBEDDING_MODEL,
         default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
-    set_indexing_dependencies(embedding_generator=mock_embedder)
-    # TaskWorker instance is created and registered earlier in this test
-    # worker is already defined and will handle index_email tasks
+    # --- Arrange: Create Indexing Pipeline ---
+    title_extractor = TitleExtractor()
+    text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
+    embedding_dispatcher = EmbeddingDispatchProcessor(
+        embedding_types_to_dispatch=["title", "content_chunk"], batch_size=10
+    )
+    test_pipeline_rank = IndexingPipeline(
+        processors=[title_extractor, text_chunker, embedding_dispatcher],
+        config={}
+    )
+    set_indexing_dependencies(pipeline=test_pipeline_rank)
+
+    # Mock application for TaskWorker
+    mock_application_rank = MagicMock()
+    mock_application_rank.state.embedding_generator = mock_embedder
+    mock_application_rank.state.llm_client = None
+
+    dummy_calendar_config_rank = {}
+    dummy_timezone_str_rank = "UTC"
+
 
     # --- Arrange: Ingest Emails ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
@@ -401,9 +453,6 @@ async def test_vector_ranking(pg_vector_db_engine):
 
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
-    mock_application_rank = MagicMock()  # Mock the application object
-    dummy_calendar_config_rank = {}
-    dummy_timezone_str_rank = "UTC"
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application_rank,
@@ -411,6 +460,7 @@ async def test_vector_ranking(pg_vector_db_engine):
         timezone_str=dummy_timezone_str_rank,
     )
     worker.register_task_handler("index_email", handle_index_email)
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-rank-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
@@ -537,9 +587,23 @@ async def test_metadata_filtering(pg_vector_db_engine):
         TEST_EMBEDDING_MODEL,
         default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
-    set_indexing_dependencies(embedding_generator=mock_embedder)
-    # TaskWorker instance is created and registered earlier in this test
-    # worker is already defined and will handle index_email tasks
+    # --- Arrange: Create Indexing Pipeline ---
+    title_extractor_meta = TitleExtractor()
+    text_chunker_meta = TextChunker(chunk_size=500, chunk_overlap=50)
+    embedding_dispatcher_meta = EmbeddingDispatchProcessor(
+        embedding_types_to_dispatch=["title", "content_chunk"], batch_size=10
+    )
+    test_pipeline_meta = IndexingPipeline(
+        processors=[title_extractor_meta, text_chunker_meta, embedding_dispatcher_meta],
+        config={}
+    )
+    set_indexing_dependencies(pipeline=test_pipeline_meta)
+
+    # Mock application for TaskWorker
+    mock_application_meta = MagicMock()
+    mock_application_meta.state.embedding_generator = mock_embedder
+    mock_application_meta.state.llm_client = None
+
 
     # --- Arrange: Ingest Emails with different source_type ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
@@ -558,8 +622,6 @@ async def test_metadata_filtering(pg_vector_db_engine):
 
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
-    mock_application_meta = MagicMock()  # Mock the application object
-    dummy_calendar_config_meta = {}
     dummy_timezone_str_meta = "UTC"
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
@@ -568,6 +630,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
         timezone_str=dummy_timezone_str_meta,
     )
     worker.register_task_handler("index_email", handle_index_email)
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-meta-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
@@ -688,9 +751,26 @@ async def test_keyword_filtering(pg_vector_db_engine):
         TEST_EMBEDDING_MODEL,
         default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
-    set_indexing_dependencies(embedding_generator=mock_embedder)
-    # TaskWorker instance is created and registered earlier in this test
-    # worker is already defined and will handle index_email tasks
+    # --- Arrange: Create Indexing Pipeline ---
+    title_extractor = TitleExtractor()
+    text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
+    embedding_dispatcher = EmbeddingDispatchProcessor(
+        embedding_types_to_dispatch=["title", "content_chunk"], batch_size=10
+    )
+    test_pipeline_rank = IndexingPipeline(
+        processors=[title_extractor, text_chunker, embedding_dispatcher],
+        config={}
+    )
+    set_indexing_dependencies(pipeline=test_pipeline_rank)
+
+    # Mock application for TaskWorker
+    mock_application_rank = MagicMock()
+    mock_application_rank.state.embedding_generator = mock_embedder
+    mock_application_rank.state.llm_client = None
+
+    dummy_calendar_config_rank = {}
+    dummy_timezone_str_rank = "UTC"
+
 
     # --- Arrange: Ingest Emails ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
@@ -705,8 +785,6 @@ async def test_keyword_filtering(pg_vector_db_engine):
 
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
-    mock_application_kw = MagicMock()  # Mock the application object
-    dummy_calendar_config_kw = {}
     dummy_timezone_str_kw = "UTC"
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
@@ -715,6 +793,7 @@ async def test_keyword_filtering(pg_vector_db_engine):
         timezone_str=dummy_timezone_str_kw,
     )
     worker.register_task_handler("index_email", handle_index_email)
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-keyword-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
