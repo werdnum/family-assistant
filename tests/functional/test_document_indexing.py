@@ -189,7 +189,7 @@ async def _helper_handle_embed_and_store_batch(
             embedding=vector,
             embedding_model=embedding_result.model_name,
             content=texts_to_embed[i], # The text itself
-            metadata=meta.get("original_content_metadata") # Store this
+            embedding_doc_metadata=meta.get("original_content_metadata") # Store this
         )
     logger.info(f"Stored {len(texts_to_embed)} embeddings for document {document_id} via _helper_handle_embed_and_store_batch.")
 
