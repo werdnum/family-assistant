@@ -70,3 +70,49 @@ class ContentProcessor(Protocol):
             dispatching embedding tasks for items they deem ready.
         """
         ...
+
+
+class IndexingPipeline:
+    """
+    Orchestrates the flow of IndexableContent through a series of ContentProcessors.
+    """
+
+    def __init__(
+        self, processors: List[ContentProcessor], config: Dict[str, Any]
+    ) -> None:
+        """
+        Initializes the pipeline with a list of processors and a configuration.
+
+        Args:
+            processors: An ordered list of ContentProcessor instances.
+            config: A dictionary for pipeline-level configuration.
+        """
+        self.processors = processors
+        self.config = config  # Store config, usage TBD by specific pipeline needs
+
+    async def run(
+        self,
+        initial_content: IndexableContent,
+        original_document: "Document",
+        context: "ToolExecutionContext",
+    ) -> List[IndexableContent]:
+        """
+        Runs the initial content through all configured processors sequentially.
+
+        Args:
+            initial_content: The first IndexableContent item to process.
+            original_document: The source Document object.
+            context: The execution context for processors.
+
+        Returns:
+            A list of IndexableContent items that have passed through all stages
+            and may require further, non-pipeline processing, or represent the
+            final state of content items that weren't dispatched for embedding.
+            The primary outcome is the tasks dispatched by processors.
+        """
+        current_items_to_process = [initial_content]
+        for processor in self.processors:
+            current_items_to_process = await processor.process(
+                current_items_to_process, original_document, initial_content, context
+            )
+        return current_items_to_process
