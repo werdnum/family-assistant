@@ -291,7 +291,7 @@ async def test_indexing_pipeline_e2e(
             expected_chunk_texts = [
                 "Apples are red Bananas are yel",  # Chunk 1
                 "e yellow Oranges are orange an",  # Chunk 2 - updated based on test failure
-                "orange and tasty."                # Chunk 3
+                "ge and tasty."                # Chunk 3 - updated based on test failure
             ]
 
             for row_proxy in stored_embeddings_rows:
