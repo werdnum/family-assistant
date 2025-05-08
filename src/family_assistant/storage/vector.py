@@ -150,7 +150,7 @@ class DocumentEmbeddingRecord(Base):
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=functions.now()
     )
-    embedding_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+    embedding_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(  # Renamed from metadata
         JSON().with_variant(JSONB, "postgresql")
     )  # New metadata column
 
@@ -340,7 +340,7 @@ async def add_embedding(
     embedding_model: str,
     content: Optional[str] = None,
     content_hash: Optional[str] = None,
-    embedding_doc_metadata: Optional[Dict[str, Any]] = None,  # New parameter
+    embedding_doc_metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Adds an embedding record linked to a document, updating if it already exists.
@@ -364,7 +364,7 @@ async def add_embedding(
         "embedding_model": embedding_model,
         "content": content,
         "content_hash": content_hash,
-        "embedding_metadata": embedding_doc_metadata,  # Store the new metadata
+        "embedding_metadata": embedding_doc_metadata,
     }
 
     if db_context.engine.dialect.name != "postgresql":
@@ -563,6 +563,7 @@ async def query_vectors(
         DocumentRecord.doc_metadata,
         DocumentEmbeddingRecord.embedding_type,
         DocumentEmbeddingRecord.content.label("embedding_source_content"),
+        DocumentEmbeddingRecord.embedding_metadata, # Add embedding_metadata to output
         DocumentEmbeddingRecord.chunk_index,
         vector_results_cte.c.distance,
         vector_results_cte.c.vec_rank,
