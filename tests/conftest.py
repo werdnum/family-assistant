@@ -8,6 +8,8 @@ from unittest.mock import (
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+import pytest_asyncio  # Import the correct decorator
+import docker  # Import the docker library to catch its exceptions
 from testcontainers.postgres import PostgresContainer
 
 # Import the metadata and the original engine object from your storage base
@@ -23,7 +25,6 @@ from family_assistant.task_worker import TaskWorker
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
-import pytest_asyncio  # Import the correct decorator
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +71,6 @@ async def test_db_engine(request):  # Add request fixture
 
 
 # --- PostgreSQL Test Fixtures (using testcontainers) ---
-
-import docker  # Import the docker library to catch its exceptions
-
 
 @pytest.fixture(scope="session")
 def postgres_container():
