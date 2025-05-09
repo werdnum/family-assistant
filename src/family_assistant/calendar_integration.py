@@ -1,17 +1,15 @@
 import asyncio  # Import asyncio for run_in_executor
-import logging
-import uuid  # For generating event UIDs
 from datetime import date, datetime, time, timedelta  # Added time
+import logging
+from typing import TYPE_CHECKING, Any
+import uuid  # For generating event UIDs
 from zoneinfo import ZoneInfo  # Import ZoneInfo
 
-# Consolidated imports including Any
-from typing import TYPE_CHECKING, Any
-
 import caldav
-import httpx  # Import httpx
-import vobject
 from caldav.lib.error import DAVError, NotFoundError
 from dateutil.parser import isoparse  # For parsing ISO strings in tools
+import httpx  # Import httpx
+import vobject
 
 if TYPE_CHECKING:
     # Import types needed by tools under TYPE_CHECKING to break circular import
