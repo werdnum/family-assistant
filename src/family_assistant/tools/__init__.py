@@ -13,15 +13,12 @@ from collections.abc import Callable  # Added Awaitable, Set
 from datetime import datetime, timedelta, timezone  # Added date, time
 from typing import (
     Any,
-    Dict,
-    List,
-    Optional,
     Protocol,
-    Set,
 )
 from zoneinfo import ZoneInfo
 
 import aiofiles
+import telegramify_markdown # For escaping confirmation prompts
 from dateutil import rrule
 from dateutil.parser import isoparse
 from sqlalchemy.sql import text
@@ -1054,9 +1051,6 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
 # --- Tool Provider Implementations ---
 
 
-import telegramify_markdown  # For escaping confirmation prompts
-
-
 class LocalToolsProvider:
     """Provides and executes locally defined Python functions as tools."""
 
@@ -1114,12 +1108,10 @@ class LocalToolsProvider:
             # Always check for exec_context first
             if needs_exec_context:
                 call_args["exec_context"] = context
-
             # Check for and inject other specific dependencies.
-            if needs_db_context:
-                # Only inject if not already covered by exec_context (though harmless if redundant)
-                if "db_context" not in call_args:
-                    call_args["db_context"] = context.db_context
+            # Only inject if not already covered by exec_context (though harmless if redundant)
+            if needs_db_context and "db_context" not in call_args:
+                call_args["db_context"] = context.db_context
             if needs_embedding_generator:
                 if self._embedding_generator:
                     call_args["embedding_generator"] = self._embedding_generator
