@@ -2,24 +2,22 @@ import asyncio
 import base64
 import contextlib
 import html
+import html
 import io
 import json
 import logging
-
-# Import necessary types for type hinting
-import os  # Added for environment variable access
 import traceback
 import uuid
 from collections import defaultdict
 from collections.abc import Callable  # Added cast
 from datetime import datetime, timezone
+import os  # Added for environment variable access
 from typing import (
     Any,
     Protocol,
     runtime_checkable,
 )
 
-import telegramify_markdown
 from sqlalchemy import update  # For error handling db update
 from telegram import (
     ForceReply,  # Add ForceReply import
@@ -29,6 +27,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatAction, ParseMode
+from telegram.error import Conflict  # Import telegram errors for specific checking
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -39,11 +38,12 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telegram.error import Conflict  # Import telegram errors for specific checking
+import telegramify_markdown
 
 # Import necessary types for type hinting
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
+
 
 # from .storage.context import get_db_context # get_db_context is passed as a function
 
