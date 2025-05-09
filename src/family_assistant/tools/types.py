@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional, Callable, Awaitable, TYPE_CHECKING
 if TYPE_CHECKING:
     from telegram.ext import Application  # Keep Application for type checking
     from family_assistant.processing import ProcessingService
+    from family_assistant.embeddings import EmbeddingGenerator # Add this import
     from family_assistant.storage.context import DatabaseContext
 
 
@@ -31,6 +32,7 @@ class ToolExecutionContext:
     ] = None
     # Add processing_service back, make it optional
     processing_service: Optional["ProcessingService"] = None
+    embedding_generator: Optional["EmbeddingGenerator"] = None # Add embedding_generator
 
 
 class ToolNotFoundError(LookupError):
