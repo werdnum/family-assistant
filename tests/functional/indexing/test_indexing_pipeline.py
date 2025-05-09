@@ -257,7 +257,7 @@ async def test_indexing_pipeline_e2e(
 
             # --- Act ---
             logger.info(f"Running indexing pipeline for document ID {doc_db_id} ({doc_source_id})...")
-            await pipeline.run(initial_content, original_doc_record, tool_exec_context)
+            await pipeline.run([initial_content], original_doc_record, tool_exec_context)
 
         # Signal worker and wait for task completion
         test_new_task_event.set()
