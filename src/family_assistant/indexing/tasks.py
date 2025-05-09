@@ -3,7 +3,7 @@ Task handlers related to the document indexing pipeline.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from family_assistant.storage.vector import add_embedding
 from family_assistant.tools.types import ToolExecutionContext  # Added import
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 async def handle_embed_and_store_batch(
     db_context: "ToolExecutionContext",  # Caller uses 'db_context' keyword; expects ToolExecutionContext
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
 ) -> None:
     """
     Task handler for embedding a batch of texts and storing them in the vector database.
@@ -64,8 +64,8 @@ async def handle_embed_and_store_batch(
 
     try:
         document_id: int = payload["document_id"]
-        texts_to_embed: List[str] = payload["texts_to_embed"]
-        embedding_metadata_list: List[Dict[str, Any]] = payload[
+        texts_to_embed: list[str] = payload["texts_to_embed"]
+        embedding_metadata_list: list[dict[str, Any]] = payload[
             "embedding_metadata_list"
         ]
     except KeyError as e:
