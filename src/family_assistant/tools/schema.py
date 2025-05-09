@@ -1,18 +1,16 @@
 import html
-import logging
 import json  # Add json import
-from typing import Optional
-import tempfile  # For creating temporary files
+import logging
 import os  # For working with file paths
+import tempfile  # For creating temporary files
 
 # Remove lru_cache as we will cache based on tool name at the call site
 
 # Attempt to import schema generation tools, handle import error gracefully
 try:
-    from json_schema_for_humans.generation_configuration import GenerationConfiguration
-
     # Import generate_from_filename which works with file paths
     from json_schema_for_humans.generate import generate_from_filename
+    from json_schema_for_humans.generation_configuration import GenerationConfiguration
 
     _SCHEMA_GENERATION_AVAILABLE = True
     # Configure once
@@ -32,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 # Removed @lru_cache decorator
-def render_schema_as_html(schema_json_str: Optional[str]) -> str:
+def render_schema_as_html(schema_json_str: str | None) -> str:
     """
     Renders a JSON schema (passed as a JSON string) as HTML using json-schema-for-humans.
     Uses temporary files for input and output.
@@ -73,7 +71,7 @@ def render_schema_as_html(schema_json_str: Optional[str]) -> str:
 
         # Ensure files are closed before passing paths to the generate function
         generate_from_filename(infile_path, outfile_path, config=_SCHEMA_GEN_CONFIG)
-        with open(outfile_path, "r", encoding="utf-8") as f:
+        with open(outfile_path, encoding="utf-8") as f:
             result_html = f.read()
         return result_html
     except Exception as e:

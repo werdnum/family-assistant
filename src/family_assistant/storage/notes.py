@@ -4,19 +4,19 @@ Handles storage and retrieval of notes.
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 from sqlalchemy import (
-    Table,
     Column,
-    String,
-    Integer,
-    Text,
     DateTime,
-    select,
-    insert,
-    update,
+    Integer,
+    String,
+    Table,
+    Text,
     delete,
+    insert,
+    select,
+    update,
 )
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
 
@@ -49,7 +49,7 @@ notes_table = Table(
 )
 
 
-async def get_all_notes(db_context: DatabaseContext) -> List[Dict[str, str]]:
+async def get_all_notes(db_context: DatabaseContext) -> list[dict[str, str]]:
     """Retrieves all notes."""
     try:
         stmt = select(notes_table.c.title, notes_table.c.content).order_by(
@@ -64,7 +64,7 @@ async def get_all_notes(db_context: DatabaseContext) -> List[Dict[str, str]]:
 
 async def get_note_by_title(
     db_context: DatabaseContext, title: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Retrieves a specific note by its title."""
     try:
         stmt = select(notes_table.c.title, notes_table.c.content).where(

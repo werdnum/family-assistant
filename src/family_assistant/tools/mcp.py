@@ -1,21 +1,16 @@
 import asyncio
 import logging
+import os  # Import os for environment variable resolution
+from contextlib import AsyncExitStack  # Import AsyncExitStack
 from typing import (
-    List,
-    Dict,
     Any,
-    Optional,
-    Tuple,
 )  # Added Tuple
 
-from contextlib import AsyncExitStack  # Import AsyncExitStack
-import os  # Import os for environment variable resolution
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client  # Import the correct context manager
+from mcp.client.stdio import stdio_client
 
 # Import storage functions needed by local tools
-
 # Import the context from the new types file
 from .types import ToolExecutionContext, ToolNotFoundError
 
@@ -30,16 +25,16 @@ class MCPToolsProvider:
 
     def __init__(
         self,
-        mcp_server_configs: Dict[
-            str, Dict[str, Any]
+        mcp_server_configs: dict[
+            str, dict[str, Any]
         ],  # Expects dict {server_id: config}
         # mcp_client: Optional[Client] = None, # Removed unused parameter and type hint
     ):
         self._mcp_server_configs = mcp_server_configs
         # self._mcp_client = None # Client not directly used for stdio connections
-        self._sessions: Dict[str, ClientSession] = {}
-        self._tool_map: Dict[str, str] = {}  # Map tool name -> server_id
-        self._definitions: List[Dict[str, Any]] = []
+        self._sessions: dict[str, ClientSession] = {}
+        self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
+        self._definitions: list[dict[str, Any]] = []
         self._initialized = False
         self._exit_stack = AsyncExitStack()  # Manage stdio process lifecycles
         logger.info(
@@ -60,8 +55,8 @@ class MCPToolsProvider:
         all_tool_names = set()  # To detect duplicates across servers
 
         async def _connect_and_discover_mcp(
-            server_id: str, server_conf: Dict[str, Any]
-        ) -> Tuple[Optional[ClientSession], List[Dict[str, Any]], Dict[str, str]]:
+            server_id: str, server_conf: dict[str, Any]
+        ) -> tuple[ClientSession | None, list[dict[str, Any]], dict[str, str]]:
             """Connects to a single MCP server, discovers tools, and returns results."""
             discovered_tools = []
             tool_map = {}
@@ -283,8 +278,8 @@ class MCPToolsProvider:
     def _format_mcp_definitions_to_dicts(
         # self, definitions: List[Dict[str, Any]] # Original signature
         self,
-        definitions: List[Any],  # MCP list_tools returns list of Tool objects
-    ) -> List[Dict[str, Any]]:
+        definitions: list[Any],  # MCP list_tools returns list of Tool objects
+    ) -> list[dict[str, Any]]:
         """
         Accepts a list of MCP Tool objects.
         Converts MCP Tool objects to OpenAI-like dictionary format.
@@ -318,14 +313,14 @@ class MCPToolsProvider:
 
     async def get_tool_definitions(
         self,
-    ) -> List[Dict[str, Any]]:  # Return type is still dict
+    ) -> list[dict[str, Any]]:  # Return type is still dict
         """Returns the aggregated and sanitized tool definitions from all connected servers."""
         if not self._initialized:
             await self.initialize()
         return self._definitions
 
     async def execute_tool(
-        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
     ) -> str:
         """Executes an MCP tool on the appropriate server."""
         if not self._initialized:

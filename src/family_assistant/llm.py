@@ -2,23 +2,23 @@
 Module defining the interface and implementations for interacting with Large Language Models (LLMs).
 """
 
-import litellm  # Import litellm
+import copy  # For deep copying tool definitions
 import json
 import logging
 import os
-import aiofiles  # For async file operations
-import copy  # For deep copying tool definitions
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Protocol
+from typing import Any, Protocol
 
+import aiofiles  # For async file operations
+import litellm  # Import litellm
 from litellm import acompletion
 from litellm.exceptions import (
     APIConnectionError,
-    Timeout,
-    RateLimitError,
-    ServiceUnavailableError,
     APIError,
     BadRequestError,
+    RateLimitError,
+    ServiceUnavailableError,
+    Timeout,
 )
 
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
@@ -52,16 +52,16 @@ else:
 class LLMOutput:
     """Standardized output structure from an LLM call."""
 
-    content: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = field(
+    content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = field(
         default=None
     )  # Store raw tool call dicts
-    reasoning_info: Optional[Dict[str, Any]] = field(
+    reasoning_info: dict[str, Any] | None = field(
         default=None
     )  # Store reasoning/usage data
 
 
-def _sanitize_tools_for_litellm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _sanitize_tools_for_litellm(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Removes unsupported 'format' fields from string parameters in tool definitions
     before sending them to LiteLLM/OpenAI, which only supports 'enum' and 'date-time'.
@@ -119,9 +119,9 @@ class LLMInterface(Protocol):
 
     async def generate_response(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = "auto",
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """
         Generates a response from the LLM based on the provided context.
@@ -148,7 +148,7 @@ class LiteLLMClient:
     def __init__(
         self,
         model: str,
-        model_parameters: Optional[Dict[str, Any]] = None,
+        model_parameters: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         """
@@ -175,9 +175,9 @@ class LiteLLMClient:
 
     async def generate_response(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = "auto",
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generates a response using LiteLLM."""
         # Start with default kwargs passed during initialization
@@ -236,7 +236,7 @@ class LiteLLMClient:
             response = await acompletion(**call_kwargs)
 
             # Extract response message
-            response_message: Optional[ChatCompletionMessageParam] = (
+            response_message: ChatCompletionMessageParam | None = (
                 response.choices[0].message if response.choices else None
             )
 
@@ -344,9 +344,9 @@ class RecordingLLMClient:
 
     async def generate_response(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = "auto",
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Calls the wrapped client, records the interaction, and returns the result."""
         # Prepare input data for recording
@@ -413,14 +413,14 @@ class PlaybackLLMClient:
             ValueError: If the recording file is empty or contains invalid JSON.
         """
         self.recording_path = recording_path
-        self.recorded_interactions: List[Dict[str, Any]] = []
+        self.recorded_interactions: list[dict[str, Any]] = []
         logger.info(
             f"PlaybackLLMClient initializing. Reading from: {self.recording_path}"
         )
         try:
             # Load all interactions into memory synchronously during init
             # For async loading, this would need to be an async factory or method
-            with open(self.recording_path, mode="r", encoding="utf-8") as f:
+            with open(self.recording_path, encoding="utf-8") as f:
                 line_num = 0
                 for line in f:
                     line_num += 1
@@ -473,9 +473,9 @@ class PlaybackLLMClient:
 
     async def generate_response(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = "auto",
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """
         Finds a recorded interaction matching the input arguments and returns its output.

@@ -1,35 +1,21 @@
-import logging
 import json
-import uuid  # Added for unique task IDs
+import logging
 import traceback  # Added for error traceback
-from datetime import datetime, timezone  # Added timezone
+import uuid  # Added for unique task IDs
+from collections.abc import Awaitable, Callable  # Added Union, Awaitable
+from datetime import (  # Added timezone
+    datetime,
+    timedelta,  # Added
+    timezone,
+)
 from typing import (
-    List,
-    Dict,
     Any,
-    Optional,
-    Callable,
-    Tuple,
-    Union,
-    Awaitable,
-)  # Added Union, Awaitable
-
-
-from datetime import timedelta  # Added
+)
 
 import pytz  # Added
 
-# Import the LLM interface and output structure
-from .llm import LLMInterface, LLMOutput
-
-# Import ToolsProvider interface and context
-from .tools import ToolsProvider, ToolExecutionContext, ToolNotFoundError
-
 # Import Application type hint
 from telegram.ext import Application
-
-# Import DatabaseContext for type hinting
-from .storage.context import DatabaseContext
 
 # Import storage and calendar integration for context building
 from family_assistant import (
@@ -38,6 +24,15 @@ from family_assistant import (
 
 # --- NEW: Import ContextProvider ---
 from .context_providers import ContextProvider
+
+# Import the LLM interface and output structure
+from .llm import LLMInterface, LLMOutput
+
+# Import DatabaseContext for type hinting
+from .storage.context import DatabaseContext
+
+# Import ToolsProvider interface and context
+from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
 
 logger = logging.getLogger(__name__)
 
@@ -56,14 +51,14 @@ class ProcessingService:
         self,
         llm_client: LLMInterface,
         tools_provider: ToolsProvider,
-        prompts: Dict[str, str],
-        calendar_config: Dict[str, Any],
-        context_providers: List[
+        prompts: dict[str, str],
+        calendar_config: dict[str, Any],
+        context_providers: list[
             ContextProvider
         ],  # NEW: List of context providers (corrected to be single)
         timezone_str: str,
         max_history_messages: int,
-        server_url: Optional[str],  # Added server_url
+        server_url: str | None,  # Added server_url
         history_max_age_hours: int,  # Recommended value is now 1
     ):
         """
@@ -95,7 +90,7 @@ class ProcessingService:
 
     async def _aggregate_context_from_providers(self) -> str:
         """Gathers context fragments from all registered providers."""
-        all_fragments: List[str] = []
+        all_fragments: list[str] = []
         for provider in self.context_providers:
             try:
                 fragments = await provider.get_context_fragments()
@@ -114,16 +109,16 @@ class ProcessingService:
     async def process_message(
         self,
         db_context: DatabaseContext,  # Added db_context
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         # --- Updated Signature ---
         interface_type: str,
         conversation_id: str,
         application: Application,
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
-        request_confirmation_callback: Optional[
-            Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-        ] = None,  # Removed comma
-    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        request_confirmation_callback: (
+            Callable[[str, str, dict[str, Any]], Awaitable[bool]] | None
+        ) = None,  # Removed comma
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         """
         Sends the conversation history to the LLM via the injected client,
         handles potential tool calls using the injected tools provider,
@@ -145,7 +140,7 @@ class ProcessingService:
               (assistant requests, tool responses, final answer).
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
         """
-        final_content: Optional[str] = None  # Store final text response from LLM
+        final_content: str | None = None  # Store final text response from LLM
         max_iterations = 5  # Safety limit for tool call loops
         current_iteration = 1
 
@@ -153,7 +148,7 @@ class ProcessingService:
             # --- Get Tool Definitions ---
             # List to store all messages generated *within this turn*
             # This list will be returned by the function
-            turn_messages: List[Dict[str, Any]] = []
+            turn_messages: list[dict[str, Any]] = []
             all_tools = await self.tools_provider.get_tool_definitions()
             if all_tools:
                 logger.info(f"Providing {len(all_tools)} tools to LLM.")
@@ -429,8 +424,8 @@ class ProcessingService:
             return [], None  # Return empty list, no reasoning info
 
     def _format_history_for_llm(
-        self, history_messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, history_messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Formats message history retrieved from the database into the list structure
         expected by the LLM, handling assistant tool calls correctly.
@@ -441,7 +436,7 @@ class ProcessingService:
         Returns:
             A list of message dictionaries formatted for the LLM API.
         """
-        messages: List[Dict[str, Any]] = []
+        messages: list[dict[str, Any]] = []
         # Process history messages, formatting assistant tool calls correctly
         for msg in history_messages:
             # Use .get for safer access to potentially missing keys
@@ -504,17 +499,15 @@ class ProcessingService:
         # --- Refactored Parameters ---
         interface_type: str,
         conversation_id: str,
-        trigger_content_parts: List[Dict[str, Any]],
-        trigger_interface_message_id: Optional[str],  # Added trigger message ID
+        trigger_content_parts: list[dict[str, Any]],
+        trigger_interface_message_id: str | None,  # Added trigger message ID
         user_name: str,
-        turn_id: Optional[
-            str
-        ] = None,  # Made turn_id optional, moved after non-defaults
-        replied_to_interface_id: Optional[str] = None,  # Added for reply context
+        turn_id: str | None = None,  # Made turn_id optional, moved after non-defaults
+        replied_to_interface_id: str | None = None,  # Added for reply context
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
-        request_confirmation_callback: Optional[
-            Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-        ] = None,
+        request_confirmation_callback: (
+            Callable[[str, str, dict[str, Any]], Awaitable[bool]] | None
+        ) = None,
     ):
         """Prepares context, message history, calls the LLM processing logic,
         and returns the response, tool info, reasoning info, and any processing error traceback.
@@ -593,7 +586,7 @@ class ProcessingService:
         )
 
         # --- Handle Reply Thread Context ---
-        thread_root_id_for_saving: Optional[int] = (
+        thread_root_id_for_saving: int | None = (
             None  # Store the root ID for saving later
         )
         if replied_to_interface_id:
@@ -704,7 +697,7 @@ class ProcessingService:
             logger.warning("Generated empty system prompt.")
 
         # --- Add the triggering message content ---
-        trigger_content: Union[str, List[Dict[str, Any]]]
+        trigger_content: str | list[dict[str, Any]]
         if (
             isinstance(trigger_content_parts, list)
             and len(trigger_content_parts) == 1

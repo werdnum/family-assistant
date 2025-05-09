@@ -1,65 +1,61 @@
 import argparse
 import asyncio
 import copy
-
 import json
 import logging
-
 import os
 import signal
 import sys
-import yaml
-from typing import Optional, Dict, Any, Tuple
-
 import zoneinfo
-from dotenv import load_dotenv
+from typing import Any
+
 import uvicorn
-
-# Import task worker CLASS, handlers, and events
-from family_assistant.task_worker import (
-    TaskWorker,
-    handle_log_message,
-    handle_llm_callback,
-    handle_index_email,
-    shutdown_event,
-    new_task_event,
-)
-
-# Import the ProcessingService and LLM interface/clients
-from family_assistant.processing import ProcessingService
-from family_assistant.llm import (
-    LLMInterface,
-    LiteLLMClient,
-)
+import yaml
+from dotenv import load_dotenv
 
 # Import Embedding interface/clients
 import family_assistant.embeddings as embeddings
+
+# Import the whole storage module for task queue functions etc.
+from family_assistant import storage
+
+# --- NEW: Import ContextProvider and its implementations ---
+from family_assistant.context_providers import (
+    CalendarContextProvider,
+    NotesContextProvider,
+)
 from family_assistant.embeddings import (
     # --- Embedding Imports ---
     EmbeddingGenerator,
     LiteLLMEmbeddingGenerator,  # For testing
 )
+from family_assistant.indexing.document_indexer import (
+    DocumentIndexer,
+)  # Import the class
 
-# Import tool definitions from the new tools module
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-    _scan_user_docs,  # Import the scanner function
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
-    LocalToolsProvider,
-    MCPToolsProvider,
-    CompositeToolsProvider,
-    ConfirmingToolsProvider,  # Import the class directly
-    ToolsProvider,  # Import protocol for type hinting
+# Import indexing components
+from family_assistant.indexing.email_indexer import (
+    handle_index_email,
+    set_indexing_dependencies,
 )
 
-# --- NEW: Import ContextProvider and its implementations ---
-from family_assistant.context_providers import (
-    NotesContextProvider,
-    CalendarContextProvider,
+# Import pipeline and processors for indexing
+from family_assistant.indexing.pipeline import IndexingPipeline
+from family_assistant.indexing.processors.dispatch_processors import (
+    EmbeddingDispatchProcessor,
+)
+from family_assistant.indexing.processors.metadata_processors import TitleExtractor
+from family_assistant.indexing.processors.text_processors import TextChunker
+
+# Import the specific task handler for embedding
+from family_assistant.indexing.tasks import handle_embed_and_store_batch
+from family_assistant.llm import (
+    LiteLLMClient,
+    LLMInterface,
 )
 
-# Import the FastAPI app
-from family_assistant.web_server import app as fastapi_app
+# Import the ProcessingService and LLM interface/clients
+from family_assistant.processing import ProcessingService
 
 # Import storage functions
 # Import facade for primary access
@@ -72,39 +68,43 @@ from family_assistant.storage import (
     # add_or_update_note, # Called via tools provider
 )
 
-# Import the whole storage module for task queue functions etc.
-from family_assistant import storage
-
 # Import items specifically from storage.context
 from family_assistant.storage.context import (
     get_db_context,  # Add back get_db_context
 )
 
-# Import calendar functions
+# Import task worker CLASS, handlers, and events
+from family_assistant.task_worker import (
+    TaskWorker,
+    handle_index_email,
+    handle_llm_callback,
+    handle_log_message,
+    new_task_event,
+    shutdown_event,
+)
+from family_assistant.tools import (
+    AVAILABLE_FUNCTIONS as local_tool_implementations,
+)
 
+# Import tool definitions from the new tools module
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
+)
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    ConfirmingToolsProvider,  # Import the class directly
+    LocalToolsProvider,
+    MCPToolsProvider,
+    ToolsProvider,  # Import protocol for type hinting
+    _scan_user_docs,  # Import the scanner function
+)
+
+# Import the FastAPI app
+from family_assistant.web_server import app as fastapi_app
+
+# Import calendar functions
 # Import the Telegram service class
 from .telegram_bot import TelegramService  # Updated import
-
-# Import indexing components
-from family_assistant.indexing.email_indexer import (
-    handle_index_email,
-    set_indexing_dependencies,
-)
-from family_assistant.indexing.document_indexer import (
-    DocumentIndexer,
-)  # Import the class
-
-# Import pipeline and processors for indexing
-from family_assistant.indexing.pipeline import IndexingPipeline
-from family_assistant.indexing.processors.metadata_processors import TitleExtractor
-from family_assistant.indexing.processors.text_processors import TextChunker
-from family_assistant.indexing.processors.dispatch_processors import (
-    EmbeddingDispatchProcessor,
-)
-
-# Import the specific task handler for embedding
-from family_assistant.indexing.tasks import handle_embed_and_store_batch
-
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -127,7 +127,7 @@ CONFIG_FILE_PATH = "config.yaml"  # Path to the new config file
 
 
 # --- Configuration Loading ---
-def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
+def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     """
     Loads configuration according to the defined hierarchy:
     Defaults -> config.yaml -> Environment Variables.
@@ -140,7 +140,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         A dictionary containing the resolved configuration.
     """
     # 1. Code Defaults
-    config_data: Dict[str, Any] = {
+    config_data: dict[str, Any] = {
         "telegram_token": None,
         "openrouter_api_key": None,
         "gemini_api_key": None,  # For direct Gemini usage
@@ -165,7 +165,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
 
     # 2. Load config.yaml
     try:
-        with open(config_file_path, "r", encoding="utf-8") as f:
+        with open(config_file_path, encoding="utf-8") as f:
             yaml_config = yaml.safe_load(f)
             if isinstance(yaml_config, dict):
                 # Merge YAML config, overwriting defaults
@@ -287,7 +287,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     # 4. Load other config files (Prompts, MCP)
     # Load prompts from YAML file
     try:
-        with open("prompts.yaml", "r", encoding="utf-8") as f:
+        with open("prompts.yaml", encoding="utf-8") as f:
             loaded_prompts = yaml.safe_load(f)
             if isinstance(loaded_prompts, dict):
                 config_data["prompts"] = loaded_prompts  # Store in config dict
@@ -304,7 +304,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     # Load MCP config from JSON file
     mcp_config_path = "mcp_config.json"
     try:
-        with open(mcp_config_path, "r", encoding="utf-8") as f:
+        with open(mcp_config_path, encoding="utf-8") as f:
             loaded_mcp_config = json.load(f)
             if isinstance(loaded_mcp_config, dict):
                 config_data["mcp_config"] = loaded_mcp_config  # Store in config dict
@@ -389,10 +389,8 @@ parser.add_argument(
 # Add mcp_provider argument
 async def shutdown_handler(
     signal_name: str,
-    telegram_service: Optional[TelegramService],
-    tools_provider: Optional[
-        ToolsProvider
-    ],  # Use generic ToolsProvider and correct name
+    telegram_service: TelegramService | None,
+    tools_provider: ToolsProvider | None,  # Use generic ToolsProvider and correct name
 ):
     """Initiates graceful shutdown."""
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
@@ -448,9 +446,9 @@ def reload_config_handler(signum, frame):
 # --- Main Application Setup & Run ---
 # Return tuple: (TelegramService, ToolsProvider) or (None, None)
 async def main_async(
-    config: Dict[str, Any],  # Accept the resolved config dictionary
-) -> Tuple[
-    Optional[TelegramService], Optional[ToolsProvider]
+    config: dict[str, Any],  # Accept the resolved config dictionary
+) -> tuple[
+    TelegramService | None, ToolsProvider | None
 ]:  # Return generic ToolsProvider
     """Initializes and runs the bot application using the provided configuration."""
     # global application # Removed

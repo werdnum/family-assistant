@@ -68,6 +68,7 @@ dev = [
     "mcp-server-time>=0.1.0", # Ensure mcp-server-time is available for tests
     "symbex>=2.0",
     "pytest-timeout",
+    "ruff",
 ]
 
 [project.scripts]
@@ -103,20 +104,14 @@ help = "Run pylint in errors-only mode and full pytest suite with verbose output
 shell = "pylint src tests -j0 --errors-only && pytest -s -v tests"
 
 
-# --- Tool Configuration (Example: Ruff) ---
-# [tool.ruff]
-# line-length = 88
-# select = ["E", "F", "W", "I", "UP", "PL", "T20"] # Example rule set
-# ignore = []
+[tool.ruff.lint.isort]
+known-first-party = ["family_assistant"]
 
-# [tool.ruff.lint.isort]
-# known-first-party = ["family_assistant"]
-
-# [tool.pytest.ini_options]
-# asyncio_mode = "auto"
-# testpaths = [
-#     "tests", # Assuming tests will be in a top-level tests/ directory
-# ]
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = [
+    "tests",
+]
 [tool.pydantic]
 # Enable Pydantic v2 behaviors
 validate_default = false
@@ -128,3 +123,19 @@ from_attributes = true
 
 # Set type validation strictness
 strict = false
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]

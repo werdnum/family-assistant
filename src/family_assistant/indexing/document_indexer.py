@@ -3,14 +3,14 @@ Handles the indexing process for documents uploaded via the API.
 """
 
 import logging
-from typing import Any, Dict, Optional, List
+from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
 from family_assistant.indexing.pipeline import (
-    IndexingPipeline,
     IndexableContent,
+    IndexingPipeline,
 )  # Added
 
 # Import the Document protocol from the correct location (though not directly used here, good practice)
@@ -44,7 +44,7 @@ class DocumentIndexer:
         )
 
     async def process_document(
-        self, exec_context: ToolExecutionContext, payload: Dict[str, Any]
+        self, exec_context: ToolExecutionContext, payload: dict[str, Any]
     ):
         """
         Task handler method to process and index content parts provided for a document
@@ -60,7 +60,7 @@ class DocumentIndexer:
             raise ValueError("Missing DatabaseContext dependency in context.")
 
         document_id = payload.get("document_id")
-        content_parts: Optional[Dict[str, str]] = payload.get("content_parts")
+        content_parts: dict[str, str] | None = payload.get("content_parts")
 
         if not document_id:
             raise ValueError(
@@ -95,7 +95,7 @@ class DocumentIndexer:
             f"Preparing content parts for indexing pipeline for document ID: {document_id} with {len(content_parts)} part(s)."
         )
 
-        initial_items: List[IndexableContent] = []
+        initial_items: list[IndexableContent] = []
         for key, text_content in content_parts.items():
             if not text_content or not isinstance(text_content, str):
                 logger.warning(

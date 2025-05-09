@@ -3,12 +3,13 @@ Defines the schema for vector search queries and implements the query logic.
 """
 
 import logging
-from typing import List, Dict, Optional, Any, Literal
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Literal
+
+from sqlalchemy.sql import text  # For executing raw SQL if needed
 
 from .context import DatabaseContext  # Import context
-from sqlalchemy.sql import text  # For executing raw SQL if needed
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +33,21 @@ class VectorSearchQuery:
     search_type: Literal["semantic", "keyword", "hybrid"] = "hybrid"
 
     # Query Content
-    semantic_query: Optional[str] = None
-    keywords: Optional[str] = None
+    semantic_query: str | None = None
+    keywords: str | None = None
     # Note: query_embedding is generated based on semantic_query and embedding_model,
     # so it's not part of the raw input schema but passed separately to the query function.
 
     # Model Selection (Required for semantic/hybrid)
-    embedding_model: Optional[str] = None
+    embedding_model: str | None = None
 
     # Filters
-    embedding_types: List[str] = field(default_factory=list)
-    source_types: List[str] = field(default_factory=list)
-    created_after: Optional[datetime] = None  # Expect timezone-aware datetime
-    created_before: Optional[datetime] = None  # Expect timezone-aware datetime
-    title_like: Optional[str] = None
-    metadata_filters: List[MetadataFilter] = field(
+    embedding_types: list[str] = field(default_factory=list)
+    source_types: list[str] = field(default_factory=list)
+    created_after: datetime | None = None  # Expect timezone-aware datetime
+    created_before: datetime | None = None  # Expect timezone-aware datetime
+    title_like: str | None = None
+    metadata_filters: list[MetadataFilter] = field(
         default_factory=list
     )  # Changed to list
 
@@ -78,10 +79,8 @@ class VectorSearchQuery:
 async def query_vector_store(
     db_context: DatabaseContext,
     query: VectorSearchQuery,
-    query_embedding: Optional[
-        List[float]
-    ] = None,  # Pass generated embedding separately
-) -> List[Dict[str, Any]]:
+    query_embedding: list[float] | None = None,  # Pass generated embedding separately
+) -> list[dict[str, Any]]:
     """
     Performs vector, keyword, or hybrid search based on the VectorSearchQuery input.
 

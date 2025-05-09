@@ -3,44 +3,41 @@ Module defining interfaces and implementations for providing and executing tools
 """
 
 import asyncio
+import inspect
 import json
 import logging
-import uuid
 import os
 import pathlib
-import inspect
-from datetime import datetime, timezone  # Added date, time
+import uuid
+from collections.abc import Callable  # Added Awaitable, Set
+from datetime import datetime, timedelta, timezone  # Added date, time
 from typing import (
-    List,
-    Dict,
     Any,
+    Dict,
+    List,
     Optional,
     Protocol,
-    Callable,
     Set,
-)  # Added Awaitable, Set
+)
 from zoneinfo import ZoneInfo
 
 import aiofiles
-
 from dateutil import rrule
 from dateutil.parser import isoparse
 from sqlalchemy.sql import text
 
 # Import storage functions needed by local tools
-from family_assistant import storage
+# Import calendar helper functions AND tool implementations
+from family_assistant import calendar_integration, storage
+from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.storage import get_recent_history
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
-from family_assistant.embeddings import EmbeddingGenerator
-from datetime import timedelta
 
-# Import calendar helper functions AND tool implementations
-from family_assistant import calendar_integration
+from .mcp import MCPToolsProvider
 
 # Import the context from the new types file
 from .types import ToolExecutionContext, ToolNotFoundError
-from .mcp import MCPToolsProvider
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +53,7 @@ class ToolConfirmationRequired(Exception):
     """
 
     def __init__(
-        self, confirmation_prompt: str, tool_name: str, tool_args: Dict[str, Any]
+        self, confirmation_prompt: str, tool_name: str, tool_args: dict[str, Any]
     ):
         self.confirmation_prompt = confirmation_prompt
         self.tool_name = tool_name
@@ -76,12 +73,12 @@ class ToolConfirmationFailed(Exception):
 class ToolsProvider(Protocol):
     """Protocol defining the interface for a tool provider."""
 
-    async def get_tool_definitions(self) -> List[Dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Returns a list of tool definitions in LLM-compatible format."""
         ...
 
     async def execute_tool(
-        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
     ) -> str:
         """
         Executes the specified tool.
@@ -117,9 +114,9 @@ async def schedule_recurring_task_tool(
     task_type: str,
     initial_schedule_time: str,
     recurrence_rule: str,
-    payload: Dict[str, Any],
-    max_retries: Optional[int] = 3,
-    description: Optional[str] = None,  # Optional description for the task ID
+    payload: dict[str, Any],
+    max_retries: int | None = 3,
+    description: str | None = None,  # Optional description for the task ID
 ):
     """
     Schedules a new recurring task.
@@ -276,8 +273,8 @@ async def search_documents_tool(
     exec_context: ToolExecutionContext,
     embedding_generator: EmbeddingGenerator,  # Injected by LocalToolsProvider
     query_text: str,
-    source_types: Optional[List[str]] = None,
-    embedding_types: Optional[List[str]] = None,
+    source_types: list[str] | None = None,
+    embedding_types: list[str] | None = None,
     limit: int = 5,  # Default limit for LLM tool
 ) -> str:
     """
@@ -512,7 +509,7 @@ async def get_message_history_tool(
 # --- Documentation Tool Helper ---
 
 
-def _scan_user_docs() -> List[str]:
+def _scan_user_docs() -> list[str]:
     """Scans the 'docs/user/' directory for allowed documentation files."""
     docs_user_dir = pathlib.Path("docs") / "user"
     allowed_extensions = {".md", ".txt"}
@@ -541,7 +538,7 @@ def _scan_user_docs() -> List[str]:
 # --- Documentation Tool Helper ---
 
 
-def _scan_user_docs() -> List[str]:
+def _scan_user_docs() -> list[str]:
     """Scans the 'docs/user/' directory for allowed documentation files."""
     docs_user_dir = pathlib.Path("docs") / "user"
     allowed_extensions = {".md", ".txt"}
@@ -608,7 +605,7 @@ async def get_user_documentation_content_tool(
         return f"Error: Access denied. Invalid path for filename '{filename}'."
 
     try:
-        async with aiofiles.open(file_path, mode="r", encoding="utf-8") as f:
+        async with aiofiles.open(file_path, encoding="utf-8") as f:
             content = await f.read()
         logger.info(f"Successfully read content from '{filename}'.")
         return content
@@ -626,7 +623,7 @@ async def get_user_documentation_content_tool(
 
 # Map tool names to their actual implementation functions
 # Note: add_or_update_note comes from storage
-AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
+AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "add_or_update_note": storage.add_or_update_note,
     "schedule_future_callback": schedule_future_callback_tool,
     "schedule_recurring_task": schedule_recurring_task_tool,
@@ -645,7 +642,7 @@ AVAILABLE_FUNCTIONS: Dict[str, Callable] = {
 
 
 def _format_event_details_for_confirmation(
-    details: Optional[Dict[str, Any]], timezone_str: str
+    details: dict[str, Any] | None, timezone_str: str
 ) -> str:
     """Formats fetched event details for inclusion in confirmation prompts."""
     if not details:
@@ -669,7 +666,7 @@ def _format_event_details_for_confirmation(
 
 
 def render_delete_calendar_event_confirmation(
-    args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str
+    args: dict[str, Any], event_details: dict[str, Any] | None, timezone_str: str
 ) -> str:
     """Renders the confirmation message for deleting a calendar event."""
     event_desc = _format_event_details_for_confirmation(
@@ -685,7 +682,7 @@ def render_delete_calendar_event_confirmation(
 
 
 def render_modify_calendar_event_confirmation(
-    args: Dict[str, Any], event_details: Optional[Dict[str, Any]], timezone_str: str
+    args: dict[str, Any], event_details: dict[str, Any] | None, timezone_str: str
 ) -> str:
     """Renders the confirmation message for modifying a calendar event."""
     event_desc = _format_event_details_for_confirmation(
@@ -722,8 +719,8 @@ def render_modify_calendar_event_confirmation(
 
 
 # Update the Callable signature to include timezone_str
-TOOL_CONFIRMATION_RENDERERS: Dict[
-    str, Callable[[Dict[str, Any], Optional[Dict[str, Any]], str], str]
+TOOL_CONFIRMATION_RENDERERS: dict[
+    str, Callable[[dict[str, Any], dict[str, Any] | None, str], str]
 ] = {
     "delete_calendar_event": render_delete_calendar_event_confirmation,
     "modify_calendar_event": render_modify_calendar_event_confirmation,
@@ -736,7 +733,7 @@ TOOL_CONFIRMATION_RENDERERS: Dict[
 # --- Tool Definitions ---
 # Define local tools in the format LiteLLM expects (OpenAI format)
 # Hardcoding common examples for now.
-TOOLS_DEFINITION: List[Dict[str, Any]] = [
+TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -1065,10 +1062,10 @@ class LocalToolsProvider:
 
     def __init__(
         self,
-        definitions: List[Dict[str, Any]],
-        implementations: Dict[str, Callable],
-        embedding_generator: Optional[EmbeddingGenerator] = None,  # Accept generator
-        calendar_config: Optional[Dict[str, Any]] = None,  # Accept calendar config
+        definitions: list[dict[str, Any]],
+        implementations: dict[str, Callable],
+        embedding_generator: EmbeddingGenerator | None = None,  # Accept generator
+        calendar_config: dict[str, Any] | None = None,  # Accept calendar config
     ):
         self._definitions = definitions
         self._implementations = implementations
@@ -1082,11 +1079,11 @@ class LocalToolsProvider:
                 f"LocalToolsProvider configured with embedding generator: {type(self._embedding_generator).__name__}"
             )
 
-    async def get_tool_definitions(self) -> List[Dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[dict[str, Any]]:
         return self._definitions
 
     async def execute_tool(
-        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
     ) -> str:
         if name not in self._implementations:
             raise ToolNotFoundError(f"Local tool '{name}' not found.")
@@ -1175,11 +1172,11 @@ class LocalToolsProvider:
 class CompositeToolsProvider:
     """Combines multiple tool providers into a single interface."""
 
-    def __init__(self, providers: List[ToolsProvider]):
+    def __init__(self, providers: list[ToolsProvider]):
         self._providers = providers
         self._providers = providers
-        self._tool_definitions: Optional[List[Dict[str, Any]]] = None
-        self._tool_map: Dict[str, ToolsProvider] = {}  # Map tool name to provider
+        self._tool_definitions: list[dict[str, Any]] | None = None
+        self._tool_map: dict[str, ToolsProvider] = {}  # Map tool name to provider
         self._validated = False  # Flag to track if validation has run
         logger.info(
             f"CompositeToolsProvider initialized with {len(providers)} providers. Validation and mapping will occur on first use."
@@ -1187,7 +1184,7 @@ class CompositeToolsProvider:
 
     # Removed synchronous _validate_providers method
 
-    async def get_tool_definitions(self) -> List[Dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[dict[str, Any]]:
         # Cache definitions after first async fetch and validation
         if self._tool_definitions is None:
             all_definitions = []
@@ -1252,7 +1249,7 @@ class CompositeToolsProvider:
         return self._tool_definitions
 
     async def execute_tool(
-        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
     ) -> str:
         # Ensure definitions are loaded and map is built
         if not self._validated:
@@ -1326,9 +1323,9 @@ class ConfirmingToolsProvider(ToolsProvider):
     def __init__(
         self,
         wrapped_provider: ToolsProvider,
-        tools_requiring_confirmation: Set[str],  # Explicitly pass the set of names
+        tools_requiring_confirmation: set[str],  # Explicitly pass the set of names
         confirmation_timeout: float = DEFAULT_CONFIRMATION_TIMEOUT,
-        calendar_config: Optional[Dict[str, Any]] = None,  # Needed for fetching details
+        calendar_config: dict[str, Any] | None = None,  # Needed for fetching details
     ):
         self.wrapped_provider = wrapped_provider
         self._tools_requiring_confirmation = (
@@ -1336,14 +1333,14 @@ class ConfirmingToolsProvider(ToolsProvider):
         )
         self.confirmation_timeout = confirmation_timeout
         self.calendar_config = calendar_config  # Store calendar config
-        self._tool_definitions: Optional[List[Dict[str, Any]]] = None
+        self._tool_definitions: list[dict[str, Any]] | None = None
         # Remove internal tracking flag, rely on external config
         logger.info(
             f"ConfirmingToolsProvider initialized, wrapping {type(wrapped_provider).__name__}. "
             f"Tools requiring confirmation: {self._tools_requiring_confirmation}. Timeout: {confirmation_timeout}s."
         )
 
-    async def get_tool_definitions(self) -> List[Dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[dict[str, Any]]:
         # Fetch definitions from the wrapped provider. No longer needs to identify tools here.
         if self._tool_definitions is None:
             definitions = await self.wrapped_provider.get_tool_definitions()
@@ -1354,8 +1351,8 @@ class ConfirmingToolsProvider(ToolsProvider):
         return self._tool_definitions
 
     async def _get_event_details_for_confirmation(
-        self, tool_name: str, arguments: Dict[str, Any], context: ToolExecutionContext
-    ) -> Optional[Dict[str, Any]]:
+        self, tool_name: str, arguments: dict[str, Any], context: ToolExecutionContext
+    ) -> dict[str, Any] | None:
         """
         Fetches event details if the tool is calendar-related and requires it.
         Requires the execution context to get the timezone.
@@ -1414,7 +1411,7 @@ class ConfirmingToolsProvider(ToolsProvider):
             )
 
     async def execute_tool(
-        self, name: str, arguments: Dict[str, Any], context: ToolExecutionContext
+        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
     ) -> str:
         # Ensure definitions are loaded to know which tools need confirmation
         if self._tool_definitions is None:

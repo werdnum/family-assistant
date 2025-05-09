@@ -2,17 +2,16 @@
 Module defining the interface and implementations for generating text embeddings.
 """
 
-import logging
 import asyncio
+import logging
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 # Import sentence-transformers if available, otherwise skip the class definition
 try:
-    from sentence_transformers import SentenceTransformer
-
     # sentence-transformers returns numpy arrays or torch tensors, need numpy for conversion
     import numpy as np
+    from sentence_transformers import SentenceTransformer
 
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
@@ -23,10 +22,10 @@ except ImportError:
 from litellm import aembedding
 from litellm.exceptions import (
     APIConnectionError,
-    Timeout,
+    APIError,
     RateLimitError,
     ServiceUnavailableError,
-    APIError,
+    Timeout,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,7 +35,7 @@ logger = logging.getLogger(__name__)
 class EmbeddingResult:
     """Represents the result of generating embeddings for a list of texts."""
 
-    embeddings: List[List[float]]
+    embeddings: list[list[float]]
     model_name: str
 
 
@@ -44,7 +43,7 @@ class EmbeddingResult:
 class EmbeddingGenerator(Protocol):
     """Protocol defining the interface for generating text embeddings."""
 
-    async def generate_embeddings(self, texts: List[str]) -> EmbeddingResult:
+    async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
         """
         Generates embeddings for a list of input texts.
 
@@ -90,7 +89,7 @@ class LiteLLMEmbeddingGenerator:
     def model_name(self) -> str:
         return self._model_name
 
-    async def generate_embeddings(self, texts: List[str]) -> EmbeddingResult:
+    async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
         """Generates embeddings using LiteLLM's aembedding."""
         if not texts:
             logger.warning("generate_embeddings called with empty list of texts.")
@@ -157,7 +156,7 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
         """
 
         def __init__(
-            self, model_name_or_path: str, device: Optional[str] = None, **kwargs: Any
+            self, model_name_or_path: str, device: str | None = None, **kwargs: Any
         ):
             """
             Initializes the SentenceTransformer embedding generator.
@@ -205,7 +204,7 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
             # Return the identifier used, which might be a path or a hub name
             return self._model_name
 
-        async def generate_embeddings(self, texts: List[str]) -> EmbeddingResult:
+        async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
             """Generates embeddings using the loaded SentenceTransformer model."""
             if not texts:
                 logger.warning("generate_embeddings called with empty list of texts.")
@@ -272,9 +271,9 @@ class MockEmbeddingGenerator:
 
     def __init__(
         self,
-        embedding_map: Dict[str, List[float]],
+        embedding_map: dict[str, list[float]],
         model_name: str = "mock-embedding-model",
-        default_embedding: Optional[List[float]] = None,
+        default_embedding: list[float] | None = None,
     ):
         """
         Initializes the mock embedding generator.
@@ -297,7 +296,7 @@ class MockEmbeddingGenerator:
     def model_name(self) -> str:
         return self._model_name
 
-    async def generate_embeddings(self, texts: List[str]) -> EmbeddingResult:
+    async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
         """Looks up embeddings in the map or returns default/raises error."""
         if not texts:
             return EmbeddingResult(embeddings=[], model_name=self.model_name)

@@ -8,7 +8,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, List  # Add missing typing imports
+from typing import Any  # Add missing typing imports
 
 import httpx  # Import httpx
 import numpy as np
@@ -19,7 +19,6 @@ from sqlalchemy import select
 
 # Import components needed for the E2E test
 from family_assistant import storage
-from family_assistant.task_worker import TaskWorker
 from family_assistant.embeddings import (
     MockEmbeddingGenerator,  # Keep if used by type hints, else can remove if only MockEmbeddingGenerator is used.
 )  # Import protocol
@@ -30,12 +29,13 @@ from family_assistant.indexing.pipeline import IndexingPipeline  # Added
 from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )  # Added
-from family_assistant.tools.types import ToolExecutionContext  # Added
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import (
     query_vectors,
 )  # Import Document protocol
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.task_worker import TaskWorker
+from family_assistant.tools.types import ToolExecutionContext  # Added
 from family_assistant.web_server import app as fastapi_app  # Import the FastAPI app
 
 # Import test helpers
@@ -160,7 +160,7 @@ async def http_client(
 
 # --- Helper Task Handler for the test ---
 async def _helper_handle_embed_and_store_batch(
-    exec_context: ToolExecutionContext, payload: Dict[str, Any]
+    exec_context: ToolExecutionContext, payload: dict[str, Any]
 ):
     logger.info(
         f"Test task handler 'test_handle_embed_and_store_batch' received payload: {payload}"
@@ -170,8 +170,8 @@ async def _helper_handle_embed_and_store_batch(
     embedding_generator = exec_context.application.state.embedding_generator
 
     document_id = payload["document_id"]
-    texts_to_embed: List[str] = payload["texts_to_embed"]
-    embedding_metadata_list: List[Dict[str, Any]] = payload["embedding_metadata_list"]
+    texts_to_embed: list[str] = payload["texts_to_embed"]
+    embedding_metadata_list: list[dict[str, Any]] = payload["embedding_metadata_list"]
 
     if not texts_to_embed:
         logger.warning(

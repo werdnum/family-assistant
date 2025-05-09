@@ -4,11 +4,11 @@ Content processors focused on dispatching embedding tasks.
 
 import logging
 import uuid
-from typing import List, Dict, Any, Set
+from typing import Any
 
-from family_assistant.indexing.pipeline import IndexableContent, ContentProcessor
-from family_assistant.storage.vector import Document  # Document protocol
+from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
 from family_assistant.storage.tasks import enqueue_task
+from family_assistant.storage.vector import Document  # Document protocol
 from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -20,13 +20,13 @@ class EmbeddingDispatchProcessor(ContentProcessor):
     for embedding via the 'embed_and_store_batch' task.
     """
 
-    def __init__(self, embedding_types_to_dispatch: List[str]):
+    def __init__(self, embedding_types_to_dispatch: list[str]):
         """
         Args:
             embedding_types_to_dispatch: A list of embedding_type strings
                 that this processor instance should handle and dispatch.
         """
-        self._embedding_types_to_dispatch: Set[str] = set(embedding_types_to_dispatch)
+        self._embedding_types_to_dispatch: set[str] = set(embedding_types_to_dispatch)
 
     @property
     def name(self) -> str:
@@ -34,17 +34,17 @@ class EmbeddingDispatchProcessor(ContentProcessor):
 
     async def process(
         self,
-        current_items: List[IndexableContent],
+        current_items: list[IndexableContent],
         original_document: Document,  # Document protocol
         initial_content_ref: IndexableContent,
         context: ToolExecutionContext,
-    ) -> List[IndexableContent]:
+    ) -> list[IndexableContent]:
         """
         Filters items by configured embedding_types, batches them,
         and dispatches an 'embed_and_store_batch' task.
         All original items are passed through to the next stage.
         """
-        items_to_embed: List[IndexableContent] = []
+        items_to_embed: list[IndexableContent] = []
         doc_id_for_log = getattr(original_document, "id", "UNKNOWN_DOC_ID")
         logger.info(
             f"[{self.name}/{doc_id_for_log}] Processing {len(current_items)} items. Dispatch types: {self._embedding_types_to_dispatch}"
@@ -94,8 +94,8 @@ class EmbeddingDispatchProcessor(ContentProcessor):
             )
             return current_items  # Pass all items through
 
-        texts_to_embed_list: List[str] = []
-        embedding_metadata_list: List[Dict[str, Any]] = []
+        texts_to_embed_list: list[str] = []
+        embedding_metadata_list: list[dict[str, Any]] = []
 
         for item_to_dispatch in items_to_embed:
             if item_to_dispatch.content:  # Ensure content is not None

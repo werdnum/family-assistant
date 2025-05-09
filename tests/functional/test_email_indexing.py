@@ -511,7 +511,7 @@ async def test_vector_ranking(pg_vector_db_engine):
 
         # --- Assert ---
         assert_that(query_results).is_not_none()
-        assert_that(query_results).described_as("Expected at least 3 results").has_length_greater_than_or_equal_to(3)
+        assert_that(len(query_results)).described_as("Expected at least 3 results").is_greater_than(3)
         logger.info(f"Ranking query returned {len(query_results)} results.")
 
         # Extract source IDs and distances
@@ -684,7 +684,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
 
         # Verify that *all* returned results belong to the correct document
         for found_result in query_results:
-            assert_that(found_result.get("source_id")).described_as(f"Incorrect document returned by metadata filter. Expected source_id {email2_msg_id}").is_equal_to(email2_msg_id)
+            assert_that(found_result.get("source_id")).described_as(f"Incorrect document returned by metadata filter. Expected source_id {email2_msg_id}, Full result: {found_result!r}").is_equal_to(email2_msg_id)
             assert_that(found_result.get("title")).described_as(f"Incorrect title in filtered result. Expected 'Metadata Test Far Correct Type'").is_equal_to("Metadata Test Far Correct Type")
 
         # Optional: Check that the closer document (email1) is NOT in the results

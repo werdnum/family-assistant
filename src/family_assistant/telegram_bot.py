@@ -5,43 +5,40 @@ import html
 import io
 import json
 import logging
+
+# Import necessary types for type hinting
+import os  # Added for environment variable access
 import traceback
 import uuid
 from collections import defaultdict
+from collections.abc import Callable  # Added cast
 from datetime import datetime, timezone
+from typing import (
+    Any,
+    Protocol,
+    runtime_checkable,
+)
 
 import telegramify_markdown
-from telegram import Update
-from telegram.constants import ChatAction, ParseMode
+from sqlalchemy import update  # For error handling db update
 from telegram import (
     ForceReply,  # Add ForceReply import
     InlineKeyboardButton,
+    InlineKeyboardMarkup,  # Move this import here
     Message,
+    Update,
 )
-from typing import Protocol, runtime_checkable
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
     ApplicationBuilder,
-    CallbackQueryHandler,  # Add CallbackQueryHandler
     CallbackContext,
+    CallbackQueryHandler,  # Add CallbackQueryHandler
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
-
-# Import necessary types for type hinting
-import os  # Added for environment variable access
-from telegram import InlineKeyboardMarkup  # Move this import here
-from sqlalchemy import update  # For error handling db update
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-)  # Added cast
 
 # Import necessary types for type hinting
 from family_assistant.processing import ProcessingService
@@ -67,7 +64,7 @@ class BatchProcessor(Protocol):
     async def process_batch(
         self,
         chat_id: int,
-        batch: List[Tuple[Update, Optional[bytes]]],
+        batch: list[tuple[Update, bytes | None]],
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Processes a given batch of updates for a specific chat."""
@@ -82,7 +79,7 @@ class MessageBatcher(Protocol):
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-        photo_bytes: Optional[bytes],
+        photo_bytes: bytes | None,
     ) -> None:
         """Adds an update to the batch and triggers processing if necessary."""
         ...
@@ -97,7 +94,7 @@ class ConfirmationUIManager(Protocol):
         chat_id: int,
         prompt_text: str,
         tool_name: str,
-        tool_args: Dict[str, Any],
+        tool_args: dict[str, Any],
         timeout: float,
     ) -> bool:
         """
@@ -121,12 +118,12 @@ class DefaultMessageBatcher(MessageBatcher):
         self.batch_delay_seconds = (
             batch_delay_seconds  # Delay before processing a batch
         )
-        self.chat_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.message_buffers: Dict[int, List[Tuple[Update, Optional[bytes]]]] = (
+        self.chat_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.message_buffers: dict[int, list[tuple[Update, bytes | None]]] = (
             defaultdict(list)
         )
-        self.processing_tasks: Dict[int, asyncio.Task] = {}
-        self.batch_timers: Dict[int, asyncio.TimerHandle] = (
+        self.processing_tasks: dict[int, asyncio.Task] = {}
+        self.batch_timers: dict[int, asyncio.TimerHandle] = (
             {}
         )  # Store timers for delayed processing
 
@@ -134,7 +131,7 @@ class DefaultMessageBatcher(MessageBatcher):
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-        photo_bytes: Optional[bytes],
+        photo_bytes: bytes | None,
     ) -> None:
         chat_id = update.effective_chat.id
         async with self.chat_locks[chat_id]:
@@ -237,8 +234,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     def __init__(
         self,
         telegram_service: "TelegramService",  # Accept the service instance
-        allowed_user_ids: List[int],
-        developer_chat_id: Optional[int],
+        allowed_user_ids: list[int],
+        developer_chat_id: int | None,
         processing_service: "ProcessingService",  # Use string quote for forward reference
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager["DatabaseContext"]
@@ -344,7 +341,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         # Add batch parameter
         self,
         chat_id: int,
-        batch: List[Tuple[Update, Optional[bytes]]],
+        batch: list[tuple[Update, bytes | None]],
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Processes the message buffer for a given chat."""
@@ -444,10 +441,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 trigger_content_parts = [text_content_part]  # Revert to text only
 
-        sent_assistant_message: Optional[Message] = (
+        sent_assistant_message: Message | None = (
             None  # To store the sent message object
         )
-        processing_error_traceback: Optional[str] = None  # Added
+        processing_error_traceback: str | None = None  # Added
         logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
         # Define interface type and conversation ID
@@ -470,7 +467,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             db_context_getter = self.get_db_context()  # Get the coroutine first
             async with await db_context_getter as db_context:
                 # --- Determine Thread Root ID ---
-                thread_root_id_for_turn: Optional[int] = None
+                thread_root_id_for_turn: int | None = None
                 if replied_to_interface_id:
                     try:
                         replied_to_db_msg = (
@@ -501,7 +498,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         # Continue without thread_root_id if error occurs
 
                 # --- Prepare and Save User Trigger Message(s) ---
-                trigger_interface_message_id: Optional[str] = None
+                trigger_interface_message_id: str | None = None
                 # Combine text again for saving user message content
                 history_user_content = combined_text.strip()
                 if first_photo_bytes:
@@ -547,7 +544,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     async def confirmation_callback_wrapper(
                         prompt_text: str,
                         tool_name: str,
-                        tool_args: Dict[str, Any],
+                        tool_args: dict[str, Any],
                         timeout: float,
                     ) -> bool:
                         return await self.confirmation_manager.request_confirmation(
@@ -589,7 +586,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         )  # Fallback, should not happen
 
                     # Save all generated messages (assistant requests, tool responses, final answer)
-                    last_assistant_internal_id: Optional[int] = (
+                    last_assistant_internal_id: int | None = (
                         None  # Track for updating interface_id
                     )
                     for msg_dict in generated_turn_messages:
@@ -625,7 +622,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # Let's keep selective=False for now as per previous code.
                     force_reply_markup = ForceReply(selective=False)
                     # Find the final message content to send to the user from the generated list
-                    final_llm_content_to_send: Optional[str] = None
+                    final_llm_content_to_send: str | None = None
                     if generated_turn_messages:
                         # Look for the last message with content, prioritizing assistant role
                         for msg in reversed(generated_turn_messages):
@@ -915,14 +912,14 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
     def __init__(self, application: Application, confirmation_timeout: float = 3600.0):
         self.application = application
         self.confirmation_timeout = confirmation_timeout
-        self.pending_confirmations: Dict[str, asyncio.Future] = {}
+        self.pending_confirmations: dict[str, asyncio.Future] = {}
 
     async def request_confirmation(
         self,
         chat_id: int,
         prompt_text: str,
         tool_name: str,
-        tool_args: Dict[str, Any],
+        tool_args: dict[str, Any],
         timeout: float,
     ) -> bool:
         """Sends confirmation message and waits for user response or timeout."""
@@ -1071,7 +1068,7 @@ class NoBatchMessageBatcher(MessageBatcher):
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-        photo_bytes: Optional[bytes],
+        photo_bytes: bytes | None,
     ) -> None:
         chat_id = update.effective_chat.id
         logger.info(
@@ -1088,8 +1085,8 @@ class TelegramService:
     def __init__(
         self,
         telegram_token: str,
-        allowed_user_ids: List[int],
-        developer_chat_id: Optional[int],
+        allowed_user_ids: list[int],
+        developer_chat_id: int | None,
         processing_service: ProcessingService,
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
@@ -1110,7 +1107,7 @@ class TelegramService:
         logger.info("Initializing TelegramService...")
         self.application = ApplicationBuilder().token(telegram_token).build()
         self._was_started: bool = False
-        self._last_error: Optional[Exception] = None
+        self._last_error: Exception | None = None
 
         # Store the ProcessingService instance in bot_data for access in handlers
         # Note: This assumes handlers might still need direct access via context.bot_data
@@ -1166,7 +1163,7 @@ class TelegramService:
         chat_id: int,
         prompt_text: str,
         tool_name: str,
-        tool_args: Dict[str, Any],
+        tool_args: dict[str, Any],
         timeout: float,
     ) -> bool:
         """Public method to request confirmation, called by ConfirmingToolsProvider."""
@@ -1199,7 +1196,7 @@ class TelegramService:
         logger.info("Telegram polling started successfully.")
 
     @property
-    def last_error(self) -> Optional[Exception]:
+    def last_error(self) -> Exception | None:
         """Returns the last error encountered by the error handler."""
         return self._last_error
 

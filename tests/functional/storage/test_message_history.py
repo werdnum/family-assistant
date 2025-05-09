@@ -1,9 +1,9 @@
 """Functional tests for message history storage operations."""
 
-import uuid
 import json  # Import json for parsing SQLite results
+import uuid
+from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio  # Need this for async fixtures
@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )  # Need these for engine fixture
 
+# Import metadata to create tables
+from family_assistant.storage.base import metadata
 from family_assistant.storage.context import (
     DatabaseContext,
     get_db_context,
@@ -25,9 +27,6 @@ from family_assistant.storage.message_history import (
     get_recent_history,
     update_message_interface_id,
 )
-
-# Import metadata to create tables
-from family_assistant.storage.base import metadata
 
 # Use an in-memory SQLite database for functional storage tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"

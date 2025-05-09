@@ -2,32 +2,32 @@
 Handles storage and retrieval of received emails.
 """
 
-import logging
+import asyncio  # Import asyncio for Event type hint
 
 # import os # Removed duplicate
 # import re # Removed duplicate
 import json
+import logging
 import uuid  # Add uuid import
-from typing import Any, Dict, Optional
 from datetime import datetime, timezone
+from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy.sql import insert, functions, update  # Consolidate and add update
+
+# import json # Removed duplicate
+from dateutil.parser import parse as parse_datetime
 
 # from sqlalchemy.sql import insert # Removed duplicate
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
-
-# import json # Removed duplicate
-from dateutil.parser import parse as parse_datetime
-import asyncio  # Import asyncio for Event type hint
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
-
-# Import metadata and engine using absolute package path
-from family_assistant.storage.base import metadata  # Keep metadata
+from sqlalchemy.sql import functions, insert, update  # Consolidate and add update
 
 # Import storage facade for enqueue_task
 from family_assistant import storage
+
+# Import metadata and engine using absolute package path
+from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
@@ -93,8 +93,8 @@ received_emails_table = sa.Table(
 
 async def store_incoming_email(
     db_context: DatabaseContext,
-    form_data: Dict[str, Any],
-    notify_event: Optional[asyncio.Event] = None,  # Add notify_event parameter
+    form_data: dict[str, Any],
+    notify_event: asyncio.Event | None = None,  # Add notify_event parameter
 ):
     """
     Parses incoming email data (from Mailgun webhook form) and prepares it for storage.
@@ -107,7 +107,7 @@ async def store_incoming_email(
     """
     logger.info("Parsing incoming email data for storage...")
 
-    email_date_parsed: Optional[datetime] = None
+    email_date_parsed: datetime | None = None
     email_date_str = form_data.get("Date")
     if email_date_str:
         try:
@@ -166,8 +166,8 @@ async def store_incoming_email(
     logger.debug(f"Attempting to store email data: {parsed_data_filtered}")
 
     # --- Actual Database Insertion and Task Enqueueing ---
-    email_db_id: Optional[int] = None
-    task_id: Optional[str] = None
+    email_db_id: int | None = None
+    task_id: str | None = None
     try:
         # 1. Insert email and get its ID
         insert_stmt = (

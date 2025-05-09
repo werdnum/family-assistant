@@ -1,80 +1,77 @@
+import json
 import logging
 import os
+import pathlib  # Import pathlib for finding template/static dirs
 import re
+import uuid  # Added import
+import zoneinfo  # Added zoneinfo for timezone handling
+from datetime import date, datetime, timezone  # Added date
+from typing import Any  # Added Any
+
+import aiofiles  # For reading docs
+import telegram.error  # Import telegram errors for specific checking in health check
+from authlib.integrations.starlette_client import OAuth  # For OIDC
 from fastapi import (
+    Depends,
     FastAPI,
-    Request,
     Form,
     HTTPException,
-    Depends,
+    Query,  # Added Query for pagination parameters
+    Request,
     Response,  # Added Query for pagination parameters
     status,
 )  # Added status
-from starlette.types import ASGIApp, Receive, Scope, Send  # For middleware class
 from fastapi.responses import (
     HTMLResponse,
-    RedirectResponse,
     JSONResponse,
+    RedirectResponse,
 )  # Added JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from markdown_it import MarkdownIt  # For rendering docs
+from pydantic import BaseModel, ValidationError  # Import BaseModel for request body
+from sqlalchemy import text  # Added text import
+from starlette.config import Config  # For reading env vars
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
-from fastapi.templating import Jinja2Templates
-from fastapi import Query  # Added Query for pagination parameters
-from typing import List, Dict, Optional, Any  # Added Any
-from datetime import datetime, timezone, date  # Added date
-import json
-import uuid  # Added import
-import pathlib  # Import pathlib for finding template/static dirs
-import zoneinfo  # Added zoneinfo for timezone handling
-import telegram.error  # Import telegram errors for specific checking in health check
-import aiofiles  # For reading docs
-from starlette.config import Config  # For reading env vars
-from authlib.integrations.starlette_client import OAuth  # For OIDC
-from markdown_it import MarkdownIt  # For rendering docs
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError  # Import BaseModel for request body
-
-# Import tool-related components
-from family_assistant.tools import (
-    ToolsProvider,
-    ToolExecutionContext,
-    ToolNotFoundError,
-)
+from starlette.types import ASGIApp, Receive, Scope, Send  # For middleware class
 
 # Import storage functions using absolute package path
 from family_assistant import storage
-from sqlalchemy import text  # Added text import
-from family_assistant.storage.context import (
-    DatabaseContext,
-    get_db_context,
-)  # Import context
-from family_assistant.storage import (
-    get_all_notes,
-    get_note_by_title,
-    add_or_update_note,
-    delete_note,
-    store_incoming_email,
-    get_grouped_message_history,
-    get_all_tasks,
-)
-
-# Import protocol for type hinting when creating the dict for add_document
-
-# Import vector search components
-from family_assistant.storage.vector_search import (
-    query_vector_store,
-    VectorSearchQuery,
-    MetadataFilter,
-)
 
 # Import embedding generator (adjust path based on actual location)
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import (
     EmbeddingGenerator,
 )  # Example
+from family_assistant.storage import (
+    add_or_update_note,
+    delete_note,
+    get_all_notes,
+    get_all_tasks,
+    get_grouped_message_history,
+    get_note_by_title,
+    store_incoming_email,
+)
+from family_assistant.storage.context import (
+    DatabaseContext,
+    get_db_context,
+)  # Import context
 
+# Import protocol for type hinting when creating the dict for add_document
+# Import vector search components
+from family_assistant.storage.vector_search import (
+    MetadataFilter,
+    VectorSearchQuery,
+    query_vector_store,
+)
+
+# Import tool-related components
 # Import tool functions directly from the tools package
 from family_assistant.tools import (
+    ToolExecutionContext,
+    ToolNotFoundError,
+    ToolsProvider,
     _scan_user_docs,  # Import the scanner function # Removed incorrect import of render_schema_as_html
 )
 from family_assistant.tools.schema import render_schema_as_html  # Correct import path
@@ -82,7 +79,7 @@ from family_assistant.tools.schema import render_schema_as_html  # Correct impor
 logger = logging.getLogger(__name__)
 
 # Simple in-memory cache for rendered tool schema HTML, keyed by tool name
-_tool_html_cache: Dict[str, str] = {}
+_tool_html_cache: dict[str, str] = {}
 
 # Directory to save raw webhook request bodies for debugging/replay
 MAILBOX_RAW_DIR = "/mnt/data/mailbox/raw_requests"  # TODO: Consider making this configurable via env var
@@ -269,7 +266,7 @@ PUBLIC_PATHS = [
 # Define AuthMiddleware class
 class AuthMiddleware:
     def __init__(
-        self, app: ASGIApp, public_paths: List[re.Pattern], auth_enabled: bool
+        self, app: ASGIApp, public_paths: list[re.Pattern], auth_enabled: bool
     ):
         self.app = app
         self.public_paths = public_paths
@@ -343,18 +340,18 @@ else:
 class SearchResultItem(BaseModel):
     embedding_id: int
     document_id: int
-    title: Optional[str]
+    title: str | None
     source_type: str
-    source_id: Optional[str] = None
-    source_uri: Optional[str] = None
-    created_at: Optional[datetime]
+    source_id: str | None = None
+    source_uri: str | None = None
+    created_at: datetime | None
     embedding_type: str
-    embedding_source_content: Optional[str]
-    chunk_index: Optional[int] = None
-    doc_metadata: Optional[Dict[str, Any]] = None
-    distance: Optional[float] = None
-    fts_score: Optional[float] = None
-    rrf_score: Optional[float] = None
+    embedding_source_content: str | None
+    chunk_index: int | None = None
+    doc_metadata: dict[str, Any] | None = None
+    distance: float | None = None
+    fts_score: float | None = None
+    rrf_score: float | None = None
 
     class Config:
         orm_mode = True  # Allows creating from ORM-like objects (dict-like rows)
@@ -491,7 +488,7 @@ async def save_note(
     request: Request,
     title: str = Form(...),
     content: str = Form(...),
-    original_title: Optional[str] = Form(None),
+    original_title: str | None = Form(None),
     db_context: DatabaseContext = Depends(get_db),  # Add dependency
 ):
     """Handles saving a new or updated note."""
@@ -976,18 +973,18 @@ async def vector_search_form(
 async def handle_vector_search(
     request: Request,
     # --- Form Inputs ---
-    semantic_query: Optional[str] = Form(None),
-    keywords: Optional[str] = Form(None),
+    semantic_query: str | None = Form(None),
+    keywords: str | None = Form(None),
     search_type: str = Form("hybrid"),  # 'semantic', 'keyword', 'hybrid'
-    embedding_model: Optional[str] = Form(None),  # CRUCIAL for vector search
-    embedding_types: List[str] = Form([]),  # Allow multiple types
-    source_types: List[str] = Form([]),  # Allow multiple source types
-    created_after: Optional[str] = Form(None),  # Expect YYYY-MM-DD
-    created_before: Optional[str] = Form(None),  # Expect YYYY-MM-DD
-    title_like: Optional[str] = Form(None),
+    embedding_model: str | None = Form(None),  # CRUCIAL for vector search
+    embedding_types: list[str] = Form([]),  # Allow multiple types
+    source_types: list[str] = Form([]),  # Allow multiple source types
+    created_after: str | None = Form(None),  # Expect YYYY-MM-DD
+    created_before: str | None = Form(None),  # Expect YYYY-MM-DD
+    title_like: str | None = Form(None),
     # --- Metadata Filters (expect lists) ---
-    metadata_keys: List[str] = Form([]),
-    metadata_values: List[str] = Form([]),
+    metadata_keys: list[str] = Form([]),
+    metadata_values: list[str] = Form([]),
     # --- Control Params ---
     limit: int = Form(10),
     rrf_k: int = Form(60),
@@ -1033,7 +1030,7 @@ async def handle_vector_search(
 
     try:
         # --- Parse Dates (handle potential errors) ---
-        created_after_dt: Optional[datetime] = None
+        created_after_dt: datetime | None = None
         if created_after:
             try:
                 # Assume YYYY-MM-DD, make it timezone-aware (start of day UTC)
@@ -1043,7 +1040,7 @@ async def handle_vector_search(
             except ValueError:
                 raise ValueError("Invalid 'Created After' date format. Use YYYY-MM-DD.")
 
-        created_before_dt: Optional[datetime] = None
+        created_before_dt: datetime | None = None
         if created_before:
             try:
                 # Assume YYYY-MM-DD, make it timezone-aware (end of day UTC)
@@ -1058,7 +1055,7 @@ async def handle_vector_search(
                 )
 
         # --- Build List of Metadata Filters ---
-        metadata_filters_list: List[MetadataFilter] = []
+        metadata_filters_list: list[MetadataFilter] = []
         if len(metadata_keys) != len(metadata_values):
             # This indicates a potential issue with form submission or client-side JS
             logger.error(
@@ -1069,7 +1066,7 @@ async def handle_vector_search(
             metadata_keys = []
             metadata_values = []
         else:
-            for key, value in zip(metadata_keys, metadata_values):
+            for key, value in zip(metadata_keys, metadata_values, strict=False):
                 if (
                     key and value is not None
                 ):  # Allow empty string value, but require key
@@ -1196,7 +1193,7 @@ import asyncio
 
 # --- Tool Execution API ---
 class ToolExecutionRequest(BaseModel):
-    arguments: Dict[str, Any]
+    arguments: dict[str, Any]
 
 
 @app.post("/api/tools/execute/{tool_name}", response_class=JSONResponse)
@@ -1312,19 +1309,19 @@ async def upload_document(
         description='JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}).',
     ),
     # Optional fields
-    source_uri: Optional[str] = Form(
+    source_uri: str | None = Form(
         None, description="Canonical URI/URL of the original document."
     ),
-    title: Optional[str] = Form(
+    title: str | None = Form(
         None,
         description="Primary title for the document (can also be in content_parts).",
     ),
-    created_at_str: Optional[str] = Form(
+    created_at_str: str | None = Form(
         None,
         alias="created_at",  # Allow form field name 'created_at'
         description="Original creation timestamp (ISO 8601 format string, e.g., 'YYYY-MM-DDTHH:MM:SSZ' or 'YYYY-MM-DD'). Timezone assumed UTC if missing.",
     ),
-    metadata_json: Optional[str] = Form(
+    metadata_json: str | None = Form(
         None,
         alias="metadata",  # Allow form field name 'metadata'
         description="JSON string representing a dictionary of additional metadata.",
@@ -1342,7 +1339,7 @@ async def upload_document(
     # --- 1. Parse and Validate Inputs ---
     try:
         # Parse JSON strings
-        content_parts: Dict[str, str] = json.loads(content_parts_json)
+        content_parts: dict[str, str] = json.loads(content_parts_json)
         if not isinstance(content_parts, dict) or not content_parts:
             raise ValueError("'content_parts' must be a non-empty JSON object string.")
         # Validate content parts values are strings
@@ -1350,7 +1347,7 @@ async def upload_document(
             if not isinstance(value, str):
                 raise ValueError(f"Value for content part '{key}' must be a string.")
 
-        doc_metadata: Dict[str, Any] = {}
+        doc_metadata: dict[str, Any] = {}
         if metadata_json:
             doc_metadata = json.loads(metadata_json)
             if not isinstance(doc_metadata, dict):
@@ -1359,7 +1356,7 @@ async def upload_document(
                 )
 
         # Parse date string (handle date vs datetime)
-        created_at_dt: Optional[datetime] = None
+        created_at_dt: datetime | None = None
         if created_at_str:
             try:
                 # Try parsing as full ISO 8601 datetime first
@@ -1437,19 +1434,19 @@ async def upload_document(
             return self._data["_source_id"]
 
         @property
-        def source_uri(self) -> Optional[str]:
+        def source_uri(self) -> str | None:
             return self._data["_source_uri"]
 
         @property
-        def title(self) -> Optional[str]:
+        def title(self) -> str | None:
             return self._data["_title"]
 
         @property
-        def created_at(self) -> Optional[datetime]:
+        def created_at(self) -> datetime | None:
             return self._data["_created_at"]
 
         @property
-        def metadata(self) -> Optional[Dict[str, Any]]:
+        def metadata(self) -> dict[str, Any] | None:
             return self._data["_base_metadata"]
 
     doc_for_storage = UploadedDocument(document_data)
@@ -1550,7 +1547,7 @@ async def serve_documentation(request: Request, filename: str):
         raise HTTPException(status_code=404, detail="Document not found.")
 
     try:
-        async with aiofiles.open(doc_path, mode="r", encoding="utf-8") as f:
+        async with aiofiles.open(doc_path, encoding="utf-8") as f:
             content_md = await f.read()
 
         # --- Replace placeholder with actual SERVER_URL ---

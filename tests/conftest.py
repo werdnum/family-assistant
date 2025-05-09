@@ -1,24 +1,25 @@
-import pytest
 import asyncio
 import logging
 import os
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
-from unittest.mock import patch
-from testcontainers.postgres import PostgresContainer
+from unittest.mock import (
+    MagicMock,  # Already imported, but good to note dependency
+    patch,
+)
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from testcontainers.postgres import PostgresContainer
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
+from family_assistant.storage.context import DatabaseContext
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
-
 # Import vector storage init and context
 from family_assistant.storage.vector import init_vector_db  # Corrected import path
-from family_assistant.storage.context import DatabaseContext
 
 # Import for task_worker_manager fixture
 from family_assistant.task_worker import TaskWorker
-from unittest.mock import MagicMock  # Already imported, but good to note dependency
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)

@@ -4,28 +4,27 @@ Handles storage and retrieval of message history.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional, Tuple, cast  # Added Tuple, cast
+from typing import Any, cast  # Added Tuple, cast
 
 from sqlalchemy import (
-    Table,
-    Column,
-    Integer,  # Import Integer
-    String,
-    BigInteger,
-    DateTime,
-    Text,
-    Select,  # Add Select
-    update,  # Add update import
     JSON,
-    select,
+    BigInteger,
+    Column,
+    DateTime,
+    Integer,  # Import Integer
+    Select,  # Add Select
+    String,
+    Table,
+    Text,
     insert,
+    select,
+    update,  # Add update import
 )
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.engine import Result  # Import Result for type hint
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import Result  # Import Result for type hint
+from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.storage.base import metadata
-
 from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
@@ -77,21 +76,21 @@ async def add_message_to_history(
     # --- New/Renamed Parameters ---
     interface_type: str,
     conversation_id: str,
-    interface_message_id: Optional[str],  # Can be None for agent-generated messages
-    turn_id: Optional[str],
-    thread_root_id: Optional[int],  # Added thread_root_id
+    interface_message_id: str | None,  # Can be None for agent-generated messages
+    turn_id: str | None,
+    thread_root_id: int | None,  # Added thread_root_id
     timestamp: datetime,
     role: str,  # 'user', 'assistant', 'system', 'tool', 'error'
-    content: Optional[str],  # Content can be optional now
+    content: str | None,  # Content can be optional now
     # --- Renamed/Added Fields ---
-    tool_calls: Optional[List[Dict[str, Any]]] = None,  # Renamed from tool_calls_info
-    reasoning_info: Optional[Dict[str, Any]] = None,  # Added
+    tool_calls: list[dict[str, Any]] | None = None,  # Renamed from tool_calls_info
+    reasoning_info: dict[str, Any] | None = None,  # Added
     # Note: `tool_call_id` is now a separate parameter below for 'tool' role messages
-    error_traceback: Optional[str] = None,  # Added
-    tool_call_id: Optional[
-        str
-    ] = None,  # Added: ID linking tool response to assistant request
-) -> Optional[Dict[str, Any]]:  # Changed to return Optional[Dict]
+    error_traceback: str | None = None,  # Added
+    tool_call_id: (
+        str | None
+    ) = None,  # Added: ID linking tool response to assistant request
+) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
     """Adds a message to the history table, including optional fields."""
     # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
     try:
@@ -155,7 +154,7 @@ async def get_recent_history(
     conversation_id: str,
     limit: int,
     max_age: timedelta,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Retrieves recent messages for a conversation, including tool call info.
     If a message included by limit/max_age belongs to a turn, all other messages
     from that turn for the same conversation are also included, even if they
@@ -197,7 +196,7 @@ async def get_recent_history(
         )
         # Store candidate messages in a dictionary by internal_id for easy merging
         # These are newest first at this stage.
-        all_messages_dict: Dict[int, Dict[str, Any]] = {
+        all_messages_dict: dict[int, dict[str, Any]] = {
             # Use public item access for 'internal_id' instead of relying on ._mapping internal attribute
             row_mapping["internal_id"]: dict(row_mapping)
             for row_mapping in candidate_rows_result
@@ -254,7 +253,7 @@ async def get_message_by_interface_id(
     interface_type: str,
     conversation_id: str,
     interface_message_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Retrieves a specific message by its chat and message ID, including all fields."""
     try:
         stmt = (
@@ -279,7 +278,7 @@ async def get_message_by_interface_id(
 # --- New Functions ---
 async def get_messages_by_turn_id(
     db_context: DatabaseContext, turn_id: str
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Retrieves all messages associated with a specific turn ID."""
     try:
         stmt = (
@@ -303,7 +302,7 @@ async def get_messages_by_turn_id(
 
 async def get_messages_by_thread_id(
     db_context: DatabaseContext, thread_root_id: int
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Retrieves all messages belonging to a specific conversation thread."""
     # A thread is defined by the `internal_id` of its first message.
     # Messages in the thread either have `thread_root_id` pointing to that first message,
@@ -337,7 +336,7 @@ async def get_messages_by_thread_id(
 
 async def get_grouped_message_history(
     db_context: DatabaseContext,  # Added context
-) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
     """Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp."""
     try:
         stmt = select(message_history_table).order_by(  # Select all columns

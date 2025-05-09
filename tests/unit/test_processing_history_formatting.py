@@ -3,8 +3,9 @@ Unit tests for the history formatting logic in ProcessingService.
 """
 
 import json
-import pytest
 from unittest.mock import Mock
+
+import pytest
 
 from family_assistant.processing import ProcessingService
 

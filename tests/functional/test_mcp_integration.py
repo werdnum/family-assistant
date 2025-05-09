@@ -1,31 +1,35 @@
-import pytest
-import logging
 import json
+import logging
 import os  # Added os import
 import signal  # Import the signal module
-import pytest_asyncio  # Import pytest_asyncio
+import socket
 import subprocess
 import time
+import uuid  # Added for turn_id
+from unittest.mock import MagicMock  # Keep mocks for LLM
+
+import pytest
+import pytest_asyncio  # Import pytest_asyncio
+
+from family_assistant.llm import LLMInterface, LLMOutput
+from family_assistant.processing import ProcessingService
 
 # Import necessary components from the application
 from family_assistant.storage.context import DatabaseContext
-
-from family_assistant.processing import ProcessingService
-from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.tools import (
-    LocalToolsProvider,
-    MCPToolsProvider,
-    CompositeToolsProvider,
-    TOOLS_DEFINITION as local_tools_definition,
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
-import uuid  # Added for turn_id
-
-import socket
-from unittest.mock import MagicMock  # Keep mocks for LLM
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
+)
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+    MCPToolsProvider,
+)
 from tests.mocks.mock_llm import (
-    RuleBasedMockLLMClient,
     Rule,
+    RuleBasedMockLLMClient,
     get_last_message_text,
 )
 
