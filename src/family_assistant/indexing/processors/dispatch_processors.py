@@ -44,20 +44,30 @@ class EmbeddingDispatchProcessor(ContentProcessor):
         All original items are passed through to the next stage.
         """
         items_to_embed: List[IndexableContent] = []
+        logger.debug(f"{self.name}: Processing {len(current_items)} items for document_id: {getattr(original_document, 'id', 'UNKNOWN')}. Configured dispatch types: {self._embedding_types_to_dispatch}")
+
         for item in current_items:
             if item.embedding_type in self._embedding_types_to_dispatch and item.content:
                 items_to_embed.append(item)
+                logger.debug(f"{self.name}: Item '{item.embedding_type}' (source: {item.source_processor}, metadata: {item.metadata}) selected for embedding batch.")
+            elif item.embedding_type not in self._embedding_types_to_dispatch:
+                logger.debug(f"{self.name}: Item '{item.embedding_type}' (source: {item.source_processor}) skipped, type not in dispatch list {self._embedding_types_to_dispatch}.")
+            elif not item.content:
+                logger.debug(f"{self.name}: Item '{item.embedding_type}' (source: {item.source_processor}) skipped, content is None/empty.")
+            else:
+                logger.debug(f"{self.name}: Item '{item.embedding_type}' (source: {item.source_processor}) skipped for other reasons.")
 
         if not items_to_embed:
             logger.debug(f"{self.name}: No items found for dispatch matching types: {self._embedding_types_to_dispatch}")
             return current_items # Pass all items through
 
         document_id = getattr(original_document, 'id', None)
+        logger.debug(f"{self.name}: Extracted document_id: {document_id} for dispatch.")
         if document_id is None:
             # This assumes original_document is a DocumentRecord instance or similar with an 'id'
             # If not, the Document protocol might need an ID or it must be passed differently.
             logger.error(
-                f"{self.name}: Cannot dispatch embeddings. Original document does not have an 'id' attribute. Document source_id: {original_document.source_id}"
+                f"{self.name}: Cannot dispatch embeddings. Original document (source_id: {original_document.source_id}) does not have an 'id' attribute or it's None."
             )
             return current_items # Pass all items through
 
@@ -75,6 +85,7 @@ class EmbeddingDispatchProcessor(ContentProcessor):
                 }
                 embedding_metadata_list.append(meta_for_task)
 
+        logger.debug(f"{self.name}: Prepared {len(texts_to_embed_list)} texts for embedding. Payload to be enqueued: document_id={document_id}, num_texts={len(texts_to_embed_list)}, metadata_items={len(embedding_metadata_list)}")
         if texts_to_embed_list:
             task_payload = {
                 "document_id": document_id,
@@ -84,6 +95,7 @@ class EmbeddingDispatchProcessor(ContentProcessor):
             # Generate a unique task ID for idempotency
             task_id = f"embed_batch_{document_id}_{uuid.uuid4()}"
 
+            logger.info(f"{self.name}: Attempting to enqueue 'embed_and_store_batch' task (ID: {task_id}) for document ID {document_id} with {len(texts_to_embed_list)} items.")
             await enqueue_task(
                 db_context=context.db_context,
                 task_id=task_id,
@@ -91,7 +103,7 @@ class EmbeddingDispatchProcessor(ContentProcessor):
                 payload=task_payload,
                 notify_event=context.application.new_task_event if hasattr(context.application, "new_task_event") else None
             )
-            logger.info(f"{self.name}: Dispatched {len(texts_to_embed_list)} items for embedding (task_id: {task_id}) for document ID {document_id}.")
+            logger.info(f"{self.name}: Successfully enqueued 'embed_and_store_batch' task (ID: {task_id}) for document ID {document_id} with {len(texts_to_embed_list)} items.")
         else:
             logger.debug(f"{self.name}: No valid content found in items selected for dispatch for document ID {document_id}.")
 
