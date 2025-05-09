@@ -5,6 +5,7 @@ Task handlers related to the document indexing pipeline.
 import logging
 from typing import Any
 
+from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.storage.vector import add_embedding
 from family_assistant.tools.types import ToolExecutionContext  # Added import
 
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 async def handle_embed_and_store_batch(
     db_context: "ToolExecutionContext",  # Caller uses 'db_context' keyword; expects ToolExecutionContext
     payload: dict[str, Any],
-    embedding_generator: "EmbeddingGenerator",  # Passed directly by the caller
+    embedding_generator: EmbeddingGenerator,  # Passed directly by the caller
 ) -> None:
     """
     Task handler for embedding a batch of texts and storing them in the vector database.
