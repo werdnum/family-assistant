@@ -48,7 +48,7 @@ TEST_EMBEDDING_DIMENSION = 128  # Smaller dimension for mock testing
 
 # --- Test Data for E2E ---
 TEST_EMAIL_SUBJECT = "E2E Test: Project Alpha Kickoff Meeting"
-TEST_EMAIL_BODY = "This email confirms the Project Alpha kickoff meeting scheduled for next Tuesday. Please find the agenda attached."
+TEST_EMAIL_BODY = "This email confirms the Project Alpha kickoff meeting scheduled for next Tuesday Please find the agenda attached."
 TEST_EMAIL_SENDER = "project.manager@example.com"
 TEST_EMAIL_RECIPIENT = "team.inbox@example.com"
 TEST_EMAIL_MESSAGE_ID = f"<e2e_email_{uuid.uuid4()}@example.com>"
