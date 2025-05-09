@@ -687,7 +687,10 @@ async def main_async(
 
     indexing_processors = [
         TitleExtractor(),
-        TextChunker(**text_chunker_config),
+        TextChunker(
+            chunk_size=text_chunker_config["chunk_size"],
+            chunk_overlap=text_chunker_config["chunk_overlap"],
+        ),
         EmbeddingDispatchProcessor(**embedding_dispatcher_config),
     ]
 
