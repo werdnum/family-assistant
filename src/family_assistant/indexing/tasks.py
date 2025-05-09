@@ -82,14 +82,16 @@ async def handle_embed_and_store_batch(
     logger.info(
         f"Generating {len(texts_to_embed)} embeddings for document_id {document_id}."
     )
-    embedding_result = await embedding_generator_instance.generate_embeddings(texts_to_embed)
+    embedding_result = await embedding_generator_instance.generate_embeddings(
+        texts_to_embed
+    )
 
     for i, text_content in enumerate(texts_to_embed):
         meta = embedding_metadata_list[i]
         vector = embedding_result.embeddings[i]
 
         await add_embedding(
-            db_context=db_context, # Use the extracted DatabaseContext
+            db_context=db_context,  # Use the extracted DatabaseContext
             document_id=document_id,
             chunk_index=meta["chunk_index"],
             embedding_type=meta["embedding_type"],

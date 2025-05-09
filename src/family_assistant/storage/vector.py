@@ -537,7 +537,7 @@ async def query_vectors(
                         logger.warning(
                             f"Ignoring filter with unsupported key: {key} = {value}"
                         )
-                else: 
+                else:
                     logger.warning(
                         f"Ignoring filter with unsupported type or format: {key} = {value}"
                     )
@@ -669,9 +669,7 @@ async def query_vectors(
     final_query = final_query.with_only_columns(*final_select_cols)
 
     # --- 6. Execute and Return using DatabaseContext ---
-    logger.info(
-        "Final vector query: %s", final_query
-    )
+    logger.info("Final vector query: %s", final_query)
     try:
         logger.debug(f"Executing vector search query: {final_query}")
         # Use fetch_all which handles retry logic internally

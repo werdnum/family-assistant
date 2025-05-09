@@ -15,7 +15,6 @@ from assertpy import assert_that  # For better assertions
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import (
-    EmbeddingGenerator,
     EmbeddingResult,
     MockEmbeddingGenerator,
 )
@@ -151,7 +150,8 @@ async def indexing_task_worker(
         timezone_str="UTC",
     )
     worker.register_task_handler(
-        "embed_and_store_batch", handle_embed_and_store_batch  # Register the handler directly
+        "embed_and_store_batch",
+        handle_embed_and_store_batch,  # Register the handler directly
     )
 
     worker_task_handle = None

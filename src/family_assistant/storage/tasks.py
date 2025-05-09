@@ -16,8 +16,8 @@ from sqlalchemy import (
     Table,
     Text,
     insert,
-    select,
     or_,
+    select,
     update,
 )
 from sqlalchemy.exc import SQLAlchemyError
@@ -135,10 +135,12 @@ async def dequeue_task(
             select(tasks_table)
             .where(tasks_table.c.status == "pending")
             .where(tasks_table.c.task_type.in_(task_types))
-            .where(or_(
-                tasks_table.c.scheduled_at.is_(None),
-                tasks_table.c.scheduled_at <= now
-            ))
+            .where(
+                or_(
+                    tasks_table.c.scheduled_at.is_(None),
+                    tasks_table.c.scheduled_at <= now,
+                )
+            )
             .where(tasks_table.c.retry_count < tasks_table.c.max_retries)
             .order_by(
                 tasks_table.c.retry_count.asc(),
