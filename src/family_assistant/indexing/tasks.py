@@ -30,11 +30,8 @@ async def handle_embed_and_store_batch(
         - content_hash (Optional[str]): Hash of the content, if available.
 
     Args:
-        db_context: The ToolExecutionContext object, passed by the caller using the
-                    keyword 'db_context'. This context provides access to the
-                    actual database context and embedding generator.
-                    actual database context.
-        embedding_generator: The EmbeddingGenerator instance, passed by the caller.
+        exec_context: The ToolExecutionContext object, providing access to the
+                      DatabaseContext and EmbeddingGenerator.
         payload: The task payload containing data for embedding.
 
     Raises:
