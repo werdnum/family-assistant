@@ -990,9 +990,9 @@ async def handle_vector_search(
     rrf_k: int = Form(60),  # noqa: B008
     # --- Dependencies ---
     db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-    embedding_generator: EmbeddingGenerator = Depends(
-        get_embedding_generator_dependency  # noqa: B008
-    ),  # noqa: B008
+    embedding_generator: EmbeddingGenerator = Depends(  # noqa: B008
+        get_embedding_generator_dependency
+    ),
 ):
     """Handles the vector search form submission."""
     results = None
