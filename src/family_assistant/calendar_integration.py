@@ -834,7 +834,9 @@ async def search_calendar_events_tool(
                                         "start": parsed.get("start"),
                                         "end": parsed.get("end"),
                                         "all_day": parsed.get("all_day"),
-                                        "calendar_url": cal_url,  # Include the source calendar URL
+                                        "calendar_url": (
+                                            cal_url
+                                        ),  # Include the source calendar URL
                                     }
                                 )
                                 if len(found_details) >= limit:

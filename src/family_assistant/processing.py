@@ -212,7 +212,9 @@ class ProcessingService:
                     "role": "assistant",
                     "content": final_content,  # May be None if only tool calls
                     "tool_calls": tool_calls,  # LLM's requested calls (OpenAI format)
-                    "reasoning_info": final_reasoning_info,  # Include reasoning for this step
+                    "reasoning_info": (
+                        final_reasoning_info
+                    ),  # Include reasoning for this step
                     "tool_call_id": None,  # Not applicable for assistant role
                     "error_traceback": None,  # Not applicable for assistant role
                 }
@@ -373,7 +375,9 @@ class ProcessingService:
                         {
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": tool_response_content,  # Send result/error back to LLM
+                            "content": (
+                                tool_response_content
+                            ),  # Send result/error back to LLM
                         }
                     )
                     # --- End of Tool Call Processing Loop ---
@@ -468,9 +472,12 @@ class ProcessingService:
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_call_id,  # The ID linking to the assistant request
-                            "content": content
-                            or "",  # Ensure content is a string, default empty
+                            "tool_call_id": (
+                                tool_call_id
+                            ),  # The ID linking to the assistant request
+                            "content": (
+                                content or ""
+                            ),  # Ensure content is a string, default empty
                         }
                     )
                 else:

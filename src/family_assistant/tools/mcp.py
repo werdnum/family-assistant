@@ -292,8 +292,12 @@ class MCPToolsProvider:
                 tool_dict = {
                     "type": "function",
                     "function": {
-                        "name": tool.name,  # Assuming these attributes exist on MCP Tool object
-                        "description": tool.description,  # Assuming these attributes exist
+                        "name": (
+                            tool.name
+                        ),  # Assuming these attributes exist on MCP Tool object
+                        "description": (
+                            tool.description
+                        ),  # Assuming these attributes exist
                         "parameters": tool.inputSchema,
                     },
                 }

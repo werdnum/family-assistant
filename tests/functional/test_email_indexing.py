@@ -67,13 +67,15 @@ TEST_EMAIL_FORM_DATA = {
     "Message-Id": TEST_EMAIL_MESSAGE_ID,
     "From": f"Project Manager <{TEST_EMAIL_SENDER}>",
     "To": f"Team Inbox <{TEST_EMAIL_RECIPIENT}>",
-    "Date": datetime.now(timezone.utc).strftime(
-        "%a, %d %b %Y %H:%M:%S %z"
+    "Date": (
+        datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
     ),  # RFC 2822 format
     "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
     "token": "dummy_token_e2e",
     "signature": "dummy_signature_e2e",
-    "message-headers": f'[["Subject", "{TEST_EMAIL_SUBJECT}"], ["From", "Project Manager <{TEST_EMAIL_SENDER}>"], ["To", "Team Inbox <{TEST_EMAIL_RECIPIENT}>"]]',  # Simplified headers
+    "message-headers": (
+        f'[["Subject", "{TEST_EMAIL_SUBJECT}"], ["From", "Project Manager <{TEST_EMAIL_SENDER}>"], ["To", "Team Inbox <{TEST_EMAIL_RECIPIENT}>"]]'
+    ),  # Simplified headers
 }
 
 TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/body
