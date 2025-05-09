@@ -687,8 +687,8 @@ async def main_async(
 
     indexing_processors = [
         TitleExtractor(),
-        TextChunker(config=text_chunker_config),
-        EmbeddingDispatchProcessor(config=embedding_dispatcher_config),
+        TextChunker(**text_chunker_config),
+        EmbeddingDispatchProcessor(**embedding_dispatcher_config),
     ]
 
     master_indexing_pipeline = IndexingPipeline(
