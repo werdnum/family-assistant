@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 async def handle_embed_and_store_batch(
     db_context: "ToolExecutionContext",  # Changed parameter name to match hypothesized caller
-    payload: dict[str, Any]
+    payload: dict[str, Any],
+    embedding_generator: EmbeddingGenerator,  # Added to match the runtime error
 ) -> None:
     """
     Task handler for embedding a batch of texts and storing them in the vector database.
@@ -33,6 +34,7 @@ async def handle_embed_and_store_batch(
         db_context: The ToolExecutionContext object. This parameter name matches
                     the keyword argument likely used by the calling TaskWorker,
                     and this object provides access to the actual DatabaseContext and EmbeddingGenerator.
+        embedding_generator: The EmbeddingGenerator instance, passed directly by the caller.
         payload: The task payload containing data for embedding.
 
     Raises:
@@ -45,8 +47,10 @@ async def handle_embed_and_store_batch(
     tool_exec_context = db_context # Use a new variable for clarity
 
     # Extract the actual DatabaseContext and EmbeddingGenerator from the ToolExecutionContext.
+    # The embedding_generator is now also passed directly as a parameter.
+    # We will prioritize the directly passed one.
     actual_database_context = tool_exec_context.db_context
-    embedding_generator_instance = tool_exec_context.embedding_generator
+    embedding_generator_instance = embedding_generator # Use the directly passed parameter
 
     # The rest of the function uses the variable name 'db_context' for the DatabaseContext.
     # To avoid confusion with the parameter name and for clarity in the function body:
@@ -59,9 +63,9 @@ async def handle_embed_and_store_batch(
         raise ValueError("Missing DatabaseContext in execution context.")
     if not embedding_generator_instance:
         logger.error(
-            "EmbeddingGenerator not found in ToolExecutionContext for handle_embed_and_store_batch."
+            "The 'embedding_generator' parameter was None for handle_embed_and_store_batch."
         )
-        raise ValueError("Missing EmbeddingGenerator in ToolExecutionContext.")
+        raise ValueError("Missing EmbeddingGenerator instance (was None).")
 
     try:
         document_id: int = payload["document_id"]
