@@ -60,11 +60,19 @@ logger = logging.getLogger(__name__)
 try:
     # Use absolute package path
     from family_assistant.storage.vector import (
-        Base as VectorBase,
-    )  # Explicit imports
-    from family_assistant.storage.vector import (
+        Base as VectorBase,  # For ORM
+        Document,  # Protocol for document structure
+        add_document,
+        add_embedding,
+        delete_document,
+        get_document_by_id,
+        get_document_by_source_id,
         init_vector_db,
+        query_vectors,
     )
+    # Re-export DocumentRecord and DocumentEmbeddingRecord if they are needed directly
+    # from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
+
 
     VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
@@ -73,27 +81,38 @@ except ImportError:
     class Base:
         pass  # type: ignore
 
-    VectorBase = Base  # type: ignore # Define here even if module fails to load
+    VectorBase = Base  # type: ignore
     logger.warning("storage/vector.py not found. Vector storage features disabled.")
     VECTOR_STORAGE_ENABLED = False
 
     # Define placeholders for the functions if the import failed
-    def init_vector_db():
-        pass  # type: ignore # noqa: E305
+    def init_vector_db(*args, **kwargs):  # type: ignore
+        pass
 
-    vector_storage = None  # Placeholder, though functions above handle the no-op
-    # Add vector storage models to the same metadata object if enabled
-    if "VectorBase" in locals() and hasattr(VectorBase, "metadata"):
-        VectorBase.metadata = metadata
-    else:
-        # This case should ideally not happen if VECTOR_STORAGE_ENABLED is true, but defensively log.
-        logger.warning(
-            "VECTOR_STORAGE_ENABLED is True, but VectorBase not found or has no metadata attribute. Vector models might not be created."
-        )
+    def add_document(*args, **kwargs):  # type: ignore
+        pass
+
+    def get_document_by_source_id(*args, **kwargs):  # type: ignore
+        pass
+
+    def get_document_by_id(*args, **kwargs):  # type: ignore
+        pass
+
+    def add_embedding(*args, **kwargs):  # type: ignore
+        pass
+
+    def delete_document(*args, **kwargs):  # type: ignore
+        pass
+
+    def query_vectors(*args, **kwargs):  # type: ignore
+        return [] # Return an empty list for queries
+
+    class Document:  # type: ignore
+        """Placeholder for the Document protocol."""
+        pass
 
 # logger definition moved here to be after potential vector_storage import logs
 logger = logging.getLogger(__name__)
-
 # --- Helper Functions for Database Initialization (Refactored) ---
 
 
@@ -430,6 +449,8 @@ __all__ = [
     "get_db_context",
     "get_note_by_title",  # Export convenience function
     # Vector Storage Exports are added conditionally below
+    # The names themselves will be defined (real or placeholder)
+    # __all__ controls `from .storage import *` and documents the public API
 ]
 
 # Extend __all__ conditionally for vector storage if it was enabled.
@@ -437,13 +458,17 @@ __all__ = [
 if VECTOR_STORAGE_ENABLED and "init_vector_db" in locals():  # 'init_vector_db' is a proxy for successful import
     __all__.extend(
         [
-            "add_document",  # Exported even if not directly used in this __init__
+            "add_document",
             "VectorBase",
             "init_vector_db",
-            "get_document_by_source_id",  # Exported
-            "add_embedding",  # Exported
-            "delete_document",  # Exported
-            "query_vectors",  # Exported
-            "VectorDocumentProtocol",  # Assuming this type might be needed by consumers
+            "get_document_by_source_id",
+            "get_document_by_id",  # Added for completeness
+            "add_embedding",
+            "delete_document",
+            "query_vectors",
+            "Document",  # Changed from VectorDocumentProtocol to match actual name
         ]
     )
+# --- Email Storage (Moved to storage/email.py, re-exported here for compatibility) ---
+# from .email import received_emails_table, store_incoming_email
+
