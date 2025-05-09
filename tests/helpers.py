@@ -77,22 +77,40 @@ async def wait_for_tasks_to_complete(
                 failed_count = failed_result.scalar_one_or_none()
 
                 if failed_count and failed_count > 0:
-                    # Get the failed task IDs for better error reporting
-                    task_id_query = select(tasks_table.c.task_id).where(
+                    # Get details of failed tasks including their last error
+                    failed_task_details_query = select(
+                        tasks_table.c.task_id,
+                        tasks_table.c.last_error  # Assuming this column exists
+                    ).where(tasks_table.c.status == "failed")
+
                         tasks_table.c.status == "failed"
                     )
                     if task_ids:
-                        task_id_query = task_id_query.where(
+                        failed_task_details_query = failed_task_details_query.where(
                             tasks_table.c.task_id.in_(task_ids)
                         )
 
-                    task_id_result = await db.execute_with_retry(task_id_query)
-                    failed_ids = [row[0] for row in task_id_result]
+                    failed_tasks_rows = await db.execute_with_retry(failed_task_details_query)
 
-                    raise RuntimeError(f"Task(s) failed: {', '.join(failed_ids)}")
+                    error_messages_list = []
+                    for row in failed_tasks_rows:
+                        task_id_val = row[0]  # task_id
+                        # Assuming the second column is last_error.
+                        # Access by index as per established pattern in this file.
+                        task_error_val = row[1] 
+                        error_messages_list.append(
+                            f"  - ID: {task_id_val}, Error: {task_error_val if task_error_val is not None else 'N/A'}"
+                        )
+
+                    if error_messages_list:
+                        raise RuntimeError(f"Task(s) failed:\n" + "\n".join(error_messages_list))
+                    else:
+                        # Fallback if details couldn't be fetched but failed_count > 0
+                        raise RuntimeError(f"{failed_count} task(s) failed, but could not retrieve specific error details.")
 
                 # Build the query to count non-terminal tasks
                 query = select(
+
                     sql_count(tasks_table.c.id)
                 ).where(  # Pass column to count
                     tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
