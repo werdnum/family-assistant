@@ -39,6 +39,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.error import Conflict  # Import telegram errors for specific checking
 
 # Import necessary types for type hinting
 from family_assistant.processing import ProcessingService
@@ -46,13 +47,10 @@ from family_assistant.storage.context import DatabaseContext
 
 # from .storage.context import get_db_context # get_db_context is passed as a function
 
-# Assuming these are passed or accessible
-
 logger = logging.getLogger(__name__)
 
 
 # Import telegram errors for specific checking
-from telegram.error import Conflict
 
 # --- Protocols for Refactoring ---
 
@@ -771,9 +769,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             # This assumes the user message was saved before the error occurred
             if processing_error_traceback and user_message_id:
                 try:
-                    db_context_getter_err = self.get_db_context()
                     # Get a new context for this update attempt
-                    async with await db_context_getter_err as db_ctx_err:
+                    async with await self.get_db_context() as db_ctx_err:  # Use await directly
                         # Fetch the user message's internal ID first (can't update by interface ID)
                         user_msg_record = await self.storage.get_message_by_interface_id(
                             db_ctx_err,
