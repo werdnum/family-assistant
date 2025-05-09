@@ -2,6 +2,7 @@ import asyncio  # Import asyncio for run_in_executor
 import logging
 import uuid  # For generating event UIDs
 from datetime import date, datetime, time, timedelta  # Added time
+from zoneinfo import ZoneInfo  # Import ZoneInfo
 
 # Consolidated imports including Any
 from typing import TYPE_CHECKING, Any
@@ -20,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration (Now passed via function arguments) ---
 # Environment variables are still read here for the standalone test section (__main__)
-
-from zoneinfo import ZoneInfo  # Import ZoneInfo
 
 # --- Helper Functions ---
 
