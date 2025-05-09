@@ -1,35 +1,40 @@
-import pytest
 import asyncio
-import logging
 import json
+import logging
+import uuid  # Added for turn_id
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from family_assistant.llm import LLMInterface, LLMOutput
+from family_assistant.processing import ProcessingService
 
 # Import necessary components from the application
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.processing import ProcessingService
-from family_assistant.llm import LLMInterface, LLMOutput
-from family_assistant.tools import (
-    LocalToolsProvider,
-    MCPToolsProvider,
-    CompositeToolsProvider,
-    TOOLS_DEFINITION as local_tools_definition,
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
-)
 
 # Import TaskWorker, events, and the specific handler needed for registration
 from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
 )
-
+from family_assistant.tools import (
+    AVAILABLE_FUNCTIONS as local_tool_implementations,
+)
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
+)
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+    MCPToolsProvider,
+)
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (
-    RuleBasedMockLLMClient,
     Rule,
+    RuleBasedMockLLMClient,
     get_last_message_text,
 )
-import uuid  # Added for turn_id
 
 logger = logging.getLogger(__name__)
 

@@ -1,14 +1,15 @@
 import asyncio  # Import asyncio for run_in_executor
 import logging
-from datetime import datetime, date, timedelta, time  # Added time
+import uuid  # For generating event UIDs
+from datetime import date, datetime, time, timedelta  # Added time
 
 # Consolidated imports including Any
-from typing import List, Dict, Optional, Tuple, Any
-import vobject
+from typing import Any
+
 import caldav
-from caldav.lib.error import DAVError, NotFoundError
 import httpx  # Import httpx
-import uuid  # For generating event UIDs
+import vobject
+from caldav.lib.error import DAVError, NotFoundError
 from dateutil.parser import isoparse  # For parsing ISO strings in tools
 
 # Import types needed by tools
@@ -82,13 +83,13 @@ def format_datetime_or_date(
 
 
 def parse_event(
-    event_data: str, timezone_str: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    event_data: str, timezone_str: str | None = None
+) -> dict[str, Any] | None:
     """
     Parses VCALENDAR data into a dictionary, including the UID.
     If timezone_str is provided, naive datetimes will be localized to that timezone.
     """
-    local_tz: Optional[ZoneInfo] = None
+    local_tz: ZoneInfo | None = None
     if timezone_str:
         try:
             local_tz = ZoneInfo(timezone_str)
@@ -174,9 +175,9 @@ def parse_event(
 
 
 async def _fetch_ical_events_async(
-    ical_urls: List[str],
+    ical_urls: list[str],
     timezone_str: str,  # Added timezone string
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Asynchronously fetches and parses events from a list of iCal URLs."""
     all_events = []
     async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
@@ -230,9 +231,9 @@ async def _fetch_ical_events_async(
 def _fetch_caldav_events_sync(
     username: str,
     password: str,
-    calendar_urls: List[str],
+    calendar_urls: list[str],
     timezone_str: str,  # Added timezone string
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Synchronous function to connect to CalDAV servers using specific calendar URLs and fetch events."""
     logger.debug("Executing synchronous CalDAV fetch using direct calendar URLs.")
     all_events = []
@@ -335,9 +336,9 @@ def _fetch_caldav_events_sync(
 
 
 async def fetch_upcoming_events(
-    calendar_config: Dict[str, Any],
+    calendar_config: dict[str, Any],
     timezone_str: str,  # Added timezone string
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Fetches events from configured CalDAV and iCal sources and merges them."""
     logger.debug("Entering fetch_upcoming_events orchestrator.")
     all_events = []
@@ -459,10 +460,10 @@ async def fetch_upcoming_events(
 
 
 def format_events_for_prompt(
-    events: List[Dict[str, Any]],
-    prompts: Dict[str, str],
+    events: list[dict[str, Any]],
+    prompts: dict[str, str],
     timezone_str: str,  # Added timezone string
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Formats the fetched events into strings suitable for the prompt."""
     try:
         local_tz = ZoneInfo(timezone_str)
@@ -577,9 +578,9 @@ async def add_calendar_event_tool(
     summary: str,
     start_time: str,
     end_time: str,
-    description: Optional[str] = None,
+    description: str | None = None,
     all_day: bool = False,
-    recurrence_rule: Optional[str] = None,  # Added RRULE parameter
+    recurrence_rule: str | None = None,  # Added RRULE parameter
 ) -> str:
     """
     Adds an event to the first configured CalDAV calendar.
@@ -712,8 +713,8 @@ async def add_calendar_event_tool(
 async def search_calendar_events_tool(
     exec_context: ToolExecutionContext,
     query_text: str,
-    start_date_str: Optional[str] = None,
-    end_date_str: Optional[str] = None,
+    start_date_str: str | None = None,
+    end_date_str: str | None = None,
     limit: int = 5,
 ) -> str:
     """Searches CalDAV events based on query text and date range."""
@@ -901,11 +902,11 @@ async def modify_calendar_event_tool(
     exec_context: ToolExecutionContext,
     uid: str,
     calendar_url: str,  # Added calendar_url
-    new_summary: Optional[str] = None,
-    new_start_time: Optional[str] = None,
-    new_end_time: Optional[str] = None,
-    new_description: Optional[str] = None,
-    new_all_day: Optional[bool] = None,
+    new_summary: str | None = None,
+    new_start_time: str | None = None,
+    new_end_time: str | None = None,
+    new_description: str | None = None,
+    new_all_day: bool | None = None,
 ) -> str:
     """Modifies a specific CalDAV event by UID."""
     logger.info(
@@ -1155,7 +1156,7 @@ async def delete_calendar_event_tool(
 
 def _fetch_event_details_sync(
     username: str, password: str, calendar_url: str, uid: str, timezone_str: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Synchronously fetches details for a single event by UID.
     Requires timezone_str to correctly parse naive datetimes.

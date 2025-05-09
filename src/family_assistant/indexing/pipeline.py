@@ -6,7 +6,7 @@ for content processors, and the pipeline orchestrator.
 
 import logging  # Added
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from family_assistant.storage.vector import Document
@@ -28,16 +28,16 @@ class IndexableContent:
     source_processor: str
     """Name of the processor that generated this item."""
 
-    content: Optional[str] = None
+    content: str | None = None
     """The textual content (or None for binary references)."""
 
-    mime_type: Optional[str] = None
+    mime_type: str | None = None
     """MIME type of the content (e.g., 'text/plain', 'image/jpeg')."""
 
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     """Processor-specific details (e.g., {'page_number': 3})."""
 
-    ref: Optional[str] = None
+    ref: str | None = None
     """Reference to original binary data if content is None (e.g., temporary file path)."""
 
 
@@ -53,11 +53,11 @@ class ContentProcessor(Protocol):
 
     async def process(
         self,
-        current_items: List[IndexableContent],
+        current_items: list[IndexableContent],
         original_document: "Document",
         initial_content_ref: IndexableContent,
         context: "ToolExecutionContext",
-    ) -> List[IndexableContent]:
+    ) -> list[IndexableContent]:
         """
         Processes a list of IndexableContent items.
 
@@ -82,7 +82,7 @@ class IndexingPipeline:
     """
 
     def __init__(
-        self, processors: List[ContentProcessor], config: Dict[str, Any]
+        self, processors: list[ContentProcessor], config: dict[str, Any]
     ) -> None:
         """
         Initializes the pipeline with a list of processors and a configuration.
@@ -97,10 +97,10 @@ class IndexingPipeline:
 
     async def run(
         self,
-        initial_items: List[IndexableContent],  # Changed parameter name and type
+        initial_items: list[IndexableContent],  # Changed parameter name and type
         original_document: "Document",
         context: "ToolExecutionContext",
-    ) -> List[IndexableContent]:
+    ) -> list[IndexableContent]:
         """
         Runs the initial list of IndexableContent items through all configured processors sequentially.
 
@@ -116,7 +116,7 @@ class IndexingPipeline:
             by any processor. Embedding tasks are dispatched by specialized
             processors within the pipeline, not by the pipeline orchestrator itself.
         """
-        items_for_next_stage: List[IndexableContent] = (
+        items_for_next_stage: list[IndexableContent] = (
             initial_items  # Changed initialization
         )
 
@@ -133,7 +133,7 @@ class IndexingPipeline:
         # Determine the single "initial_content_ref" to be passed to all processors.
         # This should ideally be the very first IndexableContent created for the document.
         # If the pipeline starts with a list, we'll use the first item from that list if available.
-        initial_content_ref_for_processors: Optional[IndexableContent] = (
+        initial_content_ref_for_processors: IndexableContent | None = (
             initial_items[0] if initial_items else None
         )
 

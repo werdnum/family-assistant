@@ -5,13 +5,13 @@ Utility functions for testing.
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Set
+
 import sqlalchemy as sa  # Import sqlalchemy
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.sql.functions import (
     count as sql_count,
 )  # Alias to avoid confusion with len()
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Use absolute imports if DatabaseContext is defined elsewhere,
 # otherwise adjust as needed. Assuming it's accessible.
@@ -28,7 +28,7 @@ async def wait_for_tasks_to_complete(
     engine: AsyncEngine,
     timeout_seconds: float = 30.0,
     poll_interval_seconds: float = 0.5,
-    task_ids: Optional[Set[str]] = None,
+    task_ids: set[str] | None = None,
 ):
     """
     Waits until all specified tasks (or all tasks if none specified)

@@ -7,31 +7,32 @@ import logging
 import random
 import uuid
 import zoneinfo  # Add this import
-from dateutil import rrule
+from collections.abc import Awaitable, Callable  # Import Union
 from datetime import datetime, timedelta, timezone  # Added Union
-from typing import Dict, Any, Optional, Callable, Awaitable, Union  # Import Union
+from typing import Any
+import traceback
+
+from dateutil import rrule
+
+# Import the new document indexer CLASS
+# Import functools for partial application
+# Import Application for type hinting
+from telegram.ext import Application
+from telegram.helpers import escape_markdown
+from telegramify_markdown import markdownify
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
-from family_assistant.processing import ProcessingService  # Import the service
-from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.indexing.email_indexer import (
     handle_index_email,
 )  # Import email indexer
-
-# Import the new document indexer CLASS
-
-# Import functools for partial application
-
-# Import Application for type hinting
-from telegram.ext import Application
+from family_assistant.processing import ProcessingService  # Import the service
+from family_assistant.storage.context import DatabaseContext, get_db_context
 
 # Import tool definitions and context from the tools module
 from family_assistant.tools import (
     ToolExecutionContext,  # Import the context class
 )
-from telegramify_markdown import markdownify
-from telegram.helpers import escape_markdown
 
 # Import LLM interface for type hinting if needed elsewhere
 # from family_assistant.llm import LLMInterface
@@ -98,7 +99,7 @@ async def handle_llm_callback(
     Dependencies are accessed via the ToolExecutionContext.
     """
     # Access dependencies from the execution context
-    processing_service: Optional[ProcessingService] = (
+    processing_service: ProcessingService | None = (
         exec_context.processing_service  # TaskWorker passes its own instance
     )  # TaskWorker passes its own instance
     application = exec_context.application
@@ -207,7 +208,7 @@ async def handle_llm_callback(
         if final_llm_content_to_send:
             # Send the LLM's response back to the chat
             # Determine target chat_id based on interface type
-            target_chat_id: Union[int, str]
+            target_chat_id: int | str
             if interface_type == "telegram":
                 int(conversation_id)  # Convert Telegram ID back to int
             else:
@@ -316,7 +317,7 @@ class TaskWorker:
         self,
         processing_service: ProcessingService,
         application: Application,  # Add application dependency
-        calendar_config: Dict[str, Any],  # Add calendar config
+        calendar_config: dict[str, Any],  # Add calendar config
         timezone_str: str,  # Add timezone string
     ):
         """Initializes the TaskWorker with its dependencies."""
@@ -326,7 +327,7 @@ class TaskWorker:
         self.timezone_str = timezone_str  # Store timezone string
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
-        self.task_handlers: Dict[
+        self.task_handlers: dict[
             str, Callable[[ToolExecutionContext, Any], Awaitable[None]]
         ] = {}
         self.worker_id = f"worker-{uuid.uuid4()}"
@@ -347,14 +348,14 @@ class TaskWorker:
     # Update return type hint
     def get_task_handlers(
         self,
-    ) -> Dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]]:
+    ) -> dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]]:
         """Return the current task handlers dictionary for this worker."""
         return self.task_handlers
 
     async def _process_task(
         self,
         db_context: DatabaseContext,
-        task: Dict[str, Any],
+        task: dict[str, Any],
         wake_up_event: asyncio.Event,
     ):
         """Handles the execution, completion marking, and recurrence logic for a dequeued task."""
@@ -384,8 +385,8 @@ class TaskWorker:
             )
             # Need to define these *before* using them in logging etc.
             # Define with default or None initially
-            interface_type: Optional[str] = None
-            conversation_id: Optional[str] = None
+            interface_type: str | None = None
+            conversation_id: str | None = None
             interface_type = payload_dict.get("interface_type")
             conversation_id = payload_dict.get("conversation_id")
             # Validate extracted identifiers (ensure they exist for tasks needing them)
@@ -518,7 +519,7 @@ class TaskWorker:
             await self._handle_task_failure(db_context, task, handler_exc)
 
     async def _handle_task_failure(
-        self, db_context: DatabaseContext, task: Dict[str, Any], handler_exc: Exception
+        self, db_context: DatabaseContext, task: dict[str, Any], handler_exc: Exception
     ):
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
@@ -533,7 +534,7 @@ class TaskWorker:
             if payload_dict.get("interface_type")
             else ""
         )
-        error_str = str(handler_exc)
+        error_str = "\n".join(traceback.format_exception(handler_exc))
         logger.error(
             f"Worker {self.worker_id} failed task {task['task_id']} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
             exc_info=True,

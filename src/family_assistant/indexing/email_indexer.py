@@ -3,18 +3,19 @@ Handles the indexing process for emails stored in the database.
 """
 
 import logging
-from typing import Any, Dict, Optional, List  # Added List
-from datetime import datetime
 from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any  # Added List
+
+from sqlalchemy import select  # Import select and update
 
 # Import RowMapping for type hinting in from_row
 from sqlalchemy.engine import RowMapping
-from sqlalchemy import select  # Import select and update
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
 from family_assistant import storage  # For DB operations (add_document)
-from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent
+from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.storage.email import (
     received_emails_table,
 )  # Import table definition
@@ -38,11 +39,11 @@ class EmailDocument(Document):
     """
 
     _source_id: str
-    _title: Optional[str] = None
-    _created_at: Optional[datetime] = None
-    _source_uri: Optional[str] = None
-    _base_metadata: Dict[str, Any] = field(default_factory=dict)
-    _content_plain: Optional[str] = None  # Store plain text content separately
+    _title: str | None = None
+    _created_at: datetime | None = None
+    _source_uri: str | None = None
+    _base_metadata: dict[str, Any] = field(default_factory=dict)
+    _content_plain: str | None = None  # Store plain text content separately
 
     @property
     def source_type(self) -> str:
@@ -55,27 +56,27 @@ class EmailDocument(Document):
         return self._source_id
 
     @property
-    def source_uri(self) -> Optional[str]:
+    def source_uri(self) -> str | None:
         """URI or path to the original item (not typically available for emails)."""
         return self._source_uri  # Could potentially be a mail archive link if available
 
     @property
-    def title(self) -> Optional[str]:
+    def title(self) -> str | None:
         """Title or subject of the document."""
         return self._title
 
     @property
-    def created_at(self) -> Optional[datetime]:
+    def created_at(self) -> datetime | None:
         """Original creation date (from 'Date' header, timezone-aware)."""
         return self._created_at
 
     @property
-    def metadata(self) -> Optional[Dict[str, Any]]:
+    def metadata(self) -> dict[str, Any] | None:
         """Base metadata extracted directly from the source."""
         return self._base_metadata
 
     @property
-    def content_plain(self) -> Optional[str]:
+    def content_plain(self) -> str | None:
         """The plain text content of the email (e.g., stripped_text)."""
         return self._content_plain
 
@@ -124,7 +125,7 @@ class EmailDocument(Document):
             # _source_uri could be set if a web view link exists, otherwise None
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Converts the EmailDocument instance to a dictionary."""
         return {
             "source_type": self.source_type,
@@ -138,12 +139,12 @@ class EmailDocument(Document):
 
 
 # --- Dependencies (Set via set_indexing_dependencies) ---
-indexing_pipeline_instance: Optional[IndexingPipeline] = None
+indexing_pipeline_instance: IndexingPipeline | None = None
 
 
 # --- Task Handler Implementation ---
 async def handle_index_email(
-    exec_context: ToolExecutionContext, payload: Dict[str, Any]
+    exec_context: ToolExecutionContext, payload: dict[str, Any]
 ):
     """
     Task handler to index a specific email from the received_emails table.
@@ -212,7 +213,7 @@ async def handle_index_email(
         raise RuntimeError(f"Failed to fetch document record {doc_db_id}") from e
 
     # --- 5. Prepare Initial Content for Pipeline ---
-    initial_items: List[IndexableContent] = []
+    initial_items: list[IndexableContent] = []
     if email_doc.content_plain:
         # The pipeline will handle title extraction, chunking, summarizing, etc.
         # Provide the raw plain text body.

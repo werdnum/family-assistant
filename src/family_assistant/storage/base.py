@@ -5,8 +5,9 @@ This module defines the SQLAlchemy engine and metadata object shared across
 different storage modules to prevent circular dependencies.
 """
 
-import os
 import logging
+import os
+
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import create_async_engine
 

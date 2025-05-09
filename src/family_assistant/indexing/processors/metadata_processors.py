@@ -3,9 +3,8 @@ Content processors focused on extracting or generating metadata-related Indexabl
 """
 
 import logging
-from typing import List
 
-from family_assistant.indexing.pipeline import IndexableContent, ContentProcessor
+from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
 from family_assistant.storage.vector import Document
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -23,11 +22,11 @@ class TitleExtractor(ContentProcessor):
 
     async def process(
         self,
-        current_items: List[IndexableContent],
+        current_items: list[IndexableContent],
         original_document: Document,
         initial_content_ref: IndexableContent,
         context: ToolExecutionContext,
-    ) -> List[IndexableContent]:
+    ) -> list[IndexableContent]:
         """
         Checks for a title in the original document. If found, creates an
         IndexableContent item for the title. Passes through all current_items

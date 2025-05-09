@@ -1,14 +1,18 @@
 import logging
-from typing import Protocol, List, Dict, Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
+
+from family_assistant import (
+    calendar_integration,  # For calendar functions
+    storage,  # For storage.get_all_notes
+)
 
 # Import necessary types and modules from your project.
 # These are based on the previously discussed files and common patterns in your project.
 from family_assistant.storage.context import DatabaseContext
-from family_assistant import storage  # For storage.get_all_notes
-from family_assistant import calendar_integration  # For calendar functions
 
 # Define a type alias for prompts if not already a dedicated class
-PromptsType = Dict[str, str]
+PromptsType = dict[str, str]
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +27,7 @@ class ContextProvider(Protocol):
         """A unique, human-readable name for this context provider (e.g., 'calendar', 'notes')."""
         ...
 
-    async def get_context_fragments(self) -> List[str]:
+    async def get_context_fragments(self) -> list[str]:
         """
         Asynchronously retrieves and formats context fragments relevant to this provider.
         Each string in the list represents a distinct piece of formatted information
@@ -60,8 +64,8 @@ class NotesContextProvider(ContextProvider):
     def name(self) -> str:
         return "notes"
 
-    async def get_context_fragments(self) -> List[str]:
-        fragments: List[str] = []
+    async def get_context_fragments(self) -> list[str]:
+        fragments: list[str] = []
         try:
             async with (
                 await self._get_db_context_func() as db_context
@@ -112,7 +116,7 @@ class CalendarContextProvider(ContextProvider):
 
     def __init__(
         self,
-        calendar_config: Dict[str, Any],
+        calendar_config: dict[str, Any],
         timezone_str: str,
         prompts: PromptsType,
     ):
@@ -132,8 +136,8 @@ class CalendarContextProvider(ContextProvider):
     def name(self) -> str:
         return "calendar"
 
-    async def get_context_fragments(self) -> List[str]:
-        fragments: List[str] = []
+    async def get_context_fragments(self) -> list[str]:
+        fragments: list[str] = []
         if not self._calendar_config or not (
             self._calendar_config.get("caldav") or self._calendar_config.get("ical")
         ):

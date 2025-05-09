@@ -1,44 +1,47 @@
-import pytest
 import asyncio
-import logging
-import json  # Added json import
 import contextlib  # Added contextlib import
-from sqlalchemy import text  # To query DB directly for assertion
+import json  # Added json import
+import logging
+
+# Import storage functions for assertion (will use the patched engine)
+# from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
+import uuid  # Added for turn_id
 from unittest.mock import MagicMock  # For mocking Application
 
-# _generate_llm_response_for_chat was moved to ProcessingService
-# from family_assistant.main import _generate_llm_response_for_chat
-
-# Import DatabaseContext and getter
-from family_assistant.storage.context import DatabaseContext, get_db_context
-
-# Import necessary classes for instantiation
-from family_assistant.processing import ProcessingService
-from family_assistant.llm import LLMInterface, LLMOutput  # Keep Interface and Output
-
-# Import the rule-based mock
-from tests.mocks.mock_llm import (
-    RuleBasedMockLLMClient,
-    Rule,
-    get_last_message_text,
-)
-
-from family_assistant.tools import (
-    LocalToolsProvider,
-    MCPToolsProvider,
-    CompositeToolsProvider,
-    TOOLS_DEFINITION as local_tools_definition,
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
-)
+import pytest
+from sqlalchemy import text  # To query DB directly for assertion
 
 # Import ContextProvider and NotesContextProvider
 from family_assistant.context_providers import (
     NotesContextProvider,
 )
+from family_assistant.llm import LLMInterface, LLMOutput  # Keep Interface and Output
 
-# Import storage functions for assertion (will use the patched engine)
-# from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
-import uuid  # Added for turn_id
+# Import necessary classes for instantiation
+from family_assistant.processing import ProcessingService
+
+# _generate_llm_response_for_chat was moved to ProcessingService
+# from family_assistant.main import _generate_llm_response_for_chat
+# Import DatabaseContext and getter
+from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.tools import (
+    AVAILABLE_FUNCTIONS as local_tool_implementations,
+)
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
+)
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+    MCPToolsProvider,
+)
+
+# Import the rule-based mock
+from tests.mocks.mock_llm import (
+    Rule,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 
 logger = logging.getLogger(__name__)
 

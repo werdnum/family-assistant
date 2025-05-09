@@ -4,23 +4,23 @@
 # 1. Messages SENT by the bot (via mocked Telegram API calls like send_message).
 # 2. Messages RECEIVED by the bot (implicitly verified by mock LLM rules/matchers).
 # Database state changes (message history, notes, tasks) are NOT directly asserted here.
-import logging
-from datetime import datetime, timezone
-import uuid  # Add import
 import json  # Add import
+import logging
+import uuid  # Add import
+from datetime import datetime, timezone
+from typing import Any  # Add missing typing imports
 from unittest.mock import AsyncMock  # Import call
-from typing import Optional, Dict, Any  # Add missing typing imports
 
 import pytest
-from telegram import Chat, Message, Update, User
-from telegram.ext import ContextTypes
-
-from family_assistant.llm import LLMOutput
 import telegramify_markdown  # Import the library
 from assertpy import (
     assert_that,
     soft_assertions,
 )  # Import assert_that and soft_assertions
+from telegram import Chat, Message, Update, User
+from telegram.ext import ContextTypes
+
+from family_assistant.llm import LLMOutput
 
 # Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
@@ -30,13 +30,12 @@ logger = logging.getLogger(__name__)
 # Import mock LLM helpers
 from tests.mocks.mock_llm import Rule, get_last_message_text
 
-
 # --- Test Helper Functions ---
 
 
 def create_mock_context(
     mock_application: AsyncMock,  # Pass the application mock
-    bot_data: Optional[Dict[Any, Any]] = None,
+    bot_data: dict[Any, Any] | None = None,
 ) -> ContextTypes.DEFAULT_TYPE:
     """Creates a mock CallbackContext."""
     # Use the provided application mock, which should have .bot set
@@ -58,7 +57,7 @@ def create_mock_update(
     chat_id: int = 123,
     user_id: int = 12345,
     message_id: int = 101,
-    reply_to_message: Optional[Message] = None,
+    reply_to_message: Message | None = None,
 ) -> Update:
     """Creates a mock Telegram Update object for a text message."""
     user = User(id=user_id, first_name="TestUser", is_bot=False)

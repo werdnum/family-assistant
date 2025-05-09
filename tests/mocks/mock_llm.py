@@ -3,7 +3,8 @@ Mock LLM implementations for testing purposes.
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Callable, Tuple
+from collections.abc import Callable
+from typing import Any
 
 # Assuming LLMInterface and LLMOutput are accessible, adjust import if needed
 # e.g., from family_assistant.llm import LLMInterface, LLMOutput
@@ -18,8 +19,8 @@ except ImportError:
 
         def __init__(
             self,
-            content: Optional[str] = None,
-            tool_calls: Optional[List[Dict[str, Any]]] = None,
+            content: str | None = None,
+            tool_calls: list[dict[str, Any]] | None = None,
         ):
             self.content = content
             self.tool_calls = tool_calls or []
@@ -29,9 +30,9 @@ except ImportError:
 
         async def generate_response(
             self,
-            messages: List[Dict[str, Any]],
-            tools: Optional[List[Dict[str, Any]]] = None,
-            tool_choice: Optional[str] = "auto",
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None = None,
+            tool_choice: str | None = "auto",
         ) -> LLMOutput: ...
 
 
@@ -42,9 +43,9 @@ logger = logging.getLogger(__name__)
 # Define type aliases for clarity
 # Matcher takes (messages, tools, tool_choice) -> bool
 MatcherFunction = Callable[
-    [List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Optional[str]], bool
+    [list[dict[str, Any]], list[dict[str, Any]] | None, str | None], bool
 ]
-Rule = Tuple[MatcherFunction, LLMOutput]
+Rule = tuple[MatcherFunction, LLMOutput]
 
 
 class RuleBasedMockLLMClient(LLMInterface):
@@ -54,7 +55,7 @@ class RuleBasedMockLLMClient(LLMInterface):
     Rules are evaluated in the order they are provided.
     """
 
-    def __init__(self, rules: List[Rule], default_response: Optional[LLMOutput] = None):
+    def __init__(self, rules: list[Rule], default_response: LLMOutput | None = None):
         """
         Initializes the mock client with rules.
 
@@ -76,7 +77,7 @@ class RuleBasedMockLLMClient(LLMInterface):
             self.default_response = default_response
             logger.debug("RuleBasedMockLLMClient using provided default response.")
         # Add call recording
-        self._calls: List[Dict[str, Any]] = []
+        self._calls: list[dict[str, Any]] = []
         self.generate_response = self._generate_response_wrapper(
             self.generate_response
         )  # Wrap for recording
@@ -84,9 +85,9 @@ class RuleBasedMockLLMClient(LLMInterface):
 
     async def generate_response(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = "auto",
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """
         Evaluates rules against the input and returns the corresponding output.
@@ -147,7 +148,7 @@ class RuleBasedMockLLMClient(LLMInterface):
 
 # --- Helper function to extract text from messages ---
 # (Useful for writing matchers)
-def get_last_message_text(messages: List[Dict[str, Any]]) -> str:
+def get_last_message_text(messages: list[dict[str, Any]]) -> str:
     """Extracts and concatenates text from the last message in a list."""
     if not messages:
         return ""

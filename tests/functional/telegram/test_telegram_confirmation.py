@@ -10,9 +10,7 @@ from assertpy import assert_that, soft_assertions
 from telegram import Message
 
 from family_assistant.llm import LLMOutput
-
-# Import the test fixture and helper functions
-from .conftest import TelegramHandlerTestFixture
+from family_assistant.tools import ConfirmingToolsProvider  # Import confirming provider
 from tests.functional.telegram.test_telegram_handler import (
     create_mock_context,
     create_mock_update,
@@ -20,7 +18,9 @@ from tests.functional.telegram.test_telegram_handler import (
 
 # Import mock LLM helpers
 from tests.mocks.mock_llm import Rule, get_last_message_text
-from family_assistant.tools import ConfirmingToolsProvider  # Import confirming provider
+
+# Import the test fixture and helper functions
+from .conftest import TelegramHandlerTestFixture
 
 logger = logging.getLogger(__name__)
 

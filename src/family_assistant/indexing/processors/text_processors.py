@@ -3,9 +3,9 @@ Content processors focused on text manipulation, like chunking.
 """
 
 import logging
-from typing import List, Sequence, Optional
+from collections.abc import Sequence
 
-from family_assistant.indexing.pipeline import IndexableContent, ContentProcessor
+from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
 from family_assistant.storage.vector import Document
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -30,7 +30,7 @@ class TextChunker(ContentProcessor):
         self,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
-        separators: Optional[Sequence[str]] = None,
+        separators: Sequence[str] | None = None,
     ):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -46,7 +46,7 @@ class TextChunker(ContentProcessor):
             separators if separators is not None else self.DEFAULT_SEPARATORS
         )
 
-    def _split_recursively(self, text: str, separators: Sequence[str]) -> List[str]:
+    def _split_recursively(self, text: str, separators: Sequence[str]) -> list[str]:
         """Recursively tries to split text by the given separators."""
         if not text:
             return []
@@ -80,7 +80,7 @@ class TextChunker(ContentProcessor):
                 results.extend(self._split_recursively(part, remaining_separators))
         return [r for r in results if r]  # Filter out any remaining empty strings
 
-    def _chunk_text_natively(self, text: str) -> List[str]:
+    def _chunk_text_natively(self, text: str) -> list[str]:
         """Combines recursive splitting with a final sliding window for overlap."""
         if not text:
             return []
@@ -93,7 +93,7 @@ class TextChunker(ContentProcessor):
             return []
 
         # Step 2: Apply sliding window with overlap
-        final_chunks: List[str] = []
+        final_chunks: list[str] = []
         text_len = len(recombined_text)
         current_pos = 0
         while current_pos < text_len:
@@ -119,12 +119,12 @@ class TextChunker(ContentProcessor):
 
     async def process(
         self,
-        current_items: List[IndexableContent],
+        current_items: list[IndexableContent],
         original_document: Document,
         initial_content_ref: IndexableContent,
         context: ToolExecutionContext,
-    ) -> List[IndexableContent]:
-        output_items: List[IndexableContent] = []
+    ) -> list[IndexableContent]:
+        output_items: list[IndexableContent] = []
 
         for item in current_items:
             if item.content and item.mime_type in self.PROCESSED_MIME_TYPES:

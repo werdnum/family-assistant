@@ -1,33 +1,38 @@
 import contextlib
-from typing import AsyncGenerator, Callable, NamedTuple
+from collections.abc import AsyncGenerator, Callable
+from typing import NamedTuple
 from unittest.mock import AsyncMock
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 from telegram.ext import Application
 
-# Mock the LLMInterface before it's imported by other modules if necessary
-# or ensure mocks are injected properly.
-from tests.mocks.mock_llm import RuleBasedMockLLMClient  # Or use AsyncMock
-
 from family_assistant.llm import LLMInterface, LLMOutput  # Import LLMOutput
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
-
-# Correct imports for tools - they are in family_assistant.tools, not telegram_bot
-from family_assistant.tools import (
-    CompositeToolsProvider,
-    LocalToolsProvider,
-    AVAILABLE_FUNCTIONS as local_tool_functions,
-    TOOLS_DEFINITION as local_tools_definition,
-    calendar_integration,
-)
 from family_assistant.telegram_bot import (
     ConfirmationUIManager,
     NoBatchMessageBatcher,
     TelegramService,
     TelegramUpdateHandler,  # Keep this as it's from telegram_bot
 )
+from family_assistant.tools import (
+    AVAILABLE_FUNCTIONS as local_tool_functions,
+)
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
+)
+
+# Correct imports for tools - they are in family_assistant.tools, not telegram_bot
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+    calendar_integration,
+)
+
+# Mock the LLMInterface before it's imported by other modules if necessary
+# or ensure mocks are injected properly.
+from tests.mocks.mock_llm import RuleBasedMockLLMClient  # Or use AsyncMock
 
 
 # Define a named tuple to hold the fixture results for easier access

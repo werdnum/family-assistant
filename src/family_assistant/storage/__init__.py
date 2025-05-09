@@ -1,56 +1,58 @@
-import logging
-from typing import Optional
 import asyncio
+import logging
 import os  # Added for path manipulation
 import random
 import traceback
-from sqlalchemy.exc import (
-    DBAPIError,
-    SQLAlchemyError,
-    OperationalError,
-)  # Keep OperationalError
+from typing import Optional
+
 from sqlalchemy import (
     inspect,
     text,
 )  # Import inspect, text and table creation components
+from sqlalchemy.exc import (
+    DBAPIError,
+    OperationalError,
+    SQLAlchemyError,
+)  # Keep OperationalError
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from alembic import command as alembic_command
 
 # from alembic.script import ScriptDirectory # No longer needed for manual stamping
 # from alembic import command as alembic_command # Already imported
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
-from alembic import command as alembic_command
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Import base components using absolute package paths
-from family_assistant.storage.base import metadata, get_engine, engine
+from family_assistant.storage.base import engine, get_engine, metadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
-
-# Import specific storage modules using absolute package paths
-from family_assistant.storage.notes import (
-    notes_table,
-    add_or_update_note,
-    get_all_notes,
-    get_note_by_title,
-    delete_note,
-)
 from family_assistant.storage.email import received_emails_table, store_incoming_email
 from family_assistant.storage.message_history import (
-    message_history_table,
     add_message_to_history,
-    get_recent_history,
     get_grouped_message_history,
     # Renamed from get_message_by_id
     get_message_by_interface_id,
-    get_messages_by_turn_id,  # Added
     get_messages_by_thread_id,  # Added
+    get_messages_by_turn_id,  # Added
+    get_recent_history,
+    message_history_table,
     update_message_interface_id,  # Added
 )
+
+# Import specific storage modules using absolute package paths
+from family_assistant.storage.notes import (
+    add_or_update_note,
+    delete_note,
+    get_all_notes,
+    get_note_by_title,
+    notes_table,
+)
 from family_assistant.storage.tasks import (
-    tasks_table,
-    enqueue_task,
     dequeue_task,
-    update_task_status,
-    reschedule_task_for_retry,
+    enqueue_task,
     get_all_tasks,
+    reschedule_task_for_retry,
+    tasks_table,
+    update_task_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,13 +62,15 @@ try:
     # Use absolute package path
     from family_assistant.storage.vector import (
         Base as VectorBase,
-        init_vector_db,
+    )  # Explicit imports
+    from family_assistant.storage.vector import (
         add_document,
-        get_document_by_source_id,
         add_embedding,
         delete_document,
+        get_document_by_source_id,
+        init_vector_db,
         query_vectors,
-    )  # Explicit imports
+    )
 
     VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
@@ -125,7 +129,7 @@ async def _log_current_revision(engine: AsyncEngine):
     logger.info("Querying current revision from alembic_version table...")
     async with engine.connect() as conn_check:
 
-        def sync_check_revision(sync_conn) -> Optional[str]:
+        def sync_check_revision(sync_conn) -> str | None:
             inspector = inspect(sync_conn)
             if inspector is None:
                 logger.error(

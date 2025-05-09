@@ -8,12 +8,13 @@ enabling dependency injection for testing and centralizing retry logic.
 import asyncio
 import logging
 import random
-from typing import Any, Dict, List, Optional, TypeVar, Callable, Union
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from sqlalchemy import Result, TextClause, event
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncTransaction
-from sqlalchemy.sql import Select, Insert, Update, Delete
 from sqlalchemy.exc import DBAPIError, ProgrammingError
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncTransaction
+from sqlalchemy.sql import Delete, Insert, Select, Update
 
 # Use absolute package path
 from family_assistant.storage.base import get_engine
@@ -34,7 +35,7 @@ class DatabaseContext:
 
     def __init__(
         self,
-        engine: Optional[AsyncEngine] = None,
+        engine: AsyncEngine | None = None,
         max_retries: int = 3,
         base_delay: float = 0.5,
     ):
@@ -50,8 +51,8 @@ class DatabaseContext:
         self.engine = engine or get_engine()
         self.max_retries = max_retries
         self.base_delay = base_delay
-        self.conn: Optional[AsyncConnection] = None
-        self._transaction_cm: Optional[AsyncTransaction] = None
+        self.conn: AsyncConnection | None = None
+        self._transaction_cm: AsyncTransaction | None = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -83,8 +84,8 @@ class DatabaseContext:
 
     async def execute_with_retry(
         self,
-        query: Union[Select, Insert, Update, Delete, TextClause],
-        params: Optional[Dict[str, Any]] = None,
+        query: Select | Insert | Update | Delete | TextClause,
+        params: dict[str, Any] | None = None,
     ) -> Result:
         """
         Execute a query with retry logic for transient database errors.
@@ -145,8 +146,8 @@ class DatabaseContext:
         raise RuntimeError("Database operation failed after multiple retries")
 
     async def fetch_all(
-        self, query: Union[Select, TextClause], params: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        self, query: Select | TextClause, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """
         Execute a query and fetch all results as dictionaries.
 
@@ -162,8 +163,8 @@ class DatabaseContext:
         return [row._mapping for row in rows]
 
     async def fetch_one(
-        self, query: Union[Select, TextClause], params: Optional[Dict[str, Any]] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, query: Select | TextClause, params: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
         """
         Execute a query and fetch one result as a dictionary.
 
@@ -201,7 +202,7 @@ class DatabaseContext:
 # via __aenter__/__aexit__. Callers should instantiate DatabaseContext directly.
 # Keeping it for now but marking as potentially deprecated or for removal.
 async def get_db_context(
-    engine: Optional[AsyncEngine] = None, max_retries: int = 3, base_delay: float = 0.5
+    engine: AsyncEngine | None = None, max_retries: int = 3, base_delay: float = 0.5
 ) -> DatabaseContext:
     """
     Create and enter a database context.

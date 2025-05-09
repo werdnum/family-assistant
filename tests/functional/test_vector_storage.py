@@ -2,38 +2,39 @@
 Functional tests for the vector storage module using PostgreSQL.
 """
 
-import pytest
-import uuid
 import logging
+import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Any
 
 import numpy as np  # Using numpy for easy random vector generation
+import pytest
 from sqlalchemy import text  # Add this import
+
+from family_assistant.embeddings import MockEmbeddingGenerator  # For mocking embeddings
+from family_assistant.storage.context import (
+    DatabaseContext,
+)  # Add get_db_context
 
 # Import the functions and classes we want to test
 from family_assistant.storage.vector import (
-    add_document,
-    add_embedding,
-    get_document_by_source_id,
-    delete_document,
     Document,  # Import the protocol
     DocumentRecord,  # Import the ORM model for type hints if needed
+    add_document,
+    add_embedding,
+    delete_document,
+    get_document_by_source_id,
 )
 
 # Import the new query function and schema
 from family_assistant.storage.vector_search import (
-    query_vector_store,
     VectorSearchQuery,
+    query_vector_store,
 )
-from family_assistant.storage.context import (
-    DatabaseContext,
-)  # Add get_db_context
-from family_assistant.embeddings import MockEmbeddingGenerator  # For mocking embeddings
 from family_assistant.tools import (  # Import tool components
-    search_documents_tool,
     LocalToolsProvider,
     ToolExecutionContext,  # To get tool definitions (though not strictly needed for execution)
+    search_documents_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,10 +54,10 @@ class MockDocumentImpl(Document):
         self,
         source_type: str,
         source_id: str,
-        title: Optional[str] = None,
-        created_at: Optional[datetime] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        source_uri: Optional[str] = None,
+        title: str | None = None,
+        created_at: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
+        source_uri: str | None = None,
     ):
         self._source_type = source_type
         self._source_id = source_id
@@ -79,19 +80,19 @@ class MockDocumentImpl(Document):
         return self._source_id
 
     @property
-    def source_uri(self) -> Optional[str]:
+    def source_uri(self) -> str | None:
         return self._source_uri
 
     @property
-    def title(self) -> Optional[str]:
+    def title(self) -> str | None:
         return self._title
 
     @property
-    def created_at(self) -> Optional[datetime]:
+    def created_at(self) -> datetime | None:
         return self._created_at
 
     @property
-    def metadata(self) -> Optional[Dict[str, Any]]:
+    def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 
 
@@ -216,7 +217,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         logger.info(f"Retrieving document by source ID: {test_source_id}...")
         # Note: get_document_by_source_id returns the ORM model
-        retrieved_doc: Optional[DocumentRecord] = await get_document_by_source_id(
+        retrieved_doc: DocumentRecord | None = await get_document_by_source_id(
             db, test_source_id
         )
 
