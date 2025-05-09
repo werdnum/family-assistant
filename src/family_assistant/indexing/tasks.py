@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import add_embedding
+from family_assistant.tools.types import ToolExecutionContext # Added import
 
 logger = logging.getLogger(__name__)
 
