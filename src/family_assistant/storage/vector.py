@@ -659,9 +659,11 @@ async def query_vectors(
                 fts_results_cte.c.embedding_id is not None,
             )
         )
+        final_query = final_query.where(doc_filter)  # Explicitly apply doc_filter
         final_query = final_query.order_by(rrf_score.desc())
     else:
         final_query = final_query.where(vector_results_cte.c.embedding_id is not None)
+        final_query = final_query.where(doc_filter)  # Explicitly apply doc_filter
         final_query = final_query.order_by(vector_results_cte.c.distance.asc())
     final_query = final_query.limit(limit)
     final_query = final_query.with_only_columns(*final_select_cols)
