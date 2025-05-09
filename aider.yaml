@@ -26,4 +26,4 @@ commit-prompt: |-
 
     Reply only with the commit message, without any additional text, explanations, or line breaks.
 lint-cmd:
-  - python: uvx ruff check --ignore=E501 --fix
+  python: uvx ruff check --ignore=E501 --fix
