@@ -208,11 +208,7 @@ async def handle_llm_callback(
         if final_llm_content_to_send:
             # Send the LLM's response back to the chat
             # Determine target chat_id based on interface type
-            target_chat_id: int | str
-            if interface_type == "telegram":
-                int(conversation_id)  # Convert Telegram ID back to int
-            else:
-                pass  # Keep as string for other interfaces
+            # The conversation_id is used directly below.
 
             formatted_response = format_llm_response_for_telegram(
                 final_llm_content_to_send
