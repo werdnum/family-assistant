@@ -230,6 +230,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         server_url=None,
+        context_providers=[], # Added context_providers
     )
 
     # --- Execute the Request ---
@@ -420,6 +421,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         server_url=None,
+        context_providers=[], # Added context_providers
     )
 
     # --- Execute the Request ---
