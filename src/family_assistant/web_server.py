@@ -1,14 +1,16 @@
+import asyncio
+import contextlib
 import json
 import logging
 import os
-import pathlib  # Import pathlib for finding template/static dirs
+import pathlib
 import re
-import uuid  # Added import
-import zoneinfo  # Added zoneinfo for timezone handling
-from datetime import date, datetime, timezone  # Added date
-from typing import Any  # Added Any
+import uuid
+import zoneinfo
+from datetime import date, datetime, timezone
+from typing import Any
 
-import aiofiles  # For reading docs
+import aiofiles
 import telegram.error  # Import telegram errors for specific checking in health check
 from authlib.integrations.starlette_client import OAuth  # For OIDC
 from fastapi import (
@@ -416,7 +418,7 @@ if AUTH_ENABLED and oauth:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Authentication failed: {e}",
-            )
+            ) from e
 
     @app.route("/logout")
     async def logout(request: Request):
@@ -431,7 +433,7 @@ if AUTH_ENABLED and oauth:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request, db_context: DatabaseContext = Depends(get_db)):
+async def read_root(request: Request, db_context: DatabaseContext = Depends(get_db)):  # noqa: B008
     """Serves the main page listing all notes."""
     notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
@@ -465,7 +467,7 @@ async def add_note_form(request: Request):
 
 @app.get("/notes/edit/{title}", response_class=HTMLResponse)
 async def edit_note_form(
-    request: Request, title: str, db_context: DatabaseContext = Depends(get_db)
+    request: Request, title: str, db_context: DatabaseContext = Depends(get_db)  # noqa: B008
 ):
     """Serves the form to edit an existing note."""
     note = await get_note_by_title(db_context, title)
@@ -489,7 +491,7 @@ async def save_note(
     title: str = Form(...),
     content: str = Form(...),
     original_title: str | None = Form(None),
-    db_context: DatabaseContext = Depends(get_db),  # Add dependency
+    db_context: DatabaseContext = Depends(get_db),  # Add dependency # noqa: B008
 ):
     """Handles saving a new or updated note."""
     try:
@@ -509,12 +511,12 @@ async def save_note(
     except Exception as e:
         logger.error(f"Error saving note '{title}': {e}", exc_info=True)
         # You might want to return an error page instead
-        raise HTTPException(status_code=500, detail=f"Failed to save note: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save note: {e}") from e
 
 
 @app.post("/notes/delete/{title}")
 async def delete_note_post(
-    request: Request, title: str, db_context: DatabaseContext = Depends(get_db)
+    request: Request, title: str, db_context: DatabaseContext = Depends(get_db)  # noqa: B008
 ):
     """Handles deleting a note."""
     deleted = await delete_note(db_context, title)
@@ -525,7 +527,7 @@ async def delete_note_post(
 
 @app.post("/webhook/mail")
 async def handle_mail_webhook(
-    request: Request, db_context: DatabaseContext = Depends(get_db)
+    request: Request, db_context: DatabaseContext = Depends(get_db)  # noqa: B008
 ):
     """
     Receives incoming email via webhook (expects multipart/form-data).
@@ -571,17 +573,17 @@ async def handle_mail_webhook(
     except Exception as e:
         logger.error(f"Error processing mail webhook: {e}", exc_info=True)
         # Return 500, Mailgun might retry
-        raise HTTPException(status_code=500, detail="Failed to process incoming email")
+        raise HTTPException(status_code=500, detail="Failed to process incoming email") from e
 
 
 @app.get("/history", response_class=HTMLResponse)
 async def view_message_history(
     request: Request,
-    db_context: DatabaseContext = Depends(get_db),
-    page: int = Query(1, ge=1, description="Page number for message history"),
+    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
+    page: int = Query(1, ge=1, description="Page number for message history"),  # noqa: B008
     per_page: int = Query(
         10, ge=1, le=100, description="Number of conversations per page"
-    ),
+    ),  # noqa: B008
 ):
     """Serves the page displaying message history."""
     try:
@@ -707,11 +709,9 @@ async def view_message_history(
                 if (
                     final_assistant_msg_for_turn is initiating_user_msg_for_turn
                     and final_assistant_msg_for_turn is not None
-                ):
-                    if (
-                        final_assistant_msg_for_turn["role"] == "user"
-                    ):  # If it's a user message, it can't be the "final assistant response"
-                        final_assistant_msg_for_turn = None
+                    and final_assistant_msg_for_turn["role"] == "user"
+                ): # If it's a user message, it can't be the "final assistant response"
+                    final_assistant_msg_for_turn = None
 
                 conversation_turns.append(
                     {
@@ -763,7 +763,7 @@ async def view_message_history(
         )
     except Exception as e:
         logger.error(f"Error fetching message history: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to fetch message history")
+        raise HTTPException(status_code=500, detail="Failed to fetch message history") from e
 
 
 @app.get("/tools", response_class=HTMLResponse)
@@ -806,11 +806,11 @@ async def view_tools(request: Request):
         )
     except Exception as e:
         logger.error(f"Error fetching tool definitions: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to fetch tool definitions")
+        raise HTTPException(status_code=500, detail="Failed to fetch tool definitions") from e
 
 
 @app.get("/tasks", response_class=HTMLResponse)
-async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get_db)):
+async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get_db)):  # noqa: B008
     """Serves the page displaying scheduled tasks."""
     try:
         tasks = await get_all_tasks(db_context, limit=200)  # Pass context, fetch tasks
@@ -828,7 +828,7 @@ async def view_tasks(request: Request, db_context: DatabaseContext = Depends(get
         )
     except Exception as e:
         logger.error(f"Error fetching tasks: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to fetch tasks")
+        raise HTTPException(status_code=500, detail="Failed to fetch tasks") from e
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)
@@ -901,7 +901,7 @@ async def health_check(request: Request):
 
 @app.get("/vector-search", response_class=HTMLResponse)
 async def vector_search_form(
-    request: Request, db_context: DatabaseContext = Depends(get_db)
+    request: Request, db_context: DatabaseContext = Depends(get_db)  # noqa: B008
 ):
     """Serves the vector search form."""
     distinct_models = []
@@ -973,26 +973,26 @@ async def vector_search_form(
 async def handle_vector_search(
     request: Request,
     # --- Form Inputs ---
-    semantic_query: str | None = Form(None),
-    keywords: str | None = Form(None),
-    search_type: str = Form("hybrid"),  # 'semantic', 'keyword', 'hybrid'
-    embedding_model: str | None = Form(None),  # CRUCIAL for vector search
-    embedding_types: list[str] = Form([]),  # Allow multiple types
-    source_types: list[str] = Form([]),  # Allow multiple source types
-    created_after: str | None = Form(None),  # Expect YYYY-MM-DD
-    created_before: str | None = Form(None),  # Expect YYYY-MM-DD
-    title_like: str | None = Form(None),
+    semantic_query: str | None = Form(None),  # noqa: B008
+    keywords: str | None = Form(None),  # noqa: B008
+    search_type: str = Form("hybrid"),  # 'semantic', 'keyword', 'hybrid' # noqa: B008
+    embedding_model: str | None = Form(None),  # CRUCIAL for vector search # noqa: B008
+    embedding_types: list[str] = Form(default_factory=list),  # Allow multiple types # noqa: B008
+    source_types: list[str] = Form(default_factory=list),  # Allow multiple source types # noqa: B008
+    created_after: str | None = Form(None),  # Expect YYYY-MM-DD # noqa: B008
+    created_before: str | None = Form(None),  # Expect YYYY-MM-DD # noqa: B008
+    title_like: str | None = Form(None),  # noqa: B008
     # --- Metadata Filters (expect lists) ---
-    metadata_keys: list[str] = Form([]),
-    metadata_values: list[str] = Form([]),
+    metadata_keys: list[str] = Form(default_factory=list), # noqa: B008
+    metadata_values: list[str] = Form(default_factory=list), # noqa: B008
     # --- Control Params ---
-    limit: int = Form(10),
-    rrf_k: int = Form(60),
+    limit: int = Form(10),  # noqa: B008
+    rrf_k: int = Form(60),  # noqa: B008
     # --- Dependencies ---
-    db_context: DatabaseContext = Depends(get_db),
+    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
     embedding_generator: EmbeddingGenerator = Depends(
-        get_embedding_generator_dependency
-    ),
+        get_embedding_generator_dependency  # noqa: B008
+    ),  # noqa: B008
 ):
     """Handles the vector search form submission."""
     results = None
@@ -1038,8 +1038,7 @@ async def handle_vector_search(
                     tzinfo=timezone.utc
                 )
             except ValueError:
-                raise ValueError("Invalid 'Created After' date format. Use YYYY-MM-DD.")
-
+                raise ValueError("Invalid 'Created After' date format. Use YYYY-MM-DD.") from None
         created_before_dt: datetime | None = None
         if created_before:
             try:
@@ -1050,9 +1049,7 @@ async def handle_vector_search(
                     created_before, "%Y-%m-%d"
                 ).replace(tzinfo=timezone.utc)
             except ValueError:
-                raise ValueError(
-                    "Invalid 'Created Before' date format. Use YYYY-MM-DD."
-                )
+                raise ValueError("Invalid 'Created Before' date format. Use YYYY-MM-DD.") from None
 
         # --- Build List of Metadata Filters ---
         metadata_filters_list: list[MetadataFilter] = []
@@ -1187,10 +1184,6 @@ async def handle_vector_search(
     )
 
 
-# Need asyncio for gather
-import asyncio
-
-
 # --- Tool Execution API ---
 class ToolExecutionRequest(BaseModel):
     arguments: dict[str, Any]
@@ -1201,8 +1194,8 @@ async def execute_tool_api(
     tool_name: str,
     request: Request,  # Keep request for potential context later
     payload: ToolExecutionRequest,
-    tools_provider: ToolsProvider = Depends(get_tools_provider_dependency),
-    db_context: DatabaseContext = Depends(get_db),  # Inject DB context if tools need it
+    tools_provider: ToolsProvider = Depends(get_tools_provider_dependency),  # noqa: B008
+    db_context: DatabaseContext = Depends(get_db),  # Inject DB context if tools need it # noqa: B008
     # embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator_dependency), # Inject if tools need it
 ):
     """Executes a specified tool with the given arguments."""
@@ -1247,23 +1240,21 @@ async def execute_tool_api(
         # Attempt to parse result if it's a JSON string
         final_result = result
         if isinstance(result, str):
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 final_result = json.loads(result)
-            except json.JSONDecodeError:
-                pass  # Not a JSON string, keep original result
         return JSONResponse(
             content={"success": True, "result": final_result}, status_code=200
         )
     except ToolNotFoundError:
         logger.warning(f"Tool '{tool_name}' not found for execution request.")
-        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found.")
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found.") from None
     except (
         ValidationError
     ) as ve:  # Catch Pydantic validation errors if execute_tool raises them
         logger.warning(f"Argument validation error for tool '{tool_name}': {ve}")
         raise HTTPException(
             status_code=400, detail=f"Invalid arguments for tool '{tool_name}': {ve}"
-        )
+        ) from ve
     except (
         TypeError
     ) as te:  # Catch potential argument mismatches within the tool function
@@ -1273,14 +1264,14 @@ async def execute_tool_api(
         raise HTTPException(
             status_code=400,
             detail=f"Argument mismatch or type error in tool '{tool_name}': {te}",
-        )
+        ) from te
     except Exception as e:
         logger.error(f"Error executing tool '{tool_name}': {e}", exc_info=True)
         # Avoid leaking internal error details unless intended
         raise HTTPException(
             status_code=500,
             detail=f"An error occurred while executing tool '{tool_name}'.",
-        )
+        ) from e
 
 
 # --- API Routes ---
@@ -1327,7 +1318,7 @@ async def upload_document(
         description="JSON string representing a dictionary of additional metadata.",
     ),
     # Dependencies
-    db_context: DatabaseContext = Depends(get_db),
+    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
 ):
     """
     API endpoint to upload document metadata and content parts for indexing.
@@ -1375,30 +1366,25 @@ async def upload_document(
                         created_date, datetime.min.time(), tzinfo=timezone.utc
                     )
                 except ValueError:
-                    raise ValueError(
-                        "Invalid 'created_at' format. Use ISO 8601 datetime (YYYY-MM-DDTHH:MM:SSZ) or date (YYYY-MM-DD)."
-                    )
+                    raise ValueError("Invalid 'created_at' format. Use ISO 8601 datetime (YYYY-MM-DDTHH:MM:SSZ) or date (YYYY-MM-DD).") from None
 
     except json.JSONDecodeError as json_err:
         logger.error(f"JSON parsing error for document upload {source_id}: {json_err}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid JSON format: {json_err}",
-        )
+        ) from json_err
     except ValueError as val_err:
         logger.error(f"Validation error for document upload {source_id}: {val_err}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err)
-        )
+        ) from val_err
     except Exception as e:
-        logger.error(
-            f"Unexpected parsing error for document upload {source_id}: {e}",
-            exc_info=True,
-        )
+        logger.error(f"Unexpected parsing error for document upload {source_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing request data.",
-        )
+        ) from e
 
     # --- 2. Create Document Record in DB ---
     # Create a dictionary conforming to the Document protocol structure
@@ -1471,11 +1457,11 @@ async def upload_document(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Document with source_type '{source_type}' and source_id '{source_id}' already exists.",
-            )
+            ) from db_err
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database error storing document.",
-        )
+        ) from db_err
 
     # --- 3. Enqueue Background Task for Embedding ---
     task_payload = {
@@ -1582,7 +1568,7 @@ async def serve_documentation(request: Request, filename: str):
         logger.error(
             f"Error serving documentation file '{filename}': {e}", exc_info=True
         )
-        raise HTTPException(status_code=500, detail="Error rendering documentation.")
+        raise HTTPException(status_code=500, detail="Error rendering documentation.") from e
 
 
 # --- Uvicorn Runner (for standalone testing) ---
