@@ -82,9 +82,6 @@ async def wait_for_tasks_to_complete(
                         tasks_table.c.task_id,
                         tasks_table.c.last_error  # Assuming this column exists
                     ).where(tasks_table.c.status == "failed")
-
-                        tasks_table.c.status == "failed"
-                    )
                     if task_ids:
                         failed_task_details_query = failed_task_details_query.where(
                             tasks_table.c.task_id.in_(task_ids)
