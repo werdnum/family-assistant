@@ -120,6 +120,13 @@ from family_assistant.indexing.email_indexer import (
 from family_assistant.indexing.document_indexer import (
     DocumentIndexer,
 )  # Import the class
+# Import pipeline and processors for indexing
+from family_assistant.indexing.pipeline import IndexingPipeline
+from family_assistant.indexing.processors import (
+    TitleExtractor,
+    TextChunker,
+    EmbeddingDispatchProcessor,
+)
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -664,11 +671,37 @@ async def main_async(
     logger.info(f"ProcessingService initialized with configuration.")
 
     # --- Instantiate Indexers ---
-    document_indexer = DocumentIndexer(embedding_generator=embedding_generator)
-    set_indexing_dependencies(
-        embedding_generator=embedding_generator, llm_client=llm_client
-    )
+    # Basic pipeline configuration
+    # These would ideally come from a config file or be more dynamically configured
+    text_chunker_config = {
+        "chunk_size": 1000,
+        "chunk_overlap": 100,
+        "embedding_type_prefix_map": {
+            "raw_body_text": "content_chunk", # For emails
+            "raw_file_text": "content_chunk", # For general files
+        },
+    }
+    embedding_dispatcher_config = {
+        "embedding_types_to_dispatch": ["title", "summary", "content_chunk"],
+    }
 
+    indexing_processors = [
+        TitleExtractor(),
+        TextChunker(config=text_chunker_config),
+        EmbeddingDispatchProcessor(config=embedding_dispatcher_config),
+    ]
+
+    master_indexing_pipeline = IndexingPipeline(
+        processors=indexing_processors,
+        # Pass global config or specific processor configs if pipeline supports it
+        config={"text_chunker": text_chunker_config, "embedding_dispatcher": embedding_dispatcher_config}
+    )
+    logger.info(f"Master IndexingPipeline initialized with {len(indexing_processors)} processors.")
+
+    document_indexer = DocumentIndexer(pipeline=master_indexing_pipeline)
+    set_indexing_dependencies(
+        pipeline=master_indexing_pipeline,
+    )
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
         telegram_token=config["telegram_token"],
