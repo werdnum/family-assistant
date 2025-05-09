@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_embed_and_store_batch(
-    exec_context: "ToolExecutionContext",
+    db_context: "ToolExecutionContext",  # Changed parameter name to match hypothesized caller
     payload: dict[str, Any]
 ) -> None:
     """
@@ -30,8 +30,9 @@ async def handle_embed_and_store_batch(
         - content_hash (Optional[str]): Hash of the content, if available.
 
     Args:
-        exec_context: The ToolExecutionContext object, providing access to the
-                      DatabaseContext and EmbeddingGenerator.
+        db_context: The ToolExecutionContext object. This parameter name matches
+                    the keyword argument likely used by the calling TaskWorker,
+                    and this object provides access to the actual DatabaseContext and EmbeddingGenerator.
         payload: The task payload containing data for embedding.
 
     Raises:
@@ -40,22 +41,27 @@ async def handle_embed_and_store_batch(
         SQLAlchemyError: If database operations fail.
         Exception: If embedding generation fails.
     """
-    actual_db_context = exec_context.db_context
-    embedding_generator = exec_context.embedding_generator
+    # The 'db_context' parameter is the ToolExecutionContext instance.
+    tool_exec_context = db_context # Use a new variable for clarity
+
+    # Extract the actual DatabaseContext and EmbeddingGenerator from the ToolExecutionContext.
+    actual_database_context = tool_exec_context.db_context
+    embedding_generator_instance = tool_exec_context.embedding_generator
 
     # The rest of the function uses the variable name 'db_context' for the DatabaseContext.
-    db_context = actual_db_context # This renames actual_db_context to db_context for the rest of the function
+    # To avoid confusion with the parameter name and for clarity in the function body:
+    db_context_for_body = actual_database_context
 
-    if not db_context:  # This check now refers to the actual_db_context
+    if not db_context_for_body:
         logger.error(
             "DatabaseContext not found in ToolExecutionContext for handle_embed_and_store_batch."
         )
         raise ValueError("Missing DatabaseContext in execution context.")
-    if not embedding_generator:
+    if not embedding_generator_instance:
         logger.error(
             "EmbeddingGenerator not found in ToolExecutionContext for handle_embed_and_store_batch."
         )
-        raise ValueError("Missing EmbeddingGenerator in execution context.")
+        raise ValueError("Missing EmbeddingGenerator in ToolExecutionContext.")
 
     try:
         document_id: int = payload["document_id"]
@@ -83,14 +89,14 @@ async def handle_embed_and_store_batch(
     logger.info(
         f"Generating {len(texts_to_embed)} embeddings for document_id {document_id}."
     )
-    embedding_result = await embedding_generator.generate_embeddings(texts_to_embed)
+    embedding_result = await embedding_generator_instance.generate_embeddings(texts_to_embed)
 
     for i, text_content in enumerate(texts_to_embed):
         meta = embedding_metadata_list[i]
         vector = embedding_result.embeddings[i]
 
         await add_embedding(
-            db_context=db_context,
+            db_context=db_context_for_body, # Use the extracted DatabaseContext
             document_id=document_id,
             chunk_index=meta["chunk_index"],
             embedding_type=meta["embedding_type"],
