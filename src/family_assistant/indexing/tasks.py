@@ -1,12 +1,12 @@
 """
 Task handlers related to the document indexing pipeline.
 """
+
 import logging
 from typing import Any, Dict, List
 
-from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import add_embedding
-from family_assistant.tools.types import ToolExecutionContext # Added import
+from family_assistant.tools.types import ToolExecutionContext  # Added import
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +51,16 @@ async def handle_embed_and_store_batch(
     # The rest of the function uses the variable name 'db_context' for the DatabaseContext.
     db_context = actual_db_context
 
-    if not db_context: # This check now refers to the actual_db_context
-        logger.error("DatabaseContext not found in ToolExecutionContext for handle_embed_and_store_batch.")
+    if not db_context:  # This check now refers to the actual_db_context
+        logger.error(
+            "DatabaseContext not found in ToolExecutionContext for handle_embed_and_store_batch."
+        )
         raise ValueError("Missing DatabaseContext in execution context.")
     if not embedding_generator:
-        logger.error("EmbeddingGenerator not found in ToolExecutionContext for handle_embed_and_store_batch.")
+        logger.error(
+            "EmbeddingGenerator not found in ToolExecutionContext for handle_embed_and_store_batch."
+        )
         raise ValueError("Missing EmbeddingGenerator in execution context.")
-
 
     try:
         document_id: int = payload["document_id"]
@@ -80,9 +83,7 @@ async def handle_embed_and_store_batch(
             f"Mismatch in lengths for 'texts_to_embed' ({len(texts_to_embed)}) and "
             f"'embedding_metadata_list' ({len(embedding_metadata_list)}) for document_id {document_id}."
         )
-        raise ValueError(
-            "Texts to embed and metadata list must have the same length."
-        )
+        raise ValueError("Texts to embed and metadata list must have the same length.")
 
     logger.info(
         f"Generating {len(texts_to_embed)} embeddings for document_id {document_id}."

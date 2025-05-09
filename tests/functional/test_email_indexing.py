@@ -6,7 +6,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-import re # Add re import
+import re  # Add re import
 from typing import Dict, Any, Tuple, Optional  # Add missing typing imports
 from unittest.mock import MagicMock  # Add this import
 
@@ -14,23 +14,31 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 
-from family_assistant import storage # Keep this import
-from family_assistant.task_worker import TaskWorker, shutdown_event, new_task_event
-from family_assistant.indexing.tasks import handle_embed_and_store_batch # Corrected import
+from family_assistant.task_worker import TaskWorker
+from family_assistant.indexing.tasks import (
+    handle_embed_and_store_batch,
+)  # Corrected import
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
 from family_assistant.indexing.processors.text_processors import TextChunker
-from family_assistant.indexing.processors.dispatch_processors import EmbeddingDispatchProcessor
+from family_assistant.indexing.processors.dispatch_processors import (
+    EmbeddingDispatchProcessor,
+)
 from family_assistant.indexing.email_indexer import (
     handle_index_email,
     set_indexing_dependencies,
 )
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table, store_incoming_email
-from family_assistant.storage.tasks import tasks_table # Keep if used for direct inspection, though wait_for_tasks_to_complete is preferred
-from family_assistant.storage.vector import query_vectors, DocumentRecord, DocumentEmbeddingRecord # Added imports
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.storage.tasks import (
+    tasks_table,
+)  # Keep if used for direct inspection, though wait_for_tasks_to_complete is preferred
+from family_assistant.storage.vector import (
+    query_vectors,
+    DocumentRecord,
+    DocumentEmbeddingRecord,
+)  # Added imports
 
 # Import components needed for the E2E test
 
@@ -97,7 +105,9 @@ async def dump_tables_on_failure(engine):
             if all_docs:
                 for doc in all_docs:
                     # Access columns directly if it's a RowMapping, or adapt if it returns ORM objects
-                    logger.info(f"  Document: {dict(doc)}") # Assuming RowMapping for simplicity
+                    logger.info(
+                        f"  Document: {dict(doc)}"
+                    )  # Assuming RowMapping for simplicity
             else:
                 logger.info("  (empty)")
 
@@ -109,8 +119,13 @@ async def dump_tables_on_failure(engine):
                 for embed in all_embeds:
                     # Log relevant fields, potentially truncating the vector
                     embed_dict = dict(embed)
-                    if 'embedding' in embed_dict and embed_dict['embedding'] is not None:
-                         embed_dict['embedding'] = f"Vector[{len(embed_dict['embedding'])}]" # Avoid logging huge vectors
+                    if (
+                        "embedding" in embed_dict
+                        and embed_dict["embedding"] is not None
+                    ):
+                        embed_dict["embedding"] = (
+                            f"Vector[{len(embed_dict['embedding'])}]"  # Avoid logging huge vectors
+                        )
                     logger.info(f"  Embedding: {embed_dict}")
             else:
                 logger.info("  (empty)")
@@ -118,6 +133,7 @@ async def dump_tables_on_failure(engine):
         except Exception as dump_exc:
             logger.error(f"Failed to dump tables on failure: {dump_exc}", exc_info=True)
     logger.info("--- End table dump ---")
+
 
 # --- Helper Function for Test Setup ---
 
@@ -173,7 +189,8 @@ async def _ingest_and_index_email(
         f"Helper: Waiting for all pending tasks to complete after ingesting email DB ID {email_db_id} (initial task: {indexing_task_id})..."
     )
     await wait_for_tasks_to_complete(
-        engine, timeout_seconds=task_timeout # task_ids=None (default) ensures all tasks
+        engine,
+        timeout_seconds=task_timeout,  # task_ids=None (default) ensures all tasks
     )
     logger.info(
         f"Helper: All pending tasks reported as complete for email DB ID {email_db_id}."
@@ -223,7 +240,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     embedding_map = {
         normalized_subject: title_embedding,
         normalized_body: body_embedding,
-        TEST_QUERY_TEXT: query_embedding, # Query text is not processed by TextChunker
+        TEST_QUERY_TEXT: query_embedding,  # Query text is not processed by TextChunker
     }
     mock_embedder = MockEmbeddingGenerator(
         embedding_map=embedding_map,
@@ -234,20 +251,25 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     # --- Arrange: Create Indexing Pipeline ---
     # For testing, we need a basic pipeline that extracts title, chunks text, and dispatches for embedding.
     title_extractor = TitleExtractor()
-    text_chunker = TextChunker(chunk_size=500, chunk_overlap=50) # Example chunker config
+    text_chunker = TextChunker(
+        chunk_size=500, chunk_overlap=50
+    )  # Example chunker config
     # Configure EmbeddingDispatchProcessor to dispatch common types
     embedding_dispatcher = EmbeddingDispatchProcessor(
-        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"], # Adjusted to match TextChunker's output
+        embedding_types_to_dispatch=[
+            "title_chunk",
+            "raw_body_text_chunk",
+        ],  # Adjusted to match TextChunker's output
     )
 
     test_pipeline = IndexingPipeline(
         processors=[title_extractor, text_chunker, embedding_dispatcher],
-        config={} # No specific pipeline config for this test
+        config={},  # No specific pipeline config for this test
     )
 
     # --- Arrange: Set Indexing Dependencies ---
     set_indexing_dependencies(pipeline=test_pipeline)
-    logger.info(f"Set IndexingPipeline for email indexing.")
+    logger.info("Set IndexingPipeline for email indexing.")
 
     # --- Arrange: Register Task Handler ---
     # Create a TaskWorker instance for this test and register the handler
@@ -265,10 +287,10 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     # We can achieve this by ensuring the `application.state.embedding_generator` is set,
     # as `TaskWorker`'s `_create_tool_execution_context` uses it.
     mock_application.state.embedding_generator = mock_embedder
-    mock_application.state.llm_client = None # Or a mock LLM if any processor uses it
+    mock_application.state.llm_client = None  # Or a mock LLM if any processor uses it
 
-    dummy_calendar_config = {} # Not used by email/embedding tasks
-    dummy_timezone_str = "UTC" # Not used by email/embedding tasks
+    dummy_calendar_config = {}  # Not used by email/embedding tasks
+    dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application,
@@ -284,8 +306,6 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     worker_id = f"test-worker-{uuid.uuid4()}"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()  # Worker will wait on this
-    original_shutdown_event = shutdown_event
-    original_new_task_event = new_task_event
     # No need to reassign module-level events since we'll use our own worker instance
 
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
@@ -333,17 +353,24 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
             logger.info(f"Found matching result: {found_result}")
 
             # Check distance (should be small since query embedding was close to body)
-            assert "distance" in found_result, f"Result missing 'distance' field: {found_result}"
+            assert (
+                "distance" in found_result
+            ), f"Result missing 'distance' field: {found_result}"
             assert (
                 found_result["distance"] < 0.1
             ), f"Distance should be small, but was {found_result['distance']}"
 
             # Check other fields in the result
-            assert found_result.get("embedding_type") in ["raw_body_text_chunk", "title_chunk"]
+            assert found_result.get("embedding_type") in [
+                "raw_body_text_chunk",
+                "title_chunk",
+            ]
             if found_result.get("embedding_type") == "raw_body_text_chunk":
                 assert found_result.get("embedding_source_content") == TEST_EMAIL_BODY
             else:
-                assert found_result.get("embedding_source_content") == TEST_EMAIL_SUBJECT
+                assert (
+                    found_result.get("embedding_source_content") == TEST_EMAIL_SUBJECT
+                )
 
             assert found_result.get("title") == TEST_EMAIL_SUBJECT
             assert found_result.get("source_type") == "email"
@@ -353,7 +380,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
         except Exception as e:
             test_failed = True
             logger.error(f"Test failed: {e}", exc_info=True)
-            raise # Re-raise the exception after logging
+            raise  # Re-raise the exception after logging
     finally:
         # Stop the worker
         logger.info(f"Stopping background task worker {worker_id}...")
@@ -426,22 +453,23 @@ async def test_vector_ranking(pg_vector_db_engine):
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor = TitleExtractor()
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
-    embedding_dispatcher_kw = EmbeddingDispatchProcessor(  # Renamed for clarity if needed, or reuse
-        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],) # Adjusted
-    test_pipeline_kw = IndexingPipeline( # Renamed for clarity
-        processors=[title_extractor, text_chunker, embedding_dispatcher_kw],
-        config={}
+    embedding_dispatcher_kw = (
+        EmbeddingDispatchProcessor(  # Renamed for clarity if needed, or reuse
+            embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],
+        )
+    )  # Adjusted
+    test_pipeline_kw = IndexingPipeline(  # Renamed for clarity
+        processors=[title_extractor, text_chunker, embedding_dispatcher_kw], config={}
     )
     set_indexing_dependencies(pipeline=test_pipeline_kw)
 
     # Mock application for TaskWorker
-    mock_application_kw = MagicMock() # Define mock_application_kw
+    mock_application_kw = MagicMock()  # Define mock_application_kw
     mock_application_kw.state.embedding_generator = mock_embedder
     mock_application_kw.state.llm_client = None
 
-    dummy_calendar_config_kw = {} # Define dummy_calendar_config_kw
-    dummy_timezone_str_kw = "UTC" # Define dummy_timezone_str_kw
-
+    dummy_calendar_config_kw = {}  # Define dummy_calendar_config_kw
+    dummy_timezone_str_kw = "UTC"  # Define dummy_timezone_str_kw
 
     # --- Arrange: Ingest Emails ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
@@ -477,7 +505,6 @@ async def test_vector_ranking(pg_vector_db_engine):
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     await asyncio.sleep(0.1)
 
-    all_task_ids = set()
     test_failed = False
     try:
         _, task_id1 = await _ingest_and_index_email(
@@ -600,10 +627,11 @@ async def test_metadata_filtering(pg_vector_db_engine):
     title_extractor_meta = TitleExtractor()
     text_chunker_meta = TextChunker(chunk_size=500, chunk_overlap=50)
     embedding_dispatcher_meta = EmbeddingDispatchProcessor(
-        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],) # Adjusted
+        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],
+    )  # Adjusted
     test_pipeline_meta = IndexingPipeline(
         processors=[title_extractor_meta, text_chunker_meta, embedding_dispatcher_meta],
-        config={}
+        config={},
     )
     set_indexing_dependencies(pipeline=test_pipeline_meta)
 
@@ -611,7 +639,6 @@ async def test_metadata_filtering(pg_vector_db_engine):
     mock_application_meta = MagicMock()
     mock_application_meta.state.embedding_generator = mock_embedder
     mock_application_meta.state.llm_client = None
-
 
     # --- Arrange: Ingest Emails with different source_type ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
@@ -630,7 +657,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
 
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
-    dummy_calendar_config_meta = {} # Define dummy_calendar_config_meta
+    dummy_calendar_config_meta = {}  # Define dummy_calendar_config_meta
     dummy_timezone_str_meta = "UTC"
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
@@ -648,7 +675,6 @@ async def test_metadata_filtering(pg_vector_db_engine):
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     await asyncio.sleep(0.1)
 
-    all_task_ids = set()
     test_failed = False
     try:
         _, task_id1 = await _ingest_and_index_email(
@@ -735,7 +761,7 @@ async def test_keyword_filtering(pg_vector_db_engine):
     query_vec = base_vec.tolist()
 
     keyword = "banana"
-    email1_body = f"This document talks about apples and oranges."
+    email1_body = "This document talks about apples and oranges."
     email2_body = f"This document is all about the yellow {keyword} fruit."
     email1_msg_id = f"<keyword_no_{uuid.uuid4()}@example.com>"
     email2_msg_id = f"<keyword_yes_{uuid.uuid4()}@example.com>"
@@ -763,22 +789,23 @@ async def test_keyword_filtering(pg_vector_db_engine):
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor = TitleExtractor()
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
-    embedding_dispatcher_kw = EmbeddingDispatchProcessor(  # Renamed for clarity if needed, or reuse
-        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],) # Adjusted
-    test_pipeline_kw = IndexingPipeline( # Renamed for clarity
-        processors=[title_extractor, text_chunker, embedding_dispatcher_kw],
-        config={}
+    embedding_dispatcher_kw = (
+        EmbeddingDispatchProcessor(  # Renamed for clarity if needed, or reuse
+            embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],
+        )
+    )  # Adjusted
+    test_pipeline_kw = IndexingPipeline(  # Renamed for clarity
+        processors=[title_extractor, text_chunker, embedding_dispatcher_kw], config={}
     )
     set_indexing_dependencies(pipeline=test_pipeline_kw)
 
     # Mock application for TaskWorker
-    mock_application_kw = MagicMock() # Define mock_application_kw
+    mock_application_kw = MagicMock()  # Define mock_application_kw
     mock_application_kw.state.embedding_generator = mock_embedder
     mock_application_kw.state.llm_client = None
 
-    dummy_calendar_config_kw = {} # Define dummy_calendar_config_kw
-    dummy_timezone_str_kw = "UTC" # Define dummy_timezone_str_kw
-
+    dummy_calendar_config_kw = {}  # Define dummy_calendar_config_kw
+    dummy_timezone_str_kw = "UTC"  # Define dummy_timezone_str_kw
 
     # --- Arrange: Ingest Emails ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
@@ -797,7 +824,7 @@ async def test_keyword_filtering(pg_vector_db_engine):
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application_kw,
-        calendar_config=dummy_calendar_config_kw, # Now defined
+        calendar_config=dummy_calendar_config_kw,  # Now defined
         timezone_str=dummy_timezone_str_kw,
     )
     worker.register_task_handler("index_email", handle_index_email)
@@ -810,7 +837,6 @@ async def test_keyword_filtering(pg_vector_db_engine):
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     await asyncio.sleep(0.1)
 
-    all_task_ids = set()
     test_failed = False
     try:
         _, task_id1 = await _ingest_and_index_email(

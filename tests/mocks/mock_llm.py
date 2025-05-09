@@ -2,9 +2,7 @@
 Mock LLM implementations for testing purposes.
 """
 
-import json
 import logging
-import uuid
 from typing import List, Dict, Any, Optional, Callable, Tuple
 
 # Assuming LLMInterface and LLMOutput are accessible, adjust import if needed
@@ -79,7 +77,9 @@ class RuleBasedMockLLMClient(LLMInterface):
             logger.debug("RuleBasedMockLLMClient using provided default response.")
         # Add call recording
         self._calls: List[Dict[str, Any]] = []
-        self.generate_response = self._generate_response_wrapper(self.generate_response) # Wrap for recording
+        self.generate_response = self._generate_response_wrapper(
+            self.generate_response
+        )  # Wrap for recording
         logger.info(f"RuleBasedMockLLMClient initialized with {len(rules)} rules.")
 
     async def generate_response(
@@ -93,11 +93,6 @@ class RuleBasedMockLLMClient(LLMInterface):
         """
         # Original logic starts here, this method will be wrapped
         # Record the call *before* executing logic
-        call_data = {
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": tool_choice,
-        }
         # We'll record the call in the wrapper instead
         # self._calls.append(call_data)
         # logger.debug(f"Recorded call {self.call_count()}. Args: {call_data}")
@@ -106,7 +101,7 @@ class RuleBasedMockLLMClient(LLMInterface):
         for i, (matcher, response) in enumerate(self.rules):
             try:
                 if matcher(messages, tools, tool_choice):
-                    logger.info(f"Rule {i+1} matched. Returning predefined response.")
+                    logger.info(f"Rule {i + 1} matched. Returning predefined response.")
                     # Maybe add logging of the response content/tools here if needed
                     logger.debug(
                         f" -> Response Content: {bool(response.content)}, Tool Calls: {len(response.tool_calls) if response.tool_calls else 0}"
@@ -114,7 +109,7 @@ class RuleBasedMockLLMClient(LLMInterface):
                     return response
             except Exception as e:
                 logger.error(
-                    f"Error executing matcher for rule {i+1}: {e}", exc_info=True
+                    f"Error executing matcher for rule {i + 1}: {e}", exc_info=True
                 )
                 # Decide how to handle matcher errors: skip rule, raise, etc.
                 # Skipping seems reasonable for a mock.
@@ -122,7 +117,7 @@ class RuleBasedMockLLMClient(LLMInterface):
 
         # If no rules matched
         logger.warning(
-            f"No rules matched the input. Returning default response. Input: %r",
+            "No rules matched the input. Returning default response. Input: %r",
             messages,
         )
         return self.default_response
@@ -142,8 +137,11 @@ class RuleBasedMockLLMClient(LLMInterface):
                 "tool_choice": tool_choice,
             }
             self._calls.append(call_data)
-            logger.debug(f"Recorded call {len(self._calls)}. Args keys: {call_data.keys()}")
+            logger.debug(
+                f"Recorded call {len(self._calls)}. Args keys: {call_data.keys()}"
+            )
             return await original_method(*args, **kwargs)
+
         return wrapper
 
 

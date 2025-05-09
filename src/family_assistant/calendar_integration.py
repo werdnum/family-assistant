@@ -1,6 +1,5 @@
 import asyncio  # Import asyncio for run_in_executor
 import logging
-import os
 from datetime import datetime, date, timedelta, time  # Added time
 
 # Consolidated imports including Any
@@ -175,7 +174,8 @@ def parse_event(
 
 
 async def _fetch_ical_events_async(
-    ical_urls: List[str], timezone_str: str  # Added timezone string
+    ical_urls: List[str],
+    timezone_str: str,  # Added timezone string
 ) -> List[Dict[str, Any]]:
     """Asynchronously fetches and parses events from a list of iCal URLs."""
     all_events = []
@@ -585,7 +585,9 @@ async def add_calendar_event_tool(
     Adds an event to the first configured CalDAV calendar.
     Can create recurring events if an RRULE string is provided.
     """
-    logger.info(f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}")
+    logger.info(
+        f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}"
+    )
     calendar_config = exec_context.calendar_config
     caldav_config = calendar_config.get("caldav")
 
@@ -795,7 +797,7 @@ async def search_calendar_events_tool(
                         parsed = None  # Initialize parsed to None
                         try:
                             # --- Access and parse event data ---
-                            logger.debug(f"  -> Accessing and parsing event.data...")
+                            logger.debug("  -> Accessing and parsing event.data...")
                             event_data = event.data
                             # Pass timezone_str when parsing within the tool context
                             # Use the parse_event function defined within this module
@@ -886,7 +888,7 @@ async def search_calendar_events_tool(
                 details.get("start"), exec_context.timezone_str, is_end=False
             )
             response_lines.append(
-                f"{i+1}. Summary: '{details['summary']}', Start: {start_str}, UID: {details['uid']}, Calendar: {details['calendar_url']}"
+                f"{i + 1}. Summary: '{details['summary']}', Start: {start_str}, UID: {details['uid']}, Calendar: {details['calendar_url']}"
             )
         return "\n".join(response_lines)
 
@@ -946,7 +948,7 @@ async def modify_calendar_event_tool(
 
                 logger.debug(f"Fetching event with UID {uid} from {calendar_url}")
                 event = target_calendar.event_by_uid(uid)
-                logger.debug(f"Found event.")  # Removed ETag logging
+                logger.debug("Found event.")  # Removed ETag logging
 
                 # Parse existing event data
                 # readComponents yields components; we expect one top-level iCalendar component
@@ -1031,7 +1033,7 @@ async def modify_calendar_event_tool(
                     # Serialize the modified iCalendar component
                     updated_ical_data = ical_component.serialize()
                     logger.debug(
-                        f"Attempting to save modified event."
+                        "Attempting to save modified event."
                     )  # Removed ETag logging
                     # Set the updated data on the event object first
                     event.data = updated_ical_data

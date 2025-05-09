@@ -1,6 +1,5 @@
 import logging
 import json
-import asyncio
 import uuid  # Added for unique task IDs
 import traceback  # Added for error traceback
 from datetime import datetime, timezone  # Added timezone
@@ -15,14 +14,8 @@ from typing import (
     Awaitable,
 )  # Added Union, Awaitable
 
-from dateutil.parser import isoparse  # Added for parsing datetime strings
 
-import logging
-import json
-import asyncio
-import uuid
-from datetime import datetime, timedelta, timezone  # Added
-from typing import List, Dict, Any, Optional, Tuple
+from datetime import timedelta  # Added
 
 import pytz  # Added
 
@@ -39,7 +32,9 @@ from telegram.ext import Application
 from .storage.context import DatabaseContext
 
 # Import storage and calendar integration for context building
-from family_assistant import storage # calendar_integration import removed as context is handled by provider
+from family_assistant import (
+    storage,
+)  # calendar_integration import removed as context is handled by provider
 
 # --- NEW: Import ContextProvider ---
 from .context_providers import ContextProvider
@@ -63,7 +58,9 @@ class ProcessingService:
         tools_provider: ToolsProvider,
         prompts: Dict[str, str],
         calendar_config: Dict[str, Any],
-        context_providers: List[ContextProvider], # NEW: List of context providers (corrected to be single)
+        context_providers: List[
+            ContextProvider
+        ],  # NEW: List of context providers (corrected to be single)
         timezone_str: str,
         max_history_messages: int,
         server_url: Optional[str],  # Added server_url
@@ -86,7 +83,7 @@ class ProcessingService:
         self.llm_client = llm_client
         self.tools_provider = tools_provider
         self.prompts = prompts
-        self.calendar_config = calendar_config # Still needed for ToolExecutionContext
+        self.calendar_config = calendar_config  # Still needed for ToolExecutionContext
         self.context_providers = context_providers
         self.timezone_str = timezone_str
         self.max_history_messages = max_history_messages
@@ -105,7 +102,10 @@ class ProcessingService:
                 if fragments:  # Only add if provider returned something
                     all_fragments.extend(fragments)
             except Exception as e:
-                logger.error(f"Error getting context from provider '{provider.name}': {e}", exc_info=True)
+                logger.error(
+                    f"Error getting context from provider '{provider.name}': {e}",
+                    exc_info=True,
+                )
         # Join all non-empty fragments, separated by double newlines for clarity
         return "\n\n".join(filter(None, all_fragments)).strip()
 
@@ -505,9 +505,11 @@ class ProcessingService:
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: List[Dict[str, Any]],
-        trigger_interface_message_id: Optional[str], # Added trigger message ID
+        trigger_interface_message_id: Optional[str],  # Added trigger message ID
         user_name: str,
-        turn_id: Optional[str] = None,  # Made turn_id optional, moved after non-defaults
+        turn_id: Optional[
+            str
+        ] = None,  # Made turn_id optional, moved after non-defaults
         replied_to_interface_id: Optional[str] = None,  # Added for reply context
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
         request_confirmation_callback: Optional[
@@ -557,9 +559,7 @@ class ProcessingService:
                 exc_info=True,
             )
             raw_history_messages = []  # Continue with empty history on error
-        logger.debug(
-            f"Raw history messages fetched ({len(raw_history_messages)}):"
-        )
+        logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}):")
         for i, msg in enumerate(raw_history_messages):
             logger.debug(
                 f"  RawHist[{i}]: internal_id={msg.get('internal_id')}, role={msg.get('role')}, content_snippet='{str(msg.get('content'))[:50]}...', ts={msg.get('timestamp')}"
@@ -575,18 +575,22 @@ class ProcessingService:
                 f"Filtered history: {len(raw_history_messages)} -> {len(filtered_history_messages)} messages after removing trigger ID {trigger_interface_message_id}"
             )
         else:
-            filtered_history_messages = raw_history_messages # No trigger ID to filter by
-        logger.debug(
-            f"Filtered history messages ({len(filtered_history_messages)}):"
-        )
+            filtered_history_messages = (
+                raw_history_messages  # No trigger ID to filter by
+            )
+        logger.debug(f"Filtered history messages ({len(filtered_history_messages)}):")
         for i, msg in enumerate(filtered_history_messages):
             logger.debug(
                 f"  FiltHist[{i}]: internal_id={msg.get('internal_id')}, role={msg.get('role')}, content_snippet='{str(msg.get('content'))[:50]}...', ts={msg.get('timestamp')}"
             )
 
         # Format the raw history using the new helper method
-        initial_messages_for_llm = self._format_history_for_llm(filtered_history_messages)
-        logger.debug(f"Initial messages for LLM after formatting ({len(initial_messages_for_llm)}): {json.dumps(initial_messages_for_llm, default=str)}")
+        initial_messages_for_llm = self._format_history_for_llm(
+            filtered_history_messages
+        )
+        logger.debug(
+            f"Initial messages for LLM after formatting ({len(initial_messages_for_llm)}): {json.dumps(initial_messages_for_llm, default=str)}"
+        )
 
         # --- Handle Reply Thread Context ---
         thread_root_id_for_saving: Optional[int] = (
@@ -670,10 +674,16 @@ class ProcessingService:
         # --- NEW: Aggregate context from providers --- This replaces the direct fetching of calendar and notes context.
         aggregated_other_context_str = ""
         try:
-            aggregated_other_context_str = await self._aggregate_context_from_providers()
+            aggregated_other_context_str = (
+                await self._aggregate_context_from_providers()
+            )
         except Exception as agg_err:
-            logger.error(f"Failed to aggregate context from providers: {agg_err}", exc_info=True)
-            aggregated_other_context_str = "Error retrieving extended context." # Keep fallback
+            logger.error(
+                f"Failed to aggregate context from providers: {agg_err}", exc_info=True
+            )
+            aggregated_other_context_str = (
+                "Error retrieving extended context."  # Keep fallback
+            )
 
         # --- System Prompt and final message preparation happens *before* calling self.process_message ---
         # This was misplaced in the provided file structure. It should be done on the 'messages' list
@@ -683,7 +693,7 @@ class ProcessingService:
         final_system_prompt = system_prompt_template.format(
             user_name=user_name,
             current_time=current_time_str,
-            aggregated_other_context=aggregated_other_context_str, # Use new aggregated context
+            aggregated_other_context=aggregated_other_context_str,  # Use new aggregated context
             server_url=self.server_url,  # Add server URL
         ).strip()
 
@@ -714,15 +724,16 @@ class ProcessingService:
 
         # --- Now, call the processing logic with the fully prepared messages list ---
         try:
-            generated_turn_messages, final_reasoning_info = (
-                await self.process_message(  # Call the other method in this class
-                    db_context=db_context,  # Pass context
-                    messages=messages,
-                    interface_type=interface_type, # Pass interface_type
-                    conversation_id=conversation_id,  # Pass conversation_id
-                    application=application,
-                    request_confirmation_callback=request_confirmation_callback,
-                )
+            (
+                generated_turn_messages,
+                final_reasoning_info,
+            ) = await self.process_message(  # Call the other method in this class
+                db_context=db_context,  # Pass context
+                messages=messages,
+                interface_type=interface_type,  # Pass interface_type
+                conversation_id=conversation_id,  # Pass conversation_id
+                application=application,
+                request_confirmation_callback=request_confirmation_callback,
             )
             # Add context info (turn_id, etc.) to each generated message *before* returning # Marked line 641
             timestamp_now = datetime.now(timezone.utc)  # Marked line 642
@@ -742,7 +753,7 @@ class ProcessingService:
             # Return the list of fully populated turn messages, reasoning info, and None for error
             return generated_turn_messages, final_reasoning_info, None
         # Moved exception handling outside the process_message call
-        except Exception as e:  # Marked line 650
+        except Exception:  # Marked line 650
             # Return None for content/tools/reasoning, but include the traceback
             error_traceback = traceback.format_exc()
             return (

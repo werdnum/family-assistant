@@ -1,8 +1,7 @@
 import html
 import logging
 import json  # Add json import
-from typing import Dict, Any, Optional
-import io  # Import io for StringIO
+from typing import Optional
 import tempfile  # For creating temporary files
 import os  # For working with file paths
 

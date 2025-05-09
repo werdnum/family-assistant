@@ -9,9 +9,7 @@ import uuid
 import os
 import pathlib
 import inspect
-import zoneinfo
-from dataclasses import dataclass
-from datetime import datetime, timezone, date, time  # Added date, time
+from datetime import datetime, timezone  # Added date, time
 from typing import (
     List,
     Dict,
@@ -19,19 +17,14 @@ from typing import (
     Optional,
     Protocol,
     Callable,
-    Awaitable,
     Set,
 )  # Added Awaitable, Set
 from zoneinfo import ZoneInfo
 
 import aiofiles
-import caldav
-import vobject
 
 from dateutil import rrule
 from dateutil.parser import isoparse
-from mcp import ClientSession
-from telegram.ext import Application
 from sqlalchemy.sql import text
 
 # Import storage functions needed by local tools
@@ -41,7 +34,6 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
 from family_assistant.embeddings import EmbeddingGenerator
 from datetime import timedelta
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # Import calendar helper functions AND tool implementations
 from family_assistant import calendar_integration
@@ -352,7 +344,7 @@ async def search_documents_tool(
                 snippet_text = ""
 
             formatted_results.append(
-                f"{i+1}. Title: {title} (Source: {source}){snippet_text}"
+                f"{i + 1}. Title: {title} (Source: {source}){snippet_text}"
             )
 
         return "\n".join(formatted_results)
@@ -683,7 +675,7 @@ def render_delete_calendar_event_confirmation(
     event_desc = _format_event_details_for_confirmation(
         event_details, timezone_str
     )  # Pass timezone
-    cal_url = args.get("calendar_url", "Unknown Calendar")
+    args.get("calendar_url", "Unknown Calendar")
     # Use MarkdownV2 compatible formatting
     return (
         f"Please confirm you want to *delete* the event:\n"
@@ -699,7 +691,7 @@ def render_modify_calendar_event_confirmation(
     event_desc = _format_event_details_for_confirmation(
         event_details, timezone_str
     )  # Pass timezone
-    cal_url = args.get("calendar_url", "Unknown Calendar")
+    args.get("calendar_url", "Unknown Calendar")
     changes = []
     # Use MarkdownV2 compatible formatting for code blocks/inline code
     if args.get("new_summary"):
@@ -1029,7 +1021,7 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
                         "description": "Optional. Set to true if the event should become an all-day event, false if it should become timed. Requires appropriate new_start/end_time.",
                     },
                 },
-                "required": [ # TODO: Logically, at least one 'new_' field is needed, but schema doesn't enforce
+                "required": [  # TODO: Logically, at least one 'new_' field is needed, but schema doesn't enforce
                     "uid",
                     "calendar_url",
                 ],  # Require UID and URL, at least one 'new_' field should be provided logically
@@ -1065,8 +1057,6 @@ TOOLS_DEFINITION: List[Dict[str, Any]] = [
 # --- Tool Provider Implementations ---
 
 
-import inspect  # Needed for signature inspection
-import uuid  # For confirmation IDs
 import telegramify_markdown  # For escaping confirmation prompts
 
 
@@ -1336,12 +1326,14 @@ class ConfirmingToolsProvider(ToolsProvider):
     def __init__(
         self,
         wrapped_provider: ToolsProvider,
-        tools_requiring_confirmation: Set[str], # Explicitly pass the set of names
+        tools_requiring_confirmation: Set[str],  # Explicitly pass the set of names
         confirmation_timeout: float = DEFAULT_CONFIRMATION_TIMEOUT,
         calendar_config: Optional[Dict[str, Any]] = None,  # Needed for fetching details
     ):
         self.wrapped_provider = wrapped_provider
-        self._tools_requiring_confirmation = tools_requiring_confirmation # Store the provided set
+        self._tools_requiring_confirmation = (
+            tools_requiring_confirmation  # Store the provided set
+        )
         self.confirmation_timeout = confirmation_timeout
         self.calendar_config = calendar_config  # Store calendar config
         self._tool_definitions: Optional[List[Dict[str, Any]]] = None
@@ -1464,7 +1456,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                     prompt_text=confirmation_prompt,
                     tool_name=name,  # Pass tool name for context if needed by callback
                     tool_args=arguments,  # Pass args for context if needed by callback
-                    timeout=self.confirmation_timeout, # Pass the timeout value
+                    timeout=self.confirmation_timeout,  # Pass the timeout value
                 )
 
                 if user_confirmed:

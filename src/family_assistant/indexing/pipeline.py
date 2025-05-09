@@ -4,7 +4,7 @@ Defines the structure of content flowing through the pipeline and the interface
 for content processors, and the pipeline orchestrator.
 """
 
-import logging # Added
+import logging  # Added
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.vector import Document
     from family_assistant.tools.types import ToolExecutionContext
 
-logger = logging.getLogger(__name__) # Added
+logger = logging.getLogger(__name__)  # Added
 
 
 @dataclass
@@ -97,7 +97,7 @@ class IndexingPipeline:
 
     async def run(
         self,
-        initial_items: List[IndexableContent], # Changed parameter name and type
+        initial_items: List[IndexableContent],  # Changed parameter name and type
         original_document: "Document",
         context: "ToolExecutionContext",
     ) -> List[IndexableContent]:
@@ -116,7 +116,9 @@ class IndexingPipeline:
             by any processor. Embedding tasks are dispatched by specialized
             processors within the pipeline, not by the pipeline orchestrator itself.
         """
-        items_for_next_stage: List[IndexableContent] = initial_items # Changed initialization
+        items_for_next_stage: List[IndexableContent] = (
+            initial_items  # Changed initialization
+        )
 
         for processor in self.processors:
             if not items_for_next_stage:  # No more items to process
@@ -131,7 +133,9 @@ class IndexingPipeline:
         # Determine the single "initial_content_ref" to be passed to all processors.
         # This should ideally be the very first IndexableContent created for the document.
         # If the pipeline starts with a list, we'll use the first item from that list if available.
-        initial_content_ref_for_processors: Optional[IndexableContent] = initial_items[0] if initial_items else None
+        initial_content_ref_for_processors: Optional[IndexableContent] = (
+            initial_items[0] if initial_items else None
+        )
 
         logger.info(
             f"Starting IndexingPipeline for document '{original_document.title if original_document else 'Unknown'}' with {len(items_for_next_stage)} initial item(s) and {len(self.processors)} processor(s)."
@@ -148,13 +152,13 @@ class IndexingPipeline:
                 f"Running processor '{processor.name}' with {len(items_for_next_stage)} item(s) for document '{original_document.title if original_document else 'Unknown'}'."
             )
             try:
-            # Each processor returns the list of items to be passed to the next one.
-            # Specialized processors (e.g., for dispatching embeddings) will handle
-            # task enqueuing internally using the provided context.
+                # Each processor returns the list of items to be passed to the next one.
+                # Specialized processors (e.g., for dispatching embeddings) will handle
+                # task enqueuing internally using the provided context.
                 items_for_next_stage = await processor.process(
                     current_items=items_for_next_stage,
                     original_document=original_document,
-                    initial_content_ref=initial_content_ref_for_processors, # Pass determined ref
+                    initial_content_ref=initial_content_ref_for_processors,  # Pass determined ref
                     context=context,
                 )
                 logger.debug(

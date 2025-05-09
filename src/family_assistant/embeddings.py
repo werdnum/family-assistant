@@ -312,7 +312,9 @@ class MockEmbeddingGenerator:
                 )
                 results.append(self.default_embedding)
             else:
-                logger.error(f"Text '{text[:1000]}...' not found in mock embedding map.")
+                logger.error(
+                    f"Text '{text[:1000]}...' not found in mock embedding map."
+                )
                 raise LookupError(
                     f"Text '{text[:1000]}...' not found in mock embedding map and no default embedding provided."
                 )

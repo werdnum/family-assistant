@@ -52,8 +52,9 @@ def format_events_for_prompt(events: List[Dict[(str, Any)]], prompts: Dict[(str,
     "Formats the fetched events into strings suitable for the prompt."
 
 # from .calendar_integration import add_calendar_event_tool
-async def add_calendar_event_tool(exec_context: ToolExecutionContext, summary: str, start_time: str, end_time: str, description: Optional[str], all_day: bool) -> str:
-    "Adds an event to the first configured CalDAV calendar."
+async def add_calendar_event_tool(exec_context: ToolExecutionContext, summary: str, start_time: str, end_time: str, description: Optional[str], all_day: bool, recurrence_rule: Optional[str]) -> str:
+    """Adds an event to the first configured CalDAV calendar.
+    Can create recurring events if an RRULE string is provided."""
 
 # from .calendar_integration import search_calendar_events_tool
 async def search_calendar_events_tool(exec_context: ToolExecutionContext, query_text: str, start_date_str: Optional[str], end_date_str: Optional[str], limit: int=5) -> str:
@@ -127,25 +128,64 @@ class MockEmbeddingGenerator:
     """A mock embedding generator that returns predefined embeddings based on input text.
     Useful for testing without making actual API calls."""
 
+# from .context_providers import ContextProvider
+class ContextProvider(Protocol):
+    "Interface for objects that can provide context segments for the LLM."
+
+# from .context_providers import NotesContextProvider
+class NotesContextProvider(ContextProvider):
+    "Provides context from stored notes."
+
+# from .context_providers import CalendarContextProvider
+class CalendarContextProvider(ContextProvider):
+    "Provides context from calendar events."
+
+# from .telegram_bot import BatchProcessor
+class BatchProcessor(Protocol):
+    "Protocol defining the interface for processing a batch of messages."
+
+# from .telegram_bot import MessageBatcher
+class MessageBatcher(Protocol):
+    "Protocol defining the interface for buffering messages."
+
+# from .telegram_bot import ConfirmationUIManager
+class ConfirmationUIManager(Protocol):
+    "Protocol defining the interface for requesting user confirmation."
+
+# from .telegram_bot import DefaultMessageBatcher
+class DefaultMessageBatcher(MessageBatcher):
+    "Buffers messages and processes them in batches to avoid race conditions."
+
 # from .telegram_bot import TelegramUpdateHandler
 class TelegramUpdateHandler:
     "Handles specific Telegram updates (messages, commands) and delegates processing."
+
+# from .telegram_bot import TelegramConfirmationUIManager
+class TelegramConfirmationUIManager(ConfirmationUIManager):
+    "Implementation of ConfirmationUIManager using Telegram Inline Keyboards."
+
+# from .telegram_bot import NoBatchMessageBatcher
+class NoBatchMessageBatcher(MessageBatcher):
+    "A simple batcher that processes each message immediately without buffering."
 
 # from .telegram_bot import TelegramService
 class TelegramService:
     "Manages the Telegram bot application lifecycle and update handling."
 
-# from .web_server import get_db
-async def get_db() -> DatabaseContext:
-    "FastAPI dependency to get a DatabaseContext."
-
 # from .web_server import get_embedding_generator_dependency
 async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
     "Retrieves the configured EmbeddingGenerator instance from app state."
 
+# from .web_server import get_db
+async def get_db() -> DatabaseContext:
+    "FastAPI dependency to get a DatabaseContext."
+
 # from .web_server import get_tools_provider_dependency
 async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
     "Retrieves the configured ToolsProvider instance from app state."
+
+# from .web_server import AuthMiddleware
+class AuthMiddleware:
 
 # from .web_server import SearchResultItem
 class SearchResultItem(BaseModel):
@@ -179,7 +219,7 @@ async def handle_mail_webhook(request: Request, db_context: DatabaseContext=...)
     Logs the received form data for now."""
 
 # from .web_server import view_message_history
-async def view_message_history(request: Request, db_context: DatabaseContext=...):
+async def view_message_history(request: Request, db_context: DatabaseContext=..., page: int=..., per_page: int=...):
     "Serves the page displaying message history."
 
 # from .web_server import view_tools
@@ -238,6 +278,43 @@ async def handle_llm_callback(exec_context: ToolExecutionContext, payload: Any):
 class TaskWorker:
     "Manages the task processing loop and handler registry."
 
+# from .pipeline import IndexableContent
+class IndexableContent:
+    """Represents a unit of data flowing through the indexing pipeline,
+    potentially ready for embedding."""
+
+# from .pipeline import ContentProcessor
+class ContentProcessor(Protocol):
+    "Defines the contract for a stage in the document indexing pipeline."
+
+# from .pipeline import IndexingPipeline
+class IndexingPipeline:
+    "Orchestrates the flow of IndexableContent through a series of ContentProcessors."
+
+# from .tasks import handle_embed_and_store_batch
+async def handle_embed_and_store_batch(exec_context: ?, payload: Dict[(str, Any)]) -> ?:
+    """Task handler for embedding a batch of texts and storing them in the vector database.
+
+    The payload is expected to contain:
+    - document_id (int): The ID of the parent document.
+    - texts_to_embed (List[str]): A list of text strings to embed.
+    - embedding_metadata_list (List[Dict[str, Any]]): A list of metadata dictionaries,
+      one for each text in texts_to_embed. Each dictionary should contain:
+        - embedding_type (str): The type of embedding (e.g., 'title', 'content_chunk').
+        - chunk_index (int): The index of this chunk for the given embedding_type.
+        - original_content_metadata (Dict[str, Any]): Metadata from the content processor.
+        - content_hash (Optional[str]): Hash of the content, if available.
+
+    Args:
+        exec_context: The tool execution context, providing db_context and embedding_generator.
+        payload: The task payload containing data for embedding.
+
+    Raises:
+        ValueError: If the payload is malformed (e.g., lists have different lengths,
+                    texts_to_embed is empty, or required keys are missing).
+        SQLAlchemyError: If database operations fail.
+        Exception: If embedding generation fails."""
+
 # from .document_indexer import DocumentIndexer
 class DocumentIndexer:
     """Handles the indexing process for documents, primarily those uploaded via API.
@@ -255,7 +332,7 @@ async def handle_index_email(exec_context: ToolExecutionContext, payload: Dict[(
     Receives ToolExecutionContext from the TaskWorker."""
 
 # from .email_indexer import set_indexing_dependencies
-def set_indexing_dependencies(embedding_generator: EmbeddingGenerator, llm_client: Optional[LLMInterface]):
+def set_indexing_dependencies(pipeline: IndexingPipeline):
     "Sets the necessary dependencies for the email indexer."
 
 # from .__init__ import ToolConfirmationRequired
@@ -483,9 +560,24 @@ async def add_document(db_context: DatabaseContext, doc: Document, enriched_doc_
 async def get_document_by_source_id(db_context: DatabaseContext, source_id: str) -> Optional[DocumentRecord]:
     "Retrieves a document ORM object by its source ID."
 
+# from .vector import get_document_by_id
+async def get_document_by_id(db_context: DatabaseContext, document_id: int) -> Optional[DocumentRecord]:
+    "Retrieves a document ORM object by its internal primary key ID."
+
 # from .vector import add_embedding
-async def add_embedding(db_context: DatabaseContext, document_id: int, chunk_index: int, embedding_type: str, embedding: List[float], embedding_model: str, content: Optional[str], content_hash: Optional[str]) -> ?:
-    "Adds an embedding record linked to a document, updating if it already exists."
+async def add_embedding(db_context: DatabaseContext, document_id: int, chunk_index: int, embedding_type: str, embedding: List[float], embedding_model: str, content: Optional[str], content_hash: Optional[str], embedding_doc_metadata: Optional[Dict[(str, Any)]]) -> ?:
+    """Adds an embedding record linked to a document, updating if it already exists.
+
+    Args:
+        db_context: The DatabaseContext to use for the operation.
+        document_id: ID of the parent document.
+        chunk_index: Index of this chunk within the document for this embedding type.
+        embedding_type: Type of embedding (e.g., 'title', 'content_chunk').
+        embedding: The vector embedding.
+        embedding_model: Name of the model used to generate the embedding.
+        content: Optional textual content of the chunk.
+        content_hash: Optional hash of the content.
+        embedding_doc_metadata: Optional metadata specific to this embedding."""
 
 # from .vector import delete_document
 async def delete_document(db_context: DatabaseContext, document_id: int) -> bool:
@@ -560,9 +652,39 @@ async def reschedule_task_for_retry(db_context: DatabaseContext, task_id: str, n
 async def get_all_tasks(db_context: DatabaseContext, limit: int=100) -> List[Dict[(str, Any)]]:
     "Retrieves tasks, ordered by creation descending."
 
+# from .__init__ import _is_alembic_managed
+async def _is_alembic_managed(engine: AsyncEngine) -> bool:
+    "Checks if the database schema is managed by Alembic."
+
+# from .__init__ import _log_current_revision
+async def _log_current_revision(engine: AsyncEngine):
+    "Logs the current Alembic revision stored in the database."
+
+# from .__init__ import _get_alembic_config
+def _get_alembic_config(engine: AsyncEngine) -> AlembicConfig:
+    "Loads the Alembic configuration."
+
+# from .__init__ import _run_alembic_command
+async def _run_alembic_command(engine: AsyncEngine, config: AlembicConfig, command_name: str, *args):
+    "Executes an Alembic command asynchronously using the engine's connection."
+
+# from .__init__ import _create_initial_schema
+async def _create_initial_schema(engine: AsyncEngine):
+    "Creates all tables defined in the SQLAlchemy metadata."
+
+# from .__init__ import _initialize_vector_storage
+async def _initialize_vector_storage(engine: AsyncEngine):
+    "Initializes vector database components if enabled."
+
 # from .__init__ import init_db
 async def init_db():
-    "Initializes the database by creating all tables defined in the metadata."
+    """Initializes the database:
+    - Checks if the database is managed by Alembic.
+    - If managed, runs Alembic upgrade to head.
+    - If not managed, creates the initial schema using SQLAlchemy metadata,
+      stamps the database with the Alembic head revision, and initializes
+      vector storage if enabled.
+    - Includes retry logic for transient database errors."""
 
 # from .base import get_engine
 def get_engine():
@@ -578,7 +700,10 @@ async def update_message_interface_id(db_context: DatabaseContext, internal_id: 
 
 # from .message_history import get_recent_history
 async def get_recent_history(db_context: DatabaseContext, interface_type: str, conversation_id: str, limit: int, max_age: timedelta) -> List[Dict[(str, Any)]]:
-    "Retrieves recent messages for a conversation, including tool call info."
+    """Retrieves recent messages for a conversation, including tool call info.
+    If a message included by limit/max_age belongs to a turn, all other messages
+    from that turn for the same conversation are also included, even if they
+    would otherwise be outside the limit/max_age."""
 
 # from .message_history import get_message_by_interface_id
 async def get_message_by_interface_id(db_context: DatabaseContext, interface_type: str, conversation_id: str, interface_message_id: str) -> Optional[Dict[(str, Any)]]:
@@ -595,4 +720,17 @@ async def get_messages_by_thread_id(db_context: DatabaseContext, thread_root_id:
 # from .message_history import get_grouped_message_history
 async def get_grouped_message_history(db_context: DatabaseContext) -> Dict[(Tuple[(str, str)], List[Dict[(str, Any)]])]:
     "Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp."
+
+# from .dispatch_processors import EmbeddingDispatchProcessor
+class EmbeddingDispatchProcessor(ContentProcessor):
+    """Identifies IndexableContent items of specified types and dispatches them
+    for embedding via the 'embed_and_store_batch' task."""
+
+# from .text_processors import TextChunker
+class TextChunker(ContentProcessor):
+    "Splits textual content of IndexableContent items into smaller chunks."
+
+# from .metadata_processors import TitleExtractor
+class TitleExtractor(ContentProcessor):
+    "Extracts the title from the original document and creates an IndexableContent item for it."
 

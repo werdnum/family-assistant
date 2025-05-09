@@ -191,7 +191,7 @@ async def query_vector_store(
           FROM document_embeddings de_vec
           WHERE de_vec.document_id IN (SELECT id FROM documents d WHERE {doc_where_sql})
             AND de_vec.embedding_model = :vector_model
-            AND {embed_where_sql.replace('de.', 'de_vec.')}
+            AND {embed_where_sql.replace("de.", "de_vec.")}
           ORDER BY distance ASC
           LIMIT {vector_limit}
         )
@@ -220,7 +220,7 @@ async def query_vector_store(
           WHERE de_fts.document_id IN (SELECT id FROM documents d WHERE {doc_where_sql})
             AND de_fts.content IS NOT NULL
             AND to_tsvector('english', de_fts.content) @@ plainto_tsquery('english', :query_keywords)
-            AND {embed_where_sql.replace('de.', 'de_fts.')}
+            AND {embed_where_sql.replace("de.", "de_fts.")}
           ORDER BY score DESC
           LIMIT {fts_limit}
         )
@@ -256,15 +256,15 @@ async def query_vector_store(
 
     # Need to select FROM the base tables and join CTEs
     sql_query = f"""
-    WITH {vector_cte if vector_cte else ''} {' , ' if vector_cte and fts_cte else ''} {fts_cte if fts_cte else ''}
+    WITH {vector_cte if vector_cte else ""} {" , " if vector_cte and fts_cte else ""} {fts_cte if fts_cte else ""}
     SELECT
-        {', '.join(final_select_cols)}
+        {", ".join(final_select_cols)}
     FROM document_embeddings de
     JOIN documents d ON de.document_id = d.id
-    {' '.join(final_joins)}
+    {" ".join(final_joins)}
     WHERE ({final_where_sql}) -- Ensure WHERE clause is valid even if empty
-      AND ({doc_where_sql.replace('d.', 'd.')}) -- Apply doc filters again on the final join result
-      AND ({embed_where_sql.replace('de.', 'de.')}) -- Apply embedding filters again
+      AND ({doc_where_sql.replace("d.", "d.")}) -- Apply doc filters again on the final join result
+      AND ({embed_where_sql.replace("de.", "de.")}) -- Apply embedding filters again
     {final_order_by}
     LIMIT :limit;
     """

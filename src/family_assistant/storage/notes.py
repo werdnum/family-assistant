@@ -3,8 +3,6 @@ Handles storage and retrieval of notes.
 """
 
 import logging
-import random
-import asyncio
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 

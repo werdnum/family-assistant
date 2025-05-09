@@ -2,9 +2,8 @@ import pytest
 import asyncio
 import logging
 import json  # Added json import
-import contextlib # Added contextlib import
+import contextlib  # Added contextlib import
 from sqlalchemy import text  # To query DB directly for assertion
-from typing import List, Dict, Any, Optional, Callable, Tuple  # Added typing imports
 from unittest.mock import MagicMock  # For mocking Application
 
 # _generate_llm_response_for_chat was moved to ProcessingService
@@ -21,7 +20,6 @@ from family_assistant.llm import LLMInterface, LLMOutput  # Keep Interface and O
 from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     Rule,
-    MatcherFunction,
     get_last_message_text,
 )
 
@@ -40,7 +38,7 @@ from family_assistant.context_providers import (
 
 # Import storage functions for assertion (will use the patched engine)
 # from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
-import uuid # Added for turn_id
+import uuid  # Added for turn_id
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +47,7 @@ logger = logging.getLogger(__name__)
 TEST_NOTE_TITLE_BASE = "Smoketest Note"
 TEST_NOTE_CONTENT = "This is the content for the smoke test."
 TEST_CHAT_ID = 12345  # Dummy chat ID
-TEST_USER_ID = 98765 # Added User ID
+TEST_USER_ID = 98765  # Added User ID
 TEST_USER_NAME = "NotesTestUser"
 # TEST_MODEL_NAME is no longer needed for the mock
 
@@ -66,11 +64,11 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     6. Verify the mock's response includes the note content without a tool call.
     """
     # --- Setup ---
-    user_message_id_add = 171 # Message ID for adding the note
-    user_message_id_retrieve = 235 # Message ID for retrieving the note
+    user_message_id_add = 171  # Message ID for adding the note
+    user_message_id_retrieve = 235  # Message ID for retrieving the note
     test_note_title = f"{TEST_NOTE_TITLE_BASE} {uuid.uuid4()}"
     test_tool_call_id = f"call_{uuid.uuid4()}"  # Pre-generate ID for the rule
-    logger.info(f"\n--- Running Rule-Based Mock Test: Add/Retrieve Note ---")
+    logger.info("\n--- Running Rule-Based Mock Test: Add/Retrieve Note ---")
     logger.info(f"Using Note Title: {test_note_title}")
 
     # --- Define Rules ---
@@ -127,7 +125,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         rules=[add_note_rule, retrieve_note_rule]
         # Can optionally provide a specific default_response here
     )
-    logger.info(f"Using RuleBasedMockLLMClient for testing.")
+    logger.info("Using RuleBasedMockLLMClient for testing.")
 
     # --- Instantiate other dependencies (Tool Providers remain the same) ---
     local_provider = LocalToolsProvider(
@@ -150,7 +148,9 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
 
     # --- Instantiate Context Providers ---
     # Function to get DB context for the specific test engine
-    async def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[DatabaseContext]:
+    async def get_test_db_context_func() -> (
+        contextlib.AbstractAsyncContextManager[DatabaseContext]
+    ):
         return await get_db_context(engine=test_db_engine)
 
     notes_provider = NotesContextProvider(
@@ -165,7 +165,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
-        context_providers=[notes_provider], # Pass the notes provider
+        context_providers=[notes_provider],  # Pass the notes provider
         history_max_age_hours=dummy_history_age,
         server_url=None,  # Added missing argument
     )
@@ -187,18 +187,22 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance
         # Unpack the 3 return values correctly
-        add_turn_messages, add_reasoning_info, add_error = (
-            await processing_service.generate_llm_response_for_chat(
-                db_context=db_context,  # Pass the context
-                application=mock_application,
-                interface_type="test",  # Added interface type
-                conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
-                turn_id=str(uuid.uuid4()), # Added turn_id
-                trigger_content_parts=add_note_trigger,
-                trigger_interface_message_id=str(user_message_id_add), # Added missing argument
-                user_name=TEST_USER_NAME,
-                # model_name argument removed
-            )
+        (
+            add_turn_messages,
+            add_reasoning_info,
+            add_error,
+        ) = await processing_service.generate_llm_response_for_chat(
+            db_context=db_context,  # Pass the context
+            application=mock_application,
+            interface_type="test",  # Added interface type
+            conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
+            turn_id=str(uuid.uuid4()),  # Added turn_id
+            trigger_content_parts=add_note_trigger,
+            trigger_interface_message_id=str(
+                user_message_id_add
+            ),  # Added missing argument
+            user_name=TEST_USER_NAME,
+            # model_name argument removed
         )
     # Assertions remain outside the context manager
     assert (
@@ -245,7 +249,7 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     # --- Add a small delay ---
     await asyncio.sleep(0.1)  # Can be shorter with mock
 
-    logger.info(f"\n--- Running Rule-Based Mock Test: Retrieve Note ---")
+    logger.info("\n--- Running Rule-Based Mock Test: Retrieve Note ---")
     # --- Part 2: Retrieve the note ---
     retrieve_note_text = f"What do you know about the note titled '{test_note_title}'?"
     retrieve_note_trigger = [{"type": "text", "text": retrieve_note_text}]
@@ -253,18 +257,22 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine):  # Renamed test
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance again
-        retrieve_turn_messages, _, retrieve_error = (
-            await processing_service.generate_llm_response_for_chat(
-                db_context=db_context,  # Pass the context
-                interface_type="test",  # Added missing interface type
-                conversation_id=str(TEST_CHAT_ID),  # Added missing conversation ID
-                application=mock_application,
-                turn_id=str(uuid.uuid4()), # Added turn_id
-                trigger_content_parts=retrieve_note_trigger,
-                trigger_interface_message_id=str(user_message_id_retrieve), # Added missing argument
-                user_name=TEST_USER_NAME,
-                # model_name argument removed
-            )
+        (
+            retrieve_turn_messages,
+            _,
+            retrieve_error,
+        ) = await processing_service.generate_llm_response_for_chat(
+            db_context=db_context,  # Pass the context
+            interface_type="test",  # Added missing interface type
+            conversation_id=str(TEST_CHAT_ID),  # Added missing conversation ID
+            application=mock_application,
+            turn_id=str(uuid.uuid4()),  # Added turn_id
+            trigger_content_parts=retrieve_note_trigger,
+            trigger_interface_message_id=str(
+                user_message_id_retrieve
+            ),  # Added missing argument
+            user_name=TEST_USER_NAME,
+            # model_name argument removed
         )
 
         # model_name argument removed

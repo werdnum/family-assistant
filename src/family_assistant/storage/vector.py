@@ -5,44 +5,31 @@ Provides functions for adding, retrieving, deleting, and querying documents and 
 
 """
 
-import asyncio  # Import asyncio, was previously flagged by flake8
 import logging  # Import the logging module
-import os
 from datetime import datetime
 from typing import (
     Any,
     Dict,
     List,
     Optional,
-    Tuple,
-    Sequence,
     Protocol,
 )
 
 import sqlalchemy as sa
 from sqlalchemy import (
     JSON,
-    Select,
-    TextClause,
     and_,
     delete,
     func,
     select,
-    text,
     literal_column,
-    CTE,
-    alias,
-    cast,
     or_,
 )
 from sqlalchemy.dialects.postgresql import JSONB, insert
-from sqlalchemy.dialects.postgresql.dml import OnConflictDoUpdate
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, aliased
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import functions  # Import functions explicitly
-from sqlalchemy.sql.expression import ColumnElement
-from sqlalchemy.engine import RowMapping
 
 from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
@@ -60,7 +47,10 @@ logger = logging.getLogger(__name__)
 
 # --- Protocol Definition ---
 class Document(Protocol):
-    """Defines the interface for documents that can be ingested into vector storage.""" """Defines the interface for document objects that can be ingested into vector storage."""
+    (
+        """Defines the interface for documents that can be ingested into vector storage."""
+        """Defines the interface for document objects that can be ingested into vector storage."""
+    )
 
     @property
     def source_type(self) -> str:
@@ -150,9 +140,9 @@ class DocumentEmbeddingRecord(Base):
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=functions.now()
     )
-    embedding_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(  # Renamed from metadata
+    embedding_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
-    )  # New metadata column
+    )  # Renamed from metadata  # New metadata column
 
     document_record: Mapped["DocumentRecord"] = sa.orm.relationship(
         "DocumentRecord", back_populates="embeddings"
@@ -284,19 +274,24 @@ async def add_document(
 
 
 async def get_document_by_source_id(
-    db_context: DatabaseContext, source_id: str  # Added context
+    db_context: DatabaseContext,
+    source_id: str,  # Added context
 ) -> Optional[DocumentRecord]:
     """Retrieves a document ORM object by its source ID."""
     try:
         stmt = select(DocumentRecord).where(DocumentRecord.source_id == source_id)
 
         if db_context.conn is None:
-            logger.error("get_document_by_source_id called with a DatabaseContext that has no active connection.")
+            logger.error(
+                "get_document_by_source_id called with a DatabaseContext that has no active connection."
+            )
             raise RuntimeError("DatabaseContext has no active connection.")
 
         # Create an AsyncSession that will use the existing connection (and thus transaction)
         # from the db_context. The session does not own the connection or transaction lifecycle.
-        async_session_instance = AsyncSession(bind=db_context.conn, expire_on_commit=False)
+        async_session_instance = AsyncSession(
+            bind=db_context.conn, expire_on_commit=False
+        )
         try:
             # Execute the ORM statement using this session
             result = await async_session_instance.execute(stmt)
@@ -306,40 +301,51 @@ async def get_document_by_source_id(
             await async_session_instance.close()
 
         if record:
-            logger.debug(f"Found document with source_id {source_id} using db_context's transaction.")
+            logger.debug(
+                f"Found document with source_id {source_id} using db_context's transaction."
+            )
             return record
         else:
-            logger.debug(f"No document found with source_id {source_id} using db_context's transaction.")
+            logger.debug(
+                f"No document found with source_id {source_id} using db_context's transaction."
+            )
             return None
 
-    except SQLAlchemyError as e: # Catch database-specific errors
+    except SQLAlchemyError as e:  # Catch database-specific errors
         logger.error(
             f"Database error retrieving document with source_id {source_id}: {e}",
             exc_info=True,
         )
         raise
-    except Exception as e: # Catch other potential errors like RuntimeError from pre-checks
+    except (
+        Exception
+    ) as e:  # Catch other potential errors like RuntimeError from pre-checks
         logger.error(
             f"Unexpected error retrieving document with source_id {source_id}: {e}",
             exc_info=True,
-            )
+        )
         raise
 
 
 async def get_document_by_id(
-    db_context: DatabaseContext, document_id: int # Added context and id
+    db_context: DatabaseContext,
+    document_id: int,  # Added context and id
 ) -> Optional[DocumentRecord]:
     """Retrieves a document ORM object by its internal primary key ID."""
     try:
         stmt = select(DocumentRecord).where(DocumentRecord.id == document_id)
 
         if db_context.conn is None:
-            logger.error("get_document_by_id called with a DatabaseContext that has no active connection.")
+            logger.error(
+                "get_document_by_id called with a DatabaseContext that has no active connection."
+            )
             raise RuntimeError("DatabaseContext has no active connection.")
 
         # Create an AsyncSession that will use the existing connection (and thus transaction)
         # from the db_context. The session does not own the connection or transaction lifecycle.
-        async_session_instance = AsyncSession(bind=db_context.conn, expire_on_commit=False)
+        async_session_instance = AsyncSession(
+            bind=db_context.conn, expire_on_commit=False
+        )
         try:
             # Execute the ORM statement using this session
             result = await async_session_instance.execute(stmt)
@@ -349,17 +355,30 @@ async def get_document_by_id(
             await async_session_instance.close()
 
         if record:
-            logger.debug(f"Found document with ID {document_id} using db_context's transaction.")
+            logger.debug(
+                f"Found document with ID {document_id} using db_context's transaction."
+            )
             return record
         else:
-            logger.debug(f"No document found with ID {document_id} using db_context's transaction.")
+            logger.debug(
+                f"No document found with ID {document_id} using db_context's transaction."
+            )
             return None
-    except SQLAlchemyError as e: # Catch database-specific errors
-        logger.error(f"Database error retrieving document with ID {document_id}: {e}", exc_info=True)
+    except SQLAlchemyError as e:  # Catch database-specific errors
+        logger.error(
+            f"Database error retrieving document with ID {document_id}: {e}",
+            exc_info=True,
+        )
         raise
-    except Exception as e: # Catch other potential errors like RuntimeError from pre-checks
-        logger.error(f"Unexpected error retrieving document with ID {document_id}: {e}", exc_info=True)
+    except (
+        Exception
+    ) as e:  # Catch other potential errors like RuntimeError from pre-checks
+        logger.error(
+            f"Unexpected error retrieving document with ID {document_id}: {e}",
+            exc_info=True,
+        )
         raise
+
 
 async def add_embedding(
     db_context: DatabaseContext,  # Added context
@@ -566,7 +585,7 @@ async def query_vectors(
                 DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id
             )
             .where(doc_filter)
-            .where(DocumentEmbeddingRecord.content != None)
+            .where(DocumentEmbeddingRecord.content is not None)
             .where(tsvector_col.op("@@")(tsquery))
             .order_by(literal_column("score").desc())
             .limit(limit * 5)
@@ -593,7 +612,7 @@ async def query_vectors(
         DocumentRecord.doc_metadata,
         DocumentEmbeddingRecord.embedding_type,
         DocumentEmbeddingRecord.content.label("embedding_source_content"),
-        DocumentEmbeddingRecord.embedding_metadata, # Add embedding_metadata to output
+        DocumentEmbeddingRecord.embedding_metadata,  # Add embedding_metadata to output
         DocumentEmbeddingRecord.chunk_index,
         vector_results_cte.c.distance,
         vector_results_cte.c.vec_rank,
@@ -624,13 +643,13 @@ async def query_vectors(
         final_select_cols.append(rrf_score)
         final_query = final_query.where(
             or_(
-                vector_results_cte.c.embedding_id != None,
-                fts_results_cte.c.embedding_id != None,
+                vector_results_cte.c.embedding_id is not None,
+                fts_results_cte.c.embedding_id is not None,
             )
         )
         final_query = final_query.order_by(rrf_score.desc())
     else:
-        final_query = final_query.where(vector_results_cte.c.embedding_id != None)
+        final_query = final_query.where(vector_results_cte.c.embedding_id is not None)
         final_query = final_query.order_by(vector_results_cte.c.distance.asc())
     final_query = final_query.limit(limit)
     final_query = final_query.with_only_columns(*final_select_cols)

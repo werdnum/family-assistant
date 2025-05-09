@@ -2,25 +2,23 @@ import pytest
 import asyncio
 import logging
 import os
-import sqlalchemy as sa  # Add this import
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from unittest.mock import patch
 from testcontainers.postgres import PostgresContainer
 
 
 # Import the metadata and the original engine object from your storage base
-from family_assistant.storage.base import metadata, engine as original_engine
 from family_assistant.storage import init_db  # Import init_db
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
-import family_assistant.storage.tasks
 
 # Import vector storage init and context
-from family_assistant.storage.vector import init_vector_db # Corrected import path
+from family_assistant.storage.vector import init_vector_db  # Corrected import path
 from family_assistant.storage.context import DatabaseContext
+
 # Import for task_worker_manager fixture
 from family_assistant.task_worker import TaskWorker
-from unittest.mock import MagicMock # Already imported, but good to note dependency
+from unittest.mock import MagicMock  # Already imported, but good to note dependency
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
@@ -213,7 +211,7 @@ async def task_worker_manager():
         if worker_task_handle:
             logger.info("Stopping background TaskWorker (fixture)...")
             shutdown_event.set()
-            new_task_event.set() # Wake up worker if it's waiting on this
+            new_task_event.set()  # Wake up worker if it's waiting on this
             try:
                 await asyncio.wait_for(worker_task_handle, timeout=5.0)
                 logger.info("Background TaskWorker (fixture) stopped gracefully.")
@@ -225,4 +223,6 @@ async def task_worker_manager():
                 except asyncio.CancelledError:
                     logger.info("TaskWorker (fixture) cancellation confirmed.")
             except Exception as e:
-                logger.error(f"Error during TaskWorker (fixture) shutdown: {e}", exc_info=True)
+                logger.error(
+                    f"Error during TaskWorker (fixture) shutdown: {e}", exc_info=True
+                )

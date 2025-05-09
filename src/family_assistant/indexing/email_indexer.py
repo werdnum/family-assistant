@@ -2,7 +2,6 @@
 Handles the indexing process for emails stored in the database.
 """
 
-import asyncio
 import logging
 from typing import Any, Dict, Optional, List  # Added List
 from datetime import datetime
@@ -10,16 +9,16 @@ from dataclasses import dataclass, field
 
 # Import RowMapping for type hinting in from_row
 from sqlalchemy.engine import RowMapping
-from sqlalchemy import select, update  # Import select and update
+from sqlalchemy import select  # Import select and update
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
-from family_assistant import storage # For DB operations (add_document)
+from family_assistant import storage  # For DB operations (add_document)
 from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent
-from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import (
     received_emails_table,
 )  # Import table definition
+
 # Import the Document protocol from the correct location
 from family_assistant.storage.vector import Document, get_document_by_id
 from family_assistant.tools import ToolExecutionContext  # Import the context class
@@ -141,6 +140,7 @@ class EmailDocument(Document):
 # --- Dependencies (Set via set_indexing_dependencies) ---
 indexing_pipeline_instance: Optional[IndexingPipeline] = None
 
+
 # --- Task Handler Implementation ---
 async def handle_index_email(
     exec_context: ToolExecutionContext, payload: Dict[str, Any]
@@ -202,9 +202,13 @@ async def handle_index_email(
         db_document_record = await get_document_by_id(db_context, doc_db_id)
         if not db_document_record:
             # This should ideally not happen if add_document succeeded
-            raise ValueError(f"Failed to retrieve document record for ID {doc_db_id} after adding/updating.")
+            raise ValueError(
+                f"Failed to retrieve document record for ID {doc_db_id} after adding/updating."
+            )
     except SQLAlchemyError as e:
-        logger.error(f"Database error fetching document record {doc_db_id}: {e}", exc_info=True)
+        logger.error(
+            f"Database error fetching document record {doc_db_id}: {e}", exc_info=True
+        )
         raise RuntimeError(f"Failed to fetch document record {doc_db_id}") from e
 
     # --- 5. Prepare Initial Content for Pipeline ---
@@ -214,7 +218,7 @@ async def handle_index_email(
         # Provide the raw plain text body.
         plain_text_item = IndexableContent(
             content=email_doc.content_plain,
-            embedding_type="raw_body_text", # A generic type for processors to pick up
+            embedding_type="raw_body_text",  # A generic type for processors to pick up
             mime_type="text/plain",
             source_processor="EmailIndexer.handle_index_email",
             metadata={"original_source": "email_body"},
@@ -230,17 +234,24 @@ async def handle_index_email(
 
     # --- 6. Run Indexing Pipeline ---
     try:
-        logger.info(f"Running indexing pipeline for email {email_db_id} (Doc ID: {doc_db_id}) with {len(initial_items)} initial items.")
+        logger.info(
+            f"Running indexing pipeline for email {email_db_id} (Doc ID: {doc_db_id}) with {len(initial_items)} initial items."
+        )
         await indexing_pipeline_instance.run(
             initial_items=initial_items,
-            original_document=db_document_record, # Pass the DB record
+            original_document=db_document_record,  # Pass the DB record
             context=exec_context,
         )
     except Exception as e:
-        logger.error(f"Indexing pipeline run failed for email {email_db_id} (Doc ID: {doc_db_id}): {e}", exc_info=True)
+        logger.error(
+            f"Indexing pipeline run failed for email {email_db_id} (Doc ID: {doc_db_id}): {e}",
+            exc_info=True,
+        )
         raise RuntimeError(f"Indexing pipeline failed for email {email_db_id}") from e
 
-    logger.info(f"Indexing pipeline successfully initiated for email {email_db_id} (Doc ID: {doc_db_id}).")
+    logger.info(
+        f"Indexing pipeline successfully initiated for email {email_db_id} (Doc ID: {doc_db_id})."
+    )
     # Task completion is handled by the worker loop
 
 

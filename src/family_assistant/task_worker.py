@@ -9,7 +9,7 @@ import uuid
 import zoneinfo  # Add this import
 from dateutil import rrule
 from datetime import datetime, timedelta, timezone  # Added Union
-from typing import Dict, List, Any, Optional, Callable, Awaitable, Union  # Import Union
+from typing import Dict, Any, Optional, Callable, Awaitable, Union  # Import Union
 
 # Use absolute imports based on the package structure
 from family_assistant import storage  # Import for task queue operations
@@ -20,17 +20,14 @@ from family_assistant.indexing.email_indexer import (
 )  # Import email indexer
 
 # Import the new document indexer CLASS
-from family_assistant.indexing.document_indexer import DocumentIndexer
 
 # Import functools for partial application
-import functools
 
 # Import Application for type hinting
 from telegram.ext import Application
 
 # Import tool definitions and context from the tools module
 from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
     ToolExecutionContext,  # Import the context class
 )
 from telegramify_markdown import markdownify
@@ -109,7 +106,6 @@ async def handle_llm_callback(
     # Get interface identifiers from context
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
-    timezone_str = exec_context.timezone_str
 
     # Basic validation of dependencies from context
     if not processing_service:
@@ -164,34 +160,38 @@ async def handle_llm_callback(
         callback_trigger_timestamp = datetime.now(timezone.utc)
         await storage.add_message_to_history(
             db_context=db_context,
-            interface_type=interface_type, # Should be "system_callback" or similar
+            interface_type=interface_type,  # Should be "system_callback" or similar
             conversation_id=conversation_id,
-            interface_message_id=None, # System-generated, no direct interface ID
-            turn_id=callback_turn_id, # Assign the generated turn_id
-            thread_root_id=None, # Callbacks currently don't maintain prior thread root
+            interface_message_id=None,  # System-generated, no direct interface ID
+            turn_id=callback_turn_id,  # Assign the generated turn_id
+            thread_root_id=None,  # Callbacks currently don't maintain prior thread root
             timestamp=callback_trigger_timestamp,
-            role="system", # Role for the trigger message
+            role="system",  # Role for the trigger message
             content=trigger_text,
         )
-        logger.info(f"Saved system trigger message for callback {callback_turn_id} to history.")
+        logger.info(
+            f"Saved system trigger message for callback {callback_turn_id} to history."
+        )
 
         # Call the ProcessingService.
         # NOTE: process_message returns the LIST of generated messages for the turn,
         # not just the final content string. We are now calling generate_llm_response_for_chat
         (
-            generated_messages, # This is List[Dict[str, Any]]
-            final_reasoning_info, # Capture reasoning
-            processing_error_traceback, # Capture error
+            generated_messages,  # This is List[Dict[str, Any]]
+            final_reasoning_info,  # Capture reasoning
+            processing_error_traceback,  # Capture error
         ) = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,
             application=application,
             interface_type=interface_type,
             conversation_id=conversation_id,
-            turn_id=callback_turn_id, # Pass the generated turn_id
-            trigger_content_parts=[{"type": "text", "text": trigger_text}], # Pass the trigger text as content part
-            trigger_interface_message_id=None, # System trigger, no direct interface ID
-            user_name="System", # Callback initiated by system
-            replied_to_interface_id=None, # Not a reply in this context
+            turn_id=callback_turn_id,  # Pass the generated turn_id
+            trigger_content_parts=[
+                {"type": "text", "text": trigger_text}
+            ],  # Pass the trigger text as content part
+            trigger_interface_message_id=None,  # System trigger, no direct interface ID
+            user_name="System",  # Callback initiated by system
+            replied_to_interface_id=None,  # Not a reply in this context
             # No confirmation callback needed for system-triggered callbacks
             request_confirmation_callback=None,
         )
@@ -209,11 +209,13 @@ async def handle_llm_callback(
             # Determine target chat_id based on interface type
             target_chat_id: Union[int, str]
             if interface_type == "telegram":
-                target_chat_id = int(conversation_id)  # Convert Telegram ID back to int
+                int(conversation_id)  # Convert Telegram ID back to int
             else:
-                target_chat_id = conversation_id  # Keep as string for other interfaces
+                pass  # Keep as string for other interfaces
 
-            formatted_response = format_llm_response_for_telegram(final_llm_content_to_send)
+            formatted_response = format_llm_response_for_telegram(
+                final_llm_content_to_send
+            )
             sent_message = await application.bot.send_message(  # type: ignore
                 chat_id=(
                     int(conversation_id)
@@ -234,26 +236,36 @@ async def handle_llm_callback(
                 # Find the corresponding assistant message in generated_messages to update its interface_message_id
                 # This assumes the last 'assistant' message in generated_messages is the one sent.
                 assistant_msg_to_update = next(
-                    (m for m in reversed(generated_messages) if m.get("role") == "assistant" and m.get("internal_id")),
-                    None
+                    (
+                        m
+                        for m in reversed(generated_messages)
+                        if m.get("role") == "assistant" and m.get("internal_id")
+                    ),
+                    None,
                 )
-                if assistant_msg_to_update and assistant_msg_to_update.get("internal_id"):
+                if assistant_msg_to_update and assistant_msg_to_update.get(
+                    "internal_id"
+                ):
                     await storage.update_message_interface_id(
                         db_context=db_context,
                         internal_id=assistant_msg_to_update["internal_id"],
                         interface_message_id=str(sent_message.message_id),
                     )
                 else:
-                    logger.warning(f"Could not find saved assistant message to update interface_id for callback to {interface_type}:{conversation_id}")
+                    logger.warning(
+                        f"Could not find saved assistant message to update interface_id for callback to {interface_type}:{conversation_id}"
+                    )
 
             # Save the *generated* messages (tool calls, assistant responses) from the LLM interaction
             # These messages already have turn_id, interface_type, conversation_id, and timestamp populated by generate_llm_response_for_chat
-            for msg_dict_to_save in generated_messages: # Iterate over the list of dicts
+            for (
+                msg_dict_to_save
+            ) in generated_messages:  # Iterate over the list of dicts
                 # Ensure all required fields are present or defaulted for add_message_to_history
                 # msg_dict_to_save is already populated by generate_llm_response_for_chat
                 await storage.add_message_to_history(
                     db_context=db_context,
-                    **msg_dict_to_save # Pass directly as it's prepared by generate_llm_response_for_chat
+                    **msg_dict_to_save,  # Pass directly as it's prepared by generate_llm_response_for_chat
                 )
 
         else:
@@ -276,9 +288,13 @@ async def handle_llm_callback(
             # Raise an error to mark the task as failed if no response was generated
             # Check if there was a processing_error_traceback first
             if processing_error_traceback:
-                raise RuntimeError(f"LLM callback failed. Traceback: {processing_error_traceback}")
-            else: # No specific error from processing, but also no content
-                raise RuntimeError("LLM failed to generate response content for callback.")
+                raise RuntimeError(
+                    f"LLM callback failed. Traceback: {processing_error_traceback}"
+                )
+            else:  # No specific error from processing, but also no content
+                raise RuntimeError(
+                    "LLM failed to generate response content for callback."
+                )
 
     except Exception as e:
         # Catch errors during the generate_llm_response_for_chat call or sending/saving messages
@@ -399,7 +415,7 @@ class TaskWorker:
                 processing_service=self.processing_service,  # Add processing service
                 embedding_generator=getattr(
                     self.application.state, "embedding_generator", None
-                ), # Add embedding_generator from app state
+                ),  # Add embedding_generator from app state
             )
             # --- Execute Handler with Context ---
             logger.debug(
@@ -511,7 +527,7 @@ class TaskWorker:
         payload_dict = (
             task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
         )
-        interface_info = (  # Create helper string for logging
+        (  # Create helper string for logging
             f" ({payload_dict.get('interface_type', 'unknown_if')}:"
             f"{payload_dict.get('conversation_id', 'unknown_cid')})"
             if payload_dict.get("interface_type")

@@ -8,9 +8,9 @@ enabling dependency injection for testing and centralizing retry logic.
 import asyncio
 import logging
 import random
-from typing import Any, Dict, List, Optional, TypeVar, Generic, Callable, Union, cast
+from typing import Any, Dict, List, Optional, TypeVar, Callable, Union
 
-from sqlalchemy import Result, TextClause, event, text
+from sqlalchemy import Result, TextClause, event
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncTransaction
 from sqlalchemy.sql import Select, Insert, Update, Delete
 from sqlalchemy.exc import DBAPIError, ProgrammingError
@@ -127,7 +127,7 @@ class DatabaseContext:
                 )
                 if attempt == self.max_retries - 1:
                     logger.error(
-                        f"Max retries exceeded for retryable error. Raising error."
+                        "Max retries exceeded for retryable error. Raising error."
                     )
                     raise
 
