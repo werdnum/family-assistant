@@ -2,41 +2,43 @@
 Functional test for the basic document indexing pipeline.
 """
 
-import pytest
 import asyncio
-import uuid
-import pytest_asyncio  # For async fixtures
 import logging
-from assertpy import assert_that  # For better assertions
+import uuid
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+import pytest_asyncio  # For async fixtures
+from assertpy import assert_that  # For better assertions
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import get_db_context
-from family_assistant.storage.vector import (
-    add_document,
-    get_document_by_source_id,
-    query_vectors,
-    DocumentEmbeddingRecord,
-    Document as DocumentProtocol,
-)
-from family_assistant.storage.tasks import tasks_table  # For querying tasks
 from family_assistant.embeddings import (
-    MockEmbeddingGenerator,
     EmbeddingGenerator,
     EmbeddingResult,
+    MockEmbeddingGenerator,
 )
-from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent
-from family_assistant.indexing.processors.metadata_processors import TitleExtractor
-from family_assistant.indexing.processors.text_processors import TextChunker
+from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
+from family_assistant.indexing.processors.metadata_processors import TitleExtractor
+from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.storage.context import get_db_context
+from family_assistant.storage.tasks import tasks_table  # For querying tasks
+from family_assistant.storage.vector import (
+    Document as DocumentProtocol,
+)
+from family_assistant.storage.vector import (
+    DocumentEmbeddingRecord,
+    add_document,
+    get_document_by_source_id,
+    query_vectors,
+)
 from family_assistant.task_worker import TaskWorker  # For running the task worker
+from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete  # For waiting for task completion
 
 logger = logging.getLogger(__name__)
@@ -52,10 +54,10 @@ class MockDocumentImpl(DocumentProtocol):
         self,
         source_type: str,
         source_id: str,
-        title: Optional[str] = None,
-        created_at: Optional[datetime] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        source_uri: Optional[str] = None,
+        title: str | None = None,
+        created_at: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
+        source_uri: str | None = None,
     ):
         self._source_type = source_type
         self._source_id = source_id
@@ -77,19 +79,19 @@ class MockDocumentImpl(DocumentProtocol):
         return self._source_id
 
     @property
-    def source_uri(self) -> Optional[str]:
+    def source_uri(self) -> str | None:
         return self._source_uri
 
     @property
-    def title(self) -> Optional[str]:
+    def title(self) -> str | None:
         return self._title
 
     @property
-    def created_at(self) -> Optional[datetime]:
+    def created_at(self) -> datetime | None:
         return self._created_at
 
     @property
-    def metadata(self) -> Optional[Dict[str, Any]]:
+    def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 
 
@@ -98,7 +100,7 @@ class EmbeddingTaskHandlerWrapper:
     def __init__(self, embedding_generator: EmbeddingGenerator):
         self.embedding_generator = embedding_generator
 
-    async def handle_task(self, context: ToolExecutionContext, payload: Dict[str, Any]):
+    async def handle_task(self, context: ToolExecutionContext, payload: dict[str, Any]):
         # Call the original handle_embed_and_store_batch, adapting arguments
         await handle_embed_and_store_batch(
             db_context=context.db_context,  # Extract DatabaseContext from ToolExecutionContext
@@ -119,7 +121,7 @@ async def mock_pipeline_embedding_generator() -> MockEmbeddingGenerator:
     # Mock Embedding Generator
     # It's important that different texts map to different (but consistent) vectors.
     # For simplicity, we'll make it return a vector based on sum of char ords.
-    def generate_simple_vector(text: str) -> List[float]:
+    def generate_simple_vector(text: str) -> list[float]:
         # Crude but deterministic vector generation for testing
         base_val = sum(ord(c) for c in text) % 1000
         return [float(base_val + i) for i in range(TEST_EMBEDDING_DIMENSION)]
@@ -127,7 +129,7 @@ async def mock_pipeline_embedding_generator() -> MockEmbeddingGenerator:
     embedding_map = {}  # Will be populated by the generator as it sees texts
 
     class TestSpecificMockEmbeddingGenerator(MockEmbeddingGenerator):
-        async def generate_embeddings(self, texts: List[str]) -> EmbeddingResult:
+        async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
             # Ensure this returns unique vectors for unique texts during the test
             for text in texts:
                 if text not in self.embedding_map:
@@ -200,7 +202,7 @@ async def indexing_task_worker(
 async def test_indexing_pipeline_e2e(
     pg_vector_db_engine: AsyncEngine,
     mock_pipeline_embedding_generator: MockEmbeddingGenerator,  # Get the generator instance
-    indexing_task_worker: Tuple[
+    indexing_task_worker: tuple[
         TaskWorker, asyncio.Event, asyncio.Event
     ],  # Use the new fixture
 ):
