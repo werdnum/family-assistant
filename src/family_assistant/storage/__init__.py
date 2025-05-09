@@ -3,7 +3,6 @@ import logging
 import os  # Added for path manipulation
 import random
 import traceback
-from typing import Optional
 
 from sqlalchemy import (
     inspect,
@@ -64,12 +63,7 @@ try:
         Base as VectorBase,
     )  # Explicit imports
     from family_assistant.storage.vector import (
-        add_document,
-        add_embedding,
-        delete_document,
-        get_document_by_source_id,
         init_vector_db,
-        query_vectors,
     )
 
     VECTOR_STORAGE_ENABLED = True
@@ -439,19 +433,17 @@ __all__ = [
 ]
 
 # Extend __all__ conditionally for vector storage if it was enabled.
-if VECTOR_STORAGE_ENABLED:
-    # Check if vector_storage specific names were imported successfully
-    # This assumes the placeholder functions/classes were NOT defined if import failed
-    if "add_document" in locals():
-        __all__.extend(
-            [
-                "add_document",
-                "VectorBase",
-                "init_vector_db",
-                "get_document_by_source_id",
-                "add_embedding",
-                "delete_document",
-                "query_vectors",
-                "VectorDocumentProtocol",
-            ]
-        )
+# Check if vector_storage specific names are available and if the feature is enabled.
+if VECTOR_STORAGE_ENABLED and "init_vector_db" in locals():  # 'init_vector_db' is a proxy for successful import
+    __all__.extend(
+        [
+            "add_document",  # Exported even if not directly used in this __init__
+            "VectorBase",
+            "init_vector_db",
+            "get_document_by_source_id",  # Exported
+            "add_embedding",  # Exported
+            "delete_document",  # Exported
+            "query_vectors",  # Exported
+            "VectorDocumentProtocol",  # Assuming this type might be needed by consumers
+        ]
+    )
