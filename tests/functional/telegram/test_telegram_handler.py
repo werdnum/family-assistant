@@ -22,13 +22,12 @@ from telegram.ext import ContextTypes
 
 from family_assistant.llm import LLMOutput
 
+# Import mock LLM helpers
+from tests.mocks.mock_llm import Rule, get_last_message_text
 # Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
 
 logger = logging.getLogger(__name__)
-
-# Import mock LLM helpers
-from tests.mocks.mock_llm import Rule, get_last_message_text
 
 # --- Test Helper Functions ---
 
