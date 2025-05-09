@@ -127,6 +127,9 @@ from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
+# Import the specific task handler for embedding
+from family_assistant.indexing.tasks import handle_embed_and_store_batch
+
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -761,6 +764,10 @@ async def main_async(
     # Register LLM callback handler directly (dependencies passed via context by worker)
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
 
+    # --- Register Indexing Task Handlers ---
+    task_worker_instance.register_task_handler(
+        "embed_and_store_batch", handle_embed_and_store_batch
+    )
     logger.info(
         f"Registered task handlers for worker {task_worker_instance.worker_id}: {list(task_worker_instance.get_task_handlers().keys())}"
     )
