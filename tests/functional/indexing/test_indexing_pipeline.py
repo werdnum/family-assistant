@@ -95,20 +95,6 @@ class MockDocumentImpl(DocumentProtocol):
         return self._metadata
 
 
-# Wrapper class to hold embedding_generator and provide a compliant task handler method
-class EmbeddingTaskHandlerWrapper:
-    def __init__(self, embedding_generator: EmbeddingGenerator):
-        self.embedding_generator = embedding_generator
-
-    async def handle_task(self, context: ToolExecutionContext, payload: dict[str, Any]):
-        # Call the original handle_embed_and_store_batch, adapting arguments
-        await handle_embed_and_store_batch(
-            db_context=context.db_context,  # Extract DatabaseContext from ToolExecutionContext
-            payload=payload,
-            embedding_generator=self.embedding_generator,
-        )
-
-
 @pytest_asyncio.fixture(scope="function")
 async def mock_pipeline_embedding_generator() -> MockEmbeddingGenerator:
     """
@@ -154,17 +140,18 @@ async def indexing_task_worker(
     Yields the worker, new_task_event, and shutdown_event.
     """
     mock_application = MagicMock()
+    # Ensure the mock_pipeline_embedding_generator is set on the mock_application's state
+    # so that TaskWorker can pick it up when creating ToolExecutionContext.
+    mock_application.state.embedding_generator = mock_pipeline_embedding_generator
+
     worker = TaskWorker(
         processing_service=None,
         application=mock_application,
         calendar_config={},
         timezone_str="UTC",
     )
-    embedding_task_executor = EmbeddingTaskHandlerWrapper(
-        mock_pipeline_embedding_generator
-    )
     worker.register_task_handler(
-        "embed_and_store_batch", embedding_task_executor.handle_task
+        "embed_and_store_batch", handle_embed_and_store_batch  # Register the handler directly
     )
 
     worker_task_handle = None
