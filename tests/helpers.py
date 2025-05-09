@@ -33,7 +33,7 @@ async def wait_for_tasks_to_complete(
     """
     Waits until all specified tasks (or all tasks if none specified)
     in the database reach a terminal state ('done' or 'failed').
-    Fails immediately if any tasks enter the 'failed' state.
+    Fails immediately if any tasks enter the 'failed' state or have encountered an error (indicated by `last_error`).
 
     Args:
         engine: The SQLAlchemy AsyncEngine to use for database connections.
@@ -46,7 +46,7 @@ async def wait_for_tasks_to_complete(
     Raises:
         asyncio.TimeoutError: If the timeout is reached before all relevant
                               tasks reach a terminal state.
-        RuntimeError: If any task enters the 'failed' state.
+        RuntimeError: If any task enters the 'failed' state or has a recorded error.
         Exception: If a database error occurs during polling.
     """
     start_time = datetime.now(timezone.utc)
@@ -61,12 +61,14 @@ async def wait_for_tasks_to_complete(
         try:
             # Use the provided engine to get a context
             async with await get_db_context(engine=engine) as db:
-                # First check for failed tasks
+                # First check for tasks that have failed or have a recorded error
+                failure_condition = sa.or_(
+                    tasks_table.c.status == "failed",
+                    tasks_table.c.last_error.is_not(None)
+                )
                 failed_query = select(
                     sql_count(tasks_table.c.id)
-                ).where(  # Pass column to count
-                    tasks_table.c.status == "failed"
-                )
+                ).where(failure_condition)
                 # Filter by specific task IDs if provided
                 if task_ids:
                     failed_query = failed_query.where(
@@ -81,7 +83,7 @@ async def wait_for_tasks_to_complete(
                     failed_task_details_query = select(
                         tasks_table.c.task_id,
                         tasks_table.c.last_error  # Assuming this column exists
-                    ).where(tasks_table.c.status == "failed")
+                    ).where(failure_condition)
                     if task_ids:
                         failed_task_details_query = failed_task_details_query.where(
                             tasks_table.c.task_id.in_(task_ids)
