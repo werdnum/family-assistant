@@ -502,7 +502,7 @@ async def test_vector_ranking(pg_vector_db_engine):
         await _ingest_and_index_email(
             pg_vector_db_engine, form_data1, notify_event=test_new_task_event
         )
-        _ingest_and_index_email(
+        await _ingest_and_index_email(
             pg_vector_db_engine, form_data2, notify_event=test_new_task_event
         )
         await _ingest_and_index_email(
