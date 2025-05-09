@@ -737,7 +737,9 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "add_or_update_note",
-            "description": "Add a new note or update an existing note with the given title. Use this to remember information provided by the user.",
+            "description": (
+                "Add a new note or update an existing note with the given title. Use this to remember information provided by the user."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -758,18 +760,24 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "schedule_future_callback",
-            "description": "Schedule a future trigger for yourself (the assistant) to continue processing or follow up on a topic at a specified time within the current chat context. Use this if the user asks you to do something later, or if a task requires waiting.",
+            "description": (
+                "Schedule a future trigger for yourself (the assistant) to continue processing or follow up on a topic at a specified time within the current chat context. Use this if the user asks you to do something later, or if a task requires waiting."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "callback_time": {
                         "type": "string",
                         "format": "date-time",
-                        "description": "The exact date and time (ISO 8601 format, including timezone, e.g., '2025-05-10T14:30:00+02:00') when the callback should be triggered.",
+                        "description": (
+                            "The exact date and time (ISO 8601 format, including timezone, e.g., '2025-05-10T14:30:00+02:00') when the callback should be triggered."
+                        ),
                     },
                     "context": {
                         "type": "string",
-                        "description": "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan').",
+                        "description": (
+                            "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan')."
+                        ),
                     },
                 },
                 "required": ["callback_time", "context"],
@@ -780,36 +788,52 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "schedule_recurring_task",
-            "description": "Schedule a task that will run repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like sending a daily summary or checking for updates periodically.",
+            "description": (
+                "Schedule a task that will run repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like sending a daily summary or checking for updates periodically."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task_type": {
                         "type": "string",
-                        "description": "The identifier for the task handler that should process this task (e.g., 'send_daily_brief').",
+                        "description": (
+                            "The identifier for the task handler that should process this task (e.g., 'send_daily_brief')."
+                        ),
                     },
                     "initial_schedule_time": {
                         "type": "string",
                         "format": "date-time",
-                        "description": "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the task should run.",
+                        "description": (
+                            "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the task should run."
+                        ),
                     },
                     "recurrence_rule": {
                         "type": "string",
-                        "description": "An RRULE string defining the recurrence schedule according to RFC 5545 (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0' for 8:00 AM daily, 'FREQ=WEEKLY;BYDAY=MO' for every Monday).",
+                        "description": (
+                            "An RRULE string defining the recurrence schedule according to RFC 5545 (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0' for 8:00 AM daily, 'FREQ=WEEKLY;BYDAY=MO' for every Monday)."
+                        ),
                     },
                     "payload": {
                         "type": "object",
-                        "description": "A JSON object containing any necessary data or parameters for the task handler.",
-                        "additionalProperties": True,  # Allow any structure within the payload
+                        "description": (
+                            "A JSON object containing any necessary data or parameters for the task handler."
+                        ),
+                        "additionalProperties": (
+                            True
+                        ),  # Allow any structure within the payload
                     },
                     "max_retries": {
                         "type": "integer",
-                        "description": "Optional. Maximum number of retries for each instance if it fails (default: 3).",
+                        "description": (
+                            "Optional. Maximum number of retries for each instance if it fails (default: 3)."
+                        ),
                         "default": 3,
                     },
                     "description": {
                         "type": "string",
-                        "description": "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief').",
+                        "description": (
+                            "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief')."
+                        ),
                     },
                 },
                 "required": [
@@ -825,27 +849,37 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_documents",
-            "description": "Search previously stored documents (emails, notes, files) using semantic and keyword matching. Returns titles and snippets of the most relevant documents.",
+            "description": (
+                "Search previously stored documents (emails, notes, files) using semantic and keyword matching. Returns titles and snippets of the most relevant documents."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query_text": {
                         "type": "string",
-                        "description": "The natural language query describing the information to search for.",
+                        "description": (
+                            "The natural language query describing the information to search for."
+                        ),
                     },
                     "source_types": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional. Filter results to only include documents from specific sources. Common sources: 'email', 'note', 'google_drive', 'pdf', 'image'. Use ONLY if you are certain about the source type, otherwise omit this filter.",
+                        "description": (
+                            "Optional. Filter results to only include documents from specific sources. Common sources: 'email', 'note', 'google_drive', 'pdf', 'image'. Use ONLY if you are certain about the source type, otherwise omit this filter."
+                        ),
                     },
                     "embedding_types": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional. Filter results based on the type of content that was embedded. Common types: 'content_chunk', 'summary', 'title', 'ocr_text'. Use ONLY if necessary (e.g., searching only titles), otherwise omit this filter.",
+                        "description": (
+                            "Optional. Filter results based on the type of content that was embedded. Common types: 'content_chunk', 'summary', 'title', 'ocr_text'. Use ONLY if necessary (e.g., searching only titles), otherwise omit this filter."
+                        ),
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Optional. Maximum number of results to return (default: 5).",
+                        "description": (
+                            "Optional. Maximum number of results to return (default: 5)."
+                        ),
                         "default": 5,
                     },
                 },
@@ -857,13 +891,17 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_full_document_content",
-            "description": "Retrieves the full text content of a specific document using its unique document ID (obtained from a previous search). Use this when you need the complete text after identifying a relevant document.",
+            "description": (
+                "Retrieves the full text content of a specific document using its unique document ID (obtained from a previous search). Use this when you need the complete text after identifying a relevant document."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "document_id": {
                         "type": "integer",
-                        "description": "The unique identifier of the document whose full content is needed.",
+                        "description": (
+                            "The unique identifier of the document whose full content is needed."
+                        ),
                     },
                 },
                 "required": ["document_id"],
@@ -874,7 +912,9 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "add_calendar_event",
-            "description": "Adds a new event to the primary family calendar (requires CalDAV configuration). Can create single or recurring events. Use this to schedule appointments, reminders with duration, or block out time.",
+            "description": (
+                "Adds a new event to the primary family calendar (requires CalDAV configuration). Can create single or recurring events. Use this to schedule appointments, reminders with duration, or block out time."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -884,24 +924,34 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "The start date or datetime of the event in ISO 8601 format. MUST include timezone offset (e.g., '2025-05-20T09:00:00+02:00' for timed event, '2025-05-21' for all-day).",
+                        "description": (
+                            "The start date or datetime of the event in ISO 8601 format. MUST include timezone offset (e.g., '2025-05-20T09:00:00+02:00' for timed event, '2025-05-21' for all-day)."
+                        ),
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "The end date or datetime of the event in ISO 8601 format. MUST include timezone offset (e.g., '2025-05-20T10:30:00+02:00' for timed event, '2025-05-22' for all-day - note: end date is exclusive for all-day).",
+                        "description": (
+                            "The end date or datetime of the event in ISO 8601 format. MUST include timezone offset (e.g., '2025-05-20T10:30:00+02:00' for timed event, '2025-05-22' for all-day - note: end date is exclusive for all-day)."
+                        ),
                     },
                     "description": {
                         "type": "string",
-                        "description": "Optional. A more detailed description or notes for the event.",
+                        "description": (
+                            "Optional. A more detailed description or notes for the event."
+                        ),
                     },
                     "all_day": {
                         "type": "boolean",
-                        "description": "Set to true if this is an all-day event, false or omit if it has specific start/end times. Determines if start/end times are treated as dates or datetimes.",
+                        "description": (
+                            "Set to true if this is an all-day event, false or omit if it has specific start/end times. Determines if start/end times are treated as dates or datetimes."
+                        ),
                         "default": False,
                     },
                     "recurrence_rule": {
                         "type": "string",
-                        "description": "Optional. An RRULE string (RFC 5545) to make this a recurring event (e.g., 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20251231T235959Z'). If omitted, the event is a single instance.",
+                        "description": (
+                            "Optional. An RRULE string (RFC 5545) to make this a recurring event (e.g., 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20251231T235959Z'). If omitted, the event is a single instance."
+                        ),
                     },
                 },
                 "required": ["summary", "start_time", "end_time"],
@@ -912,18 +962,24 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_message_history",
-            "description": "Retrieve past messages from the current conversation history. Use this if you need context from earlier in the conversation that might not be in the default short-term history window.",
+            "description": (
+                "Retrieve past messages from the current conversation history. Use this if you need context from earlier in the conversation that might not be in the default short-term history window."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Optional. The maximum number of messages to retrieve (most recent first). Default is 10.",
+                        "description": (
+                            "Optional. The maximum number of messages to retrieve (most recent first). Default is 10."
+                        ),
                         "default": 10,
                     },
                     "max_age_hours": {
                         "type": "integer",
-                        "description": "Optional. Retrieve messages only up to this many hours old. Default is 24.",
+                        "description": (
+                            "Optional. Retrieve messages only up to this many hours old. Default is 24."
+                        ),
                         "default": 24,
                     },
                 },
@@ -936,13 +992,17 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_user_documentation_content",
-            "description": "Retrieves the content of a specific user documentation file. Use this to answer questions about how the assistant works or what features it has, based on the official documentation.\nAvailable files: {available_doc_files}",  # Placeholder added
+            "description": (
+                "Retrieves the content of a specific user documentation file. Use this to answer questions about how the assistant works or what features it has, based on the official documentation.\nAvailable files: {available_doc_files}"
+            ),  # Placeholder added
             "parameters": {
                 "type": "object",
                 "properties": {
                     "filename": {
                         "type": "string",
-                        "description": "The exact filename of the documentation file to retrieve (e.g., 'USER_GUIDE.md'). Must end in .md or .txt.",
+                        "description": (
+                            "The exact filename of the documentation file to retrieve (e.g., 'USER_GUIDE.md'). Must end in .md or .txt."
+                        ),
                     },
                 },
                 "required": ["filename"],
@@ -953,25 +1013,35 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_calendar_events",
-            "description": "Search for calendar events based on a query and optional date range. Returns a list of matching events with their details and unique IDs (UIDs). Use this *first* when a user asks to modify or delete an event, to identify the correct event UID.",
+            "description": (
+                "Search for calendar events based on a query and optional date range. Returns a list of matching events with their details and unique IDs (UIDs). Use this *first* when a user asks to modify or delete an event, to identify the correct event UID."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query_text": {
                         "type": "string",
-                        "description": "Keywords from the user's request describing the event (e.g., 'dentist appointment', 'team meeting').",
+                        "description": (
+                            "Keywords from the user's request describing the event (e.g., 'dentist appointment', 'team meeting')."
+                        ),
                     },
                     "start_date_str": {
                         "type": "string",
-                        "description": "Optional. The start date for the search range (ISO 8601 format, e.g., '2025-05-20'). Defaults to today if omitted.",
+                        "description": (
+                            "Optional. The start date for the search range (ISO 8601 format, e.g., '2025-05-20'). Defaults to today if omitted."
+                        ),
                     },
                     "end_date_str": {
                         "type": "string",
-                        "description": "Optional. The end date for the search range (ISO 8601 format, e.g., '2025-05-22'). Defaults to start_date + 2 days if omitted.",
+                        "description": (
+                            "Optional. The end date for the search range (ISO 8601 format, e.g., '2025-05-22'). Defaults to start_date + 2 days if omitted."
+                        ),
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Optional. Maximum number of events to return (default: 5).",
+                        "description": (
+                            "Optional. Maximum number of events to return (default: 5)."
+                        ),
                         "default": 5,
                     },
                 },
@@ -983,18 +1053,24 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "modify_calendar_event",
-            "description": "Modifies an existing calendar event identified by its UID. Requires the UID obtained from search_calendar_events. Only provide parameters for the fields that need changing. Does *not* currently support modifying recurring events reliably (may affect only the specified instance).",
+            "description": (
+                "Modifies an existing calendar event identified by its UID. Requires the UID obtained from search_calendar_events. Only provide parameters for the fields that need changing. Does *not* currently support modifying recurring events reliably (may affect only the specified instance)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "uid": {
                         "type": "string",
-                        "description": "The unique ID (UID) of the event to modify, obtained from search_calendar_events.",
+                        "description": (
+                            "The unique ID (UID) of the event to modify, obtained from search_calendar_events."
+                        ),
                     },
                     "calendar_url": {
                         "type": "string",
                         "format": "uri",
-                        "description": "The URL of the calendar containing the event, obtained from search_calendar_events.",
+                        "description": (
+                            "The URL of the calendar containing the event, obtained from search_calendar_events."
+                        ),
                     },
                     "new_summary": {
                         "type": "string",
@@ -1002,19 +1078,27 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "new_start_time": {
                         "type": "string",
-                        "description": "Optional. The new start date or datetime (ISO 8601 format with timezone for timed events, e.g., '2025-05-20T11:00:00+02:00' or '2025-05-21').",
+                        "description": (
+                            "Optional. The new start date or datetime (ISO 8601 format with timezone for timed events, e.g., '2025-05-20T11:00:00+02:00' or '2025-05-21')."
+                        ),
                     },
                     "new_end_time": {
                         "type": "string",
-                        "description": "Optional. The new end date or datetime (ISO 8601 format with timezone for timed events, e.g., '2025-05-20T11:30:00+02:00' or '2025-05-22').",
+                        "description": (
+                            "Optional. The new end date or datetime (ISO 8601 format with timezone for timed events, e.g., '2025-05-20T11:30:00+02:00' or '2025-05-22')."
+                        ),
                     },
                     "new_description": {
                         "type": "string",
-                        "description": "Optional. The new detailed description for the event.",
+                        "description": (
+                            "Optional. The new detailed description for the event."
+                        ),
                     },
                     "new_all_day": {
                         "type": "boolean",
-                        "description": "Optional. Set to true if the event should become an all-day event, false if it should become timed. Requires appropriate new_start/end_time.",
+                        "description": (
+                            "Optional. Set to true if the event should become an all-day event, false if it should become timed. Requires appropriate new_start/end_time."
+                        ),
                     },
                 },
                 "required": [  # TODO: Logically, at least one 'new_' field is needed, but schema doesn't enforce
@@ -1028,18 +1112,24 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "delete_calendar_event",
-            "description": "Deletes a specific calendar event identified by its UID. Requires the UID obtained from search_calendar_events. Does *not* currently support deleting recurring events reliably (may affect only the specified instance).",
+            "description": (
+                "Deletes a specific calendar event identified by its UID. Requires the UID obtained from search_calendar_events. Does *not* currently support deleting recurring events reliably (may affect only the specified instance)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "uid": {
                         "type": "string",
-                        "description": "The unique ID (UID) of the event to delete, obtained from search_calendar_events.",
+                        "description": (
+                            "The unique ID (UID) of the event to delete, obtained from search_calendar_events."
+                        ),
                     },
                     "calendar_url": {
                         "type": "string",
                         "format": "uri",
-                        "description": "The URL of the calendar containing the event, obtained from search_calendar_events.",
+                        "description": (
+                            "The URL of the calendar containing the event, obtained from search_calendar_events."
+                        ),
                     },
                 },
                 "required": ["uid", "calendar_url"],

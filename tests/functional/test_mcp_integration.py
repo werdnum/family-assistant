@@ -152,7 +152,9 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
                     "name": MCP_TIME_TOOL_NAME,
                     "arguments": json.dumps(
                         {
-                            "time": SOURCE_TIME,  # Argument name from mcp-server-time docs
+                            "time": (
+                                SOURCE_TIME
+                            ),  # Argument name from mcp-server-time docs
                             "source_timezone": SOURCE_TZ,
                             "target_timezone": TARGET_TZ,
                         }

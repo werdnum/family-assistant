@@ -146,7 +146,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "allowed_user_ids": [],
         "developer_chat_id": None,
         "model": "openrouter/google/gemini-2.5-pro-preview-03-25",  # Default model
-        "embedding_model": "gemini/gemini-embedding-exp-03-07",  # Default embedding model
+        "embedding_model": (
+            "gemini/gemini-embedding-exp-03-07"
+        ),  # Default embedding model
         "embedding_dimensions": 1536,  # Default dimension
         "timezone": "UTC",
         "database_url": "sqlite+aiosqlite:///family_assistant.db",  # Default DB
