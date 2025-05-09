@@ -6,6 +6,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+import re # Add re import
 from typing import Dict, Any, Tuple, Optional  # Add missing typing imports
 from unittest.mock import MagicMock  # Add this import
 
@@ -215,10 +216,14 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
         + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
     ).tolist()
 
+    # Normalize test strings in the same way TextChunker does
+    normalized_subject = re.sub(r"\s+", " ", TEST_EMAIL_SUBJECT).strip()
+    normalized_body = re.sub(r"\s+", " ", TEST_EMAIL_BODY).strip()
+
     embedding_map = {
-        TEST_EMAIL_SUBJECT: title_embedding,
-        TEST_EMAIL_BODY: body_embedding,
-        TEST_QUERY_TEXT: query_embedding,
+        normalized_subject: title_embedding,
+        normalized_body: body_embedding,
+        TEST_QUERY_TEXT: query_embedding, # Query text is not processed by TextChunker
     }
     mock_embedder = MockEmbeddingGenerator(
         embedding_map=embedding_map,
