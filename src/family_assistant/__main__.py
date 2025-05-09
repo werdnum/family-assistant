@@ -122,9 +122,9 @@ from family_assistant.indexing.document_indexer import (
 )  # Import the class
 # Import pipeline and processors for indexing
 from family_assistant.indexing.pipeline import IndexingPipeline
-from family_assistant.indexing.processors import (
-    TitleExtractor,
-    TextChunker,
+from family_assistant.indexing.processors.metadata_processors import TitleExtractor
+from family_assistant.indexing.processors.text_processors import TextChunker
+from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
 
