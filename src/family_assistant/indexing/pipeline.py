@@ -120,7 +120,7 @@ class IndexingPipeline:
             initial_items  # Changed initialization
         )
 
-        for processor in self.processors:
+        for _processor in self.processors:
             if not items_for_next_stage:  # No more items to process
                 break
 
