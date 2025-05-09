@@ -192,7 +192,7 @@ async def handle_index_email(
     # LLM enrichment logic would go here in the future
 
     # --- 4. Add/Update Document Record in Vector DB & Get DB Record ---
-    doc_db_id = await storage.add_document(
+    doc_db_id: int = await storage.add_document(
         db_context=db_context, doc=email_doc, enriched_doc_metadata=enriched_metadata
     )
     logger.info(

@@ -1438,7 +1438,7 @@ async def upload_document(
     doc_for_storage = UploadedDocument(document_data)
 
     try:
-        document_id = await storage.add_document(
+        document_id: int = await storage.add_document(
             db_context=db_context,
             doc=doc_for_storage,
             # No separate enriched metadata here, it's already merged
