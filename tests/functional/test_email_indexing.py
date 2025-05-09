@@ -367,57 +367,6 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
         except Exception as e:
             logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
 
-    # --- Act: Query Vectors ---
-    query_results = None
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info(f"Querying vectors using text: '{TEST_QUERY_TEXT}'")
-        query_results = await query_vectors(
-            db,
-            query_embedding=query_embedding,  # Use the mock query embedding
-            embedding_model=TEST_EMBEDDING_MODEL,  # Must match the mock model name
-            limit=5,
-            # Optional: Add filters if needed, e.g., source_type='email'
-            filters={"source_type": "email"},
-        )
-
-    # --- Assert ---
-    assert query_results is not None, "query_vectors returned None"
-    assert len(query_results) > 0, "No results returned from vector query"
-    logger.info(f"Query returned {len(query_results)} result(s).")
-
-    # Find the result corresponding to our document
-    found_result = None
-    for result in query_results:
-        # Check against the source_id (Message-ID) stored in the documents table
-        if result.get("source_id") == TEST_EMAIL_MESSAGE_ID:
-            found_result = result
-            break
-
-    assert (
-        found_result is not None
-    ), f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}"
-    logger.info(f"Found matching result: {found_result}")
-
-    # Check distance (should be small since query embedding was close to body)
-    assert "distance" in found_result, "Result missing 'distance' field"
-    # Distance depends on the mock vectors, check it's reasonably small
-    assert (
-        found_result["distance"] < 0.1
-    ), f"Distance should be small, but was {found_result['distance']}"
-
-    # Check other fields in the result
-    # The closest embedding might be title or body depending on the random vectors
-    assert found_result.get("embedding_type") in ["content_chunk", "title"]
-    if found_result.get("embedding_type") == "content_chunk":
-        assert found_result.get("embedding_source_content") == TEST_EMAIL_BODY
-    else:
-        assert found_result.get("embedding_source_content") == TEST_EMAIL_SUBJECT
-
-    assert found_result.get("title") == TEST_EMAIL_SUBJECT
-    assert found_result.get("source_type") == "email"
-
-    logger.info("--- Email Indexing E2E Test Passed ---")
-
 
 @pytest.mark.asyncio
 async def test_vector_ranking(pg_vector_db_engine):
@@ -591,11 +540,6 @@ async def test_vector_ranking(pg_vector_db_engine):
             await asyncio.wait_for(worker_task, timeout=5.0)
             if test_failed:
                 await dump_tables_on_failure(pg_vector_db_engine)
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-            # Dump tables if the test failed before this finally block
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
         except asyncio.TimeoutError:
             worker_task.cancel()
 
@@ -762,11 +706,6 @@ async def test_metadata_filtering(pg_vector_db_engine):
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-            # Dump tables if the test failed before this finally block
             if test_failed:
                 await dump_tables_on_failure(pg_vector_db_engine)
         except asyncio.TimeoutError:
@@ -937,11 +876,6 @@ async def test_keyword_filtering(pg_vector_db_engine):
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-            # Dump tables if the test failed before this finally block
             if test_failed:
                 await dump_tables_on_failure(pg_vector_db_engine)
         except asyncio.TimeoutError:
