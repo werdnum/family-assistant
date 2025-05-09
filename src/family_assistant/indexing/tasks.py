@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 async def handle_embed_and_store_batch(
     db_context: "ToolExecutionContext",  # Caller uses 'db_context' keyword; expects ToolExecutionContext
     payload: dict[str, Any],
+    embedding_generator: "EmbeddingGenerator",  # Passed directly by the caller
 ) -> None:
     """
     Task handler for embedding a batch of texts and storing them in the vector database.
@@ -32,6 +33,8 @@ async def handle_embed_and_store_batch(
         db_context: The ToolExecutionContext object, passed by the caller using the
                     keyword 'db_context'. This context provides access to the
                     actual database context and embedding generator.
+                    actual database context.
+        embedding_generator: The EmbeddingGenerator instance, passed by the caller.
         payload: The task payload containing data for embedding.
 
     Raises:
@@ -45,8 +48,8 @@ async def handle_embed_and_store_batch(
     exec_context_obj = db_context  # Alias for clarity
 
     # Extract the actual DatabaseContext and EmbeddingGenerator.
-    actual_db_context = exec_context_obj.db_context
-    embedding_generator = exec_context_obj.embedding_generator
+    actual_db_context = exec_context_obj.db_context # Get DatabaseContext from ToolExecutionContext
+    # The embedding_generator is now passed directly as a parameter.
 
     # The rest of the function uses the variable name 'db_context' for the DatabaseContext.
     db_context = actual_db_context
