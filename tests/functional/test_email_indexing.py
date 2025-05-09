@@ -232,7 +232,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50) # Example chunker config
     # Configure EmbeddingDispatchProcessor to dispatch common types
     embedding_dispatcher = EmbeddingDispatchProcessor(
-        embedding_types_to_dispatch=["title", "content_chunk"], # Add other types if needed by test
+        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"], # Adjusted to match TextChunker's output
     )
 
     test_pipeline = IndexingPipeline(
@@ -328,14 +328,14 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
             logger.info(f"Found matching result: {found_result}")
 
             # Check distance (should be small since query embedding was close to body)
-            assert "distance" in found_result, "Result missing 'distance' field"
+            assert "distance" in found_result, f"Result missing 'distance' field: {found_result}"
             assert (
                 found_result["distance"] < 0.1
             ), f"Distance should be small, but was {found_result['distance']}"
 
             # Check other fields in the result
-            assert found_result.get("embedding_type") in ["content_chunk", "title"]
-            if found_result.get("embedding_type") == "content_chunk":
+            assert found_result.get("embedding_type") in ["raw_body_text_chunk", "title_chunk"]
+            if found_result.get("embedding_type") == "raw_body_text_chunk":
                 assert found_result.get("embedding_source_content") == TEST_EMAIL_BODY
             else:
                 assert found_result.get("embedding_source_content") == TEST_EMAIL_SUBJECT
@@ -422,7 +422,7 @@ async def test_vector_ranking(pg_vector_db_engine):
     title_extractor = TitleExtractor()
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
     embedding_dispatcher_kw = EmbeddingDispatchProcessor(  # Renamed for clarity if needed, or reuse
-        embedding_types_to_dispatch=["title", "content_chunk"],)
+        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],) # Adjusted
     test_pipeline_kw = IndexingPipeline( # Renamed for clarity
         processors=[title_extractor, text_chunker, embedding_dispatcher_kw],
         config={}
@@ -595,7 +595,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
     title_extractor_meta = TitleExtractor()
     text_chunker_meta = TextChunker(chunk_size=500, chunk_overlap=50)
     embedding_dispatcher_meta = EmbeddingDispatchProcessor(
-        embedding_types_to_dispatch=["title", "content_chunk"],)
+        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],) # Adjusted
     test_pipeline_meta = IndexingPipeline(
         processors=[title_extractor_meta, text_chunker_meta, embedding_dispatcher_meta],
         config={}
@@ -759,7 +759,7 @@ async def test_keyword_filtering(pg_vector_db_engine):
     title_extractor = TitleExtractor()
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
     embedding_dispatcher_kw = EmbeddingDispatchProcessor(  # Renamed for clarity if needed, or reuse
-        embedding_types_to_dispatch=["title", "content_chunk"],)
+        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"],) # Adjusted
     test_pipeline_kw = IndexingPipeline( # Renamed for clarity
         processors=[title_extractor, text_chunker, embedding_dispatcher_kw],
         config={}
