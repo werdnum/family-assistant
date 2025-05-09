@@ -6,7 +6,7 @@ import pytest
 import uuid
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 
 import numpy as np  # Using numpy for easy random vector generation
 from sqlalchemy import text  # Add this import
@@ -28,15 +28,12 @@ from family_assistant.storage.vector_search import (
 )
 from family_assistant.storage.context import (
     DatabaseContext,
-    get_db_context,
 )  # Add get_db_context
 from family_assistant.embeddings import MockEmbeddingGenerator  # For mocking embeddings
 from family_assistant.tools import (  # Import tool components
     search_documents_tool,
     LocalToolsProvider,
-    ToolExecutionContext,
-    AVAILABLE_FUNCTIONS,  # To get the tool function mapping
-    TOOLS_DEFINITION,  # To get tool definitions (though not strictly needed for execution)
+    ToolExecutionContext,  # To get tool definitions (though not strictly needed for execution)
 )
 
 logger = logging.getLogger(__name__)
@@ -133,7 +130,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
         metadata=test_metadata,
     )
 
-    logger.info(f"\n--- Running Vector Storage Basic Flow Test ---")
+    logger.info("\n--- Running Vector Storage Basic Flow Test ---")
     logger.info(f"Using Source ID: {test_source_id}")
     logger.info(
         f"Using Embedding Model: {TEST_EMBEDDING_MODEL} (Dim: {TEST_EMBEDDING_DIMENSION})"
@@ -302,7 +299,7 @@ async def test_search_documents_tool(pg_vector_db_engine):
         metadata={"purpose": "tool_testing"},
     )
 
-    logger.info(f"\n--- Running Search Documents Tool Test ---")
+    logger.info("\n--- Running Search Documents Tool Test ---")
     logger.info(f"Using Source ID: {test_source_id}")
     logger.info(
         f"Using Mock Embedding Model: {mock_embedding_model} (Dim: {mock_embedding_dimension})"
@@ -391,7 +388,7 @@ async def test_search_documents_tool(pg_vector_db_engine):
         # Use direct query as get_document_by_source_id might be cached or slow
         stmt = text("SELECT COUNT(*) FROM documents WHERE id = :doc_id")
         result = await db.execute_with_retry(stmt, {"doc_id": doc_id})
-        count = result.scalar_one()
+        result.scalar_one()
         # NOTE: This assertion depends on the fixture cleaning up *after* the test runs.
         # If the fixture cleans *before*, this check is invalid.
         # Assuming cleanup happens after:

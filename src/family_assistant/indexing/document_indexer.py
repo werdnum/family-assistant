@@ -2,19 +2,19 @@
 Handles the indexing process for documents uploaded via the API.
 """
 
-import asyncio
 import logging
 from typing import Any, Dict, Optional, List
 
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
-from family_assistant import storage  # For DB operations (add_embedding)
-from family_assistant.storage.context import DatabaseContext
-from family_assistant.indexing.pipeline import IndexingPipeline, IndexableContent # Added
+from family_assistant.indexing.pipeline import (
+    IndexingPipeline,
+    IndexableContent,
+)  # Added
 
 # Import the Document protocol from the correct location (though not directly used here, good practice)
-from family_assistant.storage.vector import Document, get_document_by_id # Added import
+from family_assistant.storage.vector import get_document_by_id  # Added import
 from family_assistant.tools import ToolExecutionContext  # Import the context class
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class DocumentIndexer:
     Takes dependencies via constructor.
     """
 
-    def __init__(self, pipeline: IndexingPipeline): # Modified
+    def __init__(self, pipeline: IndexingPipeline):  # Modified
         """
         Initializes the DocumentIndexer.
 
@@ -70,17 +70,20 @@ class DocumentIndexer:
         # Fetch the original DocumentRecord
         try:
             # Assuming a function like get_document_by_id exists.
-            original_document_record = await get_document_by_id( # Changed from storage.get_document_by_id
-                db_context, document_id # The returned object should conform to the Document protocol.
+            original_document_record = await get_document_by_id(  # Changed from storage.get_document_by_id
+                db_context,
+                document_id,  # The returned object should conform to the Document protocol.
             )
             if not original_document_record:
                 raise ValueError(f"Document with ID {document_id} not found.")
         except SQLAlchemyError as e:
-            logger.error(f"Database error fetching document {document_id}: {e}", exc_info=True)
+            logger.error(
+                f"Database error fetching document {document_id}: {e}", exc_info=True
+            )
             raise RuntimeError(f"Failed to fetch document {document_id}") from e
         except ValueError as e:
             logger.error(str(e))
-            raise # Re-raise to mark task as failed if document not found
+            raise  # Re-raise to mark task as failed if document not found
 
         if not content_parts:
             logger.warning(
@@ -132,7 +135,9 @@ class DocumentIndexer:
 
         # Run the pipeline with the prepared items
         try:
-            logger.info(f"Running indexing pipeline for document {document_id} with {len(initial_items)} initial items.")
+            logger.info(
+                f"Running indexing pipeline for document {document_id} with {len(initial_items)} initial items."
+            )
             # Pass the list of items directly to the pipeline's run method.
             # The pipeline's run method will determine how to handle initial_content_ref from this list.
             await self.pipeline.run(
@@ -154,5 +159,6 @@ class DocumentIndexer:
             f"Indexing pipeline successfully initiated for document {document_id}."
         )
         # Task completion is handled by the worker loop
+
 
 __all__ = ["DocumentIndexer"]

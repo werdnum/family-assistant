@@ -1,8 +1,6 @@
 import pytest
-import asyncio
 import logging
 import json
-from typing import List, Dict, Any, Optional, Callable, Tuple
 import os  # Added os import
 import signal  # Import the signal module
 import pytest_asyncio  # Import pytest_asyncio
@@ -10,7 +8,7 @@ import subprocess
 import time
 
 # Import necessary components from the application
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import DatabaseContext
 
 from family_assistant.processing import ProcessingService
 from family_assistant.llm import LLMInterface, LLMOutput
@@ -20,17 +18,14 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     TOOLS_DEFINITION as local_tools_definition,
     AVAILABLE_FUNCTIONS as local_tool_implementations,
-    ToolExecutionContext,
 )
-from family_assistant import storage  # For direct task checking
-import uuid # Added for turn_id
+import uuid  # Added for turn_id
 
 import socket
-from unittest.mock import MagicMock, AsyncMock  # Keep mocks for LLM
+from unittest.mock import MagicMock  # Keep mocks for LLM
 from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     Rule,
-    MatcherFunction,
     get_last_message_text,
 )
 
@@ -118,7 +113,8 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     # --- Define Rules for Mock LLM ---
     mcp_tool_call_id = f"call_mcp_time_{test_run_id}"
 
-    user_message_id = 101 # Added message ID for the user request
+    user_message_id = 101  # Added message ID for the user request
+
     # Rule 1: Match request to convert time
     def time_conversion_matcher(messages, tools, tool_choice):
         last_text = get_last_message_text(messages).lower()
@@ -193,7 +189,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         rules=[tool_call_rule, tool_result_rule],
         default_response=LLMOutput(content="Default mock response for MCP test."),
     )
-    logger.info(f"Using RuleBasedMockLLMClient for MCP test.")
+    logger.info("Using RuleBasedMockLLMClient for MCP test.")
 
     # --- Instantiate Dependencies ---
     # Tool Providers
@@ -230,7 +226,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         server_url=None,
-        context_providers=[], # Added context_providers
+        context_providers=[],  # Added context_providers
     )
 
     # --- Execute the Request ---
@@ -242,17 +238,19 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call generate_llm_response_for_chat directly
         # Unpack the correct return values: generated_turn_messages, final_reasoning_info, processing_error_traceback
-        generated_turn_messages, final_reasoning_info, processing_error_traceback = (
-            await processing_service.generate_llm_response_for_chat(
-                db_context=db_context,
-                application=MagicMock(),
-                interface_type="test",
-                conversation_id=str(TEST_CHAT_ID),
-                turn_id=str(uuid.uuid4()), # Added turn_id
-                trigger_content_parts=user_request_trigger,
-                trigger_interface_message_id=user_message_id,
-                user_name=TEST_USER_NAME,
-            )
+        (
+            generated_turn_messages,
+            final_reasoning_info,
+            processing_error_traceback,
+        ) = await processing_service.generate_llm_response_for_chat(
+            db_context=db_context,
+            application=MagicMock(),
+            interface_type="test",
+            conversation_id=str(TEST_CHAT_ID),
+            turn_id=str(uuid.uuid4()),  # Added turn_id
+            trigger_content_parts=user_request_trigger,
+            trigger_interface_message_id=user_message_id,
+            user_name=TEST_USER_NAME,
         )
 
     # --- Verification (Assert on final response content) ---
@@ -313,13 +311,13 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     # --- Define Rules for Mock LLM (Identical to stdio test) ---
     mcp_tool_call_id = f"call_mcp_time_sse_{test_run_id}"
-    user_message_id = 201 # Added message ID for the SSE test user request
+    user_message_id = 201  # Added message ID for the SSE test user request
 
     # Rule 1: Match request to convert time
     def time_conversion_matcher(messages, tools, tool_choice):
         last_text = get_last_message_text(messages).lower()
         tool_names = [t.get("function", {}).get("name") for t in tools or []]
-        match_tool_name = any(name == MCP_TIME_TOOL_NAME for name in tool_names)
+        any(name == MCP_TIME_TOOL_NAME for name in tool_names)
         # Simplified matcher checks for SSE test
         return (
             "convert" in last_text  # Corrected syntax for matcher
@@ -379,7 +377,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
         rules=[tool_call_rule, tool_result_rule],
         default_response=LLMOutput(content="Default mock response for MCP SSE test."),
     )
-    logger.info(f"Using RuleBasedMockLLMClient for MCP SSE test.")
+    logger.info("Using RuleBasedMockLLMClient for MCP SSE test.")
 
     # --- Instantiate Dependencies ---
     local_provider = LocalToolsProvider(
@@ -421,7 +419,7 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         server_url=None,
-        context_providers=[], # Added context_providers
+        context_providers=[],  # Added context_providers
     )
 
     # --- Execute the Request ---
@@ -434,17 +432,19 @@ async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Correct unpacking based on function signature
-        generated_turn_messages, final_reasoning_info, processing_error_traceback = (
-            await processing_service.generate_llm_response_for_chat(
-                db_context=db_context,
-                application=MagicMock(),
-                interface_type="test",
-                conversation_id=str(TEST_CHAT_ID),
-                turn_id=str(uuid.uuid4()), # Added turn_id
-                trigger_content_parts=user_request_trigger,
-                trigger_interface_message_id=user_message_id,
-                user_name=TEST_USER_NAME,
-            )
+        (
+            generated_turn_messages,
+            final_reasoning_info,
+            processing_error_traceback,
+        ) = await processing_service.generate_llm_response_for_chat(
+            db_context=db_context,
+            application=MagicMock(),
+            interface_type="test",
+            conversation_id=str(TEST_CHAT_ID),
+            turn_id=str(uuid.uuid4()),  # Added turn_id
+            trigger_content_parts=user_request_trigger,
+            trigger_interface_message_id=user_message_id,
+            user_name=TEST_USER_NAME,
         )
 
     # --- Verification (Assert on final response content) ---

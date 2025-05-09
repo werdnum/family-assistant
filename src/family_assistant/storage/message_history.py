@@ -3,8 +3,6 @@ Handles storage and retrieval of message history.
 """
 
 import logging
-import random
-import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple, cast  # Added Tuple, cast
 
@@ -15,14 +13,12 @@ from sqlalchemy import (
     String,
     BigInteger,
     DateTime,
-    or_, # Add or_ import
     Text,
     Select,  # Add Select
     update,  # Add update import
     JSON,
     select,
     insert,
-    desc,
 )
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.engine import Result  # Import Result for type hint
@@ -99,10 +95,10 @@ async def add_message_to_history(
     """Adds a message to the history table, including optional fields."""
     # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
     try:
-        stmt = ( # Start statement assignment
-            insert(message_history_table) # Call insert
-            .values( # Specify values to insert
-                interface_type=interface_type, # Added missing interface_type
+        stmt = (  # Start statement assignment
+            insert(message_history_table)  # Call insert
+            .values(  # Specify values to insert
+                interface_type=interface_type,  # Added missing interface_type
                 conversation_id=conversation_id,
                 interface_message_id=interface_message_id,
                 turn_id=turn_id,
@@ -115,9 +111,9 @@ async def add_message_to_history(
                 reasoning_info=reasoning_info,
                 error_traceback=error_traceback,
                 tool_call_id=tool_call_id,
-            ) # Close .values()
-            .returning(message_history_table.c.internal_id) # Specify returning clause
-        ) # Close statement assignment parenthesis
+            )  # Close .values()
+            .returning(message_history_table.c.internal_id)  # Specify returning clause
+        )  # Close statement assignment parenthesis
         # Use execute_with_retry as commit is handled by context manager
         result: Result = await db_context.execute_with_retry(stmt)
         internal_id = result.scalar_one_or_none()
@@ -192,11 +188,13 @@ async def get_recent_history(
             .where(message_history_table.c.timestamp >= cutoff_time)
             .order_by(
                 message_history_table.c.timestamp.desc(),
-                message_history_table.c.internal_id.desc() # Add this secondary sort
+                message_history_table.c.internal_id.desc(),  # Add this secondary sort
             )
             .limit(limit)
         )
-        candidate_rows_result = await db_context.fetch_all(cast(Select[Any], stmt_candidates))
+        candidate_rows_result = await db_context.fetch_all(
+            cast(Select[Any], stmt_candidates)
+        )
         # Store candidate messages in a dictionary by internal_id for easy merging
         # These are newest first at this stage.
         all_messages_dict: Dict[int, Dict[str, Any]] = {
@@ -221,7 +219,9 @@ async def get_recent_history(
                 # We fetch all messages for these turns, even if some parts of the turn
                 # are older than cutoff_time, as one part of the turn met the criteria.
             )
-            expanded_turn_rows_result = await db_context.fetch_all(cast(Select[Any], stmt_expand_turns))
+            expanded_turn_rows_result = await db_context.fetch_all(
+                cast(Select[Any], stmt_expand_turns)
+            )
 
             for row_mapping in expanded_turn_rows_result:
                 msg_dict = dict(row_mapping)
@@ -288,12 +288,9 @@ async def get_messages_by_turn_id(
             .order_by(
                 message_history_table.c.internal_id
             )  # Order by insertion sequence first
-        ) # Close the statement parenthesis
+        )  # Close the statement parenthesis
         rows = await db_context.fetch_all(
-
             cast(Select[Any], stmt)
-
-
         )  # Cast for type checker
         return [dict(row) for row in rows]
     except SQLAlchemyError as e:
@@ -312,20 +309,22 @@ async def get_messages_by_thread_id(
     # Messages in the thread either have `thread_root_id` pointing to that first message,
     # or *are* the first message (where `internal_id == thread_root_id` would be true,
     try:
-    # although the first message itself has `thread_root_id` as NULL).
+        # although the first message itself has `thread_root_id` as NULL).
         # Corrected query to include the root message itself
         stmt = (
-            select(message_history_table) # Filter by thread root ID or the root message itself
-            .where( (message_history_table.c.thread_root_id == thread_root_id) | (message_history_table.c.internal_id == thread_root_id) )
+            select(
+                message_history_table
+            )  # Filter by thread root ID or the root message itself
+            .where(
+                (message_history_table.c.thread_root_id == thread_root_id)
+                | (message_history_table.c.internal_id == thread_root_id)
+            )
             .order_by(
                 message_history_table.c.internal_id
             )  # Order by insertion sequence first
-        ) # Close the statement parenthesis
+        )  # Close the statement parenthesis
         rows = await db_context.fetch_all(
-
             cast(Select[Any], stmt)
-
-
         )  # Cast for type checker
         return [dict(row) for row in rows]
     except SQLAlchemyError as e:
@@ -346,7 +345,7 @@ async def get_grouped_message_history(
             # Group by (interface_type, conversation_id) tuple
             message_history_table.c.conversation_id,
             message_history_table.c.timestamp,  # Order chronologically within group
-            message_history_table.c.internal_id # Add for stable chronological order
+            message_history_table.c.internal_id,  # Add for stable chronological order
         )
         rows = await db_context.fetch_all(
             cast(Select[Any], stmt)

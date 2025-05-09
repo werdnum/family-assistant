@@ -7,10 +7,10 @@ from fastapi import (
     Form,
     HTTPException,
     Depends,
-    Response, # Added Query for pagination parameters
+    Response,  # Added Query for pagination parameters
     status,
 )  # Added status
-from starlette.types import ASGIApp, Receive, Scope, Send # For middleware class
+from starlette.types import ASGIApp, Receive, Scope, Send  # For middleware class
 from fastapi.responses import (
     HTMLResponse,
     RedirectResponse,
@@ -19,20 +19,19 @@ from fastapi.responses import (
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.templating import Jinja2Templates
-from fastapi import Query # Added Query for pagination parameters
+from fastapi import Query  # Added Query for pagination parameters
 from typing import List, Dict, Optional, Any  # Added Any
 from datetime import datetime, timezone, date  # Added date
 import json
 import uuid  # Added import
 import pathlib  # Import pathlib for finding template/static dirs
-import zoneinfo # Added zoneinfo for timezone handling
+import zoneinfo  # Added zoneinfo for timezone handling
 import telegram.error  # Import telegram errors for specific checking in health check
 import aiofiles  # For reading docs
 from starlette.config import Config  # For reading env vars
 from authlib.integrations.starlette_client import OAuth  # For OIDC
 from markdown_it import MarkdownIt  # For rendering docs
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ValidationError  # Import BaseModel for request body
 
 # Import tool-related components
@@ -60,9 +59,6 @@ from family_assistant.storage import (
 )
 
 # Import protocol for type hinting when creating the dict for add_document
-from family_assistant.storage.vector import (
-    Document,
-)
 
 # Import vector search components
 from family_assistant.storage.vector_search import (
@@ -75,9 +71,7 @@ from family_assistant.storage.vector_search import (
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import (
     EmbeddingGenerator,
-    LiteLLMEmbeddingGenerator,
 )  # Example
-from pydantic import BaseModel, Field  # For structuring results if needed, added Field
 
 # Import tool functions directly from the tools package
 from family_assistant.tools import (
@@ -136,7 +130,9 @@ except NameError:
     )
     # Provide fallback paths relative to CWD, although this might not work reliably
     templates = Jinja2Templates(directory="src/family_assistant/templates")
-    static_dir = pathlib.Path("src/family_assistant/static") # Define fallback static_dir
+    static_dir = pathlib.Path(
+        "src/family_assistant/static"
+    )  # Define fallback static_dir
     # Fallback docs path relative to CWD
     docs_user_dir = pathlib.Path("docs") / "user"
     logger.warning(f"Using fallback user docs directory: {docs_user_dir}")
@@ -146,13 +142,15 @@ md_renderer = MarkdownIt("gfm-like")  # Use GitHub Flavored Markdown preset
 
 # --- Auth Configuration ---
 # Load config from environment variables or .env file
-config = Config() # Removed .env assumption, reads directly from env
+config = Config()  # Removed .env assumption, reads directly from env
 
 # OIDC configuration
 OIDC_CLIENT_ID = config("OIDC_CLIENT_ID", default=None)
 OIDC_CLIENT_SECRET = config("OIDC_CLIENT_SECRET", default=None)
 OIDC_DISCOVERY_URL = config("OIDC_DISCOVERY_URL", default=None)
-SESSION_SECRET_KEY = config("SESSION_SECRET_KEY", default=None) # Needed for session middleware
+SESSION_SECRET_KEY = config(
+    "SESSION_SECRET_KEY", default=None
+)  # Needed for session middleware
 
 # Check if OIDC is configured
 AUTH_ENABLED = bool(
@@ -165,36 +163,40 @@ middleware = []
 # Always add SessionMiddleware if the secret key is set,
 # as routes might try to access request.session even if auth is disabled.
 if SESSION_SECRET_KEY:
-    middleware.append(
-        Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY)
-    )
+    middleware.append(Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY))
     logger.info("SessionMiddleware added (SESSION_SECRET_KEY is set).")
 
 if AUTH_ENABLED:
     logger.info("OIDC Authentication is ENABLED.")
-    if oauth is None: # Initialize OAuth only if auth is fully enabled
+    if oauth is None:  # Initialize OAuth only if auth is fully enabled
         # Session middleware is already added above if SESSION_SECRET_KEY is set.
         # No need to add it again here.
         # Initialize Authlib OAuth client
         oauth = OAuth(config)
         # Register the OIDC provider (e.g., Keycloak)
         oauth.register(
-            name='oidc_provider', # Can be any name, used internally
+            name="oidc_provider",  # Can be any name, used internally
             client_id=OIDC_CLIENT_ID,
             client_secret=OIDC_CLIENT_SECRET,
             server_metadata_url=OIDC_DISCOVERY_URL,
             client_kwargs={
-                'scope': 'openid email profile', # Standard scopes
+                "scope": "openid email profile",  # Standard scopes
                 # Add any provider-specific kwargs here if needed
-            }
+            },
         )
 else:
     if not SESSION_SECRET_KEY:
-        logger.warning("SessionMiddleware NOT added (SESSION_SECRET_KEY is not set). Accessing request.session will fail.")
+        logger.warning(
+            "SessionMiddleware NOT added (SESSION_SECRET_KEY is not set). Accessing request.session will fail."
+        )
     if not (OIDC_CLIENT_ID and OIDC_CLIENT_SECRET and OIDC_DISCOVERY_URL):
-        logger.info("OIDC Authentication is DISABLED (OIDC environment variables not set).")
+        logger.info(
+            "OIDC Authentication is DISABLED (OIDC environment variables not set)."
+        )
     elif not SESSION_SECRET_KEY:
-        logger.warning("OIDC Authentication is DISABLED (SESSION_SECRET_KEY is not set, required for sessions).")
+        logger.warning(
+            "OIDC Authentication is DISABLED (SESSION_SECRET_KEY is not set, required for sessions)."
+        )
 
 
 # async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
@@ -203,6 +205,7 @@ else:
 #         raise HTTPException(status_code=500, detail="Embedding generator not configured")
 #     return generator
 # Dependency function to retrieve the embedding generator from app state
+
 
 async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
     """Retrieves the configured EmbeddingGenerator instance from app state."""
@@ -222,12 +225,14 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
         )
     return generator
 
+
 # --- Dependency Functions ---
 async def get_db() -> DatabaseContext:
     """FastAPI dependency to get a DatabaseContext."""
     # Uses the engine configured in storage/base.py by default.
     async with await get_db_context() as db_context:
         yield db_context
+
 
 # Dependency function to retrieve the ToolsProvider instance from app state
 async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
@@ -254,15 +259,18 @@ PUBLIC_PATHS = [
     re.compile(r"^/logout$"),
     re.compile(r"^/auth$"),
     re.compile(r"^/webhook(/.*)?$"),
-    re.compile(r"^/api(/.*)?$"), # Covers /api/docs, /api/redoc, /api/tools/* etc.
+    re.compile(r"^/api(/.*)?$"),  # Covers /api/docs, /api/redoc, /api/tools/* etc.
     re.compile(r"^/health$"),
     re.compile(r"^/static(/.*)?$"),
     re.compile(r"^/favicon.ico$"),
 ]
 
+
 # Define AuthMiddleware class
 class AuthMiddleware:
-    def __init__(self, app: ASGIApp, public_paths: List[re.Pattern], auth_enabled: bool):
+    def __init__(
+        self, app: ASGIApp, public_paths: List[re.Pattern], auth_enabled: bool
+    ):
         self.app = app
         self.public_paths = public_paths
         self.auth_enabled = auth_enabled
@@ -274,7 +282,7 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        request = Request(scope, receive=receive) # Need receive here for url_for
+        request = Request(scope, receive=receive)  # Need receive here for url_for
 
         # Check if the path is explicitly public
         for pattern in self.public_paths:
@@ -285,40 +293,51 @@ class AuthMiddleware:
         # All other paths are considered protected if auth is enabled
         # SessionMiddleware MUST have run before this if SESSION_SECRET_KEY is set
         # Otherwise request.session below will fail the assertion
-        user = request.session.get('user')
+        user = request.session.get("user")
         if not user:
             # Store the intended destination URL to redirect after successful login
-            request.session['redirect_after_login'] = str(request.url)
-            logger.debug(f"No user session for protected path {request.url.path}, redirecting to login.")
+            request.session["redirect_after_login"] = str(request.url)
+            logger.debug(
+                f"No user session for protected path {request.url.path}, redirecting to login."
+            )
             # Use url_for to generate the login URL robustly
-            redirect_response = RedirectResponse(url=request.url_for('login'), status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+            redirect_response = RedirectResponse(
+                url=request.url_for("login"),
+                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            )
             await redirect_response(scope, receive, send)
             return
 
         # User is logged in, proceed to the underlying app
         await self.app(scope, receive, send)
 
+
 # --- Add AuthMiddleware to the list if enabled ---
 if AUTH_ENABLED:
     # IMPORTANT: Add this *after* SessionMiddleware in the list (added earlier)
-    middleware.append(Middleware(AuthMiddleware, public_paths=PUBLIC_PATHS, auth_enabled=AUTH_ENABLED))
+    middleware.append(
+        Middleware(AuthMiddleware, public_paths=PUBLIC_PATHS, auth_enabled=AUTH_ENABLED)
+    )
     logger.info("AuthMiddleware added to the application middleware stack.")
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Family Assistant Web Interface",
     docs_url="/api/docs",  # URL for Swagger UI (part of /api/, public)
-    redoc_url="/api/redoc", # URL for ReDoc (part of /api/, public)
-    middleware=middleware, # Add configured middleware
+    redoc_url="/api/redoc",  # URL for ReDoc (part of /api/, public)
+    middleware=middleware,  # Add configured middleware
 )
 
 
 # --- Mount Static Files (after app initialization) ---
-if 'static_dir' in locals() and static_dir.is_dir():
+if "static_dir" in locals() and static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
     logger.info(f"Mounted static files from: {static_dir}")
 else:
-    logger.error(f"Static directory '{static_dir if 'static_dir' in locals() else 'Not Defined'}' not found or not a directory. Static files will not be served.")
+    logger.error(
+        f"Static directory '{static_dir if 'static_dir' in locals() else 'Not Defined'}' not found or not a directory. Static files will not be served."
+    )
+
 
 # --- Pydantic model for search results (optional but good practice) ---
 class SearchResultItem(BaseModel):
@@ -350,47 +369,66 @@ class DocumentUploadResponse(BaseModel):
 
 # --- Auth Routes (only added if AUTH_ENABLED) ---
 if AUTH_ENABLED and oauth:
-    @app.route('/login')
+
+    @app.route("/login")
     async def login(request: Request):
         """Redirects the user to the OIDC provider for authentication."""
         # Construct the redirect URI for the callback endpoint
         # Ensure the scheme matches what's expected by the OIDC provider (http/https)
         # Use request.url.scheme or configure explicitly if behind proxy
-        redirect_uri = request.url_for('auth')
+        redirect_uri = request.url_for("auth")
         # Check if running behind a proxy and need to force HTTPS
-        if request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https":
-             # Ensure redirect_uri uses https if the request indicates it.
-             redirect_uri = redirect_uri.replace(scheme="https")
+        if (
+            request.headers.get("x-forwarded-proto") == "https"
+            or request.url.scheme == "https"
+        ):
+            # Ensure redirect_uri uses https if the request indicates it.
+            redirect_uri = redirect_uri.replace(scheme="https")
 
-        logger.debug(f"Initiating login redirect to OIDC provider. Callback URL: {redirect_uri}")
+        logger.debug(
+            f"Initiating login redirect to OIDC provider. Callback URL: {redirect_uri}"
+        )
         return await oauth.oidc_provider.authorize_redirect(request, redirect_uri)
 
-    @app.route('/auth') # Callback URL
+    @app.route("/auth")  # Callback URL
     async def auth(request: Request):
         """Handles the callback from the OIDC provider after authentication."""
         try:
             token = await oauth.oidc_provider.authorize_access_token(request)
-            user_info = token.get('userinfo') # OIDC standard claim
+            user_info = token.get("userinfo")  # OIDC standard claim
             if user_info:
-                request.session['user'] = dict(user_info) # Store user info in session
-                logger.info(f"User logged in successfully: {user_info.get('email') or user_info.get('sub')}")
+                request.session["user"] = dict(user_info)  # Store user info in session
+                logger.info(
+                    f"User logged in successfully: {user_info.get('email') or user_info.get('sub')}"
+                )
                 # Redirect to originally requested URL or homepage
-                redirect_url = request.session.pop('redirect_after_login', '/')
+                redirect_url = request.session.pop("redirect_after_login", "/")
                 return RedirectResponse(url=redirect_url)
             else:
-                logger.warning("OIDC callback successful but no userinfo found in token.")
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not fetch user information.")
+                logger.warning(
+                    "OIDC callback successful but no userinfo found in token."
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not fetch user information.",
+                )
         except Exception as e:
-            logger.error(f"Error during OIDC authentication callback: {e}", exc_info=True)
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Authentication failed: {e}")
+            logger.error(
+                f"Error during OIDC authentication callback: {e}", exc_info=True
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Authentication failed: {e}",
+            )
 
-    @app.route('/logout')
+    @app.route("/logout")
     async def logout(request: Request):
         """Clears the user session."""
-        request.session.pop('user', None)
+        request.session.pop("user", None)
         logger.info("User logged out.")
         # Redirect to home, which will trigger login again if protected
-        return RedirectResponse(url='/')
+        return RedirectResponse(url="/")
+
 
 # --- Application Routes ---
 
@@ -400,12 +438,14 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
     """Serves the main page listing all notes."""
     notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
-        "index.html", # Use consistent naming if preferred
+        "index.html",  # Use consistent naming if preferred
         {
             "request": request,
             "notes": notes,
-            "user": request.session.get("user"), # Pass user info (will be None if not logged in or no session)
-            "auth_enabled": AUTH_ENABLED, # Indicate if auth is on
+            "user": request.session.get(
+                "user"
+            ),  # Pass user info (will be None if not logged in or no session)
+            "auth_enabled": AUTH_ENABLED,  # Indicate if auth is on
             "server_url": SERVER_URL,
         },  # Pass SERVER_URL
     )
@@ -415,7 +455,14 @@ async def read_root(request: Request, db_context: DatabaseContext = Depends(get_
 async def add_note_form(request: Request):
     """Serves the form to add a new note."""
     return templates.TemplateResponse(
-        "edit_note.html", {"request": request, "note": None, "is_new": True, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
+        "edit_note.html",
+        {
+            "request": request,
+            "note": None,
+            "is_new": True,
+            "user": request.session.get("user"),
+            "auth_enabled": AUTH_ENABLED,
+        },
     )
 
 
@@ -428,7 +475,14 @@ async def edit_note_form(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
-        "edit_note.html", {"request": request, "note": note, "is_new": False, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,}
+        "edit_note.html",
+        {
+            "request": request,
+            "note": note,
+            "is_new": False,
+            "user": request.session.get("user"),
+            "auth_enabled": AUTH_ENABLED,
+        },
     )
 
 
@@ -536,11 +590,15 @@ async def view_message_history(
     try:
         # Get the configured timezone from app state
         app_config = getattr(request.app.state, "config", {})
-        config_timezone_str = app_config.get("timezone", "UTC") # Default to UTC if not found
+        config_timezone_str = app_config.get(
+            "timezone", "UTC"
+        )  # Default to UTC if not found
         try:
             config_tz = zoneinfo.ZoneInfo(config_timezone_str)
         except zoneinfo.ZoneInfoNotFoundError:
-            logger.warning(f"Configured timezone '{config_timezone_str}' not found, defaulting to UTC for history view.")
+            logger.warning(
+                f"Configured timezone '{config_timezone_str}' not found, defaulting to UTC for history view."
+            )
             config_tz = zoneinfo.ZoneInfo("UTC")
 
         history_by_chat = await get_grouped_message_history(db_context)
@@ -552,28 +610,38 @@ async def view_message_history(
 
             # --- Pre-parse JSON string fields in messages ---
             for msg in messages:
-                for field_name in ['tool_calls', 'reasoning_info']: # 'tool_calls' was 'tool_calls_info' from DB
+                for field_name in [
+                    "tool_calls",
+                    "reasoning_info",
+                ]:  # 'tool_calls' was 'tool_calls_info' from DB
                     field_val = msg.get(field_name)
                     if isinstance(field_val, str):
-                        if field_val.lower() == "null": # Handle string "null"
+                        if field_val.lower() == "null":  # Handle string "null"
                             msg[field_name] = None
                         else:
                             try:
                                 msg[field_name] = json.loads(field_val)
                             except json.JSONDecodeError:
-                                logger.warning(f"Failed to parse JSON string for {field_name} in msg {msg.get('internal_id')}: {field_val[:100]}")
+                                logger.warning(
+                                    f"Failed to parse JSON string for {field_name} in msg {msg.get('internal_id')}: {field_val[:100]}"
+                                )
                                 # Keep original string or set to an error placeholder if preferred
                                 # msg[field_name] = {"error": "failed to parse JSON", "original_value": field_val}
 
                 # Further parse 'arguments' within tool_calls if it's a JSON string
-                if msg.get('tool_calls') and isinstance(msg['tool_calls'], list):
-                    for tool_call_item in msg['tool_calls']:
-                        if isinstance(tool_call_item, dict) and 'function' in tool_call_item and \
-                           isinstance(tool_call_item['function'], dict):
-                            func_args_str = tool_call_item['function'].get('arguments')
+                if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
+                    for tool_call_item in msg["tool_calls"]:
+                        if (
+                            isinstance(tool_call_item, dict)
+                            and "function" in tool_call_item
+                            and isinstance(tool_call_item["function"], dict)
+                        ):
+                            func_args_str = tool_call_item["function"].get("arguments")
                             if isinstance(func_args_str, str):
                                 try:
-                                    tool_call_item['function']['arguments'] = json.loads(func_args_str)
+                                    tool_call_item["function"]["arguments"] = (
+                                        json.loads(func_args_str)
+                                    )
                                 except json.JSONDecodeError:
                                     logger.warning(
                                         f"Failed to parse function arguments JSON string within tool_calls for msg {msg.get('internal_id')}: {func_args_str[:100]}"
@@ -584,17 +652,25 @@ async def view_message_history(
             grouped_by_turn_id = {}
 
             for msg in messages:
-                turn_id = msg.get('turn_id') # Can be None
+                turn_id = msg.get("turn_id")  # Can be None
                 if turn_id not in grouped_by_turn_id:
                     grouped_by_turn_id[turn_id] = []
                 grouped_by_turn_id[turn_id].append(msg)
             sorted_turn_ids = sorted(
                 grouped_by_turn_id.keys(),
                 key=lambda tid: (
-                    (lambda ts: ts.replace(tzinfo=config_tz) if ts.tzinfo is None else ts.astimezone(config_tz))(
-                        grouped_by_turn_id[tid][0]['timestamp']
+                    (
+                        (
+                            lambda ts: (
+                                ts.replace(tzinfo=config_tz)
+                                if ts.tzinfo is None
+                                else ts.astimezone(config_tz)
+                            )
+                        )(grouped_by_turn_id[tid][0]["timestamp"])
                     )
-                ) if tid is not None and grouped_by_turn_id[tid] else datetime.min.replace(tzinfo=config_tz)
+                    if tid is not None and grouped_by_turn_id[tid]
+                    else datetime.min.replace(tzinfo=config_tz)
+                ),
             )
 
             for turn_id in sorted_turn_ids:
@@ -602,16 +678,28 @@ async def view_message_history(
 
                 # Find the initiating message (user or system) for this turn_id group
                 # The first message in a sorted group (by timestamp) should be the trigger if it's user/system
-                trigger_candidates = [m for m in turn_messages_for_current_id if m['role'] in ('user', 'system')]
-                initiating_user_msg_for_turn = trigger_candidates[0] if trigger_candidates else None
+                trigger_candidates = [
+                    m
+                    for m in turn_messages_for_current_id
+                    if m["role"] in ("user", "system")
+                ]
+                initiating_user_msg_for_turn = (
+                    trigger_candidates[0] if trigger_candidates else None
+                )
 
                 # Find the final assistant response for this turn_id group
                 # It should be the last assistant message with actual content.
-                assistant_candidates = [m for m in turn_messages_for_current_id if m['role'] == 'assistant']
-                contentful_assistant_msgs = [m for m in assistant_candidates if m.get('content')]
+                assistant_candidates = [
+                    m for m in turn_messages_for_current_id if m["role"] == "assistant"
+                ]
+                contentful_assistant_msgs = [
+                    m for m in assistant_candidates if m.get("content")
+                ]
                 if contentful_assistant_msgs:
                     final_assistant_msg_for_turn = contentful_assistant_msgs[-1]
-                elif assistant_candidates: # Fallback to the very last assistant message in the group (might have only tool_calls)
+                elif (
+                    assistant_candidates
+                ):  # Fallback to the very last assistant message in the group (might have only tool_calls)
                     final_assistant_msg_for_turn = assistant_candidates[-1]
                 else:
                     final_assistant_msg_for_turn = None
@@ -619,16 +707,23 @@ async def view_message_history(
                 # Ensure the initiating message isn't also the final assistant message if they are the same object
                 # This can happen if a turn only has one assistant message that also serves as a trigger (e.g. for a callback)
                 # However, our logic now assigns turn_id to user triggers, so this is less likely.
-                if final_assistant_msg_for_turn is initiating_user_msg_for_turn and final_assistant_msg_for_turn is not None:
-                    if final_assistant_msg_for_turn['role'] == 'user': # If it's a user message, it can't be the "final assistant response"
+                if (
+                    final_assistant_msg_for_turn is initiating_user_msg_for_turn
+                    and final_assistant_msg_for_turn is not None
+                ):
+                    if (
+                        final_assistant_msg_for_turn["role"] == "user"
+                    ):  # If it's a user message, it can't be the "final assistant response"
                         final_assistant_msg_for_turn = None
 
-                conversation_turns.append({
-                    "turn_id": turn_id, # Store the turn_id itself
-                    "initiating_user_message": initiating_user_msg_for_turn,
-                    "final_assistant_response": final_assistant_msg_for_turn,
-                    "all_messages_in_group": turn_messages_for_current_id
-                })
+                conversation_turns.append(
+                    {
+                        "turn_id": turn_id,  # Store the turn_id itself
+                        "initiating_user_message": initiating_user_msg_for_turn,
+                        "final_assistant_response": final_assistant_msg_for_turn,
+                        "all_messages_in_group": turn_messages_for_current_id,
+                    }
+                )
             turns_by_chat[conversation_key] = conversation_turns
 
         # --- Pagination Logic ---
@@ -647,7 +742,6 @@ async def view_message_history(
         end_index = start_index + per_page
         paged_items = all_items[start_index:end_index]
 
-
         # Pagination metadata for the template
         pagination_info = {
             "current_page": current_page,
@@ -664,8 +758,10 @@ async def view_message_history(
             "message_history.html",
             {
                 "request": request,
-                "paged_conversations": paged_items, # Renamed for clarity in template
-                "pagination": pagination_info, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED, # Pass auth info
+                "paged_conversations": paged_items,  # Renamed for clarity in template
+                "pagination": pagination_info,
+                "user": request.session.get("user"),
+                "auth_enabled": AUTH_ENABLED,  # Pass auth info
             },
         )
     except Exception as e:
@@ -833,13 +929,16 @@ async def vector_search_form(
             "SELECT DISTINCT key FROM documents, jsonb_object_keys(doc_metadata) AS keys(key) ORDER BY key;"
         )
 
-        models_result, types_result, source_types_result, meta_keys_result = (
-            await asyncio.gather(
-                db_context.fetch_all(q_models),
-                db_context.fetch_all(q_types),
-                db_context.fetch_all(q_source_types),
-                db_context.fetch_all(q_meta_keys),  # Fetch metadata keys
-            )
+        (
+            models_result,
+            types_result,
+            source_types_result,
+            meta_keys_result,
+        ) = await asyncio.gather(
+            db_context.fetch_all(q_models),
+            db_context.fetch_all(q_types),
+            db_context.fetch_all(q_source_types),
+            db_context.fetch_all(q_meta_keys),  # Fetch metadata keys
         )
 
         distinct_models = [row["embedding_model"] for row in models_result]
@@ -1048,13 +1147,16 @@ async def handle_vector_search(
         )
 
         # Use asyncio.gather for concurrent fetching
-        models_result, types_result, source_types_result, meta_keys_result = (
-            await asyncio.gather(
-                db_context.fetch_all(q_models),
-                db_context.fetch_all(q_types),
-                db_context.fetch_all(q_source_types),
-                db_context.fetch_all(q_meta_keys),
-            )
+        (
+            models_result,
+            types_result,
+            source_types_result,
+            meta_keys_result,
+        ) = await asyncio.gather(
+            db_context.fetch_all(q_models),
+            db_context.fetch_all(q_types),
+            db_context.fetch_all(q_source_types),
+            db_context.fetch_all(q_meta_keys),
         )
 
         distinct_models = [row["embedding_model"] for row in models_result]
@@ -1469,7 +1571,15 @@ async def serve_documentation(request: Request, filename: str):
                 "available_docs": available_docs,
                 "server_url": SERVER_URL,
             },
-            {"request": request, "content": content_html, "title": filename, "available_docs": available_docs, "server_url": SERVER_URL, "user": request.session.get("user"), "auth_enabled": AUTH_ENABLED,},
+            {
+                "request": request,
+                "content": content_html,
+                "title": filename,
+                "available_docs": available_docs,
+                "server_url": SERVER_URL,
+                "user": request.session.get("user"),
+                "auth_enabled": AUTH_ENABLED,
+            },
         )
     except Exception as e:
         logger.error(

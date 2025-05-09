@@ -3,8 +3,6 @@ Handles storage and retrieval of received emails.
 """
 
 import logging
-import os
-import re
 
 # import os # Removed duplicate
 # import re # Removed duplicate

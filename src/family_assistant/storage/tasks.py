@@ -3,7 +3,6 @@ Handles storage and retrieval of background tasks using the database queue.
 """
 
 import logging
-import random
 import asyncio
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
@@ -19,7 +18,6 @@ from sqlalchemy import (
     select,
     insert,
     update,
-    desc,
 )
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -120,7 +118,9 @@ async def enqueue_task(
 
 
 async def dequeue_task(
-    db_context: DatabaseContext, worker_id: str, task_types: List[str]  # Added context
+    db_context: DatabaseContext,
+    worker_id: str,
+    task_types: List[str],  # Added context
 ) -> Optional[Dict[str, Any]]:
     """Atomically dequeues the next available task."""
     now = datetime.now(timezone.utc)
@@ -135,7 +135,7 @@ async def dequeue_task(
             .where(tasks_table.c.status == "pending")
             .where(tasks_table.c.task_type.in_(task_types))
             .where(
-                (tasks_table.c.scheduled_at == None)
+                (tasks_table.c.scheduled_at is None)
                 | (tasks_table.c.scheduled_at <= now)
             )  # noqa: E711
             .where(tasks_table.c.retry_count < tasks_table.c.max_retries)

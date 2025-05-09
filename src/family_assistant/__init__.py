@@ -1,4 +1,5 @@
 """Family Assistant Package."""
+
 import logging
 import logging.config
 import os

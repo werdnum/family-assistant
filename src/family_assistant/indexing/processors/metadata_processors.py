@@ -1,8 +1,9 @@
 """
 Content processors focused on extracting or generating metadata-related IndexableContent.
 """
+
 import logging
-from typing import List, Dict, Any
+from typing import List
 
 from family_assistant.indexing.pipeline import IndexableContent, ContentProcessor
 from family_assistant.storage.vector import Document
@@ -44,9 +45,12 @@ class TitleExtractor(ContentProcessor):
                 metadata={"source_title_length": len(title_content)},
             )
             output_items.append(title_item)
-            logger.debug(f"Extracted title '{title_content}' for document ID {original_document.source_id if hasattr(original_document, 'source_id') else 'N/A'}")
+            logger.debug(
+                f"Extracted title '{title_content}' for document ID {original_document.source_id if hasattr(original_document, 'source_id') else 'N/A'}"
+            )
         else:
-            logger.debug(f"No title found or title is empty for document ID {original_document.source_id if hasattr(original_document, 'source_id') else 'N/A'}")
+            logger.debug(
+                f"No title found or title is empty for document ID {original_document.source_id if hasattr(original_document, 'source_id') else 'N/A'}"
+            )
 
         return output_items
-

@@ -9,7 +9,7 @@ import os
 import aiofiles  # For async file operations
 import copy  # For deep copying tool definitions
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Protocol, AsyncGenerator, AsyncIterator
+from typing import List, Dict, Any, Optional, Protocol
 
 from litellm import acompletion
 from litellm.exceptions import (

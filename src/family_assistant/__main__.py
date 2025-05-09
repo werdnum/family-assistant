@@ -1,13 +1,6 @@
 import argparse
 import asyncio
-import contextlib
-import html
-import argparse
 import copy
-import argparse
-import asyncio
-import contextlib
-import html
 
 import json
 import logging
@@ -15,20 +8,12 @@ import logging
 import os
 import signal
 import sys
-import traceback
-import uuid
 import yaml
-import mcp
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from contextlib import AsyncExitStack
-from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple
 
 import zoneinfo
 from dotenv import load_dotenv
 import uvicorn
-import functools  # Import functools
 
 # Import task worker CLASS, handlers, and events
 from family_assistant.task_worker import (
@@ -45,8 +30,6 @@ from family_assistant.processing import ProcessingService
 from family_assistant.llm import (
     LLMInterface,
     LiteLLMClient,
-    RecordingLLMClient,
-    PlaybackLLMClient,
 )
 
 # Import Embedding interface/clients
@@ -54,9 +37,7 @@ import family_assistant.embeddings as embeddings
 from family_assistant.embeddings import (
     # --- Embedding Imports ---
     EmbeddingGenerator,
-    LiteLLMEmbeddingGenerator,
-    SentenceTransformerEmbeddingGenerator,  # If available
-    MockEmbeddingGenerator,  # For testing
+    LiteLLMEmbeddingGenerator,  # For testing
 )
 
 # Import tool definitions from the new tools module
@@ -68,12 +49,8 @@ from family_assistant.tools import (
     MCPToolsProvider,
     CompositeToolsProvider,
     ConfirmingToolsProvider,  # Import the class directly
-    ToolExecutionContext,
     ToolsProvider,  # Import protocol for type hinting
 )
-from family_assistant.tools import (
-    _scan_user_docs,
-)  # Import the scanner function from tools package
 
 # --- NEW: Import ContextProvider and its implementations ---
 from family_assistant.context_providers import (
@@ -88,8 +65,6 @@ from family_assistant.web_server import app as fastapi_app
 # Import facade for primary access
 from family_assistant.storage import (
     init_db,
-    get_all_notes,
-    add_message_to_history,
     # get_all_notes, # Will be called with context
     # add_message_to_history, # Will be called with context
     # get_recent_history, # Will be called with context
@@ -102,12 +77,10 @@ from family_assistant import storage
 
 # Import items specifically from storage.context
 from family_assistant.storage.context import (
-    DatabaseContext,  # Add back DatabaseContext
     get_db_context,  # Add back get_db_context
 )
 
 # Import calendar functions
-from family_assistant import calendar_integration
 
 # Import the Telegram service class
 from .telegram_bot import TelegramService  # Updated import
@@ -120,6 +93,7 @@ from family_assistant.indexing.email_indexer import (
 from family_assistant.indexing.document_indexer import (
     DocumentIndexer,
 )  # Import the class
+
 # Import pipeline and processors for indexing
 from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
@@ -127,6 +101,7 @@ from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
+
 # Import the specific task handler for embedding
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 
@@ -168,7 +143,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
     config_data: Dict[str, Any] = {
         "telegram_token": None,
         "openrouter_api_key": None,
-        "gemini_api_key": None, # For direct Gemini usage
+        "gemini_api_key": None,  # For direct Gemini usage
         "allowed_user_ids": [],
         "developer_chat_id": None,
         "model": "openrouter/google/gemini-2.5-pro-preview-03-25",  # Default model
@@ -182,7 +157,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         "calendar_config": {},
         "llm_parameters": {},
         "prompts": {},
-        "tools_requiring_confirmation": [], # Default empty list
+        "tools_requiring_confirmation": [],  # Default empty list
         "mcp_config": {"mcpServers": {}},  # Default empty MCP config
         "server_url": "http://localhost:8000",  # Default server URL
     }
@@ -230,7 +205,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
         os.getenv("EMBEDDING_DIMENSIONS", str(config_data["embedding_dimensions"]))
     )
     config_data["timezone"] = os.getenv("TIMEZONE", config_data["timezone"])
-    config_data["server_url"] = os.getenv("SERVER_URL", config_data["server_url"])  # Load SERVER_URL
+    config_data["server_url"] = os.getenv(
+        "SERVER_URL", config_data["server_url"]
+    )  # Load SERVER_URL
     config_data["litellm_debug"] = os.getenv(
         "LITELLM_DEBUG", str(config_data["litellm_debug"])
     ).lower() in ("true", "1", "yes")
@@ -256,7 +233,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> Dict[str, Any]:
 
     # Tools requiring confirmation from Env Var (comma-separated list)
     tools_confirm_str_env = os.getenv("TOOLS_REQUIRING_CONFIRMATION")
-    if tools_confirm_str_env is not None: # Only override if env var is explicitly set
+    if tools_confirm_str_env is not None:  # Only override if env var is explicitly set
         # Override the list loaded from config.yaml
         config_data["tools_requiring_confirmation"] = [
             tool.strip() for tool in tools_confirm_str_env.split(",") if tool.strip()
@@ -494,7 +471,9 @@ async def main_async(
             raise ValueError(
                 "Gemini API Key is missing. Please set the GEMINI_API_KEY environment variable."
             )
-        logger.info("Gemini model selected. Will use GEMINI_API_KEY from environment for LiteLLM.")
+        logger.info(
+            "Gemini model selected. Will use GEMINI_API_KEY from environment for LiteLLM."
+        )
     elif selected_model.startswith("openrouter/"):
         if not config.get("openrouter_api_key"):
             raise ValueError(
@@ -503,8 +482,10 @@ async def main_async(
         # Set OpenRouter API key for LiteLLM if it's managed via config_data.
         # LiteLLM also checks for OPENROUTER_API_KEY env var independently.
         if config.get("openrouter_api_key"):
-             os.environ["OPENROUTER_API_KEY"] = config["openrouter_api_key"]
-        logger.info("OpenRouter model selected. OPENROUTER_API_KEY will be used by LiteLLM.")
+            os.environ["OPENROUTER_API_KEY"] = config["openrouter_api_key"]
+        logger.info(
+            "OpenRouter model selected. OPENROUTER_API_KEY will be used by LiteLLM."
+        )
     # Add elif blocks for other providers like "openai/" -> OPENAI_API_KEY if needed
     else:
         logger.warning(
@@ -624,7 +605,7 @@ async def main_async(
 
     confirming_provider = ConfirmingToolsProvider(  # Use the imported class name directly
         wrapped_provider=composite_provider,
-        tools_requiring_confirmation=confirm_tool_names, # Pass the set from config
+        tools_requiring_confirmation=confirm_tool_names,  # Pass the set from config
         calendar_config=config[
             "calendar_config"
         ],  # Pass calendar config for detail fetching
@@ -647,7 +628,7 @@ async def main_async(
 
     # --- Instantiate Context Providers ---
     notes_provider = NotesContextProvider(
-        get_db_context_func=get_db_context, # Pass the factory function
+        get_db_context_func=get_db_context,  # Pass the factory function
         prompts=config["prompts"],
     )
     calendar_provider = CalendarContextProvider(
@@ -657,21 +638,25 @@ async def main_async(
     )
     # List of all active context providers
     all_context_providers = [notes_provider, calendar_provider]
-    logger.info(f"Initialized {len(all_context_providers)} context providers: {[p.name for p in all_context_providers]}")
+    logger.info(
+        f"Initialized {len(all_context_providers)} context providers: {[p.name for p in all_context_providers]}"
+    )
 
     # --- Instantiate Processing Service ---
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=confirming_provider,  # Use the confirming provider wrapper
         prompts=config["prompts"],
-        context_providers=all_context_providers, # Pass the list of providers
-        calendar_config=config["calendar_config"], # Still pass calendar_config for ToolExecutionContext
+        context_providers=all_context_providers,  # Pass the list of providers
+        calendar_config=config[
+            "calendar_config"
+        ],  # Still pass calendar_config for ToolExecutionContext
         timezone_str=config["timezone"],
         max_history_messages=config["max_history_messages"],
         history_max_age_hours=config["history_max_age_hours"],
         server_url=config["server_url"],  # Pass server URL
     )
-    logger.info(f"ProcessingService initialized with configuration.")
+    logger.info("ProcessingService initialized with configuration.")
 
     # --- Instantiate Indexers ---
     # Basic pipeline configuration
@@ -680,8 +665,8 @@ async def main_async(
         "chunk_size": 1000,
         "chunk_overlap": 100,
         "embedding_type_prefix_map": {
-            "raw_body_text": "content_chunk", # For emails
-            "raw_file_text": "content_chunk", # For general files
+            "raw_body_text": "content_chunk",  # For emails
+            "raw_file_text": "content_chunk",  # For general files
         },
     }
     embedding_dispatcher_config = {
@@ -700,9 +685,14 @@ async def main_async(
     master_indexing_pipeline = IndexingPipeline(
         processors=indexing_processors,
         # Pass global config or specific processor configs if pipeline supports it
-        config={"text_chunker": text_chunker_config, "embedding_dispatcher": embedding_dispatcher_config}
+        config={
+            "text_chunker": text_chunker_config,
+            "embedding_dispatcher": embedding_dispatcher_config,
+        },
     )
-    logger.info(f"Master IndexingPipeline initialized with {len(indexing_processors)} processors.")
+    logger.info(
+        f"Master IndexingPipeline initialized with {len(indexing_processors)} processors."
+    )
 
     document_indexer = DocumentIndexer(pipeline=master_indexing_pipeline)
     set_indexing_dependencies(
@@ -773,7 +763,7 @@ async def main_async(
     )
 
     # Start the task queue worker using the instance's run method
-    task_worker_task = asyncio.create_task(
+    asyncio.create_task(
         task_worker_instance.run(new_task_event)  # Pass the event to the run method
     )
 

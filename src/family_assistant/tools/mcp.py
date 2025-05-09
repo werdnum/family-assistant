@@ -1,41 +1,20 @@
 import asyncio
-import json
 import logging
-import uuid
-import inspect
-import zoneinfo
-from dataclasses import dataclass
-from datetime import datetime, timezone, date, time
 from typing import (
     List,
     Dict,
     Any,
     Optional,
-    Protocol,
-    Callable,
-    Awaitable,
-    Set,
     Tuple,
 )  # Added Tuple
-from zoneinfo import ZoneInfo
 
 from contextlib import AsyncExitStack  # Import AsyncExitStack
 import os  # Import os for environment variable resolution
-from dateutil import rrule
-from dateutil.parser import isoparse
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client  # Import the correct context manager
-from telegram.ext import Application
-from sqlalchemy.sql import text
 
 # Import storage functions needed by local tools
-from family_assistant import storage
-from family_assistant.storage import get_recent_history
-from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
-from family_assistant.embeddings import EmbeddingGenerator
-from datetime import timedelta
 
 # Import the context from the new types file
 from .types import ToolExecutionContext, ToolNotFoundError
@@ -167,10 +146,11 @@ class MCPToolsProvider:
                         env=resolved_env_stdio,  # Use stdio-specific env vars
                     )
                     # Use the provider's exit stack to manage stdio process context
-                    read_stream, write_stream = (
-                        await self._exit_stack.enter_async_context(
-                            stdio_client(server_params)
-                        )
+                    (
+                        read_stream,
+                        write_stream,
+                    ) = await self._exit_stack.enter_async_context(
+                        stdio_client(server_params)
                     )
                     # Create session with streams, manage session lifecycle with exit stack
                     session = await self._exit_stack.enter_async_context(
@@ -199,10 +179,11 @@ class MCPToolsProvider:
                     # Use the sse_client context manager via the exit stack
                     # to get the streams and manage the connection lifecycle.
                     # Pass url and headers. Use default timeouts for now.
-                    read_stream, write_stream = (
-                        await self._exit_stack.enter_async_context(
-                            sse_client(url=url, headers=headers)
-                        )
+                    (
+                        read_stream,
+                        write_stream,
+                    ) = await self._exit_stack.enter_async_context(
+                        sse_client(url=url, headers=headers)
                     )
                     # Create session with the streams obtained from the sse_client context
                     session = await self._exit_stack.enter_async_context(

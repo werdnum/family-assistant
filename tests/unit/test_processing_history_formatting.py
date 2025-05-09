@@ -34,7 +34,7 @@ def processing_service() -> ProcessingService:
         tools_provider=MockToolsProvider(),
         prompts={},  # Not used by _format_history_for_llm
         calendar_config={},  # Not used
-        context_providers=[], # Added missing argument
+        context_providers=[],  # Added missing argument
         timezone_str="UTC",  # Not used
         max_history_messages=10,  # Not used
         server_url="http://test.com",  # Not used
@@ -162,7 +162,5 @@ def test_format_history_handles_empty_tool_calls(processing_service: ProcessingS
             "content": "Assistant message",
         },  # Should be treated as simple message
     ]
-    actual_output = processing_service._format_history_for_llm(
-        history_messages
-    )
+    actual_output = processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output

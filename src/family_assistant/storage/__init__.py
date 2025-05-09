@@ -1,19 +1,25 @@
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
+from typing import Optional
 import asyncio
-import os # Added for path manipulation
+import os  # Added for path manipulation
 import random
 import traceback
-from sqlalchemy.exc import DBAPIError, SQLAlchemyError, OperationalError # Keep OperationalError
-from sqlalchemy import inspect, Table, Column, String, MetaData as SqlaMetaData, insert, text # Import inspect, text and table creation components
-from dateutil import rrule
-from dateutil.parser import isoparse
+from sqlalchemy.exc import (
+    DBAPIError,
+    SQLAlchemyError,
+    OperationalError,
+)  # Keep OperationalError
+from sqlalchemy import (
+    inspect,
+    text,
+)  # Import inspect, text and table creation components
+
 # from alembic.script import ScriptDirectory # No longer needed for manual stamping
 # from alembic import command as alembic_command # Already imported
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
 from alembic import command as alembic_command
 from sqlalchemy.ext.asyncio import AsyncEngine
+
 # Import base components using absolute package paths
 from family_assistant.storage.base import metadata, get_engine, engine
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -92,98 +98,154 @@ logger = logging.getLogger(__name__)
 
 # --- Helper Functions for Database Initialization (Refactored) ---
 
+
 async def _is_alembic_managed(engine: AsyncEngine) -> bool:
     """Checks if the database schema is managed by Alembic."""
     logger.info("Inspecting database for alembic_version table...")
     async with engine.connect() as conn:
+
         def inspector_sync(sync_conn) -> bool:
             """Checks for alembic_version table."""
             inspector = inspect(sync_conn)
             # Ensure inspector is valid before calling methods
             if inspector is None:
-                 logger.error("SQLAlchemy inspector could not be created.")
-                 raise RuntimeError("Failed to create SQLAlchemy inspector.")
+                logger.error("SQLAlchemy inspector could not be created.")
+                raise RuntimeError("Failed to create SQLAlchemy inspector.")
             found_tables = inspector.get_table_names()
             logger.debug(f"Tables found by inspector: {found_tables}")
             return "alembic_version" in found_tables
 
-        is_managed = await conn.run_sync(inspector_sync) # No tuple return needed
+        is_managed = await conn.run_sync(inspector_sync)  # No tuple return needed
         logger.info(f"Alembic version table found: {is_managed}")
         return is_managed
+
 
 async def _log_current_revision(engine: AsyncEngine):
     """Logs the current Alembic revision stored in the database."""
     logger.info("Querying current revision from alembic_version table...")
     async with engine.connect() as conn_check:
+
         def sync_check_revision(sync_conn) -> Optional[str]:
             inspector = inspect(sync_conn)
             if inspector is None:
-                 logger.error("SQLAlchemy inspector could not be created for revision check.")
-                 raise RuntimeError("Failed to create SQLAlchemy inspector for revision check.")
+                logger.error(
+                    "SQLAlchemy inspector could not be created for revision check."
+                )
+                raise RuntimeError(
+                    "Failed to create SQLAlchemy inspector for revision check."
+                )
             if "alembic_version" not in inspector.get_table_names():
-                logger.warning("Alembic version table not found when trying to query revision.")
+                logger.warning(
+                    "Alembic version table not found when trying to query revision."
+                )
                 return None
             try:
-                result = sync_conn.execute(text("SELECT version_num FROM alembic_version"))
-                return result.scalar_one_or_none() # Fetch one scalar value or None
+                result = sync_conn.execute(
+                    text("SELECT version_num FROM alembic_version")
+                )
+                return result.scalar_one_or_none()  # Fetch one scalar value or None
             except Exception as query_err:
-                logger.error(f"Error querying alembic_version table: {query_err!r}", exc_info=True)
+                logger.error(
+                    f"Error querying alembic_version table: {query_err!r}",
+                    exc_info=True,
+                )
                 return None
+
         current_revision = await conn_check.run_sync(sync_check_revision)
-        logger.info(f"Current Alembic revision in DB: {current_revision or 'Could not determine / Not applicable'}")
+        logger.info(
+            f"Current Alembic revision in DB: {current_revision or 'Could not determine / Not applicable'}"
+        )
+
 
 def _get_alembic_config(engine: AsyncEngine) -> AlembicConfig:
     """Loads the Alembic configuration."""
     alembic_ini_env_var = os.getenv("ALEMBIC_CONFIG")
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    project_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..")
+    )
     default_alembic_ini_path = os.path.join(project_root, "alembic.ini")
 
     if alembic_ini_env_var:
         if os.path.exists(alembic_ini_env_var):
             alembic_ini_path = alembic_ini_env_var
-            logger.info(f"Using Alembic config from environment variable: {alembic_ini_path}")
+            logger.info(
+                f"Using Alembic config from environment variable: {alembic_ini_path}"
+            )
         else:
-            logger.error(f"ALEMBIC_CONFIG environment variable points to non-existent file: {alembic_ini_env_var}")
-            raise FileNotFoundError(f"Alembic config file specified in ALEMBIC_CONFIG not found: {alembic_ini_env_var}")
+            logger.error(
+                f"ALEMBIC_CONFIG environment variable points to non-existent file: {alembic_ini_env_var}"
+            )
+            raise FileNotFoundError(
+                f"Alembic config file specified in ALEMBIC_CONFIG not found: {alembic_ini_env_var}"
+            )
     else:
         alembic_ini_path = default_alembic_ini_path
-        logger.info(f"ALEMBIC_CONFIG env var not set. Using default path: {alembic_ini_path}")
+        logger.info(
+            f"ALEMBIC_CONFIG env var not set. Using default path: {alembic_ini_path}"
+        )
         if not os.path.exists(alembic_ini_path):
-             logger.error(f"Default alembic config file not found at {alembic_ini_path}. Cannot proceed.")
-             raise FileNotFoundError(f"Alembic config file not found: {alembic_ini_path}")
+            logger.error(
+                f"Default alembic config file not found at {alembic_ini_path}. Cannot proceed."
+            )
+            raise FileNotFoundError(
+                f"Alembic config file not found: {alembic_ini_path}"
+            )
 
     alembic_cfg = AlembicConfig(alembic_ini_path)
-    alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
-    logger.info(f"Alembic config loaded. Using script_location: {alembic_cfg.get_main_option('script_location')}")
+    alembic_cfg.set_main_option(
+        "sqlalchemy.url", engine.url.render_as_string(hide_password=False)
+    )
+    logger.info(
+        f"Alembic config loaded. Using script_location: {alembic_cfg.get_main_option('script_location')}"
+    )
     return alembic_cfg
 
-async def _run_alembic_command(engine: AsyncEngine, config: AlembicConfig, command_name: str, *args):
+
+async def _run_alembic_command(
+    engine: AsyncEngine, config: AlembicConfig, command_name: str, *args
+):
     """Executes an Alembic command asynchronously using the engine's connection."""
     command_func = getattr(alembic_command, command_name)
     command_args_str = ", ".join(map(repr, args))
-    logger.info(f"Attempting to run Alembic command '{command_name}' with args ({command_args_str}) via run_sync...")
+    logger.info(
+        f"Attempting to run Alembic command '{command_name}' with args ({command_args_str}) via run_sync..."
+    )
 
     async with engine.connect() as conn:
+
         def sync_command_wrapper(sync_conn, cfg, cmd_func, cmd_args):
             """Wrapper to run alembic commands with existing connection."""
             # Make the connection available to env.py via config attributes
             cfg.attributes["connection"] = sync_conn
-            logger.info(f"Executing alembic_command.{command_name}(...) using connection {sync_conn!r}")
+            logger.info(
+                f"Executing alembic_command.{command_name}(...) using connection {sync_conn!r}"
+            )
             try:
                 cmd_func(cfg, *cmd_args)
-                logger.info(f"Alembic command '{command_name}' executed successfully with args ({command_args_str}).")
-            except Exception as e: # Catch any exception from the command itself
-                 logger.error(f"Error executing Alembic command '{command_name}' inside run_sync: {e!r}", exc_info=True)
-                 raise # Re-raise to be caught by the outer try block
+                logger.info(
+                    f"Alembic command '{command_name}' executed successfully with args ({command_args_str})."
+                )
+            except Exception as e:  # Catch any exception from the command itself
+                logger.error(
+                    f"Error executing Alembic command '{command_name}' inside run_sync: {e!r}",
+                    exc_info=True,
+                )
+                raise  # Re-raise to be caught by the outer try block
 
         try:
             # Pass the necessary arguments to the sync wrapper
             await conn.run_sync(sync_command_wrapper, config, command_func, args)
-            logger.info(f"Alembic command '{command_name}' completed successfully via run_sync.")
+            logger.info(
+                f"Alembic command '{command_name}' completed successfully via run_sync."
+            )
         except Exception as e:
             # This catches errors from run_sync itself or re-raised from sync_command_wrapper
-            logger.error(f"Failed running Alembic command '{command_name}' via run_sync: {e!r}", exc_info=True)
+            logger.error(
+                f"Failed running Alembic command '{command_name}' via run_sync: {e!r}",
+                exc_info=True,
+            )
             raise
+
 
 async def _create_initial_schema(engine: AsyncEngine):
     """Creates all tables defined in the SQLAlchemy metadata."""
@@ -191,6 +253,7 @@ async def _create_initial_schema(engine: AsyncEngine):
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
     logger.info("Tables created.")
+
 
 async def _initialize_vector_storage(engine: AsyncEngine):
     """Initializes vector database components if enabled."""
@@ -203,13 +266,18 @@ async def _initialize_vector_storage(engine: AsyncEngine):
                 await init_vector_db(db_context=vector_init_context)
             logger.info("Vector DB components initialized successfully.")
         except Exception as vec_e:
-            logger.error(f"Failed to initialize vector database components: {vec_e!r}", exc_info=True)
+            logger.error(
+                f"Failed to initialize vector database components: {vec_e!r}",
+                exc_info=True,
+            )
             # Decide if this failure should prevent startup. For now, re-raise.
             raise
     else:
         logger.info("Vector storage is disabled, skipping initialization.")
 
+
 # --- Main Initialization Function ---
+
 
 async def init_db():
     """
@@ -226,9 +294,9 @@ async def init_db():
     engine = get_engine()  # Get engine from db_base
     last_exception = None  # Variable to store the last exception
     for attempt in range(max_retries):
-        last_exception = None # Reset last exception for this attempt
+        last_exception = None  # Reset last exception for this attempt
         try:
-            logger.info(f"Checking database state (attempt {attempt+1})...")
+            logger.info(f"Checking database state (attempt {attempt + 1})...")
 
             # 1. Load Alembic configuration (raises FileNotFoundError if config missing)
             alembic_cfg = _get_alembic_config(engine)
@@ -239,11 +307,13 @@ async def init_db():
 
             if has_version_table:
                 # 3a. Log current revision and upgrade
-                await _log_current_revision(engine) # Log current state before upgrade
+                await _log_current_revision(engine)  # Log current state before upgrade
                 await _run_alembic_command(engine, alembic_cfg, "upgrade", "head")
             else:
                 # 3b. Database is new or not managed by Alembic.
-                logger.info("Alembic version table not found. Performing initial schema creation and stamping...")
+                logger.info(
+                    "Alembic version table not found. Performing initial schema creation and stamping..."
+                )
 
                 # 4. Create all tables defined in SQLAlchemy metadata
                 await _create_initial_schema(engine)
@@ -266,34 +336,48 @@ async def init_db():
         # --- Exception Handling and Retry Logic ---
         except (DBAPIError, OperationalError) as e:
             # Handle common database connection/operation errors
-            logger.warning(f"Database connection/operation error during init_db (attempt {attempt + 1}/{max_retries}): {e!r}. Retrying...")
+            logger.warning(
+                f"Database connection/operation error during init_db (attempt {attempt + 1}/{max_retries}): {e!r}. Retrying..."
+            )
             last_exception = e
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for init_db due to connection/operation error.", exc_info=True)
+                logger.error(
+                    "Max retries exceeded for init_db due to connection/operation error.",
+                    exc_info=True,
+                )
                 # No sleep needed on the last attempt, will raise below
         except SQLAlchemyError as e:
             # Catch other SQLAlchemy specific errors (might include issues during commands not caught by _run_alembic_command)
-            logger.warning(f"SQLAlchemy error during init_db (attempt {attempt + 1}/{max_retries}): {e!r}", exc_info=True)
+            logger.warning(
+                f"SQLAlchemy error during init_db (attempt {attempt + 1}/{max_retries}): {e!r}",
+                exc_info=True,
+            )
             last_exception = e
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for init_db due to SQLAlchemy error.", exc_info=True)
+                logger.error(
+                    "Max retries exceeded for init_db due to SQLAlchemy error.",
+                    exc_info=True,
+                )
         except FileNotFoundError as e:
             # Specific handling for missing alembic config file
-            logger.error(f"Configuration error during init_db: {e}", exc_info=False) # Don't need full traceback
+            logger.error(
+                f"Configuration error during init_db: {e}", exc_info=False
+            )  # Don't need full traceback
             # This is not recoverable by retrying, so re-raise immediately
             raise
         except Exception as e:
             # Catch any other unexpected exception during init (e.g., logic errors)
             logger.warning(
                 f"Unexpected error during database initialization (attempt {attempt + 1}/{max_retries}): {e!r}",
-                exc_info=True
+                exc_info=True,
             )
             last_exception = e  # Update last_exception for generic errors too
             if attempt == max_retries - 1:
-                logger.error(f"Max retries exceeded for init_db due to error: {e}", exc_info=True)
+                logger.error(
+                    f"Max retries exceeded for init_db due to error: {e}", exc_info=True
+                )
         # finally:
         #     logger.info(f"init_db end iteration {attempt}")
-
 
         # If it wasn't the last attempt and an exception occurred, wait and retry
         if attempt < max_retries - 1 and last_exception:
@@ -305,9 +389,16 @@ async def init_db():
             break
 
     # This part is reached only if the loop completes without returning (all retries failed)
-    logger.critical(f"Database initialization failed after {max_retries} attempts. Last error: {last_exception!r}", exc_info=last_exception)
+    logger.critical(
+        f"Database initialization failed after {max_retries} attempts. Last error: {last_exception!r}",
+        exc_info=last_exception,
+    )
     # Ensure a meaningful error is raised if all retries fail
-    raise RuntimeError(f"Database initialization failed after multiple retries. Last error: {last_exception!r} with traceback " + "\n".join(traceback.format_exception(last_exception)))
+    raise RuntimeError(
+        f"Database initialization failed after multiple retries. Last error: {last_exception!r} with traceback "
+        + "\n".join(traceback.format_exception(last_exception))
+    )
+
 
 # --- Exports ---
 # Re-export functions and tables from specific modules to maintain the facade
@@ -338,7 +429,8 @@ __all__ = [
     "engine",
     "metadata",
     "DatabaseContext",  # Export the new context manager
-    "get_db_context",  # Export convenience function
+    "get_db_context",
+    "get_note_by_title",  # Export convenience function
     # Vector Storage Exports are added conditionally below
 ]
 

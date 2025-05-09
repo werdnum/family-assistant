@@ -2,14 +2,11 @@ import pytest
 import asyncio
 import logging
 import json
-import time
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import text
-from typing import List, Dict, Any, Optional, Callable, Tuple
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 # Import necessary components from the application
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.processing import ProcessingService
 from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.tools import (
@@ -18,33 +15,28 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     TOOLS_DEFINITION as local_tools_definition,
     AVAILABLE_FUNCTIONS as local_tool_implementations,
-    ToolExecutionContext,
 )
 
 # Import TaskWorker, events, and the specific handler needed for registration
 from family_assistant.task_worker import (
     TaskWorker,
-    shutdown_event,
-    new_task_event,
     handle_llm_callback,
 )
-from family_assistant import storage  # For direct task checking
 
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     Rule,
-    MatcherFunction,
     get_last_message_text,
 )
-import uuid # Added for turn_id
+import uuid  # Added for turn_id
 
 logger = logging.getLogger(__name__)
 
 # --- Test Configuration ---
 TEST_CHAT_ID = 54321
 TEST_USER_NAME = "CallbackTester"
-TEST_USER_ID = 123098 # Added user ID
+TEST_USER_ID = 123098  # Added user ID
 CALLBACK_DELAY_SECONDS = 3  # Schedule callback this many seconds into the future
 WAIT_BUFFER_SECONDS = 10  # Wait this much longer than the delay for processing
 CALLBACK_CONTEXT = "Remind me to check the test results"
@@ -66,7 +58,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
     logger.info(f"\n--- Running Callback Test ({test_run_id}) ---")
 
     # --- Calculate future callback time ---
-    user_message_id_schedule = 401 # Added user message ID for the scheduling request
+    user_message_id_schedule = 401  # Added user message ID for the scheduling request
     now_utc = datetime.now(timezone.utc)
     callback_dt = now_utc + timedelta(seconds=CALLBACK_DELAY_SECONDS)
     callback_time_iso = callback_dt.isoformat()
@@ -129,7 +121,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
         rules=[schedule_rule, callback_rule],
         default_response=LLMOutput(content="Default mock response for callback test."),
     )
-    logger.info(f"Using RuleBasedMockLLMClient for callback test.")
+    logger.info("Using RuleBasedMockLLMClient for callback test.")
 
     # --- Instantiate Dependencies ---
     # Tool Providers (using real local tools)
@@ -158,7 +150,7 @@ async def test_schedule_and_execute_callback(test_db_engine):
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
-        context_providers=[], # Added missing argument
+        context_providers=[],  # Added missing argument
         history_max_age_hours=dummy_history_age,
         server_url=None,  # Added missing argument
     )
@@ -199,27 +191,32 @@ async def test_schedule_and_execute_callback(test_db_engine):
     )
     schedule_request_trigger = [{"type": "text", "text": schedule_request_text}]
 
-    scheduled_task_id = None
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Correct unpacking to 3 values: generated_turn_messages, final_reasoning_info, processing_error_traceback
-        schedule_generated_messages, _, schedule_error = (
-            await processing_service.generate_llm_response_for_chat(
-                db_context=db_context,  # Renamed db_context
-                application=mock_application,  # Pass mock application
-                interface_type="test",
-                conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
-                turn_id=str(uuid.uuid4()), # Added turn_id
-                trigger_content_parts=schedule_request_trigger,
-                trigger_interface_message_id=str(user_message_id_schedule), # Added missing argument
-                user_name=TEST_USER_NAME,
-            )
+        (
+            schedule_generated_messages,
+            _,
+            schedule_error,
+        ) = await processing_service.generate_llm_response_for_chat(
+            db_context=db_context,  # Renamed db_context
+            application=mock_application,  # Pass mock application
+            interface_type="test",
+            conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
+            turn_id=str(uuid.uuid4()),  # Added turn_id
+            trigger_content_parts=schedule_request_trigger,
+            trigger_interface_message_id=str(
+                user_message_id_schedule
+            ),  # Added missing argument
+            user_name=TEST_USER_NAME,
         )
 
-    assert (
-        schedule_error is None
-    ), f"Error during schedule request: {schedule_error}"
-    assistant_schedule_message = next((m for m in schedule_generated_messages if m.get("role") == "assistant"), None)
-    logger.info(f"Schedule Request - Mock LLM Response: {assistant_schedule_message.get('content') if assistant_schedule_message else 'No assistant message found'}")
+    assert schedule_error is None, f"Error during schedule request: {schedule_error}"
+    assistant_schedule_message = next(
+        (m for m in schedule_generated_messages if m.get("role") == "assistant"), None
+    )
+    logger.info(
+        f"Schedule Request - Mock LLM Response: {assistant_schedule_message.get('content') if assistant_schedule_message else 'No assistant message found'}"
+    )
 
     # --- Part 2: Run Worker and Wait for Callback ---
     logger.info("--- Part 2: Waiting for task completion ---")

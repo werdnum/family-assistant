@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 # Use absolute imports if DatabaseContext is defined elsewhere,
 # otherwise adjust as needed. Assuming it's accessible.
 # Adjust the import path based on your project structure if needed
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import get_db_context
 from family_assistant.storage.tasks import tasks_table
 
 logger = logging.getLogger(__name__)
@@ -63,12 +63,11 @@ async def wait_for_tasks_to_complete(
             async with await get_db_context(engine=engine) as db:
                 # First check for tasks that have failed or have a recorded error
                 failure_condition = sa.or_(
-                    tasks_table.c.status == "failed",
-                    tasks_table.c.error.is_not(None)
+                    tasks_table.c.status == "failed", tasks_table.c.error.is_not(None)
                 )
-                failed_query = select(
-                    sql_count(tasks_table.c.id)
-                ).where(failure_condition)
+                failed_query = select(sql_count(tasks_table.c.id)).where(
+                    failure_condition
+                )
                 # Filter by specific task IDs if provided
                 if task_ids:
                     failed_query = failed_query.where(
@@ -82,34 +81,39 @@ async def wait_for_tasks_to_complete(
                     # Get details of failed tasks including their last error
                     failed_task_details_query = select(
                         tasks_table.c.task_id,
-                        tasks_table.c.error  # Corrected column name
+                        tasks_table.c.error,  # Corrected column name
                     ).where(failure_condition)
                     if task_ids:
                         failed_task_details_query = failed_task_details_query.where(
                             tasks_table.c.task_id.in_(task_ids)
                         )
 
-                    failed_tasks_rows = await db.execute_with_retry(failed_task_details_query)
+                    failed_tasks_rows = await db.execute_with_retry(
+                        failed_task_details_query
+                    )
 
                     error_messages_list = []
                     for row in failed_tasks_rows:
                         task_id_val = row[0]  # task_id
                         # Assuming the second column is last_error.
                         # Access by index as per established pattern in this file.
-                        task_error_val = row[1] 
+                        task_error_val = row[1]
                         error_messages_list.append(
                             f"  - ID: {task_id_val}, Error: {task_error_val if task_error_val is not None else 'N/A'}"
                         )
 
                     if error_messages_list:
-                        raise RuntimeError(f"Task(s) failed:\n" + "\n".join(error_messages_list))
+                        raise RuntimeError(
+                            "Task(s) failed:\n" + "\n".join(error_messages_list)
+                        )
                     else:
                         # Fallback if details couldn't be fetched but failed_count > 0
-                        raise RuntimeError(f"{failed_count} task(s) failed, but could not retrieve specific error details.")
+                        raise RuntimeError(
+                            f"{failed_count} task(s) failed, but could not retrieve specific error details."
+                        )
 
                 # Build the query to count non-terminal tasks
                 query = select(
-
                     sql_count(tasks_table.c.id)
                 ).where(  # Pass column to count
                     tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)

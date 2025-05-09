@@ -1,5 +1,5 @@
 import logging
-from typing import Protocol, List, Dict, Any, Optional, Callable, Awaitable
+from typing import Protocol, List, Dict, Any, Callable, Awaitable
 
 # Import necessary types and modules from your project.
 # These are based on the previously discussed files and common patterns in your project.
@@ -40,7 +40,11 @@ class ContextProvider(Protocol):
 class NotesContextProvider(ContextProvider):
     """Provides context from stored notes."""
 
-    def __init__(self, get_db_context_func: Callable[[], Awaitable[DatabaseContext]], prompts: PromptsType):
+    def __init__(
+        self,
+        get_db_context_func: Callable[[], Awaitable[DatabaseContext]],
+        prompts: PromptsType,
+    ):
         """
         Initializes the NotesContextProvider.
 
@@ -59,12 +63,15 @@ class NotesContextProvider(ContextProvider):
     async def get_context_fragments(self) -> List[str]:
         fragments: List[str] = []
         try:
-            async with await self._get_db_context_func() as db_context: # Get context per call
+            async with (
+                await self._get_db_context_func() as db_context
+            ):  # Get context per call
                 all_notes = await storage.get_all_notes(db_context=db_context)
                 if all_notes:
                     notes_list_str = ""
                     note_item_format = self._prompts.get(
-                        "note_item_format", "- {title}: {content}"  # Default format
+                        "note_item_format",
+                        "- {title}: {content}",  # Default format
                     )
                     for note in all_notes:
                         notes_list_str += (
@@ -98,6 +105,7 @@ class NotesContextProvider(ContextProvider):
             # As per protocol, return empty list on error, error is logged.
             return []
         return fragments
+
 
 class CalendarContextProvider(ContextProvider):
     """Provides context from calendar events."""
@@ -161,7 +169,7 @@ class CalendarContextProvider(ContextProvider):
                 next_two_weeks_events=future_events_str,
             ).strip()
 
-            if formatted_calendar_context: # Ensure not adding empty string
+            if formatted_calendar_context:  # Ensure not adding empty string
                 fragments.append(formatted_calendar_context)
             logger.debug(
                 f"[{self.name}] Formatted upcoming events into {len(fragments)} fragment(s)."
@@ -174,6 +182,7 @@ class CalendarContextProvider(ContextProvider):
             # As per protocol, return empty list on error, error is logged.
             return []
         return fragments
+
 
 # Future providers like WeatherContextProvider, EmailSummaryProvider etc. would go here.
 # Example:
