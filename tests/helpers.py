@@ -64,7 +64,7 @@ async def wait_for_tasks_to_complete(
                 # First check for tasks that have failed or have a recorded error
                 failure_condition = sa.or_(
                     tasks_table.c.status == "failed",
-                    tasks_table.c.last_error.is_not(None)
+                    tasks_table.c.error.is_not(None)
                 )
                 failed_query = select(
                     sql_count(tasks_table.c.id)
@@ -82,7 +82,7 @@ async def wait_for_tasks_to_complete(
                     # Get details of failed tasks including their last error
                     failed_task_details_query = select(
                         tasks_table.c.task_id,
-                        tasks_table.c.last_error  # Assuming this column exists
+                        tasks_table.c.error  # Corrected column name
                     ).where(failure_condition)
                     if task_ids:
                         failed_task_details_query = failed_task_details_query.where(
