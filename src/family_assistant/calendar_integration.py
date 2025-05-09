@@ -4,16 +4,16 @@ import uuid  # For generating event UIDs
 from datetime import date, datetime, time, timedelta  # Added time
 
 # Consolidated imports including Any
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import caldav
 import httpx  # Import httpx
 import vobject
 from caldav.lib.error import DAVError, NotFoundError
 from dateutil.parser import isoparse  # For parsing ISO strings in tools
-
-# Import types needed by tools
-from family_assistant.tools.types import ToolExecutionContext
+if TYPE_CHECKING:
+    # Import types needed by tools under TYPE_CHECKING to break circular import
+    from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
