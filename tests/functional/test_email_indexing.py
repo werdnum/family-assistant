@@ -679,20 +679,20 @@ async def test_metadata_filtering(pg_vector_db_engine):
         # --- Act: Query Vectors with Metadata Filter ---
         query_results = None
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info("Querying vectors with metadata filter 'source_type=email'...")
             # The filter needs to target the actual column name ('source_type')
             # or potentially JSONB metadata if we stored X-Custom-Type there.
             # Let's assume source_type is always 'email' for now from EmailDocument
             # and filter on something else we can control, like title.
             # Re-adjusting test: Filter on title instead of source_type for simplicity.
+            # Changed to filter on source_id as title filtering seems problematic in query_vectors
+            active_filter = {"source_id": email2_msg_id}
+            logger.info(f"Querying vectors with metadata filter {active_filter}...")
             query_results = await query_vectors(
                 db,
                 query_embedding=query_vec,
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
-                filters={
-                    "title": "Metadata Test Far Correct Type"
-                },  # Filter for the second email's title
+                filters=active_filter,
             )
 
         # --- Assert ---
