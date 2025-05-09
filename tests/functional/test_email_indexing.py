@@ -12,6 +12,7 @@ from unittest.mock import MagicMock  # Add this import
 
 import numpy as np
 import pytest
+from assertpy import assert_that
 from sqlalchemy import select
 
 from family_assistant.embeddings import MockEmbeddingGenerator
@@ -169,13 +170,12 @@ async def _ingest_and_index_email(
         ).where(received_emails_table.c.message_id_header == message_id)
         email_info = await db.fetch_one(select_email_stmt)
 
-        assert email_info is not None, f"Failed to retrieve ingested email {message_id}"
+        assert_that(email_info).described_as(f"Failed to retrieve ingested email {message_id}").is_not_none()
         email_db_id = email_info["id"]
-        assert email_db_id is not None, f"Email DB ID is null for {message_id}"
+        assert_that(email_db_id).described_as(f"Email DB ID is null for {message_id}").is_not_none()
         logger.info(
             f"Helper: Email ingested (DB ID: {email_db_id})"
         )
-
     # Wait for all tasks to complete
     logger.info(
         f"Helper: Waiting for all pending tasks to complete after ingesting email DB ID {email_db_id} (initial task: {indexing_task_id})..."
@@ -328,8 +328,8 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
                 )
 
             # --- Assert ---
-            assert query_results is not None, "query_vectors returned None"
-            assert len(query_results) > 0, "No results returned from vector query"
+            assert_that(query_results).described_as("query_vectors returned None").is_not_none()
+            assert_that(query_results).described_as("No results returned from vector query").is_not_empty()
             logger.info(f"Query returned {len(query_results)} result(s).")
 
             # Find the result corresponding to our document
@@ -339,33 +339,22 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
                     found_result = result
                     break
 
-            assert (
-                found_result is not None
-            ), f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}"
+            assert_that(found_result).described_as(f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}").is_not_none()
             logger.info(f"Found matching result: {found_result}")
 
             # Check distance (should be small since query embedding was close to body)
-            assert (
-                "distance" in found_result
-            ), f"Result missing 'distance' field: {found_result}"
-            assert (
-                found_result["distance"] < 0.1
-            ), f"Distance should be small, but was {found_result['distance']}"
+            assert_that(found_result).described_as(f"Result missing 'distance' field: {found_result}").contains_key("distance")
+            assert_that(found_result["distance"]).described_as(f"Distance should be small").is_less_than(0.1)
 
             # Check other fields in the result
-            assert found_result.get("embedding_type") in [
-                "raw_body_text_chunk",
-                "title_chunk",
-            ]
+            assert_that(found_result.get("embedding_type")).is_in("raw_body_text_chunk", "title_chunk")
             if found_result.get("embedding_type") == "raw_body_text_chunk":
-                assert found_result.get("embedding_source_content") == TEST_EMAIL_BODY
+                assert_that(found_result.get("embedding_source_content")).is_equal_to(TEST_EMAIL_BODY)
             else:
-                assert (
-                    found_result.get("embedding_source_content") == TEST_EMAIL_SUBJECT
-                )
+                assert_that(found_result.get("embedding_source_content")).is_equal_to(TEST_EMAIL_SUBJECT)
 
-            assert found_result.get("title") == TEST_EMAIL_SUBJECT
-            assert found_result.get("source_type") == "email"
+            assert_that(found_result.get("title")).is_equal_to(TEST_EMAIL_SUBJECT)
+            assert_that(found_result.get("source_type")).is_equal_to("email")
 
             logger.info("--- Email Indexing E2E Test Passed ---")
 
@@ -521,9 +510,8 @@ async def test_vector_ranking(pg_vector_db_engine):
             )
 
         # --- Assert ---
-        assert (
-            query_results is not None and len(query_results) >= 3
-        ), "Expected at least 3 results"
+        assert_that(query_results).is_not_none()
+        assert_that(query_results).described_as("Expected at least 3 results").has_length_greater_than_or_equal_to(3)
         logger.info(f"Ranking query returned {len(query_results)} results.")
 
         # Extract source IDs and distances
@@ -533,22 +521,15 @@ async def test_vector_ranking(pg_vector_db_engine):
         logger.info(f"Results ordered by distance: {results_ordered}")
 
         # Find the indices of our test emails in the results
-        try:
-            idx1 = [r[0] for r in results_ordered].index(email1_msg_id)
-            idx2 = [r[0] for r in results_ordered].index(email2_msg_id)
-            idx3 = [r[0] for r in results_ordered].index(email3_msg_id)
-        except ValueError:
-            pytest.fail(
-                f"One or more test emails not found in results: {results_ordered}"
-            )
+        result_source_ids = [r[0] for r in results_ordered]
+        assert_that(result_source_ids).described_as(f"Results for ranking: {results_ordered}").contains(email1_msg_id, email2_msg_id, email3_msg_id)
+        idx1 = result_source_ids.index(email1_msg_id)
+        idx2 = result_source_ids.index(email2_msg_id)
+        idx3 = result_source_ids.index(email3_msg_id)
 
         # Assert the order based on distance (lower index means closer/better rank)
-        assert (
-            idx1 < idx2
-        ), f"Closest email ({email1_msg_id}) was not ranked higher than medium ({email2_msg_id})"
-        assert (
-            idx2 < idx3
-        ), f"Medium email ({email2_msg_id}) was not ranked higher than farthest ({email3_msg_id})"
+        assert_that(idx1).described_as(f"Closest email ({email1_msg_id}) ranking").is_less_than(idx2)
+        assert_that(idx2).described_as(f"Medium email ({email2_msg_id}) ranking").is_less_than(idx3)
 
         logger.info("--- Vector Ranking Test Passed ---")
     except Exception as e:
@@ -696,27 +677,19 @@ async def test_metadata_filtering(pg_vector_db_engine):
             )
 
         # --- Assert ---
-        assert query_results is not None, "Query returned None"
+        assert_that(query_results).described_as("Query returned None").is_not_none()
         # Check that *at least one* result is returned
-        assert (
-            len(query_results) > 0
-        ), f"Expected at least 1 result matching filter, got {len(query_results)}"
+        assert_that(query_results).described_as(f"Expected at least 1 result matching filter").is_not_empty()
         logger.info(f"Metadata filter query returned {len(query_results)} result(s).")
 
         # Verify that *all* returned results belong to the correct document
         for found_result in query_results:
-            assert (
-                found_result.get("source_id") == email2_msg_id
-            ), f"Incorrect document returned by metadata filter. Expected source_id {email2_msg_id}, got {found_result.get('source_id')}"
-            assert (
-                found_result.get("title") == "Metadata Test Far Correct Type"
-            ), f"Incorrect title in filtered result. Expected 'Metadata Test Far Correct Type', got {found_result.get('title')}"
+            assert_that(found_result.get("source_id")).described_as(f"Incorrect document returned by metadata filter. Expected source_id {email2_msg_id}").is_equal_to(email2_msg_id)
+            assert_that(found_result.get("title")).described_as(f"Incorrect title in filtered result. Expected 'Metadata Test Far Correct Type'").is_equal_to("Metadata Test Far Correct Type")
 
         # Optional: Check that the closer document (email1) is NOT in the results
         source_ids_returned = {r.get("source_id") for r in query_results}
-        assert (
-            email1_msg_id not in source_ids_returned
-        ), f"Document {email1_msg_id} (which should be filtered out) was found in results."
+        assert_that(source_ids_returned).described_as(f"Document {email1_msg_id} (which should be filtered out) was found in results.").does_not_contain(email1_msg_id)
 
         logger.info("--- Metadata Filtering Test Passed ---")
     except Exception as e:
@@ -851,37 +824,25 @@ async def test_keyword_filtering(pg_vector_db_engine):
             )
 
         # --- Assert ---
-        assert query_results is not None, "Query returned None"
-        assert len(query_results) > 0, "Expected at least one result matching keyword"
+        assert_that(query_results).described_as("Query returned None").is_not_none()
+        assert_that(query_results).described_as("Expected at least one result matching keyword").is_not_empty()
         logger.info(f"Keyword filter query returned {len(query_results)} result(s).")
 
         # RRF should rank the keyword match highest, even if vector distance is slightly worse
         found_result = query_results[0]  # Check the top result
-        assert (
-            found_result.get("source_id") == email2_msg_id
-        ), f"Top result should be the one matching keyword '{keyword}'"
-        assert (
-            keyword in found_result.get("embedding_source_content", "").lower()
-        ), "Keyword not found in top result content"
-        assert "rrf_score" in found_result, "Result missing 'rrf_score'"
-        assert (
-            found_result.get("fts_score", 0) > 0
-        ), "Keyword match should have a positive FTS score"
+        assert_that(found_result.get("source_id")).described_as(f"Top result for keyword '{keyword}'").is_equal_to(email2_msg_id)
+        assert_that(found_result.get("embedding_source_content", "").lower()).described_as("Top result content for keyword matching").contains(keyword)
+        assert_that(found_result).described_as("Result missing 'rrf_score'").contains_key("rrf_score")
+        assert_that(found_result.get("fts_score", 0)).described_as("Keyword match FTS score").is_greater_than(0)
 
         # Ensure the non-matching document is either absent or ranked lower
         non_matching_present = any(
             r.get("source_id") == email1_msg_id for r in query_results
         )
         if non_matching_present:
-            rank_non_match = [r.get("source_id") for r in query_results].index(
-                email1_msg_id
-            )
-            rank_match = [r.get("source_id") for r in query_results].index(
-                email2_msg_id
-            )
-            assert (
-                rank_match < rank_non_match
-            ), "Keyword match should be ranked higher than non-match"
+            rank_non_match = [r.get("source_id") for r in query_results].index(email1_msg_id)
+            rank_match = [r.get("source_id") for r in query_results].index(email2_msg_id)
+            assert_that(rank_match).described_as("Keyword match rank").is_less_than(rank_non_match)
             logger.info(
                 f"Non-matching document found but ranked lower (Rank {rank_non_match}) than keyword match (Rank {rank_match})."
             )
