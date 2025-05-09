@@ -13,9 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_embed_and_store_batch(
-    db_context: "ToolExecutionContext",  # Caller uses 'db_context' keyword; expects ToolExecutionContext
-    payload: dict[str, Any],
-    embedding_generator: EmbeddingGenerator,  # Passed directly by the caller
+    exec_context: "ToolExecutionContext",
+    payload: dict[str, Any]
 ) -> None:
     """
     Task handler for embedding a batch of texts and storing them in the vector database.
@@ -44,16 +43,11 @@ async def handle_embed_and_store_batch(
         SQLAlchemyError: If database operations fail.
         Exception: If embedding generation fails.
     """
-    # The parameter 'db_context' (named as such due to caller's keyword)
-    # is expected to be the ToolExecutionContext.
-    exec_context_obj = db_context  # Alias for clarity
-
-    # Extract the actual DatabaseContext and EmbeddingGenerator.
-    actual_db_context = exec_context_obj.db_context # Get DatabaseContext from ToolExecutionContext
-    # The embedding_generator is now passed directly as a parameter.
+    actual_db_context = exec_context.db_context
+    embedding_generator = exec_context.embedding_generator
 
     # The rest of the function uses the variable name 'db_context' for the DatabaseContext.
-    db_context = actual_db_context
+    db_context = actual_db_context # This renames actual_db_context to db_context for the rest of the function
 
     if not db_context:  # This check now refers to the actual_db_context
         logger.error(
