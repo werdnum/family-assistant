@@ -2,21 +2,21 @@
 Handles storage and retrieval of background tasks using the database queue.
 """
 
-import logging
 import asyncio
+import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 from sqlalchemy import (
-    Table,
-    Column,
-    String,
-    Integer,
-    Text,
-    DateTime,
     JSON,
-    select,
+    Column,
+    DateTime,
+    Integer,
+    String,
+    Table,
+    Text,
     insert,
+    select,
     update,
 )
 from sqlalchemy.exc import SQLAlchemyError
@@ -60,12 +60,12 @@ async def enqueue_task(
     db_context: DatabaseContext,  # Added context
     task_id: str,
     task_type: str,
-    payload: Optional[Dict[str, Any]] = None,
-    scheduled_at: Optional[datetime] = None,
-    max_retries_override: Optional[int] = None,
-    recurrence_rule: Optional[str] = None,
-    original_task_id: Optional[str] = None,
-    notify_event: Optional[asyncio.Event] = None,
+    payload: dict[str, Any] | None = None,
+    scheduled_at: datetime | None = None,
+    max_retries_override: int | None = None,
+    recurrence_rule: str | None = None,
+    original_task_id: str | None = None,
+    notify_event: asyncio.Event | None = None,
 ):  # noqa: PLR0913
     """Adds a task to the queue, optional notification."""
     if scheduled_at and scheduled_at.tzinfo is None:
@@ -120,8 +120,8 @@ async def enqueue_task(
 async def dequeue_task(
     db_context: DatabaseContext,
     worker_id: str,
-    task_types: List[str],  # Added context
-) -> Optional[Dict[str, Any]]:
+    task_types: list[str],  # Added context
+) -> dict[str, Any] | None:
     """Atomically dequeues the next available task."""
     now = datetime.now(timezone.utc)
 
@@ -191,7 +191,7 @@ async def update_task_status(
     db_context: DatabaseContext,  # Added context
     task_id: str,
     status: str,
-    error: Optional[str] = None,
+    error: str | None = None,
 ) -> bool:
     """Updates task status."""
     values_to_update = {"status": status, "locked_by": None, "locked_at": None}
@@ -268,7 +268,7 @@ async def reschedule_task_for_retry(
 
 async def get_all_tasks(
     db_context: DatabaseContext, limit: int = 100
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Retrieves tasks, ordered by creation descending."""
     try:
         stmt = (
