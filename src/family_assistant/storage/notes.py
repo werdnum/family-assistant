@@ -145,9 +145,7 @@ async def add_or_update_note(
                         f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently."
                     )
                     # Re-raise the original error or a custom one
-                    raise RuntimeError(
-                        f"Failed to update note '{title}' after insert conflict."
-                    )
+                    raise RuntimeError(f"Failed to update note '{title}' after insert conflict.") from e
                 logger.info(f"Updated note: {title} (SQLite fallback)")
                 return "Success"
             else:
