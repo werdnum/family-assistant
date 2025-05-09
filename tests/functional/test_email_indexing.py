@@ -4,45 +4,41 @@ End-to-end functional tests for the email indexing and vector search pipeline.
 
 import asyncio
 import logging
+import re  # Add re import
 import uuid
 from datetime import datetime, timezone
-import re  # Add re import
-from typing import Dict, Any, Tuple, Optional  # Add missing typing imports
+from typing import Any  # Add missing typing imports
 from unittest.mock import MagicMock  # Add this import
 
 import numpy as np
 import pytest
 from sqlalchemy import select
 
-from family_assistant.task_worker import TaskWorker
-from family_assistant.indexing.tasks import (
-    handle_embed_and_store_batch,
-)  # Corrected import
 from family_assistant.embeddings import MockEmbeddingGenerator
-from family_assistant.indexing.pipeline import IndexingPipeline
-from family_assistant.indexing.processors.metadata_processors import TitleExtractor
-from family_assistant.indexing.processors.text_processors import TextChunker
-from family_assistant.indexing.processors.dispatch_processors import (
-    EmbeddingDispatchProcessor,
-)
 from family_assistant.indexing.email_indexer import (
     handle_index_email,
     set_indexing_dependencies,
 )
+from family_assistant.indexing.pipeline import IndexingPipeline
+from family_assistant.indexing.processors.dispatch_processors import (
+    EmbeddingDispatchProcessor,
+)
+from family_assistant.indexing.processors.metadata_processors import TitleExtractor
+from family_assistant.indexing.processors.text_processors import TextChunker
+from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table, store_incoming_email
 from family_assistant.storage.tasks import (
     tasks_table,
 )  # Keep if used for direct inspection, though wait_for_tasks_to_complete is preferred
 from family_assistant.storage.vector import (
-    query_vectors,
-    DocumentRecord,
     DocumentEmbeddingRecord,
+    DocumentRecord,
+    query_vectors,
 )  # Added imports
+from family_assistant.task_worker import TaskWorker
 
 # Import components needed for the E2E test
-
-
 # Import test helpers
 from tests.helpers import wait_for_tasks_to_complete
 
@@ -140,10 +136,10 @@ async def dump_tables_on_failure(engine):
 
 async def _ingest_and_index_email(
     engine,
-    form_data: Dict[str, Any],
+    form_data: dict[str, Any],
     task_timeout: float = 15.0,
-    notify_event: Optional[asyncio.Event] = None,  # Add notify_event parameter
-) -> Tuple[int, str]:
+    notify_event: asyncio.Event | None = None,  # Add notify_event parameter
+) -> int:
     """
     Helper to ingest an email, notify worker, wait for its indexing task, and return IDs.
 
@@ -153,7 +149,7 @@ async def _ingest_and_index_email(
         task_timeout: Timeout for waiting for the task.
 
     Returns:
-        A tuple containing (email_db_id, indexing_task_id).
+        Email DB ID
     """
     email_db_id = None
     indexing_task_id = None
@@ -175,13 +171,9 @@ async def _ingest_and_index_email(
 
         assert email_info is not None, f"Failed to retrieve ingested email {message_id}"
         email_db_id = email_info["id"]
-        indexing_task_id = email_info["indexing_task_id"]
         assert email_db_id is not None, f"Email DB ID is null for {message_id}"
-        assert (
-            indexing_task_id is not None
-        ), f"Indexing Task ID is null for {message_id}"
         logger.info(
-            f"Helper: Email ingested (DB ID: {email_db_id}), Task ID: {indexing_task_id}"
+            f"Helper: Email ingested (DB ID: {email_db_id})"
         )
 
     # Wait for all tasks to complete
@@ -196,7 +188,7 @@ async def _ingest_and_index_email(
         f"Helper: All pending tasks reported as complete for email DB ID {email_db_id}."
     )
 
-    return email_db_id, indexing_task_id
+    return email_db_id
 
 
 # --- Test Functions ---
@@ -317,7 +309,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
         try:
             # --- Act: Ingest Email and Wait for Indexing ---
             # Pass the event directly during ingestion
-            email_db_id, indexing_task_id = await _ingest_and_index_email(
+            await _ingest_and_index_email(
                 pg_vector_db_engine,
                 TEST_EMAIL_FORM_DATA,
                 notify_event=test_new_task_event,  # Pass the worker's event
@@ -507,13 +499,13 @@ async def test_vector_ranking(pg_vector_db_engine):
 
     test_failed = False
     try:
-        _, task_id1 = await _ingest_and_index_email(
+        await _ingest_and_index_email(
             pg_vector_db_engine, form_data1, notify_event=test_new_task_event
         )
-        _, task_id2 = await _ingest_and_index_email(
+        _ingest_and_index_email(
             pg_vector_db_engine, form_data2, notify_event=test_new_task_event
         )
-        _, task_id3 = await _ingest_and_index_email(
+        await _ingest_and_index_email(
             pg_vector_db_engine, form_data3, notify_event=test_new_task_event
         )
 
@@ -677,10 +669,10 @@ async def test_metadata_filtering(pg_vector_db_engine):
 
     test_failed = False
     try:
-        _, task_id1 = await _ingest_and_index_email(
+        await _ingest_and_index_email(
             pg_vector_db_engine, form_data1, notify_event=test_new_task_event
         )
-        _, task_id2 = await _ingest_and_index_email(
+        await _ingest_and_index_email(
             pg_vector_db_engine, form_data2, notify_event=test_new_task_event
         )
 
@@ -839,10 +831,10 @@ async def test_keyword_filtering(pg_vector_db_engine):
 
     test_failed = False
     try:
-        _, task_id1 = await _ingest_and_index_email(
+        await _ingest_and_index_email(
             pg_vector_db_engine, form_data1, notify_event=test_new_task_event
         )
-        _, task_id2 = await _ingest_and_index_email(
+        await _ingest_and_index_email(
             pg_vector_db_engine, form_data2, notify_event=test_new_task_event
         )
 
