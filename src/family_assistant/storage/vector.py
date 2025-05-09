@@ -9,29 +9,27 @@ import logging  # Import the logging module
 from datetime import datetime
 from typing import (
     Any,
-    Dict,
-    List,
-    Optional,
     Protocol,
 )
 
 import sqlalchemy as sa
+from pgvector.sqlalchemy import (
+    Vector,  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
+)
 from sqlalchemy import (
     JSON,
     and_,
     delete,
     func,
-    select,
     literal_column,
     or_,
+    select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import functions  # Import functions explicitly
-
-from pgvector.sqlalchemy import Vector  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 
 # Use absolute package path
 from family_assistant.storage.base import metadata  # Keep metadata
@@ -63,22 +61,22 @@ class Document(Protocol):
         ...
 
     @property
-    def source_uri(self) -> Optional[str]:
+    def source_uri(self) -> str | None:
         """URI or path to the original item, if applicable."""
         ...
 
     @property
-    def title(self) -> Optional[str]:
+    def title(self) -> str | None:
         """Title or subject of the document."""
         ...
 
     @property
-    def created_at(self) -> Optional[datetime]:
+    def created_at(self) -> datetime | None:
         """Original creation date of the item (must be timezone-aware if provided)."""
         ...
 
     @property
-    def metadata(self) -> Optional[Dict[str, Any]]:
+    def metadata(self) -> dict[str, Any] | None:
         """Base metadata extracted directly from the source (can be enriched later)."""
         ...
 
@@ -96,20 +94,20 @@ class DocumentRecord(Base):
     id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
     source_type: Mapped[str] = mapped_column(sa.String(50), nullable=False, index=True)
     source_id: Mapped[str] = mapped_column(sa.Text, unique=True, nullable=False)
-    source_uri: Mapped[Optional[str]] = mapped_column(sa.Text)
-    title: Mapped[Optional[str]] = mapped_column(sa.Text)
-    created_at: Mapped[Optional[datetime]] = mapped_column(
+    source_uri: Mapped[str | None] = mapped_column(sa.Text)
+    title: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), index=True
     )
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
         server_default=functions.now(),  # Use explicit import
     )  # Use sa.sql.func.now() for server default
-    doc_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+    doc_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )  # Use variant
 
-    embeddings: Mapped[List["DocumentEmbeddingRecord"]] = sa.orm.relationship(
+    embeddings: Mapped[list["DocumentEmbeddingRecord"]] = sa.orm.relationship(
         "DocumentEmbeddingRecord",
         back_populates="document_record",
         cascade="all, delete-orphan",
@@ -132,15 +130,15 @@ class DocumentEmbeddingRecord(Base):
     )
     chunk_index: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
     embedding_type: Mapped[str] = mapped_column(sa.String(50), nullable=False)
-    content: Mapped[Optional[str]] = mapped_column(sa.Text)
+    content: Mapped[str | None] = mapped_column(sa.Text)
     # Variable dimension vector requires pgvector >= 0.5.0
-    embedding: Mapped[List[float]] = mapped_column(Vector, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector, nullable=False)
     embedding_model: Mapped[str] = mapped_column(sa.String(100), nullable=False)
-    content_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
+    content_hash: Mapped[str | None] = mapped_column(sa.Text)
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=functions.now()
     )
-    embedding_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+    embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )  # Renamed from metadata  # New metadata column
 
@@ -201,7 +199,7 @@ async def init_vector_db(db_context: DatabaseContext):
 async def add_document(
     db_context: DatabaseContext,  # Added context
     doc: Document,
-    enriched_doc_metadata: Optional[Dict[str, Any]] = None,
+    enriched_doc_metadata: dict[str, Any] | None = None,
 ) -> int:
     """
     Adds a document record to the database or updates it based on source_id.
@@ -276,7 +274,7 @@ async def add_document(
 async def get_document_by_source_id(
     db_context: DatabaseContext,
     source_id: str,  # Added context
-) -> Optional[DocumentRecord]:
+) -> DocumentRecord | None:
     """Retrieves a document ORM object by its source ID."""
     try:
         stmt = select(DocumentRecord).where(DocumentRecord.source_id == source_id)
@@ -330,7 +328,7 @@ async def get_document_by_source_id(
 async def get_document_by_id(
     db_context: DatabaseContext,
     document_id: int,  # Added context and id
-) -> Optional[DocumentRecord]:
+) -> DocumentRecord | None:
     """Retrieves a document ORM object by its internal primary key ID."""
     try:
         stmt = select(DocumentRecord).where(DocumentRecord.id == document_id)
@@ -385,11 +383,11 @@ async def add_embedding(
     document_id: int,
     chunk_index: int,
     embedding_type: str,
-    embedding: List[float],
+    embedding: list[float],
     embedding_model: str,
-    content: Optional[str] = None,
-    content_hash: Optional[str] = None,
-    embedding_doc_metadata: Optional[Dict[str, Any]] = None,
+    content: str | None = None,
+    content_hash: str | None = None,
+    embedding_doc_metadata: dict[str, Any] | None = None,
 ) -> None:
     """
     Adds an embedding record linked to a document, updating if it already exists.
@@ -483,13 +481,13 @@ async def delete_document(db_context: DatabaseContext, document_id: int) -> bool
 
 async def query_vectors(
     db_context: DatabaseContext,  # Added context
-    query_embedding: List[float],
+    query_embedding: list[float],
     embedding_model: str,
-    keywords: Optional[str] = None,
-    filters: Optional[Dict[str, Any]] = None,
-    embedding_type_filter: Optional[List[str]] = None,
+    keywords: str | None = None,
+    filters: dict[str, Any] | None = None,
+    embedding_type_filter: list[str] | None = None,
     limit: int = 10,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Performs a hybrid search combining vector similarity and keyword search
     with metadata filtering using the provided DatabaseContext.
@@ -525,12 +523,24 @@ async def query_vectors(
                         doc_filter_conditions.append(
                             getattr(DocumentRecord, actual_key) >= value
                         )
+                    else:
+                        logger.warning(
+                            f"Ignoring filter with unsupported key: {key} = {value}"
+                        )
                 elif key.endswith("_lte") and isinstance(value, datetime):
                     actual_key = key[:-4]
                     if hasattr(DocumentRecord, actual_key):
                         doc_filter_conditions.append(
                             getattr(DocumentRecord, actual_key) <= value
                         )
+                    else:
+                        logger.warning(
+                            f"Ignoring filter with unsupported key: {key} = {value}"
+                        )
+                else: 
+                    logger.warning(
+                        f"Ignoring filter with unsupported type or format: {key} = {value}"
+                    )
                 # Add more filter handling here
             else:
                 logger.warning(f"Ignoring unknown filter key: {key}")
@@ -545,6 +555,8 @@ async def query_vectors(
             DocumentEmbeddingRecord.embedding_type.in_(embedding_type_filter)
         )
     embedding_filter = and_(*embedding_filter_conditions)
+
+    logger.info("Filter for vector query: %s", doc_filter)
 
     # --- 3. Vector Search CTE ---
     distance_op = DocumentEmbeddingRecord.embedding.cosine_distance
@@ -655,6 +667,9 @@ async def query_vectors(
     final_query = final_query.with_only_columns(*final_select_cols)
 
     # --- 6. Execute and Return using DatabaseContext ---
+    logger.info(
+        "Final vector query: %s", final_query
+    )
     try:
         logger.debug(f"Executing vector search query: {final_query}")
         # Use fetch_all which handles retry logic internally
