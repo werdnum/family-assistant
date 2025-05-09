@@ -2,9 +2,8 @@
 Task handlers related to the document indexing pipeline.
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import add_embedding
 
@@ -12,10 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_embed_and_store_batch(
-    db_context: DatabaseContext,
+    exec_context: "ToolExecutionContext",  # Changed from db_context
     payload: Dict[str, Any],
-    *,
-    embedding_generator: EmbeddingGenerator,
 ) -> None:
     """
     Task handler for embedding a batch of texts and storing them in the vector database.
@@ -31,9 +28,8 @@ async def handle_embed_and_store_batch(
         - content_hash (Optional[str]): Hash of the content, if available.
 
     Args:
-        db_context: The database context for database operations.
+        exec_context: The tool execution context, providing db_context and embedding_generator.
         payload: The task payload containing data for embedding.
-        embedding_generator: The embedding generator instance.
 
     Raises:
         ValueError: If the payload is malformed (e.g., lists have different lengths,
@@ -41,6 +37,17 @@ async def handle_embed_and_store_batch(
         SQLAlchemyError: If database operations fail.
         Exception: If embedding generation fails.
     """
+    db_context = exec_context.db_context
+    embedding_generator = exec_context.embedding_generator
+
+    if not db_context:
+        logger.error("DatabaseContext not found in ToolExecutionContext for handle_embed_and_store_batch.")
+        raise ValueError("Missing DatabaseContext in execution context.")
+    if not embedding_generator:
+        logger.error("EmbeddingGenerator not found in ToolExecutionContext for handle_embed_and_store_batch.")
+        raise ValueError("Missing EmbeddingGenerator in execution context.")
+
+
     try:
         document_id: int = payload["document_id"]
         texts_to_embed: List[str] = payload["texts_to_embed"]
@@ -89,4 +96,3 @@ async def handle_embed_and_store_batch(
     logger.info(
         f"Successfully stored {len(texts_to_embed)} embeddings for document_id {document_id}."
     )
-
