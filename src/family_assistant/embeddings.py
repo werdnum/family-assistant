@@ -308,13 +308,13 @@ class MockEmbeddingGenerator:
                 results.append(self.embedding_map[text])
             elif self.default_embedding is not None:
                 logger.warning(
-                    f"Text '{text[:50]}...' not found in mock map, using default embedding."
+                    f"Text '{text[:1000]}...' not found in mock map, using default embedding."
                 )
                 results.append(self.default_embedding)
             else:
-                logger.error(f"Text '{text[:50]}...' not found in mock embedding map.")
+                logger.error(f"Text '{text[:1000]}...' not found in mock embedding map.")
                 raise LookupError(
-                    f"Text '{text[:50]}...' not found in mock embedding map and no default embedding provided."
+                    f"Text '{text[:1000]}...' not found in mock embedding map and no default embedding provided."
                 )
 
         logger.debug(f"Mock generator returning {len(results)} embeddings.")
