@@ -574,7 +574,7 @@ def format_events_for_prompt(
 
 
 async def add_calendar_event_tool(
-    exec_context: ToolExecutionContext,
+    exec_context: "ToolExecutionContext",
     summary: str,
     start_time: str,
     end_time: str,
@@ -711,7 +711,7 @@ async def add_calendar_event_tool(
 
 
 async def search_calendar_events_tool(
-    exec_context: ToolExecutionContext,
+    exec_context: "ToolExecutionContext",
     query_text: str,
     start_date_str: str | None = None,
     end_date_str: str | None = None,
@@ -899,7 +899,7 @@ async def search_calendar_events_tool(
 
 
 async def modify_calendar_event_tool(
-    exec_context: ToolExecutionContext,
+    exec_context: "ToolExecutionContext",
     uid: str,
     calendar_url: str,  # Added calendar_url
     new_summary: str | None = None,
@@ -1073,7 +1073,7 @@ async def modify_calendar_event_tool(
 
 
 async def delete_calendar_event_tool(
-    exec_context: ToolExecutionContext,
+    exec_context: "ToolExecutionContext",
     uid: str,
     calendar_url: str,  # Added calendar_url
 ) -> str:
