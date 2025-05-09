@@ -2,22 +2,22 @@ import asyncio
 import base64
 import contextlib
 import html
-import html
 import io
 import json
 import logging
+import os  # Added for environment variable access
 import traceback
 import uuid
 from collections import defaultdict
 from collections.abc import Callable  # Added cast
 from datetime import datetime, timezone
-import os  # Added for environment variable access
 from typing import (
     Any,
     Protocol,
     runtime_checkable,
 )
 
+import telegramify_markdown
 from sqlalchemy import update  # For error handling db update
 from telegram import (
     ForceReply,  # Add ForceReply import
@@ -38,12 +38,10 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-import telegramify_markdown
 
 # Import necessary types for type hinting
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
-
 
 # from .storage.context import get_db_context # get_db_context is passed as a function
 
@@ -770,7 +768,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             if processing_error_traceback and user_message_id:
                 try:
                     # Get a new context for this update attempt
-                    async with await self.get_db_context() as db_ctx_err:  # Use await directly
+                    async with (
+                        await self.get_db_context() as db_ctx_err
+                    ):  # Use await directly
                         # Fetch the user message's internal ID first (can't update by interface ID)
                         user_msg_record = await self.storage.get_message_by_interface_id(
                             db_ctx_err,

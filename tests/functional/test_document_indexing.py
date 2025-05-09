@@ -185,7 +185,7 @@ async def _helper_handle_embed_and_store_batch(
         meta = embedding_metadata_list[
             i
         ]  # This meta contains embedding_type, chunk_index, original_content_metadata
-        await storage.add_embedding( # type: ignore
+        await storage.add_embedding(  # type: ignore
             db_context=db_context,
             document_id=document_id,
             chunk_index=meta.get("chunk_index", 0),  # From embedding_metadata_list
@@ -492,7 +492,7 @@ async def test_document_indexing_and_query_e2e(
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id) # type: ignore
+                    await storage.delete_document(db_cleanup, document_db_id)  # type: ignore
                     logger.info(f"Cleaned up test document DB ID {document_db_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test document cleanup: {cleanup_err}")

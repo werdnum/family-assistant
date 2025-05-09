@@ -18,7 +18,7 @@ from typing import (
 from zoneinfo import ZoneInfo
 
 import aiofiles
-import telegramify_markdown # For escaping confirmation prompts
+import telegramify_markdown  # For escaping confirmation prompts
 from dateutil import rrule
 from dateutil.parser import isoparse
 from sqlalchemy.sql import text
@@ -138,7 +138,9 @@ async def schedule_recurring_task_tool(
             # We don't need dtstart here, just parsing validity
             rrule.rrulestr(recurrence_rule)
         except ValueError as rrule_err:
-            raise ValueError(f"Invalid recurrence_rule format: {rrule_err}") from rrule_err
+            raise ValueError(
+                f"Invalid recurrence_rule format: {rrule_err}"
+            ) from rrule_err
 
         # Parse the initial schedule time
         initial_dt = isoparse(initial_schedule_time)
