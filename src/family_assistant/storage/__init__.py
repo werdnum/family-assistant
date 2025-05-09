@@ -70,9 +70,9 @@ try:
         init_vector_db,
         query_vectors,
     )
+
     # Re-export DocumentRecord and DocumentEmbeddingRecord if they are needed directly
     # from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
-
 
     VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
@@ -105,11 +105,13 @@ except ImportError:
         pass
 
     def query_vectors(*args, **kwargs):  # type: ignore
-        return [] # Return an empty list for queries
+        return []  # Return an empty list for queries
 
     class Document:  # type: ignore
         """Placeholder for the Document protocol."""
+
         pass
+
 
 # logger definition moved here to be after potential vector_storage import logs
 logger = logging.getLogger(__name__)
@@ -455,7 +457,9 @@ __all__ = [
 
 # Extend __all__ conditionally for vector storage if it was enabled.
 # Check if vector_storage specific names are available and if the feature is enabled.
-if VECTOR_STORAGE_ENABLED and "init_vector_db" in locals():  # 'init_vector_db' is a proxy for successful import
+if (
+    VECTOR_STORAGE_ENABLED and "init_vector_db" in locals()
+):  # 'init_vector_db' is a proxy for successful import
     __all__.extend(
         [
             "add_document",
@@ -471,4 +475,3 @@ if VECTOR_STORAGE_ENABLED and "init_vector_db" in locals():  # 'init_vector_db' 
     )
 # --- Email Storage (Moved to storage/email.py, re-exported here for compatibility) ---
 # from .email import received_emails_table, store_incoming_email
-

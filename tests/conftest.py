@@ -3,7 +3,7 @@ import logging
 import os
 from unittest.mock import MagicMock, patch
 
-import docker # Import the docker library to catch its exceptions
+import docker  # Import the docker library to catch its exceptions
 import pytest
 import pytest_asyncio  # Import the correct decorator
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -12,9 +12,11 @@ from testcontainers.postgres import PostgresContainer
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
 from family_assistant.storage.context import DatabaseContext
+
 # Explicitly import the module defining the tasks table to ensure metadata registration
 # Import vector storage init and context
 from family_assistant.storage.vector import init_vector_db  # Corrected import path
+
 # Import for task_worker_manager fixture
 from family_assistant.task_worker import TaskWorker
 
@@ -66,6 +68,7 @@ async def test_db_engine(request):  # Add request fixture
 
 
 # --- PostgreSQL Test Fixtures (using testcontainers) ---
+
 
 @pytest.fixture(scope="session")
 def postgres_container():

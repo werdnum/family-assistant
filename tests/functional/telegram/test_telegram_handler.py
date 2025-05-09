@@ -24,6 +24,7 @@ from family_assistant.llm import LLMOutput
 
 # Import mock LLM helpers
 from tests.mocks.mock_llm import Rule, get_last_message_text
+
 # Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
 

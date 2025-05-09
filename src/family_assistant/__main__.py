@@ -518,7 +518,9 @@ async def main_async(
             logger.critical(
                 f"Failed to initialize local embedding model '{embedding_model_name}': {local_embed_err}"
             )
-            raise SystemExit(f"Local embedding model initialization failed: {local_embed_err}") from local_embed_err
+            raise SystemExit(
+                f"Local embedding model initialization failed: {local_embed_err}"
+            ) from local_embed_err
     else:
         # Assume API-based model via LiteLLM
         embedding_generator = LiteLLMEmbeddingGenerator(
@@ -591,7 +593,9 @@ async def main_async(
             f"Failed to initialize CompositeToolsProvider: {provider_err}",
             exc_info=True,
         )
-        raise SystemExit(f"Tool provider initialization failed: {provider_err}") from provider_err
+        raise SystemExit(
+            f"Tool provider initialization failed: {provider_err}"
+        ) from provider_err
 
     # --- Wrap with Confirming Provider ---
     # Retrieve the list of tools requiring confirmation from the loaded config

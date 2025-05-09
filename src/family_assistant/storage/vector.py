@@ -515,7 +515,7 @@ async def query_vectors(
         for key, value in filters.items():
             if hasattr(DocumentRecord, key):
                 column = getattr(DocumentRecord, key)
-                if isinstance(value, (str, int, bool)):
+                if isinstance(value, str | int | bool):
                     doc_filter_conditions.append(column == value)
                 elif key.endswith("_gte") and isinstance(value, datetime):
                     actual_key = key[:-4]
