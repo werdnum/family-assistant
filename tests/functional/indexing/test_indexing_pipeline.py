@@ -18,7 +18,7 @@ from assertpy import assert_that  # For better assertions
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import (
-    EmbeddingResult,
+    HashingWordEmbeddingGenerator,  # Added
     MockEmbeddingGenerator,
 )
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
@@ -99,36 +99,11 @@ class MockDocumentImpl(DocumentProtocol):
 @pytest_asyncio.fixture(scope="function")
 async def mock_pipeline_embedding_generator() -> MockEmbeddingGenerator:
     """
-    Provides a MockEmbeddingGenerator instance specifically for the pipeline test,
-    which dynamically populates its embedding_map.
+    Provides a HashingWordEmbeddingGenerator instance for the pipeline test.
     """
-    # --- Arrange ---
-    # doc_content and doc_title are specific to the test logic, not the generator itself.
-
-    # Mock Embedding Generator
-    # It's important that different texts map to different (but consistent) vectors.
-    # For simplicity, we'll make it return a vector based on sum of char ords.
-    def generate_simple_vector(text: str) -> list[float]:
-        # Crude but deterministic vector generation for testing
-        base_val = sum(ord(c) for c in text) % 1000
-        return [float(base_val + i) for i in range(TEST_EMBEDDING_DIMENSION)]
-
-    embedding_map = {}  # Will be populated by the generator as it sees texts
-
-    class TestSpecificMockEmbeddingGenerator(MockEmbeddingGenerator):
-        async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
-            # Ensure this returns unique vectors for unique texts during the test
-            for text in texts:
-                if text not in self.embedding_map:
-                    self.embedding_map[text] = generate_simple_vector(text)
-            return await super().generate_embeddings(texts)
-
-    generator = TestSpecificMockEmbeddingGenerator(
+    generator = HashingWordEmbeddingGenerator(
         model_name=TEST_EMBEDDING_MODEL_NAME,
-        dimensions=TEST_EMBEDDING_DIMENSION,
-        embedding_map=embedding_map,  # Start with empty, will populate
-        default_embedding_behavior="fixed_default",
-        fixed_default_embedding=[0.0] * TEST_EMBEDDING_DIMENSION,
+        dimensionality=TEST_EMBEDDING_DIMENSION,
     )
     return generator
 
