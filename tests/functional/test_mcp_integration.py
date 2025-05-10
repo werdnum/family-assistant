@@ -1,10 +1,10 @@
+import asyncio
 import json
 import logging
 import os  # Added os import
 import signal  # Import the signal module
 import socket
-import subprocess
-import time
+import time  # Keep time for non-async parts, if any, or for constants
 import uuid  # Added for turn_id
 from unittest.mock import MagicMock  # Keep mocks for LLM
 
@@ -83,21 +83,38 @@ async def mcp_proxy_server():
     # Let subprocess stdout/stderr go to parent (test runner) to avoid pipe buffers filling up
     # Use preexec_fn to ensure the child process gets its own process group,
     # so signals don't affect the parent pytest process.
-    process = subprocess.Popen(command, preexec_fn=os.setpgrp)  # type: ignore
-    time.sleep(5)  # Increased wait time for server and proxy to start reliably
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        preexec_fn=os.setpgrp
+    )
+    await asyncio.sleep(5)  # Increased wait time for server and proxy to start reliably
 
     yield sse_url  # Provide the SSE URL to the test
 
     logger.info("Stopping MCP proxy server...")
-    try:
-        # Terminate the process group first
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-        process.send_signal(signal.SIGINT)
-        process.wait(timeout=5)  # Wait for graceful shutdown
-    except subprocess.TimeoutExpired:
-        logger.warning("MCP proxy did not terminate after SIGINT, sending SIGKILL.")
-        process.kill()  # Force kill if SIGINT failed
-        process.wait()  # Wait for kill to complete
+    if process.returncode is None:  # Check if process is still running
+        try:
+            # Terminate the process group first
+            # Ensure process.pid is available; it should be after creation
+            if process.pid is not None:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            # Also send SIGINT to the main process, as mcp-proxy might trap it
+            process.send_signal(signal.SIGINT)
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except (ProcessLookupError, PermissionError) as e:
+            logger.warning(f"Error sending SIGTERM/SIGINT to process group or process: {e}")
+        except asyncio.TimeoutError:
+            logger.warning("MCP proxy did not terminate after SIGINT/SIGTERM, sending SIGKILL.")
+            if process.returncode is None: # Check again before kill
+                try:
+                    process.kill()
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    logger.error("MCP proxy did not terminate after SIGKILL.")
+                except Exception as e:
+                    logger.error(f"Error during SIGKILL: {e}")
+    else:
+        logger.info(f"MCP proxy server already terminated with code {process.returncode}.")
     logger.info("MCP proxy server stopped.")
 
 
