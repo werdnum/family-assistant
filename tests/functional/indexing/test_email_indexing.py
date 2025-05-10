@@ -183,7 +183,9 @@ async def http_client(
 
         # Set/overwrite specific config values needed for the test
         current_test_config["attachment_storage_path"] = temp_attachment_dir
-        current_test_config["mailbox_raw_dir"] = os.path.join(temp_attachment_dir, "raw_mailbox_dumps")
+        current_test_config["mailbox_raw_dir"] = os.path.join(
+            temp_attachment_dir, "raw_mailbox_dumps"
+        )
         os.makedirs(current_test_config["mailbox_raw_dir"], exist_ok=True)
 
         logger.info(
