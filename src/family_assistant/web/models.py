@@ -30,3 +30,23 @@ class DocumentUploadResponse(BaseModel):
     message: str
     document_id: int
     task_enqueued: bool
+
+
+# --- API Token Models ---
+class ApiTokenCreateRequest(BaseModel):
+    name: str
+    expires_at: str | None = (
+        None  # ISO 8601 format string, e.g., "YYYY-MM-DDTHH:MM:SSZ"
+    )
+
+
+class ApiTokenCreateResponse(BaseModel):
+    id: int
+    name: str
+    full_token: str  # The full, unhashed token (prefix + secret)
+    prefix: str
+    user_identifier: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    is_revoked: bool
+    last_used_at: datetime | None = None
