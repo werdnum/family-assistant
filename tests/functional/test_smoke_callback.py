@@ -186,7 +186,9 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
 
     # Instantiate Task Worker
     # Add a mock embedding generator for the TaskWorker
-    mock_embedding_generator = MagicMock() # Using a simple MagicMock for this test's purpose
+    mock_embedding_generator = (
+        MagicMock()
+    )  # Using a simple MagicMock for this test's purpose
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
         application=mock_application,
