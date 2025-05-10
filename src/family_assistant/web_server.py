@@ -995,19 +995,27 @@ async def handle_vector_search(
     keywords: Annotated[str | None, Form()] = None,
     search_type: Annotated[str, Form()] = "hybrid",  # 'semantic', 'keyword', 'hybrid'
     embedding_model: Annotated[str | None, Form()] = None,  # CRUCIAL for vector search
-    embedding_types: Annotated[list[str], Form()] = [],  # Allow multiple types
-    source_types: Annotated[list[str], Form()] = [],  # Allow multiple source types
+    embedding_types: Annotated[list[str], Form()] = None,  # Allow multiple types
+    source_types: Annotated[list[str], Form()] = None,  # Allow multiple source types
     created_after: Annotated[str | None, Form()] = None,  # Expect YYYY-MM-DD
     created_before: Annotated[str | None, Form()] = None,  # Expect YYYY-MM-DD
     title_like: Annotated[str | None, Form()] = None,
     # --- Metadata Filters (expect lists) ---
-    metadata_keys: Annotated[list[str], Form()] = [],
-    metadata_values: Annotated[list[str], Form()] = [],
+    metadata_keys: Annotated[list[str], Form()] = None,
+    metadata_values: Annotated[list[str], Form()] = None,
     # --- Control Params ---
     limit: Annotated[int, Form()] = 10,
     rrf_k: Annotated[int, Form()] = 60,
 ):
     """Handles the vector search form submission."""
+    if metadata_values is None:
+        metadata_values = []
+    if metadata_keys is None:
+        metadata_keys = []
+    if source_types is None:
+        source_types = []
+    if embedding_types is None:
+        embedding_types = []
     results = None
     error = None
     query_embedding = None
