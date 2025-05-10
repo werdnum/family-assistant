@@ -51,7 +51,9 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 
 # Example Task Handler (no external dependencies)
-async def handle_log_message(db_context: DatabaseContext, payload: dict[str, Any]) -> None:
+async def handle_log_message(
+    db_context: DatabaseContext, payload: dict[str, Any]
+) -> None:
     """Simple task handler that logs the received payload."""
     logger.info(
         f"[Task Worker] Handling log_message task. Payload: {payload}"
