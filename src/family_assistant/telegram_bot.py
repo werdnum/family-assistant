@@ -9,7 +9,7 @@ import os  # Added for environment variable access
 import traceback
 import uuid
 from collections import defaultdict
-from collections.abc import Callable  # Added cast
+from collections.abc import AsyncIterator, Callable  # Added cast
 from datetime import datetime, timezone
 from typing import (
     Any,
@@ -281,7 +281,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         context: ContextTypes.DEFAULT_TYPE,
         chat_id: int,
         action: str = ChatAction.TYPING,
-    ):
+    ) -> AsyncIterator[None]:
         """Context manager to send typing notifications periodically."""
         stop_event = asyncio.Event()
 
