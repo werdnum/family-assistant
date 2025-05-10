@@ -1265,16 +1265,16 @@ async def test_email_with_pdf_attachment_indexing_e2e(
             # We expect the content from the PDF to be associated with the email's source_id
             # Check if the known substring is in the embedding_source_content
             embedding_content = result.get("embedding_source_content", "")
+            # Combine conditions into a single if statement
             if (
                 result.get("source_id") == TEST_EMAIL_MESSAGE_ID_WITH_PDF
                 and KNOWN_SUBSTRING_FROM_PDF in embedding_content
+                and embedding_content == TEST_PDF_EXTRACTED_TEXT
             ):
-                # To ensure we're matching the chunk that *should* correspond to TEST_PDF_EXTRACTED_TEXT
-                # (and thus got the specific pdf_content_embedding), we also check if this chunk's
-                # content IS TEST_PDF_EXTRACTED_TEXT. This makes the selection of found_pdf_result precise.
-                if embedding_content == TEST_PDF_EXTRACTED_TEXT:
-                    found_pdf_result = result
-                    break
+                # This ensures we're matching the chunk that *should* correspond to TEST_PDF_EXTRACTED_TEXT
+                # (and thus got the specific pdf_content_embedding).
+                found_pdf_result = result
+                break
             
         # If not found by exact match, try again with just substring for broader check,
         # though this might pick a different chunk if the first one had issues.
