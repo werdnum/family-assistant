@@ -94,11 +94,9 @@ class RuleBasedMockLLMClient(LLMInterface):
         """
         Evaluates rules against the input and returns the corresponding output.
         """
+        Evaluates rules against the input and returns the corresponding output.
+        """
         # Original logic starts here, this method will be wrapped
-        # Record the call *before* executing logic
-        # We'll record the call in the wrapper instead
-        # self._calls.append(call_data)
-        # logger.debug(f"Recorded call {self.call_count()}. Args: {call_data}")
 
         logger.debug(f"RuleBasedMockLLM evaluating {len(self.rules)} rules...")
         for i, (matcher, response) in enumerate(self.rules):
