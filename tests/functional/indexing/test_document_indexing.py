@@ -15,6 +15,9 @@ import numpy as np
 import pytest
 import pytest_asyncio  # Import pytest_asyncio for async fixtures
 import sqlalchemy  # Import sqlalchemy for cast
+
+# Import test helpers
+from helpers import wait_for_tasks_to_complete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine  # Add AsyncEngine import
 
@@ -40,9 +43,6 @@ from family_assistant.tools.types import ToolExecutionContext  # Added
 from family_assistant.web.app_creator import (
     app as fastapi_app,  # Import the FastAPI app directly from app_creator
 )
-
-# Import test helpers
-from ...helpers import wait_for_tasks_to_complete
 
 logger = logging.getLogger(__name__)
 
