@@ -509,8 +509,19 @@ async def main_async(
     embedding_generator: EmbeddingGenerator
     embedding_model_name = config["embedding_model"]
     embedding_dimensions = config["embedding_dimensions"]
+
+    if embedding_model_name == "mock-deterministic-embedder":
+        logger.info(
+            f"Using MockEmbeddingGenerator (deterministic) for model: {embedding_model_name}"
+        )
+        # Ensure MockEmbeddingGenerator is imported from family_assistant.embeddings
+        embedding_generator = embeddings.MockEmbeddingGenerator(
+            model_name=embedding_model_name,
+            dimensions=embedding_dimensions,
+            default_embedding_behavior="generate",  # Generate deterministic vectors for unknown texts
+        )
     # Example check for local model (adjust condition as needed)
-    if embedding_model_name.startswith("/") or embedding_model_name in [
+    elif embedding_model_name.startswith("/") or embedding_model_name in [
         "all-MiniLM-L6-v2",
         "other-local-model-name",
     ]:
