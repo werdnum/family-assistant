@@ -22,7 +22,6 @@ from family_assistant.llm import LLMInterface, LLMOutput  # Keep Interface and O
 from family_assistant.processing import ProcessingService
 
 # _generate_llm_response_for_chat was moved to ProcessingService
-# from family_assistant.main import _generate_llm_response_for_chat
 # Import DatabaseContext and getter
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
