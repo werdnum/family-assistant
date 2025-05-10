@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from typing import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator
 from unittest.mock import MagicMock, patch
 
 import docker  # Import the docker library to catch its exceptions
