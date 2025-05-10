@@ -185,11 +185,14 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     test_new_task_event = asyncio.Event()
 
     # Instantiate Task Worker
+    # Add a mock embedding generator for the TaskWorker
+    mock_embedding_generator = MagicMock() # Using a simple MagicMock for this test's purpose
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
         application=mock_application,
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
+        embedding_generator=mock_embedding_generator,  # Pass the generator
     )
     # Register the necessary handler for this test
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
