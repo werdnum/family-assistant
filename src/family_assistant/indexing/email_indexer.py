@@ -44,7 +44,9 @@ class EmailDocument(Document):
     _source_uri: str | None = None
     _base_metadata: dict[str, Any] = field(default_factory=dict)
     _content_plain: str | None = None  # Store plain text content separately
-    _attachment_info_raw: list[dict[str, Any]] | None = None  # Store raw attachment info
+    _attachment_info_raw: list[dict[str, Any]] | None = (
+        None  # Store raw attachment info
+    )
 
     @property
     def source_type(self) -> str:
@@ -121,7 +123,9 @@ class EmailDocument(Document):
 
         # Prefer stripped_text for cleaner content
         content = row.get("stripped_text") or row.get("body_plain")
-        attachment_info_data = row.get("attachment_info")  # This is a list of dicts or None
+        attachment_info_data = row.get(
+            "attachment_info"
+        )  # This is a list of dicts or None
 
         return cls(
             _source_id=message_id,
