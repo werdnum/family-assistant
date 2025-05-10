@@ -1,0 +1,209 @@
+import json
+import logging
+import zoneinfo
+from datetime import datetime
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
+
+from family_assistant.storage import get_grouped_message_history
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.dependencies import get_db
+
+logger = logging.getLogger(__name__)
+history_router = APIRouter()
+
+
+@history_router.get("/history", response_class=HTMLResponse)
+async def view_message_history(
+    request: Request,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
+    page: Annotated[
+        int, Query(ge=1, description="Page number for message history")
+    ] = 1,  # noqa: B008
+    per_page: Annotated[
+        int, Query(ge=1, le=100, description="Number of conversations per page")
+    ] = 10,  # noqa: B008
+) -> HTMLResponse:
+    """Serves the page displaying message history."""
+    templates = request.app.state.templates
+    try:
+        # Get the configured timezone from app state
+        app_config = getattr(request.app.state, "config", {})
+        config_timezone_str = app_config.get(
+            "timezone", "UTC"
+        )  # Default to UTC if not found
+        try:
+            config_tz = zoneinfo.ZoneInfo(config_timezone_str)
+        except zoneinfo.ZoneInfoNotFoundError:
+            logger.warning(
+                f"Configured timezone '{config_timezone_str}' not found, defaulting to UTC for history view."
+            )
+            config_tz = zoneinfo.ZoneInfo("UTC")
+
+        history_by_chat = await get_grouped_message_history(db_context)
+
+        # --- Process into Turns using turn_id ---
+        turns_by_chat = {}
+        for conversation_key, messages in history_by_chat.items():
+            # Ensure messages are sorted chronologically (assuming get_grouped_message_history returns them sorted)
+
+            # --- Pre-parse JSON string fields in messages ---
+            for msg in messages:
+                for field_name in [
+                    "tool_calls",
+                    "reasoning_info",
+                ]:  # 'tool_calls' was 'tool_calls_info' from DB
+                    field_val = msg.get(field_name)
+                    if isinstance(field_val, str):
+                        if field_val.lower() == "null":  # Handle string "null"
+                            msg[field_name] = None
+                        else:
+                            try:
+                                msg[field_name] = json.loads(field_val)
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    f"Failed to parse JSON string for {field_name} in msg {msg.get('internal_id')}: {field_val[:100]}"
+                                )
+
+                # Further parse 'arguments' within tool_calls if it's a JSON string
+                if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
+                    for tool_call_item in msg["tool_calls"]:
+                        if (
+                            isinstance(tool_call_item, dict)
+                            and "function" in tool_call_item
+                            and isinstance(tool_call_item["function"], dict)
+                        ):
+                            func_args_str = tool_call_item["function"].get("arguments")
+                            if isinstance(func_args_str, str):
+                                try:
+                                    tool_call_item["function"]["arguments"] = (
+                                        json.loads(func_args_str)
+                                    )
+                                except json.JSONDecodeError:
+                                    logger.warning(
+                                        f"Failed to parse function arguments JSON string within tool_calls for msg {msg.get('internal_id')}: {func_args_str[:100]}"
+                                    )
+                                    # Keep original string if parsing fails
+
+            conversation_turns = []
+            grouped_by_turn_id = {}
+
+            for msg in messages:
+                turn_id = msg.get("turn_id")  # Can be None
+                if turn_id not in grouped_by_turn_id:
+                    grouped_by_turn_id[turn_id] = []
+                grouped_by_turn_id[turn_id].append(msg)
+            sorted_turn_ids = sorted(
+                grouped_by_turn_id.keys(),
+                key=lambda tid: (
+                    (
+                        (
+                            lambda ts: (
+                                ts.replace(tzinfo=config_tz)
+                                if ts.tzinfo is None
+                                else ts.astimezone(config_tz)
+                            )
+                        )(grouped_by_turn_id[tid][0]["timestamp"])
+                    )
+                    if tid is not None and grouped_by_turn_id[tid]
+                    else datetime.min.replace(tzinfo=config_tz)
+                ),
+            )
+
+            for turn_id in sorted_turn_ids:
+                turn_messages_for_current_id = grouped_by_turn_id[turn_id]
+
+                # Find the initiating message (user or system) for this turn_id group
+                # The first message in a sorted group (by timestamp) should be the trigger if it's user/system
+                trigger_candidates = [
+                    m
+                    for m in turn_messages_for_current_id
+                    if m["role"] in ("user", "system")
+                ]
+                initiating_user_msg_for_turn = (
+                    trigger_candidates[0] if trigger_candidates else None
+                )
+
+                # Find the final assistant response for this turn_id group
+                # It should be the last assistant message with actual content.
+                assistant_candidates = [
+                    m for m in turn_messages_for_current_id if m["role"] == "assistant"
+                ]
+                contentful_assistant_msgs = [
+                    m for m in assistant_candidates if m.get("content")
+                ]
+                if contentful_assistant_msgs:
+                    final_assistant_msg_for_turn = contentful_assistant_msgs[-1]
+                elif (
+                    assistant_candidates
+                ):  # Fallback to the very last assistant message in the group (might have only tool_calls)
+                    final_assistant_msg_for_turn = assistant_candidates[-1]
+                else:
+                    final_assistant_msg_for_turn = None
+
+                # Ensure the initiating message isn't also the final assistant message if they are the same object
+                # This can happen if a turn only has one assistant message that also serves as a trigger (e.g. for a callback)
+                # However, our logic now assigns turn_id to user triggers, so this is less likely.
+                if (
+                    final_assistant_msg_for_turn is initiating_user_msg_for_turn
+                    and final_assistant_msg_for_turn is not None
+                    and final_assistant_msg_for_turn["role"] == "user"
+                ):  # If it's a user message, it can't be the "final assistant response"
+                    final_assistant_msg_for_turn = None
+
+                conversation_turns.append(
+                    {
+                        "turn_id": turn_id,  # Store the turn_id itself
+                        "initiating_user_message": initiating_user_msg_for_turn,
+                        "final_assistant_response": final_assistant_msg_for_turn,
+                        "all_messages_in_group": turn_messages_for_current_id,
+                    }
+                )
+            turns_by_chat[conversation_key] = conversation_turns
+
+        # --- Pagination Logic ---
+        # Convert dict items to a list for slicing. Note: Dict order is not guaranteed
+        # before Python 3.7, but generally insertion order from 3.7+.
+        # If a specific order of *conversations* is needed (e.g., by most recent message),
+        # more complex sorting would be required here *before* pagination.
+        # Paginate based on the processed turns_by_chat
+        all_items = list(turns_by_chat.items())
+        total_conversations = len(all_items)
+        total_pages = (total_conversations + per_page - 1) // per_page
+
+        # Ensure page number is valid
+        current_page = min(page, total_pages) if total_pages > 0 else 1
+        start_index = (current_page - 1) * per_page
+        end_index = start_index + per_page
+        paged_items = all_items[start_index:end_index]
+
+        # Pagination metadata for the template
+        pagination_info = {
+            "current_page": current_page,
+            "per_page": per_page,
+            "total_conversations": total_conversations,
+            "total_pages": total_pages,
+            "has_prev": current_page > 1,
+            "has_next": current_page < total_pages,
+            "prev_num": current_page - 1 if current_page > 1 else None,
+            "next_num": current_page + 1 if current_page < total_pages else None,
+        }
+
+        return templates.TemplateResponse(
+            "message_history.html",
+            {
+                "request": request,
+                "paged_conversations": paged_items,  # Renamed for clarity in template
+                "pagination": pagination_info,
+                "user": request.session.get("user"),
+                "auth_enabled": AUTH_ENABLED,  # Pass auth info
+            },
+        )
+    except Exception as e:
+        logger.error(f"Error fetching message history: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch message history"
+        ) from e
