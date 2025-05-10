@@ -251,12 +251,21 @@ async def add_document(
             else:
                 # 3. If not exists, insert it
                 insert_stmt = (
-                    insert(DocumentRecord)
-                    .values(**values_to_insert)
-                    .returning(DocumentRecord.id)
+                    insert(DocumentRecord).values(**values_to_insert)
+                    # No .returning(DocumentRecord.id) for SQLite here
                 )
                 result = await db_context.execute_with_retry(insert_stmt)
-                doc_id = result.scalar_one()
+                # For SQLite, get the last inserted ID via inserted_primary_key
+                if result.inserted_primary_key:
+                    doc_id = result.inserted_primary_key[0]
+                else:
+                    # This would be unexpected if the insert succeeded and id is PK
+                    logger.error(
+                        f"Failed to retrieve inserted_primary_key for document with source_id {doc.source_id}"
+                    )
+                    raise RuntimeError(
+                        "Failed to retrieve ID for newly inserted document."
+                    )
                 logger.info(
                     f"Successfully inserted new document with source_id {doc.source_id}, got ID: {doc_id}"
                 )
