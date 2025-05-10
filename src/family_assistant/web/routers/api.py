@@ -143,53 +143,42 @@ async def execute_tool_api(
 async def upload_document(
     # Dependencies without Python default values
     request: Request,  # Inject Request to access app state
-    # Required Form fields (Python defaulted with Ellipsis, FastAPI required)
-    source_type: Annotated[
-        str,
-        Form(
-            description="Type of the source (e.g., 'manual_upload', 'scanned_receipt')."
-        ),
-    ] = ...,
-    source_id: Annotated[
-        str,
-        Form(description="Unique identifier for the document within its source type."),
-    ] = ...,
-    # Optional Form fields (with Python default values)
-    content_parts_json: Annotated[
-        str | None,
-        Form(
-            alias="content_parts",
-            description='Optional JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}). Required if no file is uploaded.',
-        ),
-    ] = None,
-    uploaded_file: Annotated[
-        UploadFile | None,
-        File(description="The document file to upload (e.g., PDF, TXT, DOCX)."),
-    ] = None,
-    source_uri: Annotated[
-        str, Form(description="Canonical URI/URL of the original document.")
-    ] = ...,
-    title: Annotated[
-        str,
-        Form(
-            description="Primary title for the document (can also be in content_parts)."
-        ),
-    ] = ...,
-    created_at_str: Annotated[
-        str | None,
-        Form(
-            alias="created_at",
-            description="Original creation timestamp (ISO 8601 format string, e.g., 'YYYY-MM-DDTHH:MM:SSZ' or 'YYYY-MM-DD'). Timezone assumed UTC if missing.",
-        ),
-    ] = None,
-    metadata_json: Annotated[
-        str | None,
-        Form(
-            alias="metadata",
-            description="JSON string representing a dictionary of additional metadata.",
-        ),
-    ] = None,
-    # Other dependencies (with Python default values)
+    # Required Form fields
+    source_type: str = Form(
+        ...,
+        description="Type of the source (e.g., 'manual_upload', 'scanned_receipt').",
+    ),
+    source_id: str = Form(
+        ..., description="Unique identifier for the document within its source type."
+    ),
+    source_uri: str = Form(
+        ..., description="Canonical URI/URL of the original document."
+    ),
+    title: str = Form(
+        ...,
+        description="Primary title for the document (can also be in content_parts).",
+    ),
+    # Optional Form fields
+    content_parts_json: str | None = Form(
+        default=None,
+        alias="content_parts",
+        description='Optional JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}). Required if no file is uploaded.',
+    ),
+    uploaded_file: UploadFile | None = File(
+        default=None,
+        description="The document file to upload (e.g., PDF, TXT, DOCX).",
+    ),
+    created_at_str: str | None = Form(
+        default=None,
+        alias="created_at",
+        description="Original creation timestamp (ISO 8601 format string, e.g., 'YYYY-MM-DDTHH:MM:SSZ' or 'YYYY-MM-DD'). Timezone assumed UTC if missing.",
+    ),
+    metadata_json: str | None = Form(
+        default=None,
+        alias="metadata",
+        description="JSON string representing a dictionary of additional metadata.",
+    ),
+    # Other dependencies
     db_context: Annotated[DatabaseContext, Depends(get_db)] = None,  # noqa: B008
 ) -> DocumentUploadResponse:
     """
