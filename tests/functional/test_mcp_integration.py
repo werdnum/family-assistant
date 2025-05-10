@@ -4,7 +4,6 @@ import logging
 import os  # Added os import
 import signal  # Import the signal module
 import socket
-import time  # Keep time for non-async parts, if any, or for constants
 import uuid  # Added for turn_id
 from unittest.mock import MagicMock  # Keep mocks for LLM
 
@@ -83,10 +82,7 @@ async def mcp_proxy_server():
     # Let subprocess stdout/stderr go to parent (test runner) to avoid pipe buffers filling up
     # Use preexec_fn to ensure the child process gets its own process group,
     # so signals don't affect the parent pytest process.
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        preexec_fn=os.setpgrp
-    )
+    process = await asyncio.create_subprocess_exec(*command, preexec_fn=os.setpgrp)
     await asyncio.sleep(5)  # Increased wait time for server and proxy to start reliably
 
     yield sse_url  # Provide the SSE URL to the test
@@ -102,10 +98,14 @@ async def mcp_proxy_server():
             process.send_signal(signal.SIGINT)
             await asyncio.wait_for(process.wait(), timeout=5)
         except (ProcessLookupError, PermissionError) as e:
-            logger.warning(f"Error sending SIGTERM/SIGINT to process group or process: {e}")
+            logger.warning(
+                f"Error sending SIGTERM/SIGINT to process group or process: {e}"
+            )
         except asyncio.TimeoutError:
-            logger.warning("MCP proxy did not terminate after SIGINT/SIGTERM, sending SIGKILL.")
-            if process.returncode is None: # Check again before kill
+            logger.warning(
+                "MCP proxy did not terminate after SIGINT/SIGTERM, sending SIGKILL."
+            )
+            if process.returncode is None:  # Check again before kill
                 try:
                     process.kill()
                     await asyncio.wait_for(process.wait(), timeout=5)
@@ -114,7 +114,9 @@ async def mcp_proxy_server():
                 except Exception as e:
                     logger.error(f"Error during SIGKILL: {e}")
     else:
-        logger.info(f"MCP proxy server already terminated with code {process.returncode}.")
+        logger.info(
+            f"MCP proxy server already terminated with code {process.returncode}."
+        )
     logger.info("MCP proxy server stopped.")
 
 
