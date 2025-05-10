@@ -47,6 +47,7 @@ dependencies = [
     "torch>=2.0.0", # Dependency for sentence-transformers
     "Authlib>=1.3.1", # For OIDC authentication
     "itsdangerous>=2.1.0", # Dependency for signing session cookies (used by Starlette SessionMiddleware)
+    "passlib[bcrypt]>=2.7.1", # For hashing and verifying API tokens
     "numpy>=1.26.0", # Dependency for sentence-transformers and pgvector
     "alembic>=1.15.2",
     "filetype>=1.2.0", # For detecting file types
