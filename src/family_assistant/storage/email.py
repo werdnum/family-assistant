@@ -57,6 +57,7 @@ class ParsedEmailData(BaseModel):
     class Config:
         allow_population_by_field_name = True
 
+
 logger = logging.getLogger(__name__)
 # Remove engine = get_engine()
 # Define the received emails table
@@ -152,11 +153,13 @@ async def store_incoming_email(
         )
 
     # attachment_info needs to be JSON serializable if it's a list of Pydantic models
-    if "attachment_info" in email_data_for_db and email_data_for_db["attachment_info"] is not None:
+    if (
+        "attachment_info" in email_data_for_db
+        and email_data_for_db["attachment_info"] is not None
+    ):
         email_data_for_db["attachment_info"] = [
-            att.model_dump() for att in parsed_email.attachment_info # type: ignore
+            att.model_dump() for att in parsed_email.attachment_info  # type: ignore
         ]
-
 
     logger.debug(f"Attempting to store email data: {email_data_for_db}")
 
