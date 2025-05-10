@@ -141,6 +141,10 @@ select = [
     "I",
     # Type annotations
     "ANN",
+    # Commented out code
+    "ERA",
+    # FastAPI
+    "FAST",
 ]
 ignore = [
 	# Forbids dynamic types in kwargs etc
