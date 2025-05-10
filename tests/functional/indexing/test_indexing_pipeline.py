@@ -4,6 +4,8 @@ Functional test for the basic document indexing pipeline.
 
 import asyncio
 import logging
+import pathlib  # Add import for pathlib
+import shutil  # Add import for shutil
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -512,9 +514,12 @@ async def test_indexing_pipeline_pdf_processing(
                 logger.info(
                     f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{str(row_dict_log.get('content'))[:100]}...'"
                 )
-                if row_dict_log.get("embedding_type") == "content_chunk" and row_dict_log.get("content"):
-                    if known_phrase_in_pdf in str(row_dict_log.get("content")):
-                        found_expected_content = True
+                if (
+                    row_dict_log.get("embedding_type") == "content_chunk" 
+                    and row_dict_log.get("content")
+                    and known_phrase_in_pdf in str(row_dict_log.get("content"))
+                ):
+                    found_expected_content = True
             
             assert_that(found_expected_content).described_as(
                 f"Known phrase '{known_phrase_in_pdf}' not found in any extracted PDF content chunks."
