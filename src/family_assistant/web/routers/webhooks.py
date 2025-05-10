@@ -32,7 +32,6 @@ ATTACHMENT_STORAGE_DIR = os.getenv(
 async def handle_mail_webhook(
     request: Request,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
-    # notify_event: asyncio.Event | None = None, # If worker is in same process and needs immediate notification
 ) -> Response:
     """
     Receives incoming email via webhook (expects multipart/form-data from Mailgun),
@@ -49,7 +48,9 @@ async def handle_mail_webhook(
         os.makedirs(MAILBOX_RAW_DIR, exist_ok=True)
         now_dt = datetime.now(timezone.utc)
         timestamp_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")
-        content_type_header = request.headers.get("content-type", "unknown_content_type")
+        content_type_header = request.headers.get(
+            "content-type", "unknown_content_type"
+        )
         safe_content_type = (
             re.sub(r'[<>:"/\\|?*]', "_", content_type_header).split(";")[0].strip()
         )
@@ -122,13 +123,17 @@ async def handle_mail_webhook(
                             await f_out.write(content)
 
                         # Get size after reading
-                        size = form_item.size if form_item.size is not None else len(content)
-
+                        size = (
+                            form_item.size
+                            if form_item.size is not None
+                            else len(content)
+                        )
 
                         processed_attachments.append(
                             AttachmentData(
                                 filename=safe_filename,
-                                content_type=form_item.content_type or "application/octet-stream",
+                                content_type=form_item.content_type
+                                or "application/octet-stream",
                                 size=size,
                                 storage_path=final_file_path,
                             )
@@ -142,10 +147,11 @@ async def handle_mail_webhook(
                             exc_info=True,
                         )
                     finally:
-                        await form_item.close() # Close the upload file
-                elif form_item: # Not an UploadFile or no filename
-                     logger.warning(f"Skipping attachment field {attachment_field_name}: not a valid UploadFile with filename.")
-
+                        await form_item.close()  # Close the upload file
+                elif form_item:  # Not an UploadFile or no filename
+                    logger.warning(
+                        f"Skipping attachment field {attachment_field_name}: not a valid UploadFile with filename."
+                    )
 
         # --- Create Pydantic Model ---
         # Convert form_data (FormData) to a plain dict for Pydantic parsing
@@ -154,15 +160,16 @@ async def handle_mail_webhook(
         # We need to be careful if any other fields could be multi-valued.
         # For simplicity, assuming other relevant fields are single string values.
         form_data_dict: dict[str, Any] = {
-            key: form_data.get(key) for key in form_data.keys() # type: ignore
+            key: form_data.get(key) for key in form_data  # type: ignore
         }
 
-
         parsed_email_payload = ParsedEmailData(
-            **form_data_dict, # Pass all form fields, Pydantic will pick what it needs by alias
-            email_date=email_date_parsed, # Override with parsed version
-            headers_json=headers_list, # Override with parsed version
-            attachment_info=processed_attachments if processed_attachments else None, # Override
+            **form_data_dict,  # Pass all form fields, Pydantic will pick what it needs by alias
+            email_date=email_date_parsed,  # Override with parsed version
+            headers_json=headers_list,  # Override with parsed version
+            attachment_info=(
+                processed_attachments if processed_attachments else None
+            ),  # Override
         )
 
         # Pass the Pydantic model instance to the storage function
@@ -171,7 +178,10 @@ async def handle_mail_webhook(
         return Response(status_code=200, content="Email received and processed.")
 
     except ValidationError as ve:
-        logger.error(f"Pydantic validation error processing mail webhook: {ve.errors()}", exc_info=True)
+        logger.error(
+            f"Pydantic validation error processing mail webhook: {ve.errors()}",
+            exc_info=True,
+        )
         # Log ve.json() for more details if needed
         raise HTTPException(
             status_code=422, detail=f"Invalid email data: {ve.errors()}"
