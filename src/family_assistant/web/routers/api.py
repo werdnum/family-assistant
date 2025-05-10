@@ -152,6 +152,9 @@ async def upload_document(
         str,
         Form(description="Unique identifier for the document within its source type."),
     ] = ...,
+    # Dependencies without Python default values
+    request: Request,  # Inject Request to access app state
+    # Optional Form fields (with Python default values)
     content_parts_json: Annotated[
         str | None,
         Form(
@@ -159,12 +162,10 @@ async def upload_document(
             description='Optional JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}). Required if no file is uploaded.',
         ),
     ] = None,
-    # Optional file upload
     uploaded_file: Annotated[
         UploadFile | None,
         File(description="The document file to upload (e.g., PDF, TXT, DOCX)."),
     ] = None,
-    # Optional fields
     source_uri: Annotated[
         str | None, Form(description="Canonical URI/URL of the original document.")
     ] = None,
@@ -188,8 +189,7 @@ async def upload_document(
             description="JSON string representing a dictionary of additional metadata.",
         ),
     ] = None,
-    # Dependencies
-    request: Request,  # Inject Request to access app state
+    # Other dependencies (with Python default values)
     db_context: Annotated[DatabaseContext, Depends(get_db)] = None,  # noqa: B008
 ) -> DocumentUploadResponse:
     """
