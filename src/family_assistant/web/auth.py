@@ -24,11 +24,11 @@ AUTH_ENABLED = bool(
     OIDC_CLIENT_ID and OIDC_CLIENT_SECRET and OIDC_DISCOVERY_URL and SESSION_SECRET_KEY
 )
 
-oauth: OAuth | None = None # Initialize oauth as None
+oauth: OAuth | None = None  # Initialize oauth as None
 
 if AUTH_ENABLED:
     logger.info("OIDC Authentication is ENABLED in auth.py.")
-    oauth = OAuth(config) # type: ignore
+    oauth = OAuth(config)  # type: ignore
     oauth.register(
         name="oidc_provider",
         client_id=OIDC_CLIENT_ID,
@@ -84,7 +84,9 @@ class AuthMiddleware:
                 f"No user session for protected path {request.url.path}, redirecting to login."
             )
             redirect_response = RedirectResponse(
-                url=request.url_for("login"), # Relies on auth_router being named 'login'
+                url=request.url_for(
+                    "login"
+                ),  # Relies on auth_router being named 'login'
                 status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             )
             await redirect_response(scope, receive, send)
@@ -96,10 +98,11 @@ class AuthMiddleware:
 auth_router = APIRouter()
 
 if AUTH_ENABLED and oauth:
-    @auth_router.get("/login", name="login") # Add name for url_for
+
+    @auth_router.get("/login", name="login")  # Add name for url_for
     async def login(request: Request) -> RedirectResponse:
         """Redirects the user to the OIDC provider for authentication."""
-        redirect_uri = request.url_for("auth_callback") # Use new name for callback
+        redirect_uri = request.url_for("auth_callback")  # Use new name for callback
         if (
             request.headers.get("x-forwarded-proto") == "https"
             or request.url.scheme == "https"
@@ -109,13 +112,13 @@ if AUTH_ENABLED and oauth:
         logger.debug(
             f"Initiating login redirect to OIDC provider. Callback URL: {redirect_uri}"
         )
-        return await oauth.oidc_provider.authorize_redirect(request, redirect_uri) # type: ignore
+        return await oauth.oidc_provider.authorize_redirect(request, redirect_uri)  # type: ignore
 
     @auth_router.get("/auth", name="auth_callback")  # Callback URL, named for url_for
     async def auth_callback(request: Request) -> RedirectResponse:
         """Handles the callback from the OIDC provider after authentication."""
         try:
-            token = await oauth.oidc_provider.authorize_access_token(request) # type: ignore
+            token = await oauth.oidc_provider.authorize_access_token(request)  # type: ignore
             user_info = token.get("userinfo")
             if user_info:
                 request.session["user"] = dict(user_info)
