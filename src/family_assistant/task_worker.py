@@ -51,7 +51,7 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 
 # Example Task Handler (no external dependencies)
-async def handle_log_message(db_context: DatabaseContext, payload: Any) -> None:
+async def handle_log_message(db_context: DatabaseContext, payload: dict[str, Any]) -> None:
     """Simple task handler that logs the received payload."""
     logger.info(
         f"[Task Worker] Handling log_message task. Payload: {payload}"
@@ -92,7 +92,7 @@ def format_llm_response_for_telegram(response_text: str) -> str:
 
 async def handle_llm_callback(
     exec_context: ToolExecutionContext,  # Accept execution context
-    payload: Any,  # Payload from the task queue
+    payload: dict[str, Any],  # Payload from the task queue
 ) -> None:
     """
     Task handler for LLM scheduled callbacks.
