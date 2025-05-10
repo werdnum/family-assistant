@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timezone  # Added
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -14,10 +15,10 @@ tools_ui_router = APIRouter()
 _tool_html_cache: dict[str, str] = {}
 
 
-@tools_ui_router.get("/tools", response_class=HTMLResponse)
+@tools_ui_router.get("/tools", response_class=HTMLResponse, name="ui_list_tools")
 async def view_tools(request: Request) -> HTMLResponse:
     """Serves the page displaying available tools."""
-    global _tool_html_cache  # Use the module-level cache
+    global _tool_html_cache
     templates = request.app.state.templates
     try:
         tool_definitions = getattr(request.app.state, "tool_definitions", [])
@@ -50,7 +51,8 @@ async def view_tools(request: Request) -> HTMLResponse:
                 "request": request,
                 "tools": rendered_tools,
                 "user": request.session.get("user"),
-                "auth_enabled": AUTH_ENABLED,
+                "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
+                "now_utc": datetime.now(timezone.utc),  # Pass to base template
             },
         )
     except Exception as e:

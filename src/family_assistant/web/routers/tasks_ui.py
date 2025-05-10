@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone  # Added
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,21 +14,22 @@ logger = logging.getLogger(__name__)
 tasks_ui_router = APIRouter()
 
 
-@tasks_ui_router.get("/tasks", response_class=HTMLResponse)
+@tasks_ui_router.get("/tasks", response_class=HTMLResponse, name="ui_list_tasks")
 async def view_tasks(
     request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
 ) -> HTMLResponse:
     """Serves the page displaying scheduled tasks."""
     templates = request.app.state.templates
     try:
-        tasks = await get_all_tasks(db_context, limit=200)  # Pass context, fetch tasks
+        tasks = await get_all_tasks(db_context, limit=200)
         return templates.TemplateResponse(
             "tasks.html",
             {
                 "request": request,
                 "tasks": tasks,
                 "user": request.session.get("user"),
-                "auth_enabled": AUTH_ENABLED,
+                "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
+                "now_utc": datetime.now(timezone.utc),  # Pass to base template
             },
         )
     except Exception as e:
