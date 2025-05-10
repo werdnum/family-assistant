@@ -2,8 +2,9 @@ import contextlib
 import json
 import logging
 import os
+import pathlib
+import re
 import shutil
-import tempfile
 import uuid
 from datetime import date, datetime, timezone
 from typing import Annotated, Any
@@ -37,6 +38,10 @@ from family_assistant.web.models import DocumentUploadResponse
 
 logger = logging.getLogger(__name__)
 api_router = APIRouter()
+
+# Define the permanent storage path for uploaded documents
+# TODO: This should ideally be configurable via environment variables or application config
+DOCUMENT_STORAGE_PATH = pathlib.Path("/mnt/data/mailbox/documents")
 
 
 # --- Pydantic model for Tool Execution API ---
@@ -264,16 +269,31 @@ async def upload_document(
         # Process uploaded file if present
         if uploaded_file:
             original_filename = uploaded_file.filename
-            # Create a temporary file to store the upload
-            # delete=False because the path will be passed to a background task
-            with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                shutil.copyfileobj(uploaded_file.file, tmp_file)
-                file_ref = tmp_file.name
+
+            # Sanitize filename and create a unique name
+            # Use os.path.basename to prevent directory traversal from malicious filenames
+            safe_basename = re.sub(
+                r"[^a-zA-Z0-9_.-]",
+                "_",
+                os.path.basename(original_filename or "unknown_file"),
+            )
+            unique_filename = f"{uuid.uuid4()}_{safe_basename}"
+
+            target_file_path = DOCUMENT_STORAGE_PATH / unique_filename
+
+            # Ensure the storage directory exists
+            DOCUMENT_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+
+            # Save the file to the persistent location
+            with open(target_file_path, "wb") as f:
+                shutil.copyfileobj(uploaded_file.file, f)
+
+            file_ref = str(target_file_path)
             logger.info(
-                f"Uploaded file '{original_filename}' saved temporarily to '{file_ref}' for document {source_id}."
+                f"Uploaded file '{original_filename}' saved to '{file_ref}' for document {source_id}."
             )
 
-            # Detect MIME type using filetype library
+            # Detect MIME type using filetype library from the new persistent path
             try:
                 kind = filetype.guess(file_ref)
                 if kind is None:
@@ -299,18 +319,15 @@ async def upload_document(
 
     except json.JSONDecodeError as json_err:
         logger.error(f"JSON parsing error for document upload {source_id}: {json_err}")
-        if file_ref:  # Clean up temp file if created before error
-            with contextlib.suppress(OSError):
-                os.remove(file_ref)
+        # file_ref now points to a persistent location, so we don't remove it here.
+        # If saving the file itself failed, file_ref would be None or point to a non-existent path.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid JSON format: {json_err}",
         ) from json_err
     except ValueError as val_err:
         logger.error(f"Validation error for document upload {source_id}: {val_err}")
-        if file_ref:  # Clean up temp file
-            with contextlib.suppress(OSError):
-                os.remove(file_ref)
+        # file_ref points to a persistent location.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err)
         ) from val_err
@@ -319,9 +336,7 @@ async def upload_document(
             f"Unexpected parsing or file handling error for document upload {source_id}: {e}",
             exc_info=True,
         )
-        if file_ref:  # Clean up temp file
-            with contextlib.suppress(OSError):
-                os.remove(file_ref)
+        # file_ref points to a persistent location.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing request data or file.",
