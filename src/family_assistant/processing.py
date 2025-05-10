@@ -60,7 +60,7 @@ class ProcessingService:
         max_history_messages: int,
         server_url: str | None,  # Added server_url
         history_max_age_hours: int,  # Recommended value is now 1
-    ):
+    ) -> None:
         """
         Initializes the ProcessingService.
 

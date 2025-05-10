@@ -264,7 +264,7 @@ PUBLIC_PATHS = [
 class AuthMiddleware:
     def __init__(
         self, app: ASGIApp, public_paths: list[re.Pattern], auth_enabled: bool
-    ):
+    ) -> None:
         self.app = app
         self.public_paths = public_paths
         self.auth_enabled = auth_enabled
@@ -1442,7 +1442,7 @@ async def upload_document(
     # Define a simple class on the fly that behaves like the Document protocol
     # This avoids needing a direct import of a specific Document implementation
     class UploadedDocument:
-        def __init__(self, data):
+        def __init__(self, data) -> None:
             self._data = data
 
         @property

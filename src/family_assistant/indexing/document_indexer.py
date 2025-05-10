@@ -29,7 +29,7 @@ class DocumentIndexer:
     Takes dependencies via constructor.
     """
 
-    def __init__(self, pipeline: IndexingPipeline):  # Modified
+    def __init__(self, pipeline: IndexingPipeline) -> None:  # Modified
         """
         Initializes the DocumentIndexer.
 
@@ -45,7 +45,7 @@ class DocumentIndexer:
 
     async def process_document(
         self, exec_context: ToolExecutionContext, payload: dict[str, Any]
-    ):
+    ) -> None:
         """
         Task handler method to process and index content parts provided for a document
         by running them through an indexing pipeline.

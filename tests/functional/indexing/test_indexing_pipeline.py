@@ -57,7 +57,7 @@ class MockDocumentImpl(DocumentProtocol):
         created_at: datetime | None = None,
         metadata: dict[str, Any] | None = None,
         source_uri: str | None = None,
-    ):
+    ) -> None:
         self._source_type = source_type
         self._source_id = source_id
         self._title = title
@@ -192,7 +192,7 @@ async def test_indexing_pipeline_e2e(
     indexing_task_worker: tuple[
         TaskWorker, asyncio.Event, asyncio.Event
     ],  # Use the new fixture
-):
+) -> None:
     """
     End-to-end test for a basic indexing pipeline:
     1. Creates a document.

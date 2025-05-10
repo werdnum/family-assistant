@@ -58,7 +58,7 @@ class MockDocumentImpl(Document):
         created_at: datetime | None = None,
         metadata: dict[str, Any] | None = None,
         source_uri: str | None = None,
-    ):
+    ) -> None:
         self._source_type = source_type
         self._source_id = source_id
         self._title = title
@@ -97,7 +97,7 @@ class MockDocumentImpl(Document):
 
 
 @pytest.mark.asyncio
-async def test_vector_storage_basic_flow(pg_vector_db_engine):
+async def test_vector_storage_basic_flow(pg_vector_db_engine) -> None:
     """
     Basic test to verify core vector storage functionality using PostgreSQL:
     1. Add a document using the Document protocol.
@@ -267,7 +267,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine):
 
 
 @pytest.mark.asyncio
-async def test_search_documents_tool(pg_vector_db_engine):
+async def test_search_documents_tool(pg_vector_db_engine) -> None:
     """
     Tests the search_documents_tool function via LocalToolsProvider.
     1. Adds a test document and embedding.

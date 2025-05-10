@@ -159,7 +159,7 @@ class DocumentEmbeddingRecord(Base):
 # --- API Functions ---
 
 
-async def init_vector_db(db_context: DatabaseContext):
+async def init_vector_db(db_context: DatabaseContext) -> None:
     """
     Initializes the vector database components (extension, indexes) using the provided context.
     Tables should be created separately via storage.init_db or metadata.create_all.

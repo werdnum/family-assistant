@@ -29,7 +29,7 @@ async def wait_for_tasks_to_complete(
     timeout_seconds: float = 30.0,
     poll_interval_seconds: float = 0.5,
     task_ids: set[str] | None = None,
-):
+) -> None:
     """
     Waits until all specified tasks (or all tasks if none specified)
     in the database reach a terminal state ('done' or 'failed').

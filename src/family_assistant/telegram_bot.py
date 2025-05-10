@@ -109,7 +109,7 @@ class DefaultMessageBatcher(MessageBatcher):
 
     def __init__(
         self, batch_processor: BatchProcessor, batch_delay_seconds: float = 0.5
-    ):
+    ) -> None:
         self.batch_processor = batch_processor
         self.batch_delay_seconds = (
             batch_delay_seconds  # Delay before processing a batch
@@ -203,7 +203,7 @@ class DefaultMessageBatcher(MessageBatcher):
 
     def _remove_task_callback(
         self, task: asyncio.Task, chat_id: int
-    ):  # No longer in TelegramUpdateHandler
+    ) -> None:  # No longer in TelegramUpdateHandler
         """Callback function to remove task from processing_tasks dict."""
         try:
             task.result()  # Raise exception if task failed
@@ -238,7 +238,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         ],  # Closing bracket was misplaced
         message_batcher: MessageBatcher,  # Inject the batcher
         confirmation_manager: ConfirmationUIManager,  # Inject confirmation manager
-    ):
+    ) -> None:
         # Check for debug mode environment variable
         self.debug_mode = (
             os.environ.get("ASSISTANT_DEBUG_MODE", "false").lower() == "true"
@@ -285,7 +285,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         """Context manager to send typing notifications periodically."""
         stop_event = asyncio.Event()
 
-        async def typing_loop():
+        async def typing_loop() -> None:
             while not stop_event.is_set():
                 try:
                     await context.bot.send_chat_action(chat_id=chat_id, action=action)
@@ -847,7 +847,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         else:
             logger.warning("DEVELOPER_CHAT_ID not set, cannot send error notification.")
 
-    def register_handlers(self):
+    def register_handlers(self) -> None:
         """Registers the necessary Telegram handlers with the application."""
         # Access application via the telegram_service instance
         application = self.telegram_service.application  # Get application instance
@@ -906,7 +906,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 class TelegramConfirmationUIManager(ConfirmationUIManager):
     """Implementation of ConfirmationUIManager using Telegram Inline Keyboards."""
 
-    def __init__(self, application: Application, confirmation_timeout: float = 3600.0):
+    def __init__(
+        self, application: Application, confirmation_timeout: float = 3600.0
+    ) -> None:
         self.application = application
         self.confirmation_timeout = confirmation_timeout
         self.pending_confirmations: dict[str, asyncio.Future] = {}
@@ -1058,7 +1060,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
 class NoBatchMessageBatcher(MessageBatcher):
     """A simple batcher that processes each message immediately without buffering."""
 
-    def __init__(self, batch_processor: BatchProcessor):
+    def __init__(self, batch_processor: BatchProcessor) -> None:
         self.batch_processor = batch_processor
 
     async def add_to_batch(
@@ -1089,7 +1091,7 @@ class TelegramService:
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
         use_batching: bool = True,  # Add flag to control batching
-    ):
+    ) -> None:
         """
         Initializes the Telegram Service.
 
@@ -1181,7 +1183,7 @@ class TelegramService:
                 "Confirmation mechanism not properly initialized in handler."
             )
 
-    async def start_polling(self):
+    async def start_polling(self) -> None:
         """Initializes the application and starts polling for updates."""
         logger.info("Starting Telegram polling...")
         await self.application.initialize()
@@ -1197,7 +1199,7 @@ class TelegramService:
         """Returns the last error encountered by the error handler."""
         return self._last_error
 
-    async def stop_polling(self):
+    async def stop_polling(self) -> None:
         """Stops the polling and shuts down the application gracefully."""
         self._was_started = False  # Mark as stopped (or stopping)
         if self.application and self.application.updater:

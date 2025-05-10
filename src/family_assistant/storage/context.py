@@ -38,7 +38,7 @@ class DatabaseContext:
         engine: AsyncEngine | None = None,
         max_retries: int = 3,
         base_delay: float = 0.5,
-    ):
+    ) -> None:
         """
         Initialize the database context.
 

@@ -80,7 +80,7 @@ def create_mock_update(
 @pytest.mark.asyncio
 async def test_simple_text_message(
     telegram_handler_fixture: TelegramHandlerTestFixture,
-):
+) -> None:
     """
     Tests the basic flow: user sends text, LLM responds, response sent back, history saved.
     """
@@ -173,7 +173,7 @@ async def test_simple_text_message(
 @pytest.mark.asyncio
 async def test_add_note_tool_usage(
     telegram_handler_fixture: TelegramHandlerTestFixture,
-):
+) -> None:
     """
     Tests the flow where user asks to add a note, LLM requests the tool,
     confirmation is granted, the tool executes, and the note is saved.
@@ -224,7 +224,7 @@ async def test_add_note_tool_usage(
 
     # Rule 2: Match Tool Result -> Respond with Final Confirmation
     # This matcher looks for a 'tool' role message with the correct tool_call_id
-    def tool_result_matcher(messages, tools, tool_choice):
+    def tool_result_matcher(messages, tools, tool_choice) -> bool:
         if not messages:
             return False
         # Check previous messages too, as history might be added before tool result
@@ -308,7 +308,7 @@ async def test_add_note_tool_usage(
 @pytest.mark.asyncio
 async def test_tool_result_in_subsequent_history(
     telegram_handler_fixture: TelegramHandlerTestFixture,
-):
+) -> None:
     """
     Tests that after a tool call completes in one turn, the 'tool' result message
     is included in the history passed to the LLM in the *next* turn.

@@ -67,7 +67,7 @@ async def enqueue_task(
     recurrence_rule: str | None = None,
     original_task_id: str | None = None,
     notify_event: asyncio.Event | None = None,
-):  # noqa: PLR0913
+) -> None:  # noqa: PLR0913
     """Adds a task to the queue, optional notification."""
     if scheduled_at and scheduled_at.tzinfo is None:
         raise ValueError("scheduled_at must be timezone-aware")
@@ -104,7 +104,7 @@ async def enqueue_task(
         )
         if is_immediate and notify_event:
 
-            def notify(*args):
+            def notify(*args) -> None:
                 notify_event.set()
                 logger.info(f"Notified worker about immediate task {task_id}.")
 

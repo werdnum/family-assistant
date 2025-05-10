@@ -121,7 +121,7 @@ async def mcp_proxy_server():
 
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion_stdio(test_db_engine):
+async def test_mcp_time_conversion_stdio(test_db_engine) -> None:
     """
     Tests the end-to-end flow involving an MCP tool call:
     1. User asks to convert time between timezones.
@@ -319,7 +319,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine):
 
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server):
+async def test_mcp_time_conversion_sse(test_db_engine, mcp_proxy_server) -> None:
     """
     Tests the end-to-end flow involving an MCP tool call via SSE transport,
     using mcp-proxy to forward to mcp-server-time (stdio).
