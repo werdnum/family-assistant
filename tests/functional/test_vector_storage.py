@@ -330,9 +330,11 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
     # Mock Embedding Generator: Maps the query text to the predefined embedding
     embedding_map = {test_query: mock_query_embedding}
     mock_generator = MockEmbeddingGenerator(
-        embedding_map=embedding_map,
         model_name=mock_embedding_model,
-        default_embedding=np.zeros(mock_embedding_dimension).tolist(),  # Fallback
+        dimensions=mock_embedding_dimension,
+        embedding_map=embedding_map,
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=np.zeros(mock_embedding_dimension).tolist(),
     )
 
     # Local Tools Provider with the mock generator
