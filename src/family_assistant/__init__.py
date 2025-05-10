@@ -10,4 +10,3 @@ if os.path.exists(LOGGING_CONFIG):
     logging.config.fileConfig(LOGGING_CONFIG, disable_existing_loggers=False)
 
 # You can optionally define __version__ here or import key components
-# from .main import main # Example
