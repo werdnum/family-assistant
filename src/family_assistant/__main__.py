@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import sys
+import types  # Add import for types
 import zoneinfo
 from typing import Any
 
@@ -436,7 +437,7 @@ async def shutdown_handler(
     # Telegram application shutdown is now handled within telegram_service.stop_polling()
 
 
-def reload_config_handler(signum, frame) -> None:
+def reload_config_handler(signum: int, frame: types.FrameType | None) -> None:
     """Handles SIGHUP for config reloading (placeholder)."""
     logger.info("Received SIGHUP signal. Reloading configuration...")
     load_config()
