@@ -151,6 +151,7 @@ async def dump_tables_on_failure(engine: AsyncEngine) -> None:
 @pytest_asyncio.fixture(scope="function")
 async def http_client(
     pg_vector_db_engine: AsyncEngine,  # Ensure DB is setup before app starts
+    monkeypatch: pytest.MonkeyPatch,  # Add monkeypatch fixture
 ) -> AsyncGenerator[httpx.AsyncClient, None]:
     """
     Provides a test client for the FastAPI application, configured with
@@ -159,19 +160,36 @@ async def http_client(
     # The pg_vector_db_engine fixture already patches storage.base.engine
     # so the app will use the correct test database.
 
-    original_app_config = getattr(fastapi_app.state, "config", None)
-    temp_config_for_test = {}
+    original_app_state_config_present = hasattr(fastapi_app.state, "config")
+    original_app_state_config_value = getattr(fastapi_app.state, "config", None)
 
-    if original_app_config is not None:
-        temp_config_for_test.update(original_app_config)
+    current_test_config = {}
+    if original_app_state_config_present and isinstance(
+        original_app_state_config_value, dict
+    ):
+        current_test_config = original_app_state_config_value.copy()
+    elif original_app_state_config_present:  # It existed but wasn't a dict
+        logger.warning(
+            f"app.state.config was present but not a dict ({type(original_app_state_config_value)}). "
+            "Test will overwrite it with a new dict for its duration."
+        )
+        # current_test_config remains an empty dict, will be populated below
 
     with tempfile.TemporaryDirectory() as temp_attachment_dir:
         logger.info(
             f"Test http_client: Using temporary attachment directory: {temp_attachment_dir}"
         )
-        # Set the attachment_storage_path in the app's state config for the test
-        temp_config_for_test["attachment_storage_path"] = temp_attachment_dir
-        fastapi_app.state.config = temp_config_for_test
+
+        # Patch MAILBOX_RAW_DIR environment variable for webhooks.py
+        monkeypatch.setenv("MAILBOX_RAW_DIR", temp_attachment_dir)
+        logger.info(
+            f"Test http_client: Patched MAILBOX_RAW_DIR to: {temp_attachment_dir}"
+        )
+
+        # Set/overwrite specific config values needed for the test
+        current_test_config["attachment_storage_path"] = temp_attachment_dir
+        # Apply this config to the app state for the test duration
+        fastapi_app.state.config = current_test_config
 
         transport = httpx.ASGITransport(app=fastapi_app)
         async with httpx.AsyncClient(
@@ -180,12 +198,13 @@ async def http_client(
             yield client
         logger.info("Test HTTP client closed.")
 
-    # Restore original app state config
-    if original_app_config is not None:
-        fastapi_app.state.config = original_app_config
-    elif hasattr(fastapi_app.state, "config"):
-        # If there was no original config, but we set one, remove it.
-        del fastapi_app.state.config
+    # Teardown: Restore original app.state.config
+    if original_app_state_config_present:
+        fastapi_app.state.config = original_app_state_config_value
+    else:
+        # If 'config' was not on app.state originally, remove it
+        if hasattr(fastapi_app.state, "config"):  # Check again
+            delattr(fastapi_app.state, "config")
     logger.info("Test http_client: Restored original app.state.config.")
 
 
