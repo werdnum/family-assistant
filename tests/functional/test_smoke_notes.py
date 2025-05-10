@@ -2,6 +2,7 @@ import asyncio
 import contextlib  # Added contextlib import
 import json  # Added json import
 import logging
+from typing import Any  # Added for type hints
 
 # Import storage functions for assertion (will use the patched engine)
 # from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock  # For mocking Application
 
 import pytest
 from sqlalchemy import text  # To query DB directly for assertion
+from sqlalchemy.ext.asyncio import AsyncEngine  # Added for type hints
 
 # Import ContextProvider and NotesContextProvider
 from family_assistant.context_providers import (
@@ -56,7 +58,7 @@ TEST_USER_NAME = "NotesTestUser"
 
 
 @pytest.mark.asyncio
-async def test_add_and_retrieve_note_rule_mock(test_db_engine) -> None:  # Renamed test
+async def test_add_and_retrieve_note_rule_mock(test_db_engine: AsyncEngine) -> None:  # Renamed test
     """
     Rule-based mock test:
     1. Define rules for adding and retrieving a specific note.
@@ -77,7 +79,11 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine) -> None:  # Renam
     # --- Define Rules ---
 
     # Rule 1: Match Add Note Request
-    def add_note_matcher(messages, tools, tool_choice):
+    def add_note_matcher(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> bool:
         last_text = get_last_message_text(messages).lower()
         return (
             "remember this note" in last_text
@@ -107,7 +113,11 @@ async def test_add_and_retrieve_note_rule_mock(test_db_engine) -> None:  # Renam
     add_note_rule: Rule = (add_note_matcher, add_note_response)
 
     # Rule 2: Match Retrieve Note Request
-    def retrieve_note_matcher(messages, tools, tool_choice):
+    def retrieve_note_matcher(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> bool:
         last_text = get_last_message_text(messages).lower()
         # NOTE: This simple rule-based mock is stateless.
         # It doesn't know if the note was *actually* added before.
