@@ -55,7 +55,7 @@ class VectorSearchQuery:
     limit: int = 10
     rrf_k: int = 60  # Constant for Reciprocal Rank Fusion
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Basic validation."""
         if self.search_type in ["semantic", "hybrid"] and not self.semantic_query:
             raise ValueError(
