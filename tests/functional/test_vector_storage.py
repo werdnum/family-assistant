@@ -393,8 +393,7 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
         result.scalar_one()
         # NOTE: This assertion depends on the fixture cleaning up *after* the test runs.
         # If the fixture cleans *before*, this check is invalid.
-        # Assuming cleanup happens after:
-        # assert count == 0, f"Test document ID {doc_id} was not cleaned up after the test."
+        # Assuming cleanup happens after.
         # If cleanup happens before, we can't reliably check here.
         # For now, assume fixture handles cleanup.
 
