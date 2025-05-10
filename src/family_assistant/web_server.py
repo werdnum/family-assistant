@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import uuid
 import zoneinfo
 from datetime import date, datetime, timezone
@@ -204,6 +205,7 @@ async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
         )
     return provider
 
+
 # md_renderer is imported from family_assistant.web.utils
 # PUBLIC_PATHS is imported from family_assistant.web.auth
 # AuthMiddleware class is imported from family_assistant.web.auth
@@ -269,6 +271,7 @@ class DocumentUploadResponse(BaseModel):
     message: str
     document_id: int
     task_enqueued: bool
+
 
 # --- Auth Routes are now in family_assistant.web.auth and included via auth_router ---
 
