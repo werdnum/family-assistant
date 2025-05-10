@@ -1,16 +1,21 @@
 import contextlib
 import json
 import logging
+import shutil
+import tempfile
 import uuid
 from datetime import date, datetime, timezone
 from typing import Annotated, Any
 
+import filetype
 from fastapi import (
     APIRouter,
     Depends,
+    File,
     Form,
     HTTPException,
     Request,
+    UploadFile,
     status,
 )
 from fastapi.responses import JSONResponse
@@ -146,12 +151,17 @@ async def upload_document(
         Form(description="Unique identifier for the document within its source type."),
     ] = ...,
     content_parts_json: Annotated[
-        str,
+        str | None,
         Form(
             alias="content_parts",
-            description='JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}).',
+            description='Optional JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}). Required if no file is uploaded.',
         ),
-    ] = ...,
+    ] = None,
+    # Optional file upload
+    uploaded_file: Annotated[
+        UploadFile | None,
+        File(description="The document file to upload (e.g., PDF, TXT, DOCX)."),
+    ] = None,
     # Optional fields
     source_uri: Annotated[
         str | None, Form(description="Canonical URI/URL of the original document.")
@@ -183,21 +193,41 @@ async def upload_document(
     API endpoint to upload document metadata and content parts for indexing.
     """
     logger.info(
-        f"Received document upload request for source_id: {source_id} (type: {source_type})"
+        f"Received document upload request for source_id: {source_id} (type: {source_type}). File provided: {uploaded_file is not None}. Content parts provided: {content_parts_json is not None}"
     )
 
-    # --- 1. Parse and Validate Inputs ---
-    try:
-        # Parse JSON strings
-        content_parts: dict[str, str] = json.loads(content_parts_json)
-        if not isinstance(content_parts, dict) or not content_parts:
-            raise ValueError("'content_parts' must be a non-empty JSON object string.")
-        # Validate content parts values are strings
-        for key, value in content_parts.items():
-            if not isinstance(value, str):
-                raise ValueError(f"Value for content part '{key}' must be a string.")
+    # --- 1. Validate at least one input type is provided ---
+    if not uploaded_file and not content_parts_json:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either a file must be uploaded or content_parts_json must be provided.",
+        )
 
-        doc_metadata: dict[str, Any] = {}
+    # --- 2. Parse and Validate Inputs ---
+    content_parts: dict[str, str] | None = None
+    doc_metadata: dict[str, Any] = {}
+    created_at_dt: datetime | None = None
+    file_ref: str | None = None
+    detected_mime_type: str | None = None
+    original_filename: str | None = None
+
+    try:
+        # Parse JSON strings if provided
+        if content_parts_json:
+            content_parts = json.loads(content_parts_json)
+            if not isinstance(content_parts, dict): # Allow empty dict if JSON is "{}
+                raise ValueError(
+                    "'content_parts' must be a valid JSON object string if provided."
+                )
+            # Validate content parts values are strings
+            for key, value in content_parts.items():
+                if not isinstance(value, str):
+                    raise ValueError(
+                        f"Value for content part '{key}' must be a string."
+                    )
+        elif not uploaded_file: # Should be caught by the check above, but as a safeguard
+             raise ValueError("'content_parts' must be provided if no file is uploaded.")
+
         if metadata_json:
             doc_metadata = json.loads(metadata_json)
             if not isinstance(doc_metadata, dict):
@@ -206,7 +236,6 @@ async def upload_document(
                 )
 
         # Parse date string (handle date vs datetime)
-        created_at_dt: datetime | None = None
         if created_at_str:
             try:
                 # Try parsing as full ISO 8601 datetime first
@@ -229,28 +258,77 @@ async def upload_document(
                         "Invalid 'created_at' format. Use ISO 8601 datetime (YYYY-MM-DDTHH:MM:SSZ) or date (YYYY-MM-DD)."
                     ) from None
 
+        # Process uploaded file if present
+        if uploaded_file:
+            original_filename = uploaded_file.filename
+            # Create a temporary file to store the upload
+            # delete=False because the path will be passed to a background task
+            with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                shutil.copyfileobj(uploaded_file.file, tmp_file)
+                file_ref = tmp_file.name
+            logger.info(
+                f"Uploaded file '{original_filename}' saved temporarily to '{file_ref}' for document {source_id}."
+            )
+
+            # Detect MIME type using filetype library
+            try:
+                kind = filetype.guess(file_ref)
+                if kind is None:
+                    logger.warning(
+                        f"Could not determine file type for '{original_filename}' (path: {file_ref}). Falling back to client-provided content type."
+                    )
+                    detected_mime_type = uploaded_file.content_type
+                else:
+                    detected_mime_type = kind.mime
+                    logger.info(
+                        f"Detected MIME type for '{original_filename}': {detected_mime_type}"
+                    )
+            except Exception as fe:
+                logger.error(
+                    f"Error detecting file type for '{original_filename}': {fe}",
+                    exc_info=True,
+                )
+                # Fallback or error, for now, let's use client-provided if detection fails
+                detected_mime_type = uploaded_file.content_type
+                logger.warning(
+                    f"Using client-provided content type '{detected_mime_type}' due to detection error for {original_filename}."
+                )
+
     except json.JSONDecodeError as json_err:
         logger.error(f"JSON parsing error for document upload {source_id}: {json_err}")
+        if file_ref:  # Clean up temp file if created before error
+            with contextlib.suppress(OSError):
+                os.remove(file_ref)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid JSON format: {json_err}",
         ) from json_err
     except ValueError as val_err:
         logger.error(f"Validation error for document upload {source_id}: {val_err}")
+        if file_ref: # Clean up temp file
+            with contextlib.suppress(OSError):
+                os.remove(file_ref)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err)
         ) from val_err
     except Exception as e:
         logger.error(
-            f"Unexpected parsing error for document upload {source_id}: {e}",
+            f"Unexpected parsing or file handling error for document upload {source_id}: {e}",
             exc_info=True,
         )
+        if file_ref: # Clean up temp file
+            with contextlib.suppress(OSError):
+                os.remove(file_ref)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing request data.",
+            detail="Error processing request data or file.",
         ) from e
+    finally:
+        if uploaded_file:
+            await uploaded_file.close()
 
-    # --- 2. Create Document Record in DB ---
+
+    # --- 3. Create Document Record in DB ---
     # Create a dictionary conforming to the Document protocol structure
     # Use provided title if available, otherwise None
     document_data = {
@@ -327,12 +405,15 @@ async def upload_document(
             detail="Database error storing document.",
         ) from db_err
 
-    # --- 3. Enqueue Background Task for Embedding ---
+    # --- 4. Enqueue Background Task for Embedding ---
     task_payload = {
         "document_id": document_id,
-        "content_parts": content_parts,  # Pass the parsed dictionary
+        "content_parts": content_parts,  # Parsed dictionary or None
+        "file_ref": file_ref,  # Path to temp file or None
+        "mime_type": detected_mime_type,  # Detected MIME type or None
+        "original_filename": original_filename,  # Original filename or None
     }
-    task_id = f"index-doc-{document_id}-{datetime.now(timezone.utc).isoformat()}"  # Unique task ID
+    task_id = f"index-doc-{document_id}-{uuid.uuid4()}" # More robust unique task ID
     task_enqueued = False
     try:
         await storage.enqueue_task(
