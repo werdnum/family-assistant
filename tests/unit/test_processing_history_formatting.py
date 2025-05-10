@@ -3,6 +3,7 @@ Unit tests for the history formatting logic in ProcessingService.
 """
 
 import json
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -12,15 +13,15 @@ from family_assistant.processing import ProcessingService
 
 # Mock interfaces required by ProcessingService constructor
 class MockLLMClient:
-    async def generate_response(self, *args, **kwargs):
+    async def generate_response(self, *args: Any, **kwargs: Any) -> Mock:
         return Mock()  # Not used in the tested method
 
 
 class MockToolsProvider:
-    async def get_tool_definitions(self, *args, **kwargs):
+    async def get_tool_definitions(self, *args: Any, **kwargs: Any) -> list[Any]:
         return []  # Not used
 
-    async def execute_tool(self, *args, **kwargs) -> None:
+    async def execute_tool(self, *args: Any, **kwargs: Any) -> None:
         pass  # Not used
 
 
