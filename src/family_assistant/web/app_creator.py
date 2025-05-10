@@ -131,7 +131,9 @@ app.include_router(history_router, tags=["History UI"])
 app.include_router(tools_ui_router, tags=["Tools UI"])
 app.include_router(tasks_ui_router, tags=["Tasks UI"])
 app.include_router(vector_search_router, tags=["Vector Search UI"])
-app.include_router(documents_ui_router, prefix="/documents", tags=["Documents UI"]) # New router
+app.include_router(
+    documents_ui_router, prefix="/documents", tags=["Documents UI"]
+)  # New router
 app.include_router(health_router, tags=["Health Check"])
 
 # General API endpoints (like /api/tools/execute, /api/documents/upload)
