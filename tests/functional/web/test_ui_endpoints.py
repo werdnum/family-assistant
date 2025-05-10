@@ -48,10 +48,6 @@ def app_fixture() -> FastAPI:
     could include logic to override dependencies (e.g., database connections)
     with test-specific versions.
     """
-    # Example: Overriding dependencies if needed for your test environment
-    # from family_assistant.web.dependencies import get_db
-    # from tests.your_test_utils import override_get_db_for_testing
-    # actual_app.dependency_overrides[get_db] = override_get_db_for_testing
     return actual_app
 
 
@@ -59,7 +55,7 @@ def app_fixture() -> FastAPI:
 @pytest.mark.parametrize("path, description", ALL_UI_ENDPOINTS_TO_TEST)
 async def test_ui_endpoint_accessibility(
     path: str, description: str, app_fixture: FastAPI
-):
+) -> None:
     """
     Tests that a given UI endpoint is accessible and does not return a server error.
     It follows redirects and asserts that the final status code is less than 500.
