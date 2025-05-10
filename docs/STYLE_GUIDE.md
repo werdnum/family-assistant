@@ -64,6 +64,24 @@ Strongly prefer type safety at interface boundaries. In particular:
 *   Use `PascalCase` for classes.
 *   Use `UPPER_SNAKE_CASE` for module-level constants.
 
+## Type Safety
+
+Strongly prefer type safety at interface boundaries. In particular:
+
+*   Create types for structures accepted by third party APIs (e.g. OpenAI API `{"role": "user", "content": ...}`).
+*   **Comprehensive Annotations:** Functions and methods should have type hints for all arguments (including `*args` and `**kwargs`) and return values. This is enforced by `flake8-annotations` (ANN rules).
+*   **`typing.Any` is Permitted:** While comprehensive typing is encouraged, the use of `typing.Any` is currently permitted (as rule `ANN401` which disallows `Any` is ignored). Use it judiciously when a more specific type is not practical.
+*   **Type-Only Imports:** For imports used exclusively for type annotations, place them inside a `if TYPE_CHECKING:` block to avoid runtime circular dependencies and improve startup time. This is managed by `flake8-type-checking` (TC rules).
+    ```python
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from path.to.module import SomeTypeUsedForAnnotationOnly
+
+    def my_function(param: "SomeTypeUsedForAnnotationOnly") -> None:
+        # ...
+    ```
+
 ## Imports
 
 *   Group imports in the following order:
@@ -93,3 +111,31 @@ Strongly prefer type safety at interface boundaries. In particular:
 *   Be mindful of blocking operations in asynchronous code.
 *   Use `asyncio` primitives (locks, events, queues) correctly.
 *   Use `asyncio.TaskGroup` (Python 3.11+) or `asyncio.gather` for managing concurrent operations where appropriate. Prefer TaskGroup for better error handling and cancellation.
+
+## Linter-Driven Coding Standards
+
+Beyond general PEP 8 and the principles outlined above, our automated linting (primarily via Ruff) enforces several specific coding standards. Adhering to these will ensure smoother contributions and fewer CI failures.
+
+*   **No Commented-Out Code:** As stated in the "Appropriate use of comments" section, commented-out code is flagged by `eradicate` (ERA rules) and should be removed. Use version control to track historical code.
+*   **`zip()` with `strict=True`:** When using `zip()` on iterables that are expected to be of the same length, use the `strict=True` argument (available in Python 3.10+). This helps catch bugs early by raising a `ValueError` if a_i_d_e iterables have different lengths. This is checked by `flake8-bugbear` (`B905`).
+    ```python
+    # Good
+    for item1, item2 in zip(list1, list2, strict=True):
+        # ...
+    ```
+*   **FastAPI Dependencies with `Annotated`:** For FastAPI applications, dependencies should be declared using `typing.Annotated`. This is a modern FastAPI practice enforced by `FAST002`.
+    ```python
+    from typing import Annotated
+    from fastapi import Depends, FastAPI
+
+    app = FastAPI()
+
+    async def get_common_parameters(q: str | None = None):
+        return {"q": q}
+
+    @app.get("/")
+    async def read_root(commons: Annotated[dict, Depends(get_common_parameters)]):
+        return commons
+    ```
+*   **Line Length:** While PEP 8 suggests a line length limit, this project relies on an automatic code formatter (like Black, which is part of the pre-commit hooks) to handle line lengths. The linter rule for line length (`E501`) is therefore ignored. Focus on logical code structure, and let the formatter handle the visual layout.
+*   **Modern Python Syntax:** `pyupgrade` (UP rules) is used to automatically upgrade code to use more modern Python syntax where appropriate (e.g., `X | Y` for union types instead of `typing.Union[X, Y]` in Python 3.10+).
