@@ -56,7 +56,7 @@ api_tokens_table = Table(
     Column(
         "created_at",
         DateTime(timezone=True),
-        server_default=func.now(),
+        server_default=func.now(),  # pylint: disable=not-callable
         nullable=False,
     ),
     Column(
