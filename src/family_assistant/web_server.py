@@ -4,21 +4,19 @@ import json
 import logging
 import os
 import pathlib
-import re # type: ignore
+import re  # type: ignore
 import uuid
 import zoneinfo
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
 import aiofiles
-import telegram.error  # Import telegram errors for specific checking in health check
 from authlib.integrations.starlette_client import OAuth  # For OIDC
 from fastapi import (
     Depends,
     FastAPI,
     Form,
     HTTPException,
-    Query,  # Added Query for pagination parameters
     Request,
     Response,  # Added Query for pagination parameters
     status,
@@ -28,20 +26,20 @@ from fastapi.responses import (
     JSONResponse,
     RedirectResponse,
 )  # Added JSONResponse
+from fastapi import Query  # Added Query for pagination parameters
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt  # For rendering docs
 from pydantic import BaseModel, ValidationError  # Import BaseModel for request body
 from sqlalchemy import text  # Added text import
+import telegram.error  # Import telegram errors for specific checking in health check
 from starlette.config import Config  # For reading env vars
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send  # For middleware class
-from starlette.types import ASGIApp, Receive, Scope, Send # For middleware class
-from typing import Annotated
+
 # Import storage functions using absolute package path
 from family_assistant import storage
-
 # Import embedding generator (adjust path based on actual location)
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import (
@@ -60,7 +58,6 @@ from family_assistant.storage.context import (
     DatabaseContext,
     get_db_context,
 )  # Import context
-
 # Import protocol for type hinting when creating the dict for add_document
 # Import vector search components
 from family_assistant.storage.vector_search import (
@@ -68,7 +65,6 @@ from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
 )
-
 # Import tool-related components
 # Import tool functions directly from the tools package
 from family_assistant.tools import (
@@ -78,7 +74,6 @@ from family_assistant.tools import (
     _scan_user_docs,  # Import the scanner function # Removed incorrect import of render_schema_as_html
 )
 from family_assistant.tools.schema import render_schema_as_html  # Correct import path
-
 logger = logging.getLogger(__name__)
 
 # Simple in-memory cache for rendered tool schema HTML, keyed by tool name
