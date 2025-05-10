@@ -4,7 +4,7 @@ Handles storage and retrieval of message history.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast  # Added Tuple, cast
+from typing import TYPE_CHECKING, Any, cast  # Added Tuple, cast
 
 from sqlalchemy import (
     JSON,
@@ -21,11 +21,13 @@ from sqlalchemy import (
     update,  # Add update import
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.engine import Result  # Import Result for type hint
 from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.storage.base import metadata
 from family_assistant.storage.context import DatabaseContext
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Result
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +194,7 @@ async def get_recent_history(
             .limit(limit)
         )
         candidate_rows_result = await db_context.fetch_all(
-            cast(Select[Any], stmt_candidates)
+            cast("Select[Any]", stmt_candidates)
         )
         # Store candidate messages in a dictionary by internal_id for easy merging
         # These are newest first at this stage.
@@ -219,7 +221,7 @@ async def get_recent_history(
                 # are older than cutoff_time, as one part of the turn met the criteria.
             )
             expanded_turn_rows_result = await db_context.fetch_all(
-                cast(Select[Any], stmt_expand_turns)
+                cast("Select[Any]", stmt_expand_turns)
             )
 
             for row_mapping in expanded_turn_rows_result:
@@ -264,7 +266,7 @@ async def get_message_by_interface_id(
             .where(message_history_table.c.interface_message_id == interface_message_id)
         )
         row = await db_context.fetch_one(
-            cast(Select[Any], stmt)
+            cast("Select[Any]", stmt)
         )  # Cast for type checker
         return dict(row) if row else None  # Return full row as dict
     except SQLAlchemyError as e:
@@ -289,7 +291,7 @@ async def get_messages_by_turn_id(
             )  # Order by insertion sequence first
         )  # Close the statement parenthesis
         rows = await db_context.fetch_all(
-            cast(Select[Any], stmt)
+            cast("Select[Any]", stmt)
         )  # Cast for type checker
         return [dict(row) for row in rows]
     except SQLAlchemyError as e:
@@ -323,7 +325,7 @@ async def get_messages_by_thread_id(
             )  # Order by insertion sequence first
         )  # Close the statement parenthesis
         rows = await db_context.fetch_all(
-            cast(Select[Any], stmt)
+            cast("Select[Any]", stmt)
         )  # Cast for type checker
         return [dict(row) for row in rows]
     except SQLAlchemyError as e:
@@ -347,7 +349,7 @@ async def get_grouped_message_history(
             message_history_table.c.internal_id,  # Add for stable chronological order
         )
         rows = await db_context.fetch_all(
-            cast(Select[Any], stmt)
+            cast("Select[Any]", stmt)
         )  # Cast for type checker
         # Convert RowMapping to dicts for easier handling
         dict_rows = [dict(row) for row in rows]

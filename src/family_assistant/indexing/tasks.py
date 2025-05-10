@@ -3,10 +3,12 @@ Task handlers related to the document indexing pipeline.
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from family_assistant.storage.vector import add_embedding
-from family_assistant.tools.types import ToolExecutionContext  # Added import
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 

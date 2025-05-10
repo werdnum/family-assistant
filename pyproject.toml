@@ -149,6 +149,8 @@ select = [
     "TC",
 ]
 ignore = [
+	# Line length - fornatter can deal with it
+	"E501",
 	# Forbids dynamic types in kwargs etc
 	"ANN4"
 ]

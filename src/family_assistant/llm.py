@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import aiofiles  # For async file operations
 import litellm  # Import litellm
@@ -22,7 +22,9 @@ from litellm.exceptions import (
 )
 
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
-from litellm.types.completion import ChatCompletionMessageParam
+
+if TYPE_CHECKING:
+    from litellm.types.completion import ChatCompletionMessageParam
 
 logger = logging.getLogger(__name__)
 
