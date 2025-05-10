@@ -69,7 +69,7 @@ class EmbeddingGenerator(Protocol):
 class LiteLLMEmbeddingGenerator:
     """Embedding generator implementation using the LiteLLM library."""
 
-    def __init__(self, model: str, **kwargs: Any) -> None:
+    def __init__(self, model: str, **kwargs: object) -> None:
         """
         Initializes the LiteLLM embedding generator.
 
@@ -156,7 +156,7 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
         """
 
         def __init__(
-            self, model_name_or_path: str, device: str | None = None, **kwargs: Any
+            self, model_name_or_path: str, device: str | None = None, **kwargs: object
         ) -> None:
             """
             Initializes the SentenceTransformer embedding generator.
@@ -257,7 +257,7 @@ else:
     # Define a placeholder if the library is missing, so imports don't break elsewhere
     # if code explicitly tries to import SentenceTransformerEmbeddingGenerator
     class SentenceTransformerEmbeddingGenerator:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: object, **kwargs: object) -> None:
             raise ImportError(
                 "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
             )
