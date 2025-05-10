@@ -22,10 +22,8 @@ webhooks_router = APIRouter()
 # Directory to save raw webhook request bodies for debugging/replay
 MAILBOX_RAW_DIR = os.getenv("MAILBOX_RAW_DIR", "/mnt/data/mailbox/raw_requests")
 
-# Directory for storing processed attachments
-ATTACHMENT_STORAGE_DIR = os.getenv(
-    "ATTACHMENT_STORAGE_DIR", "/mnt/data/mailbox/attachments"
-)
+# Default path if not found in config, though __main__ should set a default.
+DEFAULT_ATTACHMENT_STORAGE_PATH = "/mnt/data/mailbox/attachments_fallback"
 
 
 @webhooks_router.post("/webhook/mail")
@@ -99,8 +97,18 @@ async def handle_mail_webhook(
             attachment_count = int(attachment_count_str)
             # Generate a single UUID for this email's attachments directory
             email_attachment_batch_id = str(uuid.uuid4())
+
+            # Get attachment storage path from app config
+            attachment_storage_path = request.app.state.config.get(
+                "attachment_storage_path", DEFAULT_ATTACHMENT_STORAGE_PATH
+            )
+            if attachment_storage_path == DEFAULT_ATTACHMENT_STORAGE_PATH:
+                logger.warning(
+                    f"attachment_storage_path not found in app.state.config, using fallback: {DEFAULT_ATTACHMENT_STORAGE_PATH}"
+                )
+
             base_attachment_dir = os.path.join(
-                ATTACHMENT_STORAGE_DIR, email_attachment_batch_id
+                attachment_storage_path, email_attachment_batch_id
             )
 
             for i in range(1, attachment_count + 1):
