@@ -61,6 +61,8 @@ try:
     # Use absolute package path
     from family_assistant.storage.vector import (
         Base as VectorBase,  # For ORM
+    )
+    from family_assistant.storage.vector import (
         Document,  # Protocol for document structure
         add_document,
         add_embedding,
