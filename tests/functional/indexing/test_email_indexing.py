@@ -3,6 +3,7 @@ End-to-end functional tests for the email indexing and vector search pipeline.
 """
 
 import asyncio
+import io  # Added for BytesIO
 import logging
 import re  # Add re import
 import tempfile  # Added for http_client fixture
@@ -19,6 +20,8 @@ import numpy as np
 import pytest
 import pytest_asyncio  # Added for async fixtures
 from assertpy import assert_that
+from reportlab.lib.pagesizes import letter  # Added for PDF generation
+from reportlab.pdfgen import canvas  # Added for PDF generation
 from sqlalchemy import select  # Added text for raw SQL if needed
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -1032,3 +1035,246 @@ async def test_keyword_filtering(
 
 
 # Add more tests here for hybrid search nuances, different filter combinations, etc.
+
+
+# --- Helper function to create a simple PDF ---
+def create_simple_pdf_bytes(text_content: str) -> bytes:
+    """Creates a simple PDF with the given text content and returns its bytes."""
+    pdf_buffer = io.BytesIO()
+    c = canvas.Canvas(pdf_buffer, pagesize=letter)
+    # Set a standard font that's likely to be available
+    c.setFont("Helvetica", 12)
+    # Add text line by line to handle potential newlines
+    lines = text_content.split("\n")
+    y_position = 750  # Starting y position from top of page
+    for line in lines:
+        c.drawString(72, y_position, line)
+        y_position -= 15  # Move to next line
+    c.save()
+    pdf_buffer.seek(0)
+    return pdf_buffer.getvalue()
+
+
+# --- Test Data for PDF Attachment ---
+TEST_PDF_TEXT_CONTENT = (
+    "This is the content of the test PDF attachment for Project Zeta."
+)
+TEST_PDF_FILENAME = "project_zeta_details.pdf"
+TEST_EMAIL_SUBJECT_WITH_PDF = "E2E Test: Email with PDF Attachment (Project Zeta)"
+TEST_EMAIL_BODY_WITH_PDF = "Please find attached the details for Project Zeta."
+TEST_EMAIL_MESSAGE_ID_WITH_PDF = f"<e2e_email_with_pdf_{uuid.uuid4()}@example.com>"
+TEST_QUERY_TEXT_FOR_PDF = "details about Project Zeta"
+
+
+@pytest.mark.asyncio
+async def test_email_with_pdf_attachment_indexing_e2e(
+    http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
+    """
+    End-to-end test for email ingestion with a PDF attachment,
+    indexing via task worker (including PDF text extraction), and vector query retrieval.
+    """
+    logger.info("\n--- Running Email with PDF Attachment Indexing E2E Test ---")
+
+    # --- Arrange: PDF Content ---
+    pdf_content_bytes = create_simple_pdf_bytes(TEST_PDF_TEXT_CONTENT)
+
+    # --- Arrange: Mock Embeddings ---
+    # Normalize text as TextChunker would for consistent mocking
+    normalized_pdf_text = re.sub(r"\s+", " ", TEST_PDF_TEXT_CONTENT).strip()
+    normalized_email_subject = re.sub(r"\s+", " ", TEST_EMAIL_SUBJECT_WITH_PDF).strip()
+    normalized_email_body = re.sub(r"\s+", " ", TEST_EMAIL_BODY_WITH_PDF).strip()
+
+    pdf_content_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.3
+    ).tolist()
+    email_subject_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.1
+    ).tolist()
+    email_body_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.2
+    ).tolist()
+    query_pdf_embedding = (  # Query embedding close to PDF content
+        np.array(pdf_content_embedding)
+        + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
+    ).tolist()
+
+    embedding_map = {
+        normalized_pdf_text: pdf_content_embedding,
+        normalized_email_subject: email_subject_embedding,
+        normalized_email_body: email_body_embedding,
+        TEST_QUERY_TEXT_FOR_PDF: query_pdf_embedding,
+    }
+    mock_embedder = MockEmbeddingGenerator(
+        embedding_map=embedding_map,
+        model_name=TEST_EMBEDDING_MODEL,
+        dimensions=TEST_EMBEDDING_DIMENSION,
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
+    )
+
+    # --- Arrange: Create Indexing Pipeline (including PDFTextExtractor) ---
+    # This pipeline should be capable of handling email text and PDF attachments.
+    from family_assistant.indexing.processors.file_processors import (
+        PDFTextExtractor,  # Import here
+    )
+
+    title_extractor = TitleExtractor()
+    pdf_extractor = PDFTextExtractor()
+    text_chunker = TextChunker(
+        chunk_size=500,
+        chunk_overlap=50,
+        # Ensure TextChunker is configured to produce 'content_chunk' from PDF output
+        embedding_type_prefix_map={
+            "raw_body_text": "content_chunk",
+            "extracted_markdown_content": "content_chunk",  # from PDFTextExtractor
+            "title": "title_chunk",  # if titles are chunked
+        },
+    )
+    embedding_dispatcher = EmbeddingDispatchProcessor(
+        embedding_types_to_dispatch=[
+            "title_chunk",  # or "title" if not chunked by TextChunker
+            "title",  # if TitleExtractor output is not chunked
+            "content_chunk",  # from email body and PDF
+        ],
+    )
+    test_pipeline_with_pdf = IndexingPipeline(
+        processors=[title_extractor, pdf_extractor, text_chunker, embedding_dispatcher],
+        config={},
+    )
+    set_indexing_dependencies(pipeline=test_pipeline_with_pdf)
+    logger.info(
+        "Set IndexingPipeline with PDFTextExtractor for email attachment indexing."
+    )
+
+    # --- Arrange: Task Worker Setup ---
+    mock_application_pdf = MagicMock()
+    mock_application_pdf.state.embedding_generator = mock_embedder
+    mock_application_pdf.state.llm_client = None  # Or a mock LLM if needed
+
+    dummy_calendar_config_pdf = {}
+    dummy_timezone_str_pdf = "UTC"
+    worker = TaskWorker(
+        processing_service=None,
+        application=mock_application_pdf,
+        calendar_config=dummy_calendar_config_pdf,
+        timezone_str=dummy_timezone_str_pdf,
+    )
+    worker.register_task_handler("index_email", handle_index_email)
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
+
+    worker_id = f"test-worker-pdf-{uuid.uuid4()}"
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(test_new_task_event))
+    logger.info(f"Started background task worker {worker_id} for PDF test...")
+    await asyncio.sleep(0.1)
+    test_failed = False
+
+    try:
+        # --- Arrange: Prepare Form Data and File for Upload ---
+        email_form_data_with_pdf = TEST_EMAIL_FORM_DATA.copy()
+        email_form_data_with_pdf.update(
+            {
+                "subject": TEST_EMAIL_SUBJECT_WITH_PDF,
+                "stripped-text": TEST_EMAIL_BODY_WITH_PDF,
+                "Message-Id": TEST_EMAIL_MESSAGE_ID_WITH_PDF,
+                "attachment-count": "1",  # Indicate one attachment
+            }
+        )
+        # Mailgun sends attachments as form fields like 'attachment-1', 'attachment-2', etc.
+        # httpx `files` param maps to this.
+        files_to_upload = {
+            "attachment-1": (
+                TEST_PDF_FILENAME,
+                io.BytesIO(pdf_content_bytes),
+                "application/pdf",
+            )
+        }
+
+        # --- Act: Ingest Email with PDF Attachment and Wait for Indexing ---
+        await _ingest_and_index_email(
+            http_client=http_client,
+            engine=pg_vector_db_engine,
+            form_data_dict=email_form_data_with_pdf,
+            files_to_upload=files_to_upload,
+            notify_event=test_new_task_event,
+        )
+
+        # --- Act: Query Vectors for PDF Content ---
+        query_results = None
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            logger.info(
+                f"Querying vectors using text relevant to PDF: '{TEST_QUERY_TEXT_FOR_PDF}'"
+            )
+            query_results = await query_vectors(
+                db,
+                query_embedding=query_pdf_embedding,
+                embedding_model=TEST_EMBEDDING_MODEL,
+                limit=5,
+                filters={"source_type": "email"},
+            )
+
+        # --- Assert ---
+        assert_that(query_results).described_as(
+            "query_vectors returned None for PDF content"
+        ).is_not_none()
+        assert_that(query_results).described_as(
+            "No results returned from PDF content vector query"
+        ).is_not_empty()
+        logger.info(f"PDF content query returned {len(query_results)} result(s).")
+
+        found_pdf_result = None
+        for result in query_results:
+            # We expect the content from the PDF to be associated with the email's source_id
+            if (
+                result.get("source_id") == TEST_EMAIL_MESSAGE_ID_WITH_PDF
+                and result.get("embedding_source_content") == TEST_PDF_TEXT_CONTENT
+            ):
+                found_pdf_result = result
+                break
+
+        assert_that(found_pdf_result).described_as(
+            f"Ingested PDF content (from email Source ID: {TEST_EMAIL_MESSAGE_ID_WITH_PDF}) "
+            f"not found in query results, or content mismatch. Results: {query_results}"
+        ).is_not_none()
+        logger.info(f"Found matching result for PDF content: {found_pdf_result}")
+
+        assert_that(found_pdf_result["distance"]).described_as(
+            "Distance for PDF content should be small"
+        ).is_less_than(0.1)
+        assert_that(found_pdf_result.get("embedding_type")).is_equal_to(
+            "content_chunk"
+        )  # From TextChunker
+        assert_that(found_pdf_result.get("embedding_source_content")).is_equal_to(
+            TEST_PDF_TEXT_CONTENT
+        )
+        assert_that(found_pdf_result.get("title")).is_equal_to(
+            TEST_EMAIL_SUBJECT_WITH_PDF
+        )  # Title should be email's subject
+        assert_that(found_pdf_result.get("source_type")).is_equal_to("email")
+
+        logger.info("--- Email with PDF Attachment Indexing E2E Test Passed ---")
+
+    except Exception as e:
+        test_failed = True
+        logger.error(f"Test failed: {e}", exc_info=True)
+        raise
+    finally:
+        logger.info(f"Stopping background task worker {worker_id} for PDF test...")
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+            logger.info(f"Background task worker {worker_id} stopped for PDF test.")
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Timeout stopping worker task {worker_id} for PDF test. Cancelling."
+            )
+            worker_task.cancel()
+        except Exception as e:
+            logger.error(
+                f"Error stopping worker task {worker_id} for PDF test: {e}",
+                exc_info=True,
+            )
