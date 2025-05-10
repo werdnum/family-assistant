@@ -986,25 +986,21 @@ async def vector_search_form(
 async def handle_vector_search(
     request: Request,
     # --- Form Inputs ---
-    semantic_query: Annotated[str | None, Form(None)],
-    keywords: Annotated[str | None, Form(None)],
-    search_type: Annotated[str, Form("hybrid")],  # 'semantic', 'keyword', 'hybrid'
-    embedding_model: Annotated[str | None, Form(None)],  # CRUCIAL for vector search
-    embedding_types: Annotated[list[str], Form(
-        default_factory=list
-    )],  # Allow multiple types
-    source_types: Annotated[list[str], Form(
-        default_factory=list
-    )],  # Allow multiple source types
-    created_after: Annotated[str | None, Form(None)],  # Expect YYYY-MM-DD
-    created_before: Annotated[str | None, Form(None)],  # Expect YYYY-MM-DD
-    title_like: Annotated[str | None, Form(None)],
+    semantic_query: Annotated[str | None, Form()] = None,
+    keywords: Annotated[str | None, Form()] = None,
+    search_type: Annotated[str, Form()] = "hybrid",  # 'semantic', 'keyword', 'hybrid'
+    embedding_model: Annotated[str | None, Form()] = None,  # CRUCIAL for vector search
+    embedding_types: Annotated[list[str], Form()] = [],  # Allow multiple types
+    source_types: Annotated[list[str], Form()] = [],  # Allow multiple source types
+    created_after: Annotated[str | None, Form()] = None,  # Expect YYYY-MM-DD
+    created_before: Annotated[str | None, Form()] = None,  # Expect YYYY-MM-DD
+    title_like: Annotated[str | None, Form()] = None,
     # --- Metadata Filters (expect lists) ---
-    metadata_keys: Annotated[list[str], Form(default_factory=list)],
-    metadata_values: Annotated[list[str], Form(default_factory=list)],
+    metadata_keys: Annotated[list[str], Form()] = [],
+    metadata_values: Annotated[list[str], Form()] = [],
     # --- Control Params ---
-    limit: Annotated[int, Form(10)],
-    rrf_k: Annotated[int, Form(60)],
+    limit: Annotated[int, Form()] = 10,
+    rrf_k: Annotated[int, Form()] = 60,
     # --- Dependencies ---
     db_context: Annotated[DatabaseContext, Depends(get_db)],
     embedding_generator: Annotated[EmbeddingGenerator, Depends(
