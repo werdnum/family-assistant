@@ -3,11 +3,13 @@ import logging
 import os  # Added for path manipulation
 import random
 import traceback
+from typing import Any, Callable # Added Any and Callable
 
 from sqlalchemy import (
     inspect,
     text,
 )  # Import inspect, text and table creation components
+from sqlalchemy.engine import Connection # Added Connection
 from sqlalchemy.exc import (
     DBAPIError,
     OperationalError,
@@ -88,25 +90,25 @@ except ImportError:
     VECTOR_STORAGE_ENABLED = False
 
     # Define placeholders for the functions if the import failed
-    def init_vector_db(*args, **kwargs) -> None:  # type: ignore
+    def init_vector_db(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def add_document(*args, **kwargs) -> None:  # type: ignore
+    def add_document(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def get_document_by_source_id(*args, **kwargs) -> None:  # type: ignore
+    def get_document_by_source_id(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def get_document_by_id(*args, **kwargs) -> None:  # type: ignore
+    def get_document_by_id(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def add_embedding(*args, **kwargs) -> None:  # type: ignore
+    def add_embedding(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def delete_document(*args, **kwargs) -> None:  # type: ignore
+    def delete_document(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def query_vectors(*args, **kwargs):  # type: ignore
+    def query_vectors(*args: Any, **kwargs: Any) -> list[Any]:  # type: ignore
         return []  # Return an empty list for queries
 
     class Document:  # type: ignore
@@ -125,7 +127,7 @@ async def _is_alembic_managed(engine: AsyncEngine) -> bool:
     logger.info("Inspecting database for alembic_version table...")
     async with engine.connect() as conn:
 
-        def inspector_sync(sync_conn) -> bool:
+        def inspector_sync(sync_conn: Connection) -> bool:
             """Checks for alembic_version table."""
             inspector = inspect(sync_conn)
             # Ensure inspector is valid before calling methods
@@ -146,7 +148,7 @@ async def _log_current_revision(engine: AsyncEngine) -> None:
     logger.info("Querying current revision from alembic_version table...")
     async with engine.connect() as conn_check:
 
-        def sync_check_revision(sync_conn) -> str | None:
+        def sync_check_revision(sync_conn: Connection) -> str | None:
             inspector = inspect(sync_conn)
             if inspector is None:
                 logger.error(
@@ -223,7 +225,7 @@ def _get_alembic_config(engine: AsyncEngine) -> AlembicConfig:
 
 
 async def _run_alembic_command(
-    engine: AsyncEngine, config: AlembicConfig, command_name: str, *args
+    engine: AsyncEngine, config: AlembicConfig, command_name: str, *args: Any
 ) -> None:
     """Executes an Alembic command asynchronously using the engine's connection."""
     command_func = getattr(alembic_command, command_name)
@@ -234,7 +236,12 @@ async def _run_alembic_command(
 
     async with engine.connect() as conn:
 
-        def sync_command_wrapper(sync_conn, cfg, cmd_func, cmd_args) -> None:
+        def sync_command_wrapper(
+            sync_conn: Connection,
+            cfg: AlembicConfig,
+            cmd_func: Callable[..., None],
+            cmd_args: tuple[Any, ...],
+        ) -> None:
             """Wrapper to run alembic commands with existing connection."""
             # Make the connection available to env.py via config attributes
             cfg.attributes["connection"] = sync_conn
