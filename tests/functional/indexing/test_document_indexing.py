@@ -6,7 +6,7 @@ simulating the flow initiated by the /api/documents/upload endpoint.
 import asyncio
 import json
 import logging
-import tempfile # Add tempfile import
+import tempfile  # Add tempfile import
 import uuid
 from datetime import datetime, timezone
 from typing import Any  # Add missing typing imports
@@ -154,20 +154,22 @@ async def http_client(
         )
 
         # The pg_vector_db_engine fixture already patches storage.base.engine
-    # so the app will use the correct test database.
+        # so the app will use the correct test database.
 
-    # Use ASGITransport for testing FastAPI apps with httpx >= 0.20.0
-    transport = httpx.ASGITransport(app=fastapi_app)
-    # Correctly close the 'with tempfile.TemporaryDirectory()' block here
-    # The 'async with httpx.AsyncClient' should be outside or after it,
-    # or the temp_doc_storage_dir needs to be available for the client's duration.
-    # Assuming the temp dir is only for setting config, then client can be outside.
-    # However, if the API call *uses* that path, it needs to be active.
-    # Let's keep the client within the temp_dir scope to ensure path validity.
+        # Use ASGITransport for testing FastAPI apps with httpx >= 0.20.0
+        transport = httpx.ASGITransport(app=fastapi_app)
+        # Correctly close the 'with tempfile.TemporaryDirectory()' block here
+        # The 'async with httpx.AsyncClient' should be outside or after it,
+        # or the temp_doc_storage_dir needs to be available for the client's duration.
+        # Assuming the temp dir is only for setting config, then client can be outside.
+        # However, if the API call *uses* that path, it needs to be active.
+        # Let's keep the client within the temp_dir scope to ensure path validity.
 
         # The ASGITransport should be defined once.
         # The client context manager should be inside the temp_doc_storage_dir context manager.
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             yield client
         logger.info("Test HTTP client closed.")
     # End of the 'with tempfile.TemporaryDirectory()' block
@@ -175,10 +177,10 @@ async def http_client(
     # Clean up app state after the client and temp_dir are done
     if hasattr(fastapi_app.state, "embedding_generator"):
         del fastapi_app.state.embedding_generator
-    if hasattr(fastapi_app.state, "config"): # Restore original or remove test config
-        if original_config: # if there was an original config, restore it
+    if hasattr(fastapi_app.state, "config"):  # Restore original or remove test config
+        if original_config:  # if there was an original config, restore it
             fastapi_app.state.config = original_config
-        else: # otherwise, just delete the one we set
+        else:  # otherwise, just delete the one we set
             del fastapi_app.state.config
     logger.info("Cleaned up FastAPI app state after http_client fixture.")
 
