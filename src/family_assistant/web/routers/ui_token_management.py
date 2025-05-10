@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime, timezone  # Added datetime and timezone
+from datetime import datetime, timezone
+from typing import Annotated # Added Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -18,9 +19,9 @@ router = APIRouter()
 @router.get("", response_class=HTMLResponse, name="ui_manage_api_tokens")
 async def manage_api_tokens_ui(
     request: Request,
-    current_user: dict = Depends(get_current_active_user),
-    db_context: DatabaseContext = Depends(get_db),
-):
+    current_user: Annotated[dict, Depends(get_current_active_user)],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> HTMLResponse:
     """
     Displays the API token management page.
     Lists existing tokens and provides a form to create new ones.
@@ -46,8 +47,6 @@ async def manage_api_tokens_ui(
         )
         # Render the page with an error message or an empty list
         tokens = []
-        # Optionally, add an error message to the context to display in the template
-        # context["error_message"] = "Could not load your API tokens."
 
     context = {
         "request": request,
@@ -66,10 +65,10 @@ async def manage_api_tokens_ui(
 async def revoke_api_token_ui(
     request: Request, # For redirecting
     token_id: int,
-    current_user: dict = Depends(get_current_active_user),
-    db_context: DatabaseContext = Depends(get_db),
+    current_user: Annotated[dict, Depends(get_current_active_user)],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
     # CSRF token could be added here as a Form field for better security
-):
+) -> RedirectResponse:
     """
     Handles the revocation of an API token via a form POST.
     """
@@ -94,15 +93,12 @@ async def revoke_api_token_ui(
                 token_id,
                 user_identifier,
             )
-            # Optionally, add a success message to the session/flash message system
-            # request.session["flash_message"] = "Token revoked successfully."
         else:
             logger.warning(
                 "Failed to revoke token ID %s by user %s via UI (not found or not owned).",
                 token_id,
                 user_identifier,
             )
-            # request.session["flash_message"] = "Failed to revoke token: Not found or not owned by you."
     except Exception as e:
         logger.error(
             "Error revoking token ID %s for user %s via UI: %s",
@@ -111,7 +107,6 @@ async def revoke_api_token_ui(
             e,
             exc_info=True,
         )
-        # request.session["flash_message"] = "An error occurred while revoking the token."
 
     # Redirect back to the token management page
     return RedirectResponse(
