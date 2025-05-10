@@ -268,10 +268,6 @@ class LiteLLMClient:
                     logger.warning(f"Could not serialize response.usage: {usage_err}")
 
             # Add other potential reasoning fields if the model/API provides them
-            # e.g., if response has a 'debug' or 'reasoning_steps' field:
-            # if hasattr(response, 'reasoning_steps'):
-            #     if reasoning_info is None: reasoning_info = {}
-            #     reasoning_info['steps'] = response.reasoning_steps
 
             # Convert LiteLLM ToolCall objects to simple dicts for the LLMOutput
             tool_calls_list = []
@@ -388,10 +384,6 @@ class RecordingLLMClient:
                 f"Error during wrapped LLM call in RecordingLLMClient: {e}",
                 exc_info=True,
             )
-            # Optionally record the error state?
-            # record = {"input": input_data, "error": str(e)}
-            # async with aiofiles.open(self.recording_path, mode="a", encoding="utf-8") as f:
-            #     await f.write(json.dumps(record, ensure_ascii=False) + "\n")
             raise  # Re-raise the exception caught from the wrapped client
 
 
