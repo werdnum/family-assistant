@@ -38,7 +38,7 @@ class ToolExecutionRequest(BaseModel):
     arguments: dict[str, Any]
 
 
-@api_router.post("/api/tools/execute/{tool_name}", response_class=JSONResponse)
+@api_router.post("/tools/execute/{tool_name}", response_class=JSONResponse)
 async def execute_tool_api(
     tool_name: str,
     request: Request,  # Keep request for potential context later
@@ -127,7 +127,7 @@ async def execute_tool_api(
 
 
 @api_router.post(
-    "/api/documents/upload",
+    "/documents/upload",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Upload and index a document",
     description="Accepts document metadata and content parts via multipart/form-data, "
