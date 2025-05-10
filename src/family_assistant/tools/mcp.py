@@ -29,7 +29,7 @@ class MCPToolsProvider:
             str, dict[str, Any]
         ],  # Expects dict {server_id: config}
         # mcp_client: Optional[Client] = None, # Removed unused parameter and type hint
-    ):
+    ) -> None:
         self._mcp_server_configs = mcp_server_configs
         # self._mcp_client = None # Client not directly used for stdio connections
         self._sessions: dict[str, ClientSession] = {}
@@ -41,7 +41,7 @@ class MCPToolsProvider:
             f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. Initialization pending."
         )
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """Connects to configured MCP servers, fetches and sanitizes tool definitions."""
         if self._initialized:
             return
@@ -379,7 +379,7 @@ class MCPToolsProvider:
             )
             return f"Error calling MCP tool '{name}': {e}"
 
-    async def close(self):
+    async def close(self) -> None:
         """Closes all managed MCP connections and cleans up resources."""
         logger.info(
             f"Closing MCPToolsProvider: Shutting down {len(self._sessions)} sessions..."

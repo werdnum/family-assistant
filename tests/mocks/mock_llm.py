@@ -21,7 +21,7 @@ except ImportError:
             self,
             content: str | None = None,
             tool_calls: list[dict[str, Any]] | None = None,
-        ):
+        ) -> None:
             self.content = content
             self.tool_calls = tool_calls or []
 
@@ -55,7 +55,9 @@ class RuleBasedMockLLMClient(LLMInterface):
     Rules are evaluated in the order they are provided.
     """
 
-    def __init__(self, rules: list[Rule], default_response: LLMOutput | None = None):
+    def __init__(
+        self, rules: list[Rule], default_response: LLMOutput | None = None
+    ) -> None:
         """
         Initializes the mock client with rules.
 

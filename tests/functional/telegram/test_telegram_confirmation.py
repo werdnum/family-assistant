@@ -34,7 +34,7 @@ TOOL_NAME_SENSITIVE = "add_or_update_note"
 @pytest.mark.asyncio
 async def test_confirmation_accepted(
     telegram_handler_fixture: TelegramHandlerTestFixture,
-):
+) -> None:
     """
     Tests the flow where confirmation is requested and accepted by the user.
     The sensitive tool should be executed, and a success message returned.
@@ -202,7 +202,7 @@ async def test_confirmation_accepted(
 @pytest.mark.asyncio
 async def test_confirmation_rejected(
     telegram_handler_fixture: TelegramHandlerTestFixture,
-):
+) -> None:
     """
     Tests the flow where confirmation is requested and rejected by the user.
     The sensitive tool should NOT be executed, and a cancellation message returned.
@@ -335,7 +335,7 @@ async def test_confirmation_rejected(
 @pytest.mark.asyncio
 async def test_confirmation_timed_out(
     telegram_handler_fixture: TelegramHandlerTestFixture,
-):
+) -> None:
     """
     Tests the flow where confirmation is requested but times out.
     The sensitive tool should NOT be executed, and a cancellation/timeout message returned.

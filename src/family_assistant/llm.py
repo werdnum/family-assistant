@@ -150,7 +150,7 @@ class LiteLLMClient:
         model: str,
         model_parameters: dict[str, Any] | None = None,
         **kwargs: Any,
-    ):
+    ) -> None:
         """
         Initializes the LiteLLM client.
 
@@ -324,7 +324,7 @@ class RecordingLLMClient:
     to a file while proxying calls to another LLM client.
     """
 
-    def __init__(self, wrapped_client: LLMInterface, recording_path: str):
+    def __init__(self, wrapped_client: LLMInterface, recording_path: str) -> None:
         """
         Initializes the recording client.
 
@@ -401,7 +401,7 @@ class PlaybackLLMClient:
     Plays back recorded interactions by matching the input arguments.
     """
 
-    def __init__(self, recording_path: str):
+    def __init__(self, recording_path: str) -> None:
         """
         Initializes the playback client by loading all recorded interactions.
 

@@ -20,7 +20,7 @@ class EmbeddingDispatchProcessor(ContentProcessor):
     for embedding via the 'embed_and_store_batch' task.
     """
 
-    def __init__(self, embedding_types_to_dispatch: list[str]):
+    def __init__(self, embedding_types_to_dispatch: list[str]) -> None:
         """
         Args:
             embedding_types_to_dispatch: A list of embedding_type strings

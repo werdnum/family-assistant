@@ -392,7 +392,7 @@ async def shutdown_handler(
     signal_name: str,
     telegram_service: TelegramService | None,
     tools_provider: ToolsProvider | None,  # Use generic ToolsProvider and correct name
-):
+) -> None:
     """Initiates graceful shutdown."""
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
     # Ensure the event is set to signal other parts of the application
@@ -436,7 +436,7 @@ async def shutdown_handler(
     # Telegram application shutdown is now handled within telegram_service.stop_polling()
 
 
-def reload_config_handler(signum, frame):
+def reload_config_handler(signum, frame) -> None:
     """Handles SIGHUP for config reloading (placeholder)."""
     logger.info("Received SIGHUP signal. Reloading configuration...")
     load_config()

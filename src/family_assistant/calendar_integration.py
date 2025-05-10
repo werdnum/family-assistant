@@ -657,7 +657,7 @@ async def add_calendar_event_tool(
         logger.debug(f"Generated VEVENT data:\n{event_data}")
 
         # Connect to CalDAV server and save event (synchronous, run in executor)
-        def save_event_sync():
+        def save_event_sync() -> str:
             logger.debug(f"Connecting to CalDAV: {target_calendar_url}")
             # Need to create client and get calendar object within the sync function
             with caldav.DAVClient(
@@ -936,7 +936,7 @@ async def modify_calendar_event_tool(
         return "Error: No changes specified. Please provide at least one field to modify (e.g., new_summary, new_start_time)."
 
     # --- Synchronous CalDAV Modify Logic ---
-    def modify_sync():
+    def modify_sync() -> str | None:
         try:
             with caldav.DAVClient(
                 url=calendar_url, username=username, password=password
@@ -1092,7 +1092,7 @@ async def delete_calendar_event_tool(
         return "Error: CalDAV user/pass missing. Cannot delete event."
 
     # --- Synchronous CalDAV Delete Logic ---
-    def delete_sync():
+    def delete_sync() -> str | None:
         try:
             with caldav.DAVClient(
                 url=calendar_url, username=username, password=password

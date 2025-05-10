@@ -95,7 +95,7 @@ async def store_incoming_email(
     db_context: DatabaseContext,
     form_data: dict[str, Any],
     notify_event: asyncio.Event | None = None,  # Add notify_event parameter
-):
+) -> None:
     """
     Parses incoming email data (from Mailgun webhook form) and prepares it for storage.
     Stores the parsed data in the `received_emails` table using the provided context,

@@ -20,7 +20,7 @@ class MockToolsProvider:
     async def get_tool_definitions(self, *args, **kwargs):
         return []  # Not used
 
-    async def execute_tool(self, *args, **kwargs):
+    async def execute_tool(self, *args, **kwargs) -> None:
         pass  # Not used
 
 
@@ -46,7 +46,7 @@ def processing_service() -> ProcessingService:
 # --- Test Cases ---
 
 
-def test_format_simple_history(processing_service: ProcessingService):
+def test_format_simple_history(processing_service: ProcessingService) -> None:
     """Test formatting a simple user-assistant conversation."""
     history_messages = [
         {"role": "user", "content": "Hello", "tool_calls_info_raw": None},
@@ -60,7 +60,7 @@ def test_format_simple_history(processing_service: ProcessingService):
     assert actual_output == expected_output  # Marked line 120
 
 
-def test_format_history_with_tool_call(processing_service: ProcessingService):
+def test_format_history_with_tool_call(processing_service: ProcessingService) -> None:
     """Test formatting history including an assistant message with a tool call."""
     tool_call_id = "call_123"
     tool_name = "get_weather"
@@ -126,7 +126,7 @@ def test_format_history_with_tool_call(processing_service: ProcessingService):
     assert actual_output == expected_output
 
 
-def test_format_history_filters_errors(processing_service: ProcessingService):
+def test_format_history_filters_errors(processing_service: ProcessingService) -> None:
     """Test that messages with role 'error' are filtered out."""
     history_messages = [
         {"role": "user", "content": "Try something", "tool_calls_info_raw": None},
@@ -146,7 +146,9 @@ def test_format_history_filters_errors(processing_service: ProcessingService):
     assert actual_output == expected_output
 
 
-def test_format_history_handles_empty_tool_calls(processing_service: ProcessingService):
+def test_format_history_handles_empty_tool_calls(
+    processing_service: ProcessingService,
+) -> None:
     """Test formatting an assistant message where tool_calls_info is explicitly empty."""
     history_messages = [
         {"role": "user", "content": "User message", "tool_calls_info_raw": None},

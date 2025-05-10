@@ -82,7 +82,7 @@ TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/
 
 
 # --- Debugging Helper ---
-async def dump_tables_on_failure(engine):
+async def dump_tables_on_failure(engine) -> None:
     """Logs the content of relevant tables for debugging."""
     logger.info("--- Dumping table contents on failure ---")
     async with DatabaseContext(engine=engine) as db:
@@ -199,7 +199,7 @@ async def _ingest_and_index_email(
 
 
 @pytest.mark.asyncio
-async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
+async def test_email_indexing_and_query_e2e(pg_vector_db_engine) -> None:
     """
     End-to-end test for email ingestion, indexing via task worker, and vector query retrieval.
     1. Setup Mock Embedder.
@@ -402,7 +402,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine):
 
 
 @pytest.mark.asyncio
-async def test_vector_ranking(pg_vector_db_engine):
+async def test_vector_ranking(pg_vector_db_engine) -> None:
     """
     Tests if vector search returns results ranked correctly by distance.
     1. Ingest three emails with distinct content.
@@ -578,7 +578,7 @@ async def test_vector_ranking(pg_vector_db_engine):
 
 
 @pytest.mark.asyncio
-async def test_metadata_filtering(pg_vector_db_engine):
+async def test_metadata_filtering(pg_vector_db_engine) -> None:
     """
     Tests if metadata filters correctly exclude documents, even if they are
     vector-wise closer.
@@ -745,7 +745,7 @@ async def test_metadata_filtering(pg_vector_db_engine):
 
 
 @pytest.mark.asyncio
-async def test_keyword_filtering(pg_vector_db_engine):
+async def test_keyword_filtering(pg_vector_db_engine) -> None:
     """
     Tests if keyword search correctly filters results in a hybrid query.
     1. Ingest two emails with similar vector embeddings but different keywords.

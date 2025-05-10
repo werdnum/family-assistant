@@ -51,7 +51,7 @@ class ToolConfirmationRequired(Exception):
 
     def __init__(
         self, confirmation_prompt: str, tool_name: str, tool_args: dict[str, Any]
-    ):
+    ) -> None:
         self.confirmation_prompt = confirmation_prompt
         self.tool_name = tool_name
         self.tool_args = tool_args
@@ -95,7 +95,7 @@ class ToolsProvider(Protocol):
         ...
 
     # Add the optional close method to the protocol
-    async def close(self):
+    async def close(self) -> None:
         """Optional method to clean up resources used by the provider."""
         ...
 
@@ -114,7 +114,7 @@ async def schedule_recurring_task_tool(
     payload: dict[str, Any],
     max_retries: int | None = 3,
     description: str | None = None,  # Optional description for the task ID
-):
+) -> str | None:
     """
     Schedules a new recurring task.
 
@@ -197,7 +197,7 @@ async def schedule_future_callback_tool(
     exec_context: ToolExecutionContext,  # Use execution context
     callback_time: str,
     context: str,  # This is the LLM context string
-):
+) -> str | None:
     """
     Schedules a task to trigger an LLM callback in a specific chat at a future time.
 
@@ -1152,7 +1152,7 @@ class LocalToolsProvider:
         implementations: dict[str, Callable],
         embedding_generator: EmbeddingGenerator | None = None,  # Accept generator
         calendar_config: dict[str, Any] | None = None,  # Accept calendar config
-    ):
+    ) -> None:
         self._definitions = definitions
         self._implementations = implementations
         self._embedding_generator = embedding_generator  # Store generator
@@ -1247,7 +1247,7 @@ class LocalToolsProvider:
             # Re-raise or return formatted error string? Returning error string for now.
             return f"Error executing tool '{name}': {e}"
 
-    async def close(self):
+    async def close(self) -> None:
         """Local provider has no resources to clean up."""
         logger.debug("Closing LocalToolsProvider (no-op).")
         pass  # Explicitly pass for clarity
@@ -1256,7 +1256,7 @@ class LocalToolsProvider:
 class CompositeToolsProvider:
     """Combines multiple tool providers into a single interface."""
 
-    def __init__(self, providers: list[ToolsProvider]):
+    def __init__(self, providers: list[ToolsProvider]) -> None:
         self._providers = providers
         self._providers = providers
         self._tool_definitions: list[dict[str, Any]] | None = None
@@ -1374,7 +1374,7 @@ class CompositeToolsProvider:
         # logger.error(f"Tool '{name}' not found in any registered provider.")
         # raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
 
-    async def close(self):
+    async def close(self) -> None:
         """Closes all contained providers concurrently."""
         logger.info(
             f"Closing CompositeToolsProvider and its {len(self._providers)} providers..."
@@ -1410,7 +1410,7 @@ class ConfirmingToolsProvider(ToolsProvider):
         tools_requiring_confirmation: set[str],  # Explicitly pass the set of names
         confirmation_timeout: float = DEFAULT_CONFIRMATION_TIMEOUT,
         calendar_config: dict[str, Any] | None = None,  # Needed for fetching details
-    ):
+    ) -> None:
         self.wrapped_provider = wrapped_provider
         self._tools_requiring_confirmation = (
             tools_requiring_confirmation  # Store the provided set
@@ -1570,7 +1570,7 @@ class ConfirmingToolsProvider(ToolsProvider):
             )
             return await self.wrapped_provider.execute_tool(name, arguments, context)
 
-    async def close(self):
+    async def close(self) -> None:
         """Closes the wrapped provider."""
         logger.info(
             f"Closing ConfirmingToolsProvider by closing wrapped provider {type(self.wrapped_provider).__name__}..."

@@ -145,7 +145,7 @@ indexing_pipeline_instance: IndexingPipeline | None = None
 # --- Task Handler Implementation ---
 async def handle_index_email(
     exec_context: ToolExecutionContext, payload: dict[str, Any]
-):
+) -> None:
     """
     Task handler to index a specific email from the received_emails table.
     Receives ToolExecutionContext from the TaskWorker.
@@ -259,7 +259,7 @@ async def handle_index_email(
 # --- Dependency Injection ---
 def set_indexing_dependencies(
     pipeline: IndexingPipeline,
-):
+) -> None:
     """Sets the necessary dependencies for the email indexer."""
     global indexing_pipeline_instance
     indexing_pipeline_instance = pipeline

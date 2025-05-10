@@ -48,7 +48,7 @@ CALLBACK_CONTEXT = "Remind me to check the test results"
 
 
 @pytest.mark.asyncio
-async def test_schedule_and_execute_callback(test_db_engine):
+async def test_schedule_and_execute_callback(test_db_engine) -> None:
     """
     Tests the full flow:
     1. User asks to schedule a callback.

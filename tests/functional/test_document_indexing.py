@@ -161,7 +161,7 @@ async def http_client(
 # --- Helper Task Handler for the test ---
 async def _helper_handle_embed_and_store_batch(
     exec_context: ToolExecutionContext, payload: dict[str, Any]
-):
+) -> None:
     logger.info(
         f"Test task handler 'test_handle_embed_and_store_batch' received payload: {payload}"
     )
@@ -205,7 +205,7 @@ async def test_document_indexing_and_query_e2e(
     pg_vector_db_engine,  # Still needed for direct DB checks/queries
     http_client: httpx.AsyncClient,  # Use the test client
     mock_embedding_generator: MockEmbeddingGenerator,  # Get the generator instance
-):
+) -> None:
     """
     End-to-end test for document ingestion via simulated API call, indexing
     via task worker, and vector/keyword query retrieval.

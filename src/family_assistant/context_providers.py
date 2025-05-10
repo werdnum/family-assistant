@@ -48,7 +48,7 @@ class NotesContextProvider(ContextProvider):
         self,
         get_db_context_func: Callable[[], Awaitable[DatabaseContext]],
         prompts: PromptsType,
-    ):
+    ) -> None:
         """
         Initializes the NotesContextProvider.
 
@@ -119,7 +119,7 @@ class CalendarContextProvider(ContextProvider):
         calendar_config: dict[str, Any],
         timezone_str: str,
         prompts: PromptsType,
-    ):
+    ) -> None:
         """
         Initializes the CalendarContextProvider.
 

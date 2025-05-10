@@ -56,7 +56,7 @@ async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext, 
 
 
 @pytest.mark.asyncio
-async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
+async def test_add_message_stores_optional_fields(db_context: DatabaseContext) -> None:
     """Verify storing messages with optional fields populated."""
     # Arrange
     interface_type = "test_optional"  # Define interface_type
@@ -167,7 +167,7 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext):
 @pytest.mark.asyncio
 async def test_get_recent_history_retrieves_correct_messages(
     db_context: DatabaseContext,
-):
+) -> None:
     """Verify get_recent_history filters, limits, orders, and handles age correctly."""
     # Arrange
     interface = "history_test"
@@ -250,7 +250,9 @@ async def test_get_recent_history_retrieves_correct_messages(
 
 
 @pytest.mark.asyncio
-async def test_get_message_by_interface_id_retrieval(db_context: DatabaseContext):
+async def test_get_message_by_interface_id_retrieval(
+    db_context: DatabaseContext,
+) -> None:
     """Verify retrieving a specific message by its interface identifiers."""
     # Arrange
     interface = "get_by_id"
@@ -300,7 +302,7 @@ async def test_get_message_by_interface_id_retrieval(db_context: DatabaseContext
 @pytest.mark.asyncio
 async def test_get_messages_by_turn_id_retrieves_correct_sequence(
     db_context: DatabaseContext,
-):
+) -> None:
     """Verify retrieving all messages for a specific turn_id in order."""
     # Arrange
     interface = "turn_test"
@@ -394,7 +396,7 @@ async def test_get_messages_by_turn_id_retrieves_correct_sequence(
 
 
 @pytest.mark.asyncio
-async def test_update_message_interface_id_sets_id(db_context: DatabaseContext):
+async def test_update_message_interface_id_sets_id(db_context: DatabaseContext) -> None:
     """Verify that the interface message ID can be updated after insertion."""
     # Arrange
     interface = "update_test"
@@ -443,7 +445,7 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext):
 @pytest.mark.asyncio
 async def test_get_messages_by_thread_id_retrieves_correct_sequence(
     db_context: DatabaseContext,
-):
+) -> None:
     """Verify retrieving all messages for a specific thread_root_id in order."""
     # Arrange
     interface = "thread_test"

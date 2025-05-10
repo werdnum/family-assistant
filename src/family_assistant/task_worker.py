@@ -51,7 +51,7 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 
 # Example Task Handler (no external dependencies)
-async def handle_log_message(db_context: DatabaseContext, payload: Any):
+async def handle_log_message(db_context: DatabaseContext, payload: Any) -> None:
     """Simple task handler that logs the received payload."""
     logger.info(
         f"[Task Worker] Handling log_message task. Payload: {payload}"
@@ -93,7 +93,7 @@ def format_llm_response_for_telegram(response_text: str) -> str:
 async def handle_llm_callback(
     exec_context: ToolExecutionContext,  # Accept execution context
     payload: Any,  # Payload from the task queue
-):
+) -> None:
     """
     Task handler for LLM scheduled callbacks.
     Dependencies are accessed via the ToolExecutionContext.
@@ -315,7 +315,7 @@ class TaskWorker:
         application: Application,  # Add application dependency
         calendar_config: dict[str, Any],  # Add calendar config
         timezone_str: str,  # Add timezone string
-    ):
+    ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
         self.application = application  # Store application instance
@@ -334,7 +334,7 @@ class TaskWorker:
         task_type: str,
         # Update handler signature type hint
         handler: Callable[[ToolExecutionContext, Any], Awaitable[None]],
-    ):
+    ) -> None:
         """Register a task handler function for a specific task type."""
         self.task_handlers[task_type] = handler
         logger.info(
@@ -353,7 +353,7 @@ class TaskWorker:
         db_context: DatabaseContext,
         task: dict[str, Any],
         wake_up_event: asyncio.Event,
-    ):
+    ) -> None:
         """Handles the execution, completion marking, and recurrence logic for a dequeued task."""
         logger.info(
             f"Worker {self.worker_id} processing task {task['task_id']} (type: {task['task_type']})"
@@ -516,7 +516,7 @@ class TaskWorker:
 
     async def _handle_task_failure(
         self, db_context: DatabaseContext, task: dict[str, Any], handler_exc: Exception
-    ):
+    ) -> None:
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
         max_retries = task.get("max_retries", 3)  # Use DB default if missing somehow
@@ -577,7 +577,7 @@ class TaskWorker:
                 error=error_str,
             )
 
-    async def _wait_for_next_poll(self, wake_up_event: asyncio.Event):
+    async def _wait_for_next_poll(self, wake_up_event: asyncio.Event) -> None:
         """Waits for the polling interval or a wake-up event."""
         try:
             logger.debug(
@@ -598,7 +598,7 @@ class TaskWorker:
             )
             pass  # Continue the loop normally after timeout
 
-    async def run(self, wake_up_event: asyncio.Event):
+    async def run(self, wake_up_event: asyncio.Event) -> None:
         """Continuously polls for and processes tasks. Replaces task_worker_loop."""
         logger.info(f"Task worker {self.worker_id} run loop started.")
         # Get task types handled by *this specific instance*
