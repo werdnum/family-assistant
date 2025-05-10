@@ -192,15 +192,19 @@ async def task_worker_manager() -> (
     """
     mock_application = MagicMock()  # Generic mock, tests can replace if needed
     # Add a default mock embedding generator for the TaskWorker in the fixture
-    mock_embedding_gen = MagicMock() # Simple MagicMock, tests can customize if needed by replacing app state
-    mock_application.state.embedding_generator = mock_embedding_gen # Make it accessible if needed
+    mock_embedding_gen = (
+        MagicMock()
+    )  # Simple MagicMock, tests can customize if needed by replacing app state
+    mock_application.state.embedding_generator = (
+        mock_embedding_gen  # Make it accessible if needed
+    )
 
     worker = TaskWorker(
         processing_service=None,  # Default, can be customized by tests
         application=mock_application,
         calendar_config={},  # Default
         timezone_str="UTC",  # Default
-        embedding_generator=mock_embedding_gen, # Pass the generator
+        embedding_generator=mock_embedding_gen,  # Pass the generator
     )
 
     worker_task_handle = None
