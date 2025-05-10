@@ -22,7 +22,6 @@ router = APIRouter()
 
 @router.post(
     "",  # Path will be relative to the router's prefix
-    response_model=ApiTokenCreateResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new API token for the authenticated user",
 )
