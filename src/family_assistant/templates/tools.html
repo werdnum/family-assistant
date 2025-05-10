@@ -1,11 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Available Tools</title>
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
-    <link rel="stylesheet" href="/static/css/custom.css">
+{% extends "base.html" %}
+
+{% block title_header %}Available Tools{% endblock %}
+
+{% block head_extra %}
     <style>
     	main {
     		background-color: var(--bg);
@@ -17,30 +14,14 @@
         .schema-table th { background-color: var(--accent-bg); }
         .schema-table code { background-color: var(--bg); padding: 0.1em 0.3em; border-radius: 3px; }
 
-        .tool-card { margin-bottom: 1.5rem; padding: 1rem; border: 1px solid var(--border); border-radius: 5px; background-color: var(--accent-bg); /* Use --accent-bg for secondary background */ }
+        .tool-card { margin-bottom: 1.5rem; padding: 1rem; border: 1px solid var(--border); border-radius: 5px; background-color: var(--accent-bg); }
         .tool-card h3 { margin-top: 0; }
-        /* Style for the test form */
         .tool-result-container { margin-top: 0.5rem; border: 1px dashed var(--border); padding: 0.5rem; min-height: 50px; background-color: var(--bg); }
         .tool-result-container .error { color: var(--error); font-weight: bold;}
     </style>
-</head>
-<body>
-<header>
-    <h1>Available Tools</h1>
-    <nav>
-        <a href="/">View Notes</a>
-        <span>|</span>
-        <a href="/history">View Message History</a>
-        <span>|</span>
-        <a href="/tasks">View Tasks</a>
-        <span>|</span>
-        <a href="/vector-search">Vector Search</a>
-        <span>|</span>
-        <a href="/docs/">Docs</a>
-    </nav>
-</header>
+{% endblock %}
 
-<main>
+{% block main_content %}
     {% if tools %}
         <p>The LLM has access to the following {{ tools|length }} tools:</p>
         {% for tool in tools %}
@@ -50,24 +31,17 @@
                 <strong>Parameters:</strong>
                 <details>
                     <summary style="cursor: pointer; font-weight: bold;">Show/Hide Schema</summary>
-                    {# Render the generated HTML schema (passed from web_server) using the 'safe' filter #}
                     <div style="margin-top: 0.5rem;">{{ tool.parameters_html | safe }}</div>
                 </details>
                 <details style="margin-top: 1rem;">
                     <summary style="cursor: pointer; font-weight: bold;">Test Tool</summary>
                     <div style="margin-top: 0.5rem;">
-                        {# Pass tool name via data attribute #}
                         <form class="tool-test-form" data-tool-name="{{ tool.function.name }}">
                             <label for="args-editor-{{ loop.index }}">Arguments:</label>
-                            {# Container for the JSON editor #}
-                            {# Remove fixed height, let the editor manage it #}
                             <div id="args-editor-{{ loop.index }}" class="json-editor-arguments-container" style="margin-bottom: 0.5rem;"></div>
-                            {# Store schema in a script tag for JS to access #}
                             <script id="schema-{{ loop.index }}" type="application/json">{{ tool.function.parameters | tojson | safe }}</script>
-                            {# Add unique ID to the button #}
                             <button type="submit" id="submit-button-{{ loop.index }}">Test Tool</button>
                         </form>
-                        {# Container for the result JSON editor #}
                         <div class="tool-result-container" id="result-{{ loop.index }}"></div>
                     </div>
                 </details>
@@ -76,13 +50,10 @@
     {% else %}
         <p>No tool definitions are currently available.</p>
     {% endif %}
-</main>
+{% endblock %}
 
-</body>
-<!-- Link the tool tester JavaScript -->
-{# Load json-editor library #}
+{% block scripts_extra %}
 <script src="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/jsoneditor.min.js"></script>
-{# Load vanilla-jsoneditor for result display #}
 <script type="module" src="https://unpkg.com/vanilla-jsoneditor/standalone.js"></script>
-<script type="module" src="/static/js/json_editor_tool_tester.js"></script> {# <-- Link to the new JS file #}
-</html>
+<script type="module" src="{{ request.app.url_path_for('static', path='js/json_editor_tool_tester.js') }}"></script>
+{% endblock %}

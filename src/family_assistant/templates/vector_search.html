@@ -1,11 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vector Search</title>
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
-    <link rel="stylesheet" href="/static/css/custom.css">
+{% extends "base.html" %}
+
+{% block title_header %}Vector Search Debugger{% endblock %}
+
+{% block head_extra %}
     <style>
         .form-grid { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center; margin-bottom: 1.5rem;}
         .form-grid label { font-weight: bold; }
@@ -15,12 +12,10 @@
         .results-table th, .results-table td { text-align: left; padding: 0.5rem; vertical-align: top; }
         .results-table pre { white-space: pre-wrap; word-break: break-all; margin: 0; font-size: 0.9em; }
         .error-message { color: red; font-weight: bold; margin-bottom: 1rem; border: 1px solid red; padding: 0.5rem; }
-        .metadata-cell { max-width: 300px; } /* Limit width of metadata cell */
-        .filter-row { display: contents; } /* Allow grid layout for children */
-        .filter-row > * { margin-bottom: 0.5rem; } /* Spacing within a row */
+        .metadata-cell { max-width: 300px; }
+        .filter-row { display: contents; }
+        .filter-row > * { margin-bottom: 0.5rem; }
         .remove-filter-btn { background-color: #ffcccc; border: 1px solid red; color: red; padding: 0.2rem 0.5rem; cursor: pointer; }
-
-        /* New styles for result cards */
         .results-list { list-style: none; padding: 0; }
         .result-card { border: 1px solid #ccc; border-radius: 5px; margin-bottom: 1.5rem; padding: 1rem; background-color: var(--bg-secondary); }
         .result-card h4 { margin-top: 0; margin-bottom: 0.5rem; }
@@ -31,37 +26,22 @@
         .result-card .debug-details div { font-size: 0.85em; color: var(--text-muted); background-color: var(--bg); padding: 0.5rem; border-radius: 3px; margin-top: 0.5rem; }
         .result-card .debug-details span { display: inline-block; min-width: 100px; font-weight: bold; }
     </style>
-</head>
-<body>
-<header>
-    <h1>Vector Search Debugger</h1>
-    <nav>
-        <a href="/">View Notes</a>
-        <span>|</span>
-        <a href="/history">View Message History</a>
-        <span>|</span>
-        <a href="/tools">View Tools</a>
-        <span>|</span>
-        <a href="/tasks">View Tasks</a>
-    </nav>
-</header>
+{% endblock %}
 
-<main>
+{% block main_content %}
     {% if error %}
     <p class="error-message">Error: {{ error }}</p>
     {% endif %}
 
-    <form action="/vector-search" method="post">
+    <form action="{{ request.app.url_path_for('ui_vector_search') }}" method="post">
         <div class="form-grid">
-            <!-- Visible Fields -->
-            <label for="semantic_query">Search Query:</label> <!-- Simplified label -->
+            <label for="semantic_query">Search Query:</label>
             <textarea name="semantic_query" id="semantic_query" rows="3" placeholder="Describe what you're looking for...">{{ search_params.semantic_query or '' }}</textarea>
 
-            <label for="embedding_model">Embedding Model:</label> <!-- Simplified label -->
+            <label for="embedding_model">Embedding Model:</label>
             <select name="embedding_model" id="embedding_model" required>
                 <option value="">-- Select Model --</option>
                 {% for model in distinct_models %}
-                {# If only one model exists, select it by default. Otherwise, select based on search params. #}
                 <option value="{{ model }}" {% if distinct_models | length == 1 or search_params.embedding_model == model %}selected{% endif %}>{{ model }}</option>
                 {% else %}
                 <option value="" disabled>No models found in DB</option>
@@ -89,11 +69,8 @@
             <label for="created_before">Created Before:</label>
             <input type="date" name="created_before" id="created_before" value="{{ search_params.created_after or '' }}">
 
-
-            <!-- Metadata Filters Section -->
             <label class="full-width">Metadata Filters (AND):</label>
             <div id="metadata-filters-container" class="full-width">
-                <!-- Filter rows will be added here by JS -->
                 {% for i in range(search_params.metadata_keys | length) %}
                 <div class="filter-row">
                     <select name="metadata_keys" required>
@@ -108,17 +85,13 @@
                 {% endfor %}
             </div>
             <button type="button" id="add-filter-btn" class="full-width" style="grid-column: 1 / -1; margin-top: 0.5rem;">Add Metadata Filter</button>
-            <!-- End Metadata Filters Section -->
-
 
             <label for="limit">Result Limit:</label>
             <input type="number" name="limit" id="limit" value="{{ search_params.limit or 10 }}" min="1" max="100">
 
-            <!-- Advanced Options Section -->
             <details class="full-width" style="margin-top: 1rem; border: 1px solid #ccc; padding: 0.5rem;">
                 <summary style="cursor: pointer; font-weight: bold;">Advanced Options</summary>
-                <div class="form-grid" style="margin-top: 1rem;"> <!-- Nested grid for alignment -->
-
+                <div class="form-grid" style="margin-top: 1rem;">
                     <label for="search_type" class="full-width">Search Type:</label>
                     <div class="radio-group full-width">
                         <label><input type="radio" name="search_type" value="hybrid" {% if search_params.search_type == 'hybrid' or not search_params.search_type %}checked{% endif %}> Hybrid (RRF)</label>
@@ -143,12 +116,8 @@
 
                     <label for="rrf_k">RRF k (for Hybrid):</label>
                     <input type="number" name="rrf_k" id="rrf_k" value="{{ search_params.rrf_k or 60 }}" min="1">
-
-                </div> <!-- End nested grid -->
+                </div>
             </details>
-            <!-- End Advanced Options Section -->
-
-
             <button type="submit" class="full-width" style="margin-top: 1rem;">Search</button>
         </div>
     </form>
@@ -174,14 +143,14 @@
                 </div>
 
                 {% if item.embedding_source_content %}
-                <details open> {# Keep content snippet open by default #}
+                <details open>
                     <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Content Snippet</summary>
                     <pre class="content-snippet">{{ item.embedding_source_content }}</pre>
                 </details>
                 {% endif %}
 
                 {% if item.doc_metadata %}
-                 <details> {# Keep metadata closed by default #}
+                 <details>
                     <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Metadata</summary>
                     <div id="metadata-{{ item.embedding_id }}" class="json-editor-container metadata-display"></div>
                  </details>
@@ -209,14 +178,12 @@
     {% else %}
         <p>Perform a search to see results.</p>
     {% endif %}
+{% endblock %}
 
-</main>
-
+{% block scripts_extra %}
 <script>
-    // --- Existing script for metadata filters ---
     const filtersContainer = document.getElementById('metadata-filters-container');
     const addFilterBtn = document.getElementById('add-filter-btn');
-    // Get distinct keys from template (passed by server) - ensure proper escaping if keys contain special chars
     const distinctKeys = {{ distinct_metadata_keys | tojson | safe }};
 
     function createFilterRow() {
@@ -226,12 +193,10 @@
         const keySelect = document.createElement('select');
         keySelect.name = 'metadata_keys';
         keySelect.required = true;
-        // Add default option
         const defaultOption = document.createElement('option');
         defaultOption.value = '';
         defaultOption.textContent = '-- Select Key --';
         keySelect.appendChild(defaultOption);
-        // Add distinct keys
         distinctKeys.forEach(key => {
             const option = document.createElement('option');
             option.value = key;
@@ -265,17 +230,6 @@
     addFilterBtn.addEventListener('click', () => {
         filtersContainer.appendChild(createFilterRow());
     });
-
-    // Optional: Add initial empty row if no filters are present from backend
-    // if (filtersContainer.children.length === 0) {
-    //     filtersContainer.appendChild(createFilterRow());
-    // }
-
-    // --- Script for JSON Editor Initialization ---
-    // Note: This needs to run after the results are rendered.
-    // Placing it here ensures the main script tag runs last.
-    // We need to import the editor again within this script block scope if not already global.
-    // Or better, wrap the editor init logic in a function and call it after the results loop.
 </script>
 
 <script type="module">
@@ -288,7 +242,7 @@
             return;
         }
 
-        let content = { json: jsonData }; // Metadata should be a JSON object
+        let content = { json: jsonData };
 
         try {
             new createJSONEditor({
@@ -299,16 +253,15 @@
                     mainMenuBar: false,
                     navigationBar: false,
                     statusBar: false,
-                    mode: 'tree' // Tree mode is good for metadata
+                    mode: 'tree'
                 }
             });
         } catch (error) {
              console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
-             target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`; // Fallback
+             target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`;
         }
     }
 
-    // Initialize editors for each result item's metadata
     {% if results %}
     {% for item in results %}
         {% if item.doc_metadata %}
@@ -317,6 +270,4 @@
     {% endfor %}
     {% endif %}
 </script>
-
-</body>
-</html>
+{% endblock %}
