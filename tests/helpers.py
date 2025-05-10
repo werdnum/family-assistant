@@ -165,7 +165,6 @@ async def wait_for_tasks_to_complete(
                 sa.column("status"),
                 sa.column("scheduled_at"),
                 sa.column("retry_count"),
-                # sa.column("last_error"),
             ]
             pending_query = (
                 select(*cols_to_select)
