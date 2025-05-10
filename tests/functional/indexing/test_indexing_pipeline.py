@@ -461,14 +461,10 @@ async def test_indexing_pipeline_pdf_processing(
             text_chunker = TextChunker(
                 chunk_size=500,  # Adjust as needed for test_doc.pdf content
                 chunk_overlap=50,
-                # Map the output of PDFTextExtractor to the desired chunk type
-                embedding_type_prefix_map={
-                    "extracted_markdown_content": "content_chunk"
-                },
             )
             embedding_dispatcher = EmbeddingDispatchProcessor(
                 embedding_types_to_dispatch=[
-                    "content_chunk"
+                    "extracted_markdown_content_chunk"
                 ]  # Expecting chunks from markdown
             )
             pipeline = IndexingPipeline(
@@ -524,7 +520,8 @@ async def test_indexing_pipeline_pdf_processing(
                     f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{str(row_dict_log.get('content'))[:100]}...'"
                 )
                 if (
-                    row_dict_log.get("embedding_type") == "content_chunk"
+                    row_dict_log.get("embedding_type")
+                    == "extracted_markdown_content_chunk"
                     and row_dict_log.get("content")
                     and known_phrase_in_pdf in str(row_dict_log.get("content"))
                 ):
