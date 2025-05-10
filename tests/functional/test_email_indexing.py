@@ -81,6 +81,7 @@ TEST_EMAIL_FORM_DATA = {
 
 TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/body
 
+
 # --- Debugging Helper ---
 async def dump_tables_on_failure(engine: AsyncEngine) -> None:
     """Logs the content of relevant tables for debugging."""
@@ -135,6 +136,7 @@ async def dump_tables_on_failure(engine: AsyncEngine) -> None:
 
 
 # --- Helper Function for Test Setup ---
+
 
 async def _ingest_and_index_email(
     engine: AsyncEngine,
@@ -195,6 +197,7 @@ async def _ingest_and_index_email(
 
 
 # --- Test Functions ---
+
 
 @pytest.mark.asyncio
 async def test_email_indexing_and_query_e2e(pg_vector_db_engine: AsyncEngine) -> None:
@@ -398,6 +401,7 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine: AsyncEngine) ->
         except Exception as e:
             logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
 
+
 @pytest.mark.asyncio
 async def test_vector_ranking(pg_vector_db_engine: AsyncEngine) -> None:
     """
@@ -573,6 +577,7 @@ async def test_vector_ranking(pg_vector_db_engine: AsyncEngine) -> None:
         except asyncio.TimeoutError:
             worker_task.cancel()
 
+
 @pytest.mark.asyncio
 async def test_metadata_filtering(pg_vector_db_engine: AsyncEngine) -> None:
     """
@@ -738,6 +743,7 @@ async def test_metadata_filtering(pg_vector_db_engine: AsyncEngine) -> None:
                 await dump_tables_on_failure(pg_vector_db_engine)
         except asyncio.TimeoutError:
             worker_task.cancel()
+
 
 @pytest.mark.asyncio
 async def test_keyword_filtering(pg_vector_db_engine: AsyncEngine) -> None:
