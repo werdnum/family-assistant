@@ -985,6 +985,11 @@ async def vector_search_form(
 @app.post("/vector-search", response_class=HTMLResponse)
 async def handle_vector_search(
     request: Request,
+    # --- Dependencies ---
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    embedding_generator: Annotated[EmbeddingGenerator, Depends(
+        get_embedding_generator_dependency
+    )],
     # --- Form Inputs ---
     semantic_query: Annotated[str | None, Form()] = None,
     keywords: Annotated[str | None, Form()] = None,
@@ -1001,11 +1006,6 @@ async def handle_vector_search(
     # --- Control Params ---
     limit: Annotated[int, Form()] = 10,
     rrf_k: Annotated[int, Form()] = 60,
-    # --- Dependencies ---
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
-    embedding_generator: Annotated[EmbeddingGenerator, Depends(
-        get_embedding_generator_dependency
-    )],
 ):
     """Handles the vector search form submission."""
     results = None
