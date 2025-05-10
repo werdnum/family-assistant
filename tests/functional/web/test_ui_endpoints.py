@@ -26,6 +26,7 @@ BASE_UI_ENDPOINTS = [
     ("/tools", "Available Tools Page"),
     ("/tasks", "Tasks List Page"),
     ("/vector-search", "Vector Search Page"),
+    ("/documents/upload", "Document Upload Page"),  # New endpoint
     ("/settings/tokens", "Manage API Tokens UI Page"),
 ]
 
