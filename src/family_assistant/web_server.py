@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import pathlib
-import re
+import re # type: ignore
 import uuid
 import zoneinfo
 from datetime import date, datetime, timezone
@@ -37,7 +37,8 @@ from starlette.config import Config  # For reading env vars
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send  # For middleware class
-
+from starlette.types import ASGIApp, Receive, Scope, Send # For middleware class
+from typing import Annotated
 # Import storage functions using absolute package path
 from family_assistant import storage
 
@@ -434,8 +435,8 @@ if AUTH_ENABLED and oauth:
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(
-    request: Request, db_context: DatabaseContext = Depends(get_db)
-):  # noqa: B008
+    request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
+):
     """Serves the main page listing all notes."""
     notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
@@ -826,8 +827,8 @@ async def view_tools(request: Request):
 
 @app.get("/tasks", response_class=HTMLResponse)
 async def view_tasks(
-    request: Request, db_context: DatabaseContext = Depends(get_db)
-):  # noqa: B008
+    request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
+):
     """Serves the page displaying scheduled tasks."""
     try:
         tasks = await get_all_tasks(db_context, limit=200)  # Pass context, fetch tasks
@@ -995,24 +996,24 @@ async def handle_vector_search(
     keywords: str | None = Form(None),  # noqa: B008
     search_type: str = Form("hybrid"),  # 'semantic', 'keyword', 'hybrid' # noqa: B008
     embedding_model: str | None = Form(None),  # CRUCIAL for vector search # noqa: B008
-    embedding_types: list[str] = Form(
+    embedding_types: Annotated[list[str], Form(
         default_factory=list
-    ),  # Allow multiple types # noqa: B008
-    source_types: list[str] = Form(
+    )],  # Allow multiple types
+    source_types: Annotated[list[str], Form(
         default_factory=list
-    ),  # Allow multiple source types # noqa: B008
+    )],  # Allow multiple source types
     created_after: str | None = Form(None),  # Expect YYYY-MM-DD # noqa: B008
     created_before: str | None = Form(None),  # Expect YYYY-MM-DD # noqa: B008
     title_like: str | None = Form(None),  # noqa: B008
     # --- Metadata Filters (expect lists) ---
-    metadata_keys: list[str] = Form(default_factory=list),  # noqa: B008
-    metadata_values: list[str] = Form(default_factory=list),  # noqa: B008
+    metadata_keys: list[str] = Form(default_factory=list), # noqa: B008
+    metadata_values: list[str] = Form(default_factory=list), # noqa: B008
     # --- Control Params ---
     limit: int = Form(10),  # noqa: B008
     rrf_k: int = Form(60),  # noqa: B008
     # --- Dependencies ---
     db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-    embedding_generator: EmbeddingGenerator = Depends(  # noqa: B008
+    embedding_generator: EmbeddingGenerator = Depends( # noqa: B008
         get_embedding_generator_dependency
     ),
 ):
@@ -1220,12 +1221,12 @@ async def execute_tool_api(
     tool_name: str,
     request: Request,  # Keep request for potential context later
     payload: ToolExecutionRequest,
-    tools_provider: ToolsProvider = Depends(
+    tools_provider: Annotated[ToolsProvider, Depends(
         get_tools_provider_dependency
-    ),  # noqa: B008
-    db_context: DatabaseContext = Depends(
+    )],
+    db_context: Annotated[DatabaseContext, Depends(
         get_db
-    ),  # Inject DB context if tools need it # noqa: B008
+    )],  # Inject DB context if tools need it
     # embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator_dependency), # Inject if tools need it
 ):
     """Executes a specified tool with the given arguments."""
