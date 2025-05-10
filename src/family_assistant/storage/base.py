@@ -9,7 +9,7 @@ import logging
 import os
 
 from sqlalchemy import MetaData
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,6 @@ logger.info(
 )  # Log URL safely
 
 
-def get_engine():
+def get_engine() -> AsyncEngine:
     """Returns the initialized SQLAlchemy async engine."""
     return engine
