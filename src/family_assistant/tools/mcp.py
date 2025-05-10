@@ -28,10 +28,8 @@ class MCPToolsProvider:
         mcp_server_configs: dict[
             str, dict[str, Any]
         ],  # Expects dict {server_id: config}
-        # mcp_client: Optional[Client] = None, # Removed unused parameter and type hint
     ) -> None:
         self._mcp_server_configs = mcp_server_configs
-        # self._mcp_client = None # Client not directly used for stdio connections
         self._sessions: dict[str, ClientSession] = {}
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
         self._definitions: list[dict[str, Any]] = []
@@ -61,7 +59,6 @@ class MCPToolsProvider:
             discovered_tools = []
             tool_map = {}
             session = None
-            # transport = None # Removed unused transport variable
 
             transport_type = server_conf.get("transport", "stdio").lower()
             url = server_conf.get("url")  # Needed for SSE
@@ -310,8 +307,6 @@ class MCPToolsProvider:
                     f"Error formatting MCP tool definition to dict: {getattr(tool, 'name', 'UnknownName')}. Error: {e}",
                     exc_info=True,
                 )
-                # Optionally skip the tool or add a placeholder
-                # sanitized_defs.append({...}) # Add placeholder if needed
 
         return formatted_defs
 
