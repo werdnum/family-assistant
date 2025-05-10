@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import pathlib
-import re  # type: ignore
+import re  # type: ignore # noqa: F401 - Used in MAILSENDER_RAW_DIR logic, keep for now
 import uuid
 import zoneinfo
 from datetime import date, datetime, timezone
@@ -17,30 +17,29 @@ from fastapi import (
     FastAPI,
     Form,
     HTTPException,
-    Query,  # Added Query for pagination parameters
+    Query,
     Request,
-    Response,  # Added Query for pagination parameters
+    Response,
     status,
-)  # Added status
+)
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
-)  # Added JSONResponse
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt  # For rendering docs
-from pydantic import BaseModel, ValidationError  # Import BaseModel for request body
-from sqlalchemy import text  # Added text import
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import text
 from starlette.config import Config  # For reading env vars
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.types import ASGIApp, Receive, Scope, Send  # For middleware class
+from starlette.types import ASGIApp, Receive, Scope, Send
 import telegram.error  # Import telegram errors for specific checking in health check
 
 # Import storage functions using absolute package path
 from family_assistant import storage
-
 # Import embedding generator (adjust path based on actual location)
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import EmbeddingGenerator  # Example
@@ -54,7 +53,6 @@ from family_assistant.storage import (
     store_incoming_email,
 )
 from family_assistant.storage.context import DatabaseContext, get_db_context
-
 # Import protocol for type hinting when creating the dict for add_document
 # Import vector search components
 from family_assistant.storage.vector_search import (
@@ -62,14 +60,13 @@ from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
 )
-
 # Import tool-related components
 # Import tool functions directly from the tools package
 from family_assistant.tools import (
     ToolExecutionContext,
     ToolNotFoundError,
     ToolsProvider,
-    _scan_user_docs,  # Import the scanner function # Removed incorrect import of render_schema_as_html
+    _scan_user_docs,  # Removed incorrect import of render_schema_as_html
 )
 from family_assistant.tools.schema import render_schema_as_html  # Correct import path
 
