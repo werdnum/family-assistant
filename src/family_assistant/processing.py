@@ -413,8 +413,6 @@ class ProcessingService:
                 and not turn_messages[-1].get("content")
             ):
                 logger.warning("Final LLM response content was empty.")
-                # Optionally set a fallback message, or leave as None
-                # turn_messages[-1]["content"] = "Processing complete."
 
             # Return the complete list of messages generated in this turn, and the reasoning from the final LLM call
             return turn_messages, final_reasoning_info
@@ -450,8 +448,6 @@ class ProcessingService:
             tool_call_id = msg.get(
                 "tool_call_id"
             )  # tool_call_id for role 'tool' messages
-            # reasoning_info = msg.get("reasoning_info") # Reasoning info not needed for LLM history format
-            # error_traceback = msg.get("error_traceback") # Error info not needed for LLM history format
 
             if role == "assistant":
                 # Format assistant message, including content and tool_calls if they exist
