@@ -43,7 +43,6 @@ from telegram.ext import (
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 
-# from .storage.context import get_db_context # get_db_context is passed as a function
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +258,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self.telegram_service = telegram_service  # Store the service instance
 
         # application is accessed via telegram_service.application if needed
-        # self.application = application # Removed assignment
         self.allowed_user_ids = allowed_user_ids
         self.developer_chat_id = developer_chat_id
         self.processing_service = processing_service  # Store the service instance
@@ -1118,7 +1116,6 @@ class TelegramService:
         self.confirmation_manager = TelegramConfirmationUIManager(
             application=self.application
             # Optionally pass custom timeout from config:
-            # confirmation_timeout=config.get("telegram", {}).get("confirmation_timeout", 3600.0)
         )
 
         # Instantiate the handler class, passing self (the service instance)
