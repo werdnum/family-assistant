@@ -69,7 +69,7 @@
                     <td>
                         {% if token.is_revoked %}
                             <span class="badge bg-danger">Revoked</span>
-                        {% elif token.expires_at and token.expires_at < now_utc() %}
+                        {% elif token.expires_at and token.expires_at < now_utc %}
                             <span class="badge bg-warning text-dark">Expired</span>
                         {% else %}
                             <span class="badge bg-success">Active</span>
