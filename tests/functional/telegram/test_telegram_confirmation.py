@@ -55,7 +55,11 @@ async def test_confirmation_accepted(
 
     # --- Mock LLM Rules ---
     # 1. User asks -> LLM requests sensitive tool
-    def request_delete_matcher(messages, tools, tool_choice):
+    def request_delete_matcher(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> bool:
         return user_text in get_last_message_text(messages)
 
     request_tool_output = LLMOutput(
@@ -81,7 +85,11 @@ async def test_confirmation_accepted(
     )
 
     # 2. Tool result received -> LLM gives final success message
-    def success_result_matcher(messages, tools, tool_choice):
+    def success_result_matcher(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> bool:
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
@@ -226,7 +234,11 @@ async def test_confirmation_rejected(
     # Final message from LLM after seeing the cancellation
     llm_final_cancel_text = "Okay, I have cancelled the request."
 
-    def request_delete_matcher(messages, tools, tool_choice):
+    def request_delete_matcher(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> bool:
         return user_text in get_last_message_text(messages)
 
     request_tool_output = LLMOutput(
@@ -248,7 +260,11 @@ async def test_confirmation_rejected(
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
 
     # 2. LLM rule to handle the cancellation message from the tool provider
-    def cancel_result_matcher(messages, tools, tool_choice):
+    def cancel_result_matcher(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> bool:
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
@@ -355,7 +371,11 @@ async def test_confirmation_timed_out(
     tool_timeout_result_text = f"Action cancelled: Confirmation request for tool '{TOOL_NAME_SENSITIVE}' timed out."  # Final message from LLM after seeing the timeout/cancellation
     llm_final_timeout_text = "Okay, the request timed out and was cancelled."
 
-    def request_delete_matcher(messages, tools, tool_choice):
+    def request_delete_matcher(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> bool:
         return user_text in get_last_message_text(messages)
 
     request_tool_output = LLMOutput(
@@ -377,7 +397,11 @@ async def test_confirmation_timed_out(
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
 
     # 2. LLM rule to handle the timeout/cancellation message from the tool provider
-    def timeout_result_matcher(messages, tools, tool_choice):
+    def timeout_result_matcher(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> bool:
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
