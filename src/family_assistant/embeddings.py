@@ -222,9 +222,6 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
                     None,  # Use default executor
                     self.model.encode,
                     texts,
-                    # convert_to_numpy=True # Ensure numpy output for consistent handling
-                    # Note: convert_to_numpy might not be needed if output is already numpy
-                    # Or handle tensor conversion if necessary
                 )
 
                 # Convert numpy arrays to lists of floats
