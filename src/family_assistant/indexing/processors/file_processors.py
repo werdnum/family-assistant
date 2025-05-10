@@ -7,9 +7,9 @@ import logging
 from typing import TYPE_CHECKING
 
 try:
-    import markitdown
+    from markitdown import MarkItDown
 except ImportError:
-    markitdown = None  # type: ignore[assignment]
+    MarkItDown = None  # type: ignore[assignment,misc] # misc for MarkItDown potentially not being a type
 
 from family_assistant.indexing.pipeline import IndexableContent
 
@@ -51,13 +51,16 @@ class PDFTextExtractor:
         Returns:
             A list of new IndexableContent items containing extracted Markdown.
         """
-        if markitdown is None:
+        if MarkItDown is None:  # Check for the class
             logger.warning(
                 "markitdown library is not installed. PDFTextExtractor will not process PDFs."
             )
             return []  # Return empty list, effectively skipping PDF processing
 
         output_items: list[IndexableContent] = []
+        # Instantiate the converter. If it's stateless, doing it per call is fine.
+        # If it has significant setup cost and is stateless, consider instantiating it once per processor instance.
+        md_converter = MarkItDown()
 
         for item in current_items:
             if item.mime_type == "application/pdf" and item.ref:
@@ -66,8 +69,16 @@ class PDFTextExtractor:
                 )
                 try:
                     # Run blocking markitdown conversion in a thread
-                    markdown_content = await asyncio.to_thread(
-                        markitdown.mdb.convert, item.ref
+                    # Use the convert method of the instantiated object
+                    markdown_text_result = await asyncio.to_thread(
+                        md_converter.convert, item.ref
+                    )
+                    # The convert method of MarkItDown (from scrape_mcp.py example) returns an object
+                    # with a text_content attribute.
+                    markdown_content = (
+                        markdown_text_result.text_content
+                        if markdown_text_result
+                        else None
                     )
 
                     if markdown_content:
