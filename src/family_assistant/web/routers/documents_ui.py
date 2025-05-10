@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated
 
 import httpx
@@ -27,12 +28,14 @@ async def get_document_upload_form(
         pass
 
     templates: Jinja2Templates = request.app.state.templates
+    now_utc = datetime.now(timezone.utc)
     return templates.TemplateResponse(
         "document_upload.html",
         {
             "request": request,
             "current_user": current_user,
             "AUTH_ENABLED": AUTH_ENABLED,
+            "now_utc": now_utc,
         },
     )
 
@@ -119,6 +122,7 @@ async def handle_document_upload(  # noqa: PLR0913
         if uploaded_file:
             await uploaded_file.close()
 
+    now_utc = datetime.now(timezone.utc)
     return templates.TemplateResponse(
         "document_upload.html",
         {
@@ -128,5 +132,6 @@ async def handle_document_upload(  # noqa: PLR0913
             "form_data": form_data,  # To repopulate form on error
             "current_user": current_user,
             "AUTH_ENABLED": AUTH_ENABLED,
+            "now_utc": now_utc,
         },
     )
