@@ -1,19 +1,9 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ "Edit Note" if note else "Add Note" }}</title>
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
-    <link rel="stylesheet" href="/static/css/custom.css">
-</head>
-<body>
-<header>
-    <h1>{{ "Edit Note" if note else "Add New Note" }}</h1>
-</header>
+{% extends "base.html" %}
 
-<main>
-    <form action="/notes/save" method="post" class="edit-form">
+{% block title_header %}{{ "Edit Note" if note else "Add New Note" }}{% endblock %}
+
+{% block main_content %}
+    <form action="{{ request.app.url_path_for('ui_save_note') }}" method="post" class="edit-form">
         {% if note %}
         <input type="hidden" name="original_title" value="{{ note.title }}">
         {% endif %}
@@ -27,15 +17,7 @@
         </div>
         <div class="buttons">
             <button type="submit">Save Note</button>
-            <a href="/" class="button-link">Cancel</a> <!-- Use class for button-like link -->
+            <a href="{{ request.app.url_path_for('ui_list_notes') }}" class="button-link">Cancel</a>
         </div>
     </form>
-</main>
-
-<!-- Optional Footer
-<footer>
-    <p>Family Assistant Notes</p>
-</footer>
--->
-</body>
-</html>
+{% endblock %}

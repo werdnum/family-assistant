@@ -1,37 +1,15 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ title | default("Documentation") }} - Family Assistant</title>
-    <!-- Use existing linked CSS -->
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="stylesheet" href="/static/css/custom.css">
-</head>
-<body>
-    <header>
-        <h1>{{ title | default("Documentation") }}</h1>
-        <nav>
-            <a href="{{ server_url }}/">Home</a> <!-- Use absolute URL -->
-            <span>|</span>
-            <a href="{{ server_url }}/history">History</a>
-            <span>|</span>
-            <a href="{{ server_url }}/tasks">Tasks</a>
-            <span>|</span>
-            <a href="{{ server_url }}/vector-search">Vector Search</a>
-            <span>|</span>
-            <a href="{{ server_url }}/tools">View Tools</a>
-            <span>|</span>
-            <span>Docs:</span>
-            {% for doc_file in available_docs %}
-            <a href="{{ server_url }}/docs/{{ doc_file }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a>
-            {% endfor %}
-        </nav>
-    </header>
-    <main>
-        <!-- Rendered Markdown Content -->
-        {{ content | safe }}
-    </main>
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block title %}{{ title | default("Documentation") }} - {{ super() }}{% endblock %}
+{% block title_header %}{{ title | default("Documentation") }}{% endblock %}
+
+{% block header_content %}
+    <span>Docs:</span>
+    {% for doc_file in available_docs %}
+    <a href="{{ request.app.url_path_for('ui_view_doc', doc_name=doc_file) }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a>
+    {% endfor %}
+{% endblock %}
+
+{% block main_content %}
+    {{ content | safe }}
+{% endblock %}

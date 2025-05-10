@@ -1,31 +1,12 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notes</title>
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
-    <link rel="stylesheet" href="/static/css/custom.css">
-</head>
-<body>
-<header>
-    <h1>Notes</h1>
-    <nav>
-        <a href="/notes/add" class="button-link add-button">Add New Note</a>
-        <span>|</span> <!-- Use absolute URLs for cross-page navigation -->
-        <a href="/history">View Message History</a>
-        <span>|</span>
-        <a href="/tasks">View Tasks</a>
-        <span>|</span>
-        <a href="/vector-search">Vector Search</a>
-        <span>|</span>
-        <a href="/tools">View Tools</a>
-        <span>|</span>
-        <a href="/docs/">Docs</a>
-    </nav>
-</header>
+{% extends "base.html" %}
 
-<main>
+{% block title_header %}Notes{% endblock %}
+
+{% block header_content %}
+    <a href="{{ request.app.url_path_for('ui_add_note') }}" class="button-link add-button">Add New Note</a>
+{% endblock %}
+
+{% block main_content %}
     <table>
         <thead>
             <tr>
@@ -40,9 +21,9 @@
                 <td>{{ note.title }}</td>
                 <td><pre>{{ note.content }}</pre></td>
                 <td class="note-actions">
-                    <a href="/notes/edit/{{ note.title }}" class="button-link">Edit</a>
-                    <form action="/notes/delete/{{ note.title }}" method="post" onsubmit="return confirm('Are you sure you want to delete this note?');">
-                        <button type="submit" class="secondary">Delete</button> <!-- SimpleCSS might style secondary buttons -->
+                    <a href="{{ request.app.url_path_for('ui_edit_note', title=note.title) }}" class="button-link">Edit</a>
+                    <form action="{{ request.app.url_path_for('ui_delete_note', title=note.title) }}" method="post" onsubmit="return confirm('Are you sure you want to delete this note?');">
+                        <button type="submit" class="secondary">Delete</button>
                     </form>
                 </td>
             </tr>
@@ -53,12 +34,4 @@
             {% endfor %}
         </tbody>
     </table>
-</main>
-
-<!-- Optional Footer
-<footer>
-    <p>Family Assistant Notes</p>
-</footer>
--->
-</body>
-</html>
+{% endblock %}

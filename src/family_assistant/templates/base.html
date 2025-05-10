@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Family Assistant{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <link rel="stylesheet" href="{{ request.app.url_path_for('static', path='css/custom.css') }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+    <header>
+        <h1>{% block page_title %}{% block title_header %}{% endblock %}{% endblock %}</h1>
+        <nav>
+            <a href="{{ request.app.url_path_for('ui_list_notes') }}">Notes</a>
+            <span>|</span>
+            <a href="{{ request.app.url_path_for('ui_message_history') }}">History</a>
+            <span>|</span>
+            <a href="{{ request.app.url_path_for('ui_list_tasks') }}">Tasks</a>
+            <span>|</span>
+            <a href="{{ request.app.url_path_for('ui_vector_search') }}">Vector Search</a>
+            <span>|</span>
+            <a href="{{ request.app.url_path_for('ui_list_tools') }}">Tools</a>
+            <span>|</span>
+            <a href="{{ request.app.url_path_for('ui_list_docs') }}">Docs</a>
+            {% if request.session.get("user") %}
+            <span>|</span>
+            <a href="{{ request.app.url_path_for('ui_manage_api_tokens') }}">API Tokens</a>
+            <span>|</span>
+            <a href="{{ request.app.url_path_for('logout') }}">Logout ({{ request.session.get("user").get("name", request.session.get("user").get("sub")) }})</a>
+            {% elif AUTH_ENABLED %}
+            <span>|</span>
+            <a href="{{ request.app.url_path_for('login') }}">Login</a>
+            {% endif %}
+        </nav>
+        {% block header_content %}{% endblock %}
+    </header>
+
+    <main>
+        {% block main_content %}{% endblock %}
+    </main>
+
+    <footer>
+        <p>&copy; {{ now_utc().year }} Family Assistant</p>
+        {% block footer_content %}{% endblock %}
+    </footer>
+
+    {% block scripts_extra %}{% endblock %}
+</body>
+</html>

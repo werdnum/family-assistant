@@ -1,31 +1,12 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scheduled Tasks</title>
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
-    <link rel="stylesheet" href="/static/css/custom.css">
-</head>
-<body>
-<header>
-    <h1>Scheduled Tasks</h1>
-    <nav>
-        <a href="/">View Notes</a>
-        <span>|</span>
-        <a href="/history">View Message History</a>
-        <span>|</span>
-        <a href="/tools">View Tools</a>
-        <span>|</span>
-        <a href="/vector-search">Vector Search</a>
-    </nav>
-</header>
+{% extends "base.html" %}
 
-<main>
+{% block title_header %}Scheduled Tasks{% endblock %}
+
+{% block main_content %}
     {% if tasks %}
     <div class="tasks-list">
         {% for task in tasks %}
-        <article class="task-card status-{{ task.status }}"> <!-- Use article for semantics -->
+        <article class="task-card status-{{ task.status }}">
             <div class="task-detail"><span class="task-label">Task ID:</span> <span class="task-value task-id">{{ task.task_id }}</span></div>
             <div class="task-detail"><span class="task-label">Type:</span> <span class="task-value">{{ task.task_type }}</span></div>
             <div class="task-detail"><span class="task-label">Status:</span> <span class="task-value task-status">{{ task.status }}</span></div>
@@ -38,7 +19,7 @@
             {% endif %}
             <div class="task-detail task-payload">
                 <span class="task-label">Payload:</span>
-                <div id="payload-{{ task.id }}" class="json-editor-container">{{ 'None' if task.payload is none }}</div> <!-- Container for JSON editor -->
+                <div id="payload-{{ task.id }}" class="json-editor-container">{{ 'None' if task.payload is none }}</div>
             </div>
              <div class="task-detail task-error">
                 <span class="task-label">Last Error:</span>
@@ -51,12 +32,9 @@
     {% else %}
         <p>No tasks found.</p>
     {% endif %}
-</main>
+{% endblock %}
 
-<!-- Optional Footer
-<footer> ... </footer>
--->
-
+{% block scripts_extra %}
 <!-- Load vanilla-jsoneditor -->
 <script type="module">
     import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
@@ -64,16 +42,15 @@
     function initializeEditor(targetId, jsonData) {
         const target = document.getElementById(targetId);
         if (!target || jsonData === null || jsonData === undefined) {
-            // Don't initialize if target doesn't exist or data is null/undefined
             if(target && (jsonData === null || jsonData === undefined)) {
-                 target.textContent = 'None'; // Ensure 'None' is displayed if payload was null
+                 target.textContent = 'None';
             } else if (!target) {
                  console.error(`Element with ID ${targetId} not found.`);
             }
             return;
         }
 
-        let content = { json: jsonData }; // Assume payload is always valid JSON object from DB
+        let content = { json: jsonData };
 
         try {
             new createJSONEditor({
@@ -84,23 +61,18 @@
                     mainMenuBar: false,
                     navigationBar: false,
                     statusBar: false,
-                    mode: 'tree' // Assume tree mode is desired for payloads
+                    mode: 'tree'
                 }
             });
-             // Clear the placeholder 'None' text if editor initializes successfully
             target.textContent = '';
         } catch (error) {
              console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
-             // Fallback to preformatted text if editor fails
              target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`;
         }
     }
 
     {% for task in tasks %}
-        // Initialize editor for payload if it's not None
         initializeEditor('payload-{{ task.id }}', {{ task.payload | tojson | safe if task.payload is not none else 'null' }});
     {% endfor %}
-
 </script>
-</body>
-</html>
+{% endblock %}

@@ -1,27 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Message History</title>
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
-    <link rel="stylesheet" href="/static/css/custom.css">
-</head>
-<body>
-<header>
-    <h1>Message History</h1>
-    <nav>
-        <a href="/">View Notes</a>
-        <span>|</span>
-        <a href="/tasks">View Tasks</a>
-        <span>|</span>
-        <a href="/tools">View Tools</a>
-        <span>|</span>
-        <a href="/vector-search">Vector Search</a>
-    </nav>
-</header>
+{% extends "base.html" %}
 
-<main>
+{% block title_header %}Message History{% endblock %}
+
+{% block main_content %}
     {% if paged_conversations %}
         {% for conversation_key, turns_list in paged_conversations %} {# Iterate over paginated conversations #}
         <div class="chat-group">
@@ -41,14 +22,11 @@
                     {% endif %}
 
                     {# --- System message if a turn_id group has neither primary user nor assistant message to show --- #}
-                    {# This might happen if a turn_id is valid but has no user (expected for some turns) and no final assistant response #}
-                    {# (e.g. only tool messages or intermediate assistant messages without content in the group) #}
                     {% if not turn_display_obj.initiating_user_message and not turn_display_obj.final_assistant_response %}
                         <div class="message system-message">
                             <div class="message-meta">Intermediate processing (Turn ID: {{ turn_display_obj.turn_id or 'None' }})</div>
                         </div>
                     {% elif turn_display_obj.initiating_user_message and not turn_display_obj.final_assistant_response and turn_display_obj.initiating_user_message.get('role') == 'user' %}
-                         {# User message was shown, but no distinct final assistant response for this turn #}
                          <div class="message system-message">
                             <div class="message-meta">No distinct final assistant response generated for this user input (Turn ID: {{ turn_display_obj.turn_id or 'None' }}). See trace.</div>
                         </div>
@@ -59,7 +37,6 @@
                         <summary>Show full trace ({{ turn_display_obj.all_messages_in_group | length }} message{{ 's' if turn_display_obj.all_messages_in_group | length != 1 else '' }}, Turn ID: {{ turn_display_obj.turn_id or 'None' }})</summary>
                         <div class="turn-trace-content">
                             {% for message in turn_display_obj.all_messages_in_group %}
-                                {# Render each message within the trace using the partial #}
                                 {% include 'partials/message_display.html' %}
                             {% endfor %}
                         </div>
@@ -67,35 +44,33 @@
                 </div>
             {% endfor %}
         </div>
-        {% else %} {# Corresponds to if paged_conversations loop #}
+        {% else %} 
         <p>No messages found in this conversation group.</p>
         {% endfor %}
     {% else %}
-        <p>No message history found.</p> {# Updated message #}
-    {% endif %}
-</main>
-
-{% if pagination and pagination.total_pages|default(0, True) > 1 %}
-<nav class="pagination">
-    {% if pagination.has_prev %}
-    <a href="?page={{ pagination.prev_num }}&per_page={{ pagination.per_page }}">&laquo; Previous</a>
-    {% else %}
-    <span class="disabled">&laquo; Previous</span>
+        <p>No message history found.</p>
     {% endif %}
 
-    <span>Page {{ pagination.current_page }} of {{ pagination.total_pages }}</span>
+    {% if pagination and pagination.total_pages|default(0, True) > 1 %}
+    <nav class="pagination">
+        {% if pagination.has_prev %}
+        <a href="?page={{ pagination.prev_num }}&per_page={{ pagination.per_page }}">&laquo; Previous</a>
+        {% else %}
+        <span class="disabled">&laquo; Previous</span>
+        {% endif %}
 
-    {% if pagination.has_next %}
-    <a href="?page={{ pagination.next_num }}&per_page={{ pagination.per_page }}">Next &raquo;</a>
-    {% else %}
-    <span class="disabled">Next &raquo;</span>
+        <span>Page {{ pagination.current_page }} of {{ pagination.total_pages }}</span>
+
+        {% if pagination.has_next %}
+        <a href="?page={{ pagination.next_num }}&per_page={{ pagination.per_page }}">Next &raquo;</a>
+        {% else %}
+        <span class="disabled">Next &raquo;</span>
+        {% endif %}
+    </nav>
     {% endif %}
-{% endif %}
+{% endblock %}
 
-<!-- Optional Footer
-<footer> ... </footer>
--->
-
+{% block scripts_extra %}
 <!-- Load vanilla-jsoneditor -->
 <script type="module">
     import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
@@ -103,32 +78,27 @@
     function initializeEditor(targetId, jsonData) {
         const target = document.getElementById(targetId);
         if (!target) {
-            // Don't log error if element is simply not present (e.g. no tool calls)
-            // console.error(`Element with ID ${targetId} not found.`);
             return;
         }
-        // Ensure jsonData is an object or attempt parsing if it's a string
         let content = { json: undefined, text: undefined };
         if (typeof jsonData === 'object' && jsonData !== null) {
              content.json = jsonData;
         } else if (typeof jsonData === 'string') {
             try {
-                content.json = JSON.parse(jsonData); // Try parsing if it's a string representation
+                content.json = JSON.parse(jsonData);
             } catch (e) {
                  console.warn(`Data for ${targetId} is not valid JSON, displaying as text:`, jsonData);
-                 content.text = jsonData; // Display as plain text if not valid JSON
+                 content.text = jsonData;
             }
         } else {
              console.warn(`Invalid data type for ${targetId}, displaying as text:`, jsonData);
-             content.text = String(jsonData); // Display as string representation
+             content.text = String(jsonData);
         }
 
-        // Avoid initializing if no content
         if (content.json === undefined && content.text === undefined) {
-            target.textContent = '(No data)'; // Or leave empty
+            target.textContent = '(No data)';
             return;
         }
-
 
         try {
             new createJSONEditor({
@@ -139,7 +109,6 @@
                     mainMenuBar: false,
                     navigationBar: false,
                     statusBar: false,
-                    // mode: content.json ? 'tree' : 'text' // Adjust mode based on content type
                 }
             });
         } catch (error) {
@@ -148,27 +117,19 @@
         }
     }
 
-    // Use conversation_key and internal_id for unique IDs
     {% for conversation_key, turns_list in paged_conversations %}
         {% for turn_display_obj in turns_list %}
-            {% for message in turn_display_obj.all_messages_in_group %} {# Iterate through ALL messages in the group for JS init #}
-            {# Tool Calls #}
-            {% if message.role == 'assistant' and message.tool_calls %} {# Use 'tool_calls' as parsed in web_server.py #}
+            {% for message in turn_display_obj.all_messages_in_group %}
+            {% if message.role == 'assistant' and message.tool_calls %}
                 {% for tool_call in message.tool_calls %}
-            {# Initialize editor for arguments using unique ID from partial #}
-            {# Ensure arguments are accessed correctly from the parsed structure #}
             initializeEditor('tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.get('function', {}).get('arguments') | tojson | safe }});
                 {% endfor %}
             {% endif %}
-            {# Reasoning Info #}
             {% if message.reasoning_info %}
-             {# Initialize editor for reasoning using unique ID #}
             initializeEditor('reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}', {{ message.reasoning_info | tojson | safe }});
             {% endif %}
-            {% endfor %} {# End message in all_messages_in_group loop #}
+            {% endfor %}
         {% endfor %}
-    {% endfor %} {# End paged_conversations loop #}
-
+    {% endfor %}
 </script>
-</body>
-</html>
+{% endblock %}

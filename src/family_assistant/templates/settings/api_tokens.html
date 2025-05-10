@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}
-{{ page_title | default("Manage API Tokens") }} - {{ super() }}
-{% endblock %}
+{% block title %}{{ page_title | default("Manage API Tokens") }} - {{ super() }}{% endblock %}
 
-{% block content %}
+{% block title_header %}Manage API Tokens{% endblock %}
+
+{% block main_content %}
 {# Pass server_url via data attribute for the external JS #}
 <div class="container mt-4" data-server-url="{{ server_url }}">
-    <h2>Manage API Tokens</h2>
     <p>API tokens allow applications or scripts to authenticate as you. Treat them like passwords.</p>
 
     <hr>
@@ -96,6 +95,8 @@
     {% endif %}
 
 </div>
+{% endblock %}
 
+{% block scripts_extra %}
 <script src="{{ request.app.url_path_for('static', path='js/api_token_management.js') }}"></script>
 {% endblock %}
