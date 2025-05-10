@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 import pytest_asyncio  # Added for async fixtures
 from assertpy import assert_that
-from reportlab.lib.pagesizes import letter  # Added for PDF generation
-from reportlab.pdfgen import canvas  # Added for PDF generation
+
+# Reportlab imports removed
 from sqlalchemy import select  # Added text for raw SQL if needed
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -1077,11 +1077,19 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     logger.info("\n--- Running Email with PDF Attachment Indexing E2E Test ---")
 
     # --- Arrange: PDF Content ---
-    pdf_content_bytes = create_simple_pdf_bytes(TEST_PDF_TEXT_CONTENT)
+    # Read the content from the existing PDF file
+    pdf_file_path = "tests/data/test_doc.pdf"
+    try:
+        with open(pdf_file_path, "rb") as f:
+            pdf_content_bytes = f.read()
+    except FileNotFoundError:
+        pytest.fail(f"Test PDF file not found at {pdf_file_path}")
+    assert_that(pdf_content_bytes).described_as("PDF content bytes should not be empty").is_not_empty()
 
     # --- Arrange: Mock Embeddings ---
     # Normalize text as TextChunker would for consistent mocking
-    normalized_pdf_text = re.sub(r"\s+", " ", TEST_PDF_TEXT_CONTENT).strip()
+    # TEST_PDF_EXTRACTED_TEXT is what we expect to be indexed from the PDF
+    normalized_pdf_text = re.sub(r"\s+", " ", TEST_PDF_EXTRACTED_TEXT).strip()
     normalized_email_subject = re.sub(r"\s+", " ", TEST_EMAIL_SUBJECT_WITH_PDF).strip()
     normalized_email_body = re.sub(r"\s+", " ", TEST_EMAIL_BODY_WITH_PDF).strip()
 
