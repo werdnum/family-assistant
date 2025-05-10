@@ -165,9 +165,12 @@ async def http_client(
     # However, if the API call *uses* that path, it needs to be active.
     # Let's keep the client within the temp_dir scope to ensure path validity.
 
+        # The ASGITransport should be defined once.
+        # The client context manager should be inside the temp_doc_storage_dir context manager.
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
         logger.info("Test HTTP client closed.")
+    # End of the 'with tempfile.TemporaryDirectory()' block
 
     # Clean up app state after the client and temp_dir are done
     if hasattr(fastapi_app.state, "embedding_generator"):
