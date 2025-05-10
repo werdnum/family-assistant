@@ -9,6 +9,7 @@ import asyncio
 import logging
 import random
 from collections.abc import Callable
+from types import TracebackType
 from typing import Any, TypeVar
 
 from sqlalchemy import Result, TextClause, event
