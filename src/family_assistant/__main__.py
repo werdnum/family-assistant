@@ -100,7 +100,7 @@ from family_assistant.tools import (
 )
 
 # Import the FastAPI app
-from family_assistant.web_server import app as fastapi_app
+from family_assistant.web.app_creator import app as fastapi_app
 
 # Import calendar functions
 # Import the Telegram service class
