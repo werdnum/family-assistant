@@ -21,7 +21,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    with op.batch_alter_table("document_embeddings", schema=None) as batch_op:
+    with op.batch_alter_table("document_embeddings", schema=None) as batch_op:  # pylint: disable=no-member
         batch_op.alter_column(
             "id",
             existing_type=sa.BIGINT(),
@@ -36,7 +36,7 @@ def upgrade() -> None:
             existing_nullable=False,
         )
 
-    with op.batch_alter_table("documents", schema=None) as batch_op:
+    with op.batch_alter_table("documents", schema=None) as batch_op:  # pylint: disable=no-member
         batch_op.alter_column(
             "id",
             existing_type=sa.BIGINT(),
@@ -49,7 +49,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    with op.batch_alter_table("documents", schema=None) as batch_op:
+    with op.batch_alter_table("documents", schema=None) as batch_op:  # pylint: disable=no-member
         batch_op.alter_column(
             "id",
             existing_type=sa.Integer(),
@@ -58,7 +58,7 @@ def downgrade() -> None:
             autoincrement=True,
         )
 
-    with op.batch_alter_table("document_embeddings", schema=None) as batch_op:
+    with op.batch_alter_table("document_embeddings", schema=None) as batch_op:  # pylint: disable=no-member
         batch_op.alter_column(
             "document_id",
             existing_type=sa.Integer(),
