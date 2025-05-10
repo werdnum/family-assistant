@@ -133,15 +133,12 @@ async def root_redirect(request: Request) -> RedirectResponse:
     # This ensures that accessing the base URL of the server
     # redirects to the main notes page.
     # The notes_router already defines a GET "/"
-    # return RedirectResponse(url=request.url_for("read_root"), status_code=302)
     # No, the notes_router is already at root. This is not needed.
     # Let's keep the original behavior where notes_router handles "/"
     # This function can be removed if notes_router handles "/" directly.
     # The notes_router handles "/" so this is not strictly necessary,
     # but can be kept for explicitness or if the root path changes.
     # For now, let's assume notes_router handles it.
-    # If we want to be very explicit or change the root later:
-    # return RedirectResponse(url="/", status_code=302) # Redirect to notes_router's root
     # Actually, the notes_router is already included at the root.
     # So, this explicit redirect is not needed and might cause issues if not careful.
     # Let's remove it and rely on notes_router.get("/")
