@@ -104,7 +104,6 @@ class DocumentIndexer:
                 continue
 
             embedding_type = key
-            # chunk_index = 0 # Default, not directly used for IndexableContent here unless stored in metadata
             metadata_for_item = {"original_key": key}
 
             if key.startswith("content_chunk_"):
