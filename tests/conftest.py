@@ -41,7 +41,6 @@ async def test_db_engine(
     """
     # Create an in-memory SQLite engine for testing
     # Using file DB can sometimes be easier for inspection, but memory is faster
-    # test_engine = create_async_engine("sqlite+aiosqlite:///./test_family_assistant.db")
     test_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     logger.info(f"\n--- Test DB Setup ({request.node.name}) ---")
     logger.info(f"Created test engine: {test_engine.url}")
@@ -84,7 +83,6 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
     # If using a standard postgres image, you might need to execute
     # `CREATE EXTENSION IF NOT EXISTS vector;` after connection.
     # Using a dedicated pgvector image simplifies this.
-    # image = "postgres:16-alpine" # Standard image, might need manual extension creation
     image = "pgvector/pgvector:0.8.0-pg17"  # Image with pgvector pre-installed
     logger.info(f"Attempting to start PostgreSQL container with image: {image}")
     logger.info(
