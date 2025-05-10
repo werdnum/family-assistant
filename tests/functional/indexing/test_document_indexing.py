@@ -37,7 +37,9 @@ from family_assistant.storage.vector import (
 )  # Import Document protocol
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext  # Added
-from family_assistant.web_server import app as fastapi_app  # Import the FastAPI app
+from family_assistant.web.app_creator import (
+    app as fastapi_app,  # Import the FastAPI app directly from app_creator
+)
 
 # Import test helpers
 from tests.helpers import wait_for_tasks_to_complete
