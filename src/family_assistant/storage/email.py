@@ -3,7 +3,6 @@ Handles storage and retrieval of received emails.
 """
 
 import asyncio  # Import asyncio for Event type hint
-
 import json
 import logging
 import uuid  # Add uuid import
@@ -11,9 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import sqlalchemy as sa
-
 from dateutil.parser import parse as parse_datetime
-
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
