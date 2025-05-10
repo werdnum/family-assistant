@@ -180,14 +180,14 @@ async def http_client(
             f"Test http_client: Using temporary attachment directory: {temp_attachment_dir}"
         )
 
-        # Patch MAILBOX_RAW_DIR environment variable for webhooks.py
-        monkeypatch.setenv("MAILBOX_RAW_DIR", temp_attachment_dir)
-        logger.info(
-            f"Test http_client: Patched MAILBOX_RAW_DIR to: {temp_attachment_dir}"
-        )
-
         # Set/overwrite specific config values needed for the test
         current_test_config["attachment_storage_path"] = temp_attachment_dir
+        current_test_config["mailbox_raw_dir"] = os.path.join(temp_attachment_dir, "raw_mailbox_dumps")
+        os.makedirs(current_test_config["mailbox_raw_dir"], exist_ok=True)
+
+        logger.info(
+            f"Test http_client: Setting mailbox_raw_dir in app.state.config to: {current_test_config['mailbox_raw_dir']}"
+        )
         # Apply this config to the app state for the test duration
         fastapi_app.state.config = current_test_config
 

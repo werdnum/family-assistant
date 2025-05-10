@@ -19,11 +19,10 @@ from family_assistant.web.dependencies import get_db
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
 
-# Directory to save raw webhook request bodies for debugging/replay
-MAILBOX_RAW_DIR = os.getenv("MAILBOX_RAW_DIR", "/mnt/data/mailbox/raw_requests")
-
 # Default path if not found in config, though __main__ should set a default.
 DEFAULT_ATTACHMENT_STORAGE_PATH = "/mnt/data/mailbox/attachments_fallback"
+# Fallback for raw webhook dir if not in app config
+DEFAULT_MAILBOX_RAW_DIR_FALLBACK = "/mnt/data/mailbox/raw_requests_fallback"
 
 
 @webhooks_router.post("/webhook/mail")
@@ -42,8 +41,18 @@ async def handle_mail_webhook(
     # read body first, then pass to a method that can parse from bytes if FastAPI allows,
     # or accept that form() is the primary way. For now, keeping existing raw save logic.
     raw_body_content = await request.body()
+
+    # Determine directory for saving raw requests from app config or fallback
+    mailbox_raw_dir_to_use = request.app.state.config.get(
+        "mailbox_raw_dir", DEFAULT_MAILBOX_RAW_DIR_FALLBACK
+    )
+    if mailbox_raw_dir_to_use == DEFAULT_MAILBOX_RAW_DIR_FALLBACK:
+        logger.warning(
+            f"mailbox_raw_dir not found in app.state.config, using fallback: {DEFAULT_MAILBOX_RAW_DIR_FALLBACK}"
+        )
+
     try:
-        os.makedirs(MAILBOX_RAW_DIR, exist_ok=True)
+        os.makedirs(mailbox_raw_dir_to_use, exist_ok=True)
         now_dt = datetime.now(timezone.utc)
         timestamp_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")
         content_type_header = request.headers.get(
@@ -53,7 +62,7 @@ async def handle_mail_webhook(
             re.sub(r'[<>:"/\\|?*]', "_", content_type_header).split(";")[0].strip()
         )
         raw_filename = f"{timestamp_str}_{safe_content_type}.raw"
-        raw_filepath = os.path.join(MAILBOX_RAW_DIR, raw_filename)
+        raw_filepath = os.path.join(mailbox_raw_dir_to_use, raw_filename)
 
         async with aiofiles.open(raw_filepath, "wb") as f:
             await f.write(raw_body_content)
