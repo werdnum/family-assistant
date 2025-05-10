@@ -1067,8 +1067,8 @@ async def test_keyword_filtering(
 # --- Test Data for PDF Attachment ---
 # This should be a representative string of what's expected to be extracted from test_doc.pdf
 # by PDFTextExtractor and then processed by TextChunker.
-# The content is from "tests/data/test_doc.md".
-TEST_PDF_EXTRACTED_TEXT = "# The Importance of Regular Software Updates Software updates are a common and crucial aspect of using digital devices, from smartphones and computers to smart home appliances and applications. While sometimes perceived as inconvenient, regularly updating your software is vital for a secure, stable, and optimized user experience. These updates are released by developers to address various issues, introduce new features, and enhance overall performance. ## Security Benefits One of the most critical reasons to keep your software up"
+# This is the actual first chunk (500 chars) produced by the pipeline from test_doc.pdf's markdown.
+TEST_PDF_EXTRACTED_TEXT = "The Importance of Regular Software Updates Software updates are a common and crucial aspect of using digital devices from smartphones and computers to smart home appliances and applications While sometimes perceived as inconvenient regularly updating your software is vital for a secure stable and optimized user experience These updates are released by developers to address various issues introduce new features and enhance overall performance. Security Benefits One of the most critical reasons to"
 TEST_PDF_FILENAME = "test_doc.pdf"  # Using the existing test PDF
 TEST_EMAIL_SUBJECT_WITH_PDF = "E2E Test: Email with test_doc.pdf Attachment"
 TEST_EMAIL_BODY_WITH_PDF = "Please find attached the test_doc.pdf document."
