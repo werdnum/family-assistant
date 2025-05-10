@@ -2,11 +2,11 @@ import asyncio
 import contextlib  # Added contextlib import
 import json  # Added json import
 import logging
-from typing import Any  # Added for type hints
 
 # Import storage functions for assertion (will use the patched engine)
 # from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
 import uuid  # Added for turn_id
+from typing import Any  # Added for type hints
 from unittest.mock import MagicMock  # For mocking Application
 
 import pytest
@@ -58,7 +58,9 @@ TEST_USER_NAME = "NotesTestUser"
 
 
 @pytest.mark.asyncio
-async def test_add_and_retrieve_note_rule_mock(test_db_engine: AsyncEngine) -> None:  # Renamed test
+async def test_add_and_retrieve_note_rule_mock(
+    test_db_engine: AsyncEngine,
+) -> None:  # Renamed test
     """
     Rule-based mock test:
     1. Define rules for adding and retrieving a specific note.
