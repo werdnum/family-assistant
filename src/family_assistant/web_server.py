@@ -87,6 +87,10 @@ from family_assistant.web.dependencies import (
     get_tools_provider_dependency,
 )
 from family_assistant.web.models import DocumentUploadResponse, SearchResultItem
+from family_assistant.web.routers.documentation import (
+    documentation_router,
+)  # Moved import
+from family_assistant.web.routers.notes import notes_router  # Moved import
 from family_assistant.web.utils import md_renderer
 
 logger = logging.getLogger(__name__)
@@ -216,12 +220,8 @@ else:
 
 # --- Auth Routes are now in family_assistant.web.auth and included via auth_router ---
 
-# --- Import and Include Routers ---
-from family_assistant.web.routers.documentation import (
-    documentation_router,  # Existing router
-)
-from family_assistant.web.routers.notes import notes_router  # New notes router
-
+# --- Include Routers ---
+# Imports were moved to the top of the file.
 app.include_router(notes_router, tags=["Notes"])
 app.include_router(documentation_router, tags=["Documentation"]) # Keep existing documentation router
 
