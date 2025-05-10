@@ -407,7 +407,7 @@ async def fetch_upcoming_events(
     )
 
     # --- Sort Combined Events ---
-    def get_sort_key(event):
+    def get_sort_key(event: dict[str, Any]) -> datetime:
         """Converts date/datetime to timezone-aware datetime in the local timezone for sorting."""
         start_val = event["start"]
         try:
