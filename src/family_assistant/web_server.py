@@ -4,69 +4,73 @@ import json
 import logging
 import os
 import pathlib
-import re  # type: ignore # noqa: F401 - Used in MAILSENDER_RAW_DIR logic, keep for now
+import re  # noqa: F401 - Used in MAILSENDER_RAW_DIR logic, keep for now # type: ignore
 import uuid
 import zoneinfo
 from datetime import date, datetime, timezone
 from typing import Annotated, Any
 
 import aiofiles
-from authlib.integrations.starlette_client import OAuth  # For OIDC
+import telegram.error  # Import telegram errors for specific checking in health check
+from authlib.integrations.starlette_client import OAuth  # For OIDC # type: ignore
 from fastapi import (
     Depends,
     FastAPI,
     Form,
     HTTPException,
-    Query,
     Request,
     Response,
+    Query,
     status,
 )
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
+    FileResponse,  # Added for favicon
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt  # For rendering docs
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError, HttpUrl
 from sqlalchemy import text
 from starlette.config import Config  # For reading env vars
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
-import telegram.error  # Import telegram errors for specific checking in health check
 
 # Import storage functions using absolute package path
 from family_assistant import storage
+
 # Import embedding generator (adjust path based on actual location)
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import EmbeddingGenerator  # Example
 from family_assistant.storage import (
-    add_or_update_note,
     delete_note,
     get_all_notes,
     get_all_tasks,
-    get_grouped_message_history,
     get_note_by_title,
     store_incoming_email,
+    add_or_update_note,
+    get_grouped_message_history,
 )
 from family_assistant.storage.context import DatabaseContext, get_db_context
+
 # Import protocol for type hinting when creating the dict for add_document
 # Import vector search components
 from family_assistant.storage.vector_search import (
     MetadataFilter,
-    VectorSearchQuery,
     query_vector_store,
+    VectorSearchQuery,
 )
+
 # Import tool-related components
 # Import tool functions directly from the tools package
 from family_assistant.tools import (
-    ToolExecutionContext,
     ToolNotFoundError,
     ToolsProvider,
-    _scan_user_docs,  # Removed incorrect import of render_schema_as_html
+    ToolExecutionContext,
+    _scan_user_docs, # Removed incorrect import of render_schema_as_html
 )
 from family_assistant.tools.schema import render_schema_as_html  # Correct import path
 
