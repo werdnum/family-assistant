@@ -60,7 +60,7 @@ async def test_ui_endpoint_accessibility(
     Tests that a given UI endpoint is accessible and does not return a server error.
     It follows redirects and asserts that the final status code is less than 500.
     """
-    async with httpx.AsyncClient(
+    async with httpx.AsyncClient(  # pylint: disable=unexpected-keyword-arg
         app=app_fixture, base_url="http://testserver"
     ) as client:
         response = await client.get(path)
