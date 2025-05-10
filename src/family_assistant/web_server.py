@@ -193,11 +193,6 @@ else:
         )
 
 
-# async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
-#     generator = request.app.state.embedding_generator
-#     if not generator:
-#         raise HTTPException(status_code=500, detail="Embedding generator not configured")
-#     return generator
 # Dependency function to retrieve the embedding generator from app state
 
 
@@ -237,10 +232,6 @@ async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
         raise HTTPException(
             status_code=500, detail="ToolsProvider not configured or available."
         )
-    # Optional: Check if it adheres to the protocol (runtime check might be complex)
-    # if not isinstance(provider, ToolsProvider): # This check might fail with protocols
-    #     logger.error(f"Object in app state is not a ToolsProvider: {type(provider)}")
-    #     raise HTTPException(status_code=500, detail="Invalid ToolsProvider configuration.")
     return provider
 
 
@@ -630,8 +621,6 @@ async def view_message_history(
                                 logger.warning(
                                     f"Failed to parse JSON string for {field_name} in msg {msg.get('internal_id')}: {field_val[:100]}"
                                 )
-                                # Keep original string or set to an error placeholder if preferred
-                                # msg[field_name] = {"error": "failed to parse JSON", "original_value": field_val}
 
                 # Further parse 'arguments' within tool_calls if it's a JSON string
                 if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
@@ -831,9 +820,6 @@ async def view_tasks(
             {
                 "request": request,
                 "tasks": tasks,
-                # Add json filter to Jinja environment if not default
-                # Pass 'tojson' filter if needed explicitly, or handle in template
-                # jinja_env.filters['tojson'] = json.dumps # Example # NoQA: E265 # NoQA: E265
                 "user": request.session.get("user"),
                 "auth_enabled": AUTH_ENABLED,
             },
@@ -1119,9 +1105,6 @@ async def handle_vector_search(
         # --- Generate Embedding ---
         if query_obj.search_type in ["semantic", "hybrid"]:
             # Basic check, might need more robust model matching/selection
-            # if embedding_generator.model_name != query_obj.embedding_model:
-            #      logger.warning(f"Selected model '{query_obj.embedding_model}' might differ from generator '{embedding_generator.model_name}'. Ensure compatibility.")
-            #      # Ideally, you'd select the generator based on the model chosen in the form.
             embedding_result = await embedding_generator.generate_embeddings(
                 [query_obj.semantic_query]
             )  # Pass as list
@@ -1223,7 +1206,6 @@ async def execute_tool_api(
     db_context: Annotated[
         DatabaseContext, Depends(get_db)
     ],  # Inject DB context if tools need it
-    # embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator_dependency), # Inject if tools need it
 ) -> JSONResponse:
     """Executes a specified tool with the given arguments."""
     logger.info(
@@ -1510,7 +1492,6 @@ async def upload_document(
             task_id=task_id,
             task_type="process_uploaded_document",  # Matches the handler registration
             payload=task_payload,
-            # notify_event=new_task_event # Optional: trigger worker immediately if event is accessible
         )
         task_enqueued = True
         logger.info(f"Enqueued task '{task_id}' to process document ID {document_id}")
@@ -1612,9 +1593,6 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting Uvicorn server for testing...")
-    # Make sure embedding generator is available in app state if running standalone
-    # Example placeholder:
-    # app.state.embedding_generator = MockEmbeddingGenerator({}, default_embedding=[0.0]*10)
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
 
@@ -1623,26 +1601,5 @@ if __name__ == "__main__":
 # Otherwise, it can be removed if __main__.py directly uses the 'app' instance
 # def get_web_app():
 #     """Returns the configured FastAPI application instance."""
-#
-#     # --- Determine base path for templates and static files ---
-#     # (Keep the logic for finding paths here if needed for configuration)
-#     try:
-#         current_file_dir = pathlib.Path(__file__).parent.resolve()
-#         package_root_dir = current_file_dir
-#         templates_dir = package_root_dir / "templates"
-#         static_dir = package_root_dir / "static"
-#     except NameError:
-#         templates_dir = "src/family_assistant/templates"
-#         static_dir = pathlib.Path("src/family_assistant/static")
-#
-#     # --- Configure Templates ---
-#     templates = Jinja2Templates(directory=templates_dir)
-#     templates.env.filters["tojson"] = json.dumps
-#
-#     # --- Mount Static Files (now done after app init) ---
-#     # if static_dir.is_dir():
-#     #     app.mount("/static", StaticFiles(directory=static_dir), name="static")
-#     # else:
-#     #     logger.error(f"Static directory '{static_dir}' not found. Static files will not be served.")
 #
 #     return app
