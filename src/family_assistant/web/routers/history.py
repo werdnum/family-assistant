@@ -200,7 +200,7 @@ async def view_message_history(
                 "pagination": pagination_info,
                 "user": request.session.get("user"),
                 "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
-                "now_utc": datetime.now(timezone.utc), # Pass to base template
+                "now_utc": datetime.now(timezone.utc),  # Pass to base template
             },
         )
     except Exception as e:
