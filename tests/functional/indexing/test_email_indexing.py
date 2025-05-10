@@ -5,6 +5,7 @@ End-to-end functional tests for the email indexing and vector search pipeline.
 import asyncio
 import io  # Added for BytesIO
 import logging
+import os  # Add os import
 import re  # Add re import
 import tempfile  # Added for http_client fixture
 import uuid
