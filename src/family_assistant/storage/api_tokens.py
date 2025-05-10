@@ -7,7 +7,7 @@ import secrets
 import string
 from datetime import datetime, timezone
 
-from sqlalchemy import insert
+from sqlalchemy import insert, select, update  # Added select and update
 
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.context import DatabaseContext
@@ -174,17 +174,19 @@ async def get_api_tokens_for_user(
     Returns:
         A list of dictionaries, where each dictionary represents an API token.
     """
-    query = select(
-        api_tokens_table.c.id,
-        api_tokens_table.c.name,
-        api_tokens_table.c.prefix,
-        api_tokens_table.c.user_identifier, # Keep for consistency, though it'll be the same
-        api_tokens_table.c.created_at,
-        api_tokens_table.c.expires_at,
-        api_tokens_table.c.last_used_at,
-        api_tokens_table.c.is_revoked,
-    ).where(api_tokens_table.c.user_identifier == user_identifier).order_by(
-        api_tokens_table.c.created_at.desc()
+    query = (
+        select(
+            api_tokens_table.c.id,
+            api_tokens_table.c.name,
+            api_tokens_table.c.prefix,
+            api_tokens_table.c.user_identifier,  # Keep for consistency, though it'll be the same
+            api_tokens_table.c.created_at,
+            api_tokens_table.c.expires_at,
+            api_tokens_table.c.last_used_at,
+            api_tokens_table.c.is_revoked,
+        )
+        .where(api_tokens_table.c.user_identifier == user_identifier)
+        .order_by(api_tokens_table.c.created_at.desc())
     )
     results = await db_context.fetch_all(query)
     return [dict(row._mapping) for row in results]
@@ -257,16 +259,19 @@ async def revoke_api_token(
             token_id,
             user_identifier,
         )
-        return True # Considered success as the state is already as desired
+        return True  # Considered success as the state is already as desired
 
     update_query = (
         update(api_tokens_table)
         .where(
             api_tokens_table.c.id == token_id,
-            api_tokens_table.c.user_identifier == user_identifier, # Double check ownership
+            api_tokens_table.c.user_identifier
+            == user_identifier,  # Double check ownership
         )
-        .values(is_revoked=True, last_used_at=datetime.now(timezone.utc)) # Update last_used_at on revoke
-        .returning(api_tokens_table.c.id) # To check if any row was updated
+        .values(
+            is_revoked=True, last_used_at=datetime.now(timezone.utc)
+        )  # Update last_used_at on revoke
+        .returning(api_tokens_table.c.id)  # To check if any row was updated
     )
     result = await db_context.execute_with_retry(update_query)
     updated_id = result.scalar_one_or_none()
