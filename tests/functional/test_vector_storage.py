@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np  # Using numpy for easy random vector generation
 import pytest
 from sqlalchemy import text  # Add this import
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator  # For mocking embeddings
 from family_assistant.storage.context import (
@@ -97,7 +98,7 @@ class MockDocumentImpl(Document):
 
 
 @pytest.mark.asyncio
-async def test_vector_storage_basic_flow(pg_vector_db_engine) -> None:
+async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> None:
     """
     Basic test to verify core vector storage functionality using PostgreSQL:
     1. Add a document using the Document protocol.
@@ -267,7 +268,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_documents_tool(pg_vector_db_engine) -> None:
+async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
     """
     Tests the search_documents_tool function via LocalToolsProvider.
     1. Adds a test document and embedding.
