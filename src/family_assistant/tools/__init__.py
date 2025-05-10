@@ -178,8 +178,6 @@ async def schedule_recurring_task_tool(
             scheduled_at=initial_dt,
             max_retries_override=max_retries,  # Correct argument name
             recurrence_rule=recurrence_rule,
-            # original_task_id=None, # Let enqueue_task handle setting it to initial_task_id
-            # notify_event=new_task_event # No immediate notification needed usually
         )
         logger.info(
             f"Scheduled initial recurring task {initial_task_id} (Type: {task_type}) starting at {initial_dt} with rule '{recurrence_rule}'"
@@ -254,7 +252,6 @@ async def schedule_future_callback_tool(
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
-            # notify_event=new_task_event # Needs event passed down
         )
         logger.info(
             f"Scheduled LLM callback task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
@@ -1134,7 +1131,6 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                 },
                 "required": ["uid", "calendar_url"],
             },
-            # "requires_confirmation": True, # Flag removed, configured via provider init
         },
     },
 ]
@@ -1369,10 +1365,6 @@ class CompositeToolsProvider:
             )
             # Return an error string immediately, as something went wrong beyond just not finding the tool
             return f"Error during execution attempt with {type(provider).__name__}: {e}"
-
-        # # If loop completes, no provider handled the tool -- This part is replaced by map lookup
-        # logger.error(f"Tool '{name}' not found in any registered provider.")
-        # raise ToolNotFoundError(f"Tool '{name}' not found in any provider.")
 
     async def close(self) -> None:
         """Closes all contained providers concurrently."""
