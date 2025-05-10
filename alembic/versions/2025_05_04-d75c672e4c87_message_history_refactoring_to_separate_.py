@@ -60,7 +60,8 @@ def upgrade() -> None:
     # Backfill internal_id sequentially based on timestamp
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("""
+        op.execute(
+            """
             WITH numbered_rows AS (
                 SELECT ctid, ROW_NUMBER() OVER (ORDER BY timestamp) AS rn
                 FROM message_history
@@ -69,13 +70,16 @@ def upgrade() -> None:
             SET internal_id = numbered_rows.rn
             FROM numbered_rows
             WHERE message_history.ctid = numbered_rows.ctid AND message_history.internal_id IS NULL;
-        """)
+        """
+        )
     elif bind.dialect.name == "sqlite":
-        op.execute("""
+        op.execute(
+            """
             UPDATE message_history
             SET internal_id = (SELECT rn FROM (SELECT rowid, ROW_NUMBER() OVER (ORDER BY timestamp) as rn FROM message_history) AS sub WHERE sub.rowid = message_history.rowid)
             WHERE internal_id IS NULL;
-        """)
+        """
+        )
     # Add other dialect support if needed
 
     op.execute(
