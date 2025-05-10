@@ -149,7 +149,7 @@ class LiteLLMClient:
         self,
         model: str,
         model_parameters: dict[str, Any] | None = None,
-        **kwargs: Any,
+        **kwargs: dict[str, Any],
     ) -> None:
         """
         Initializes the LiteLLM client.
