@@ -71,7 +71,6 @@ async def mcp_proxy_server() -> AsyncGenerator[str, None]:
     host = "127.0.0.1"
     port = find_free_port()
     sse_url = f"http://{host}:{port}/sse"
-    # Command: mcp-proxy --sse-port <port> --sse-host <host> mcp-server-time
     command = [
         "mcp-proxy",
         "--sse-port",
