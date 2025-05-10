@@ -98,15 +98,10 @@ class PDFTextExtractor:
                         f"Error converting PDF '{item.metadata.get('original_filename', item.ref)}' with markitdown: {e}",
                         exc_info=True,
                     )
-            # else:
-            # This processor only handles 'application/pdf'. Other items are implicitly
-            # passed through if this processor were to return current_items + output_items.
-            # However, typical pipeline design is that a processor consumes items it handles
-            # and produces new ones, or passes unhandled ones through.
-            # For simplicity here, we only return newly created markdown items.
-            # The pipeline orchestrator passes the output of one processor to the next.
-            # If an item is not processed, it won't be in output_items.
-            # If it needs to be passed through, the processor should explicitly add it.
-            # For now, PDFTextExtractor consumes PDFs and produces markdown, or nothing if conversion fails.
+            # This processor only handles 'application/pdf'.
+            # It consumes PDF items and produces new markdown items, or nothing if conversion fails.
+            # Other item types are implicitly filtered out as they are not added to output_items.
+            # The pipeline orchestrator passes the output of one processor (output_items from this one)
+            # as input to the next.
 
         return output_items
