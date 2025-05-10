@@ -49,12 +49,8 @@ from family_assistant import storage
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import EmbeddingGenerator  # Example
 from family_assistant.storage import (
-    add_or_update_note,
-    delete_note,
-    get_all_notes,
     get_all_tasks,
     get_grouped_message_history,
-    get_note_by_title,
     store_incoming_email,
 )
 from family_assistant.storage.context import DatabaseContext
@@ -195,6 +191,12 @@ app = FastAPI(
     middleware=middleware,  # Add configured middleware
 )
 
+# --- Store shared objects on app.state ---
+app.state.templates = templates  # Make templates instance available to routers
+app.state.server_url = SERVER_URL  # Make SERVER_URL available to routers
+app.state.docs_user_dir = docs_user_dir  # Make docs_user_dir available (used by documentation_router)
+
+
 # Include the authentication routes
 if AUTH_ENABLED:
     app.include_router(auth_router, tags=["Authentication"])
@@ -214,108 +216,16 @@ else:
 
 # --- Auth Routes are now in family_assistant.web.auth and included via auth_router ---
 
+# --- Import and Include Routers ---
+from family_assistant.web.routers.documentation import (
+    documentation_router,  # Existing router
+)
+from family_assistant.web.routers.notes import notes_router  # New notes router
 
-# --- Application Routes ---
+app.include_router(notes_router, tags=["Notes"])
+app.include_router(documentation_router, tags=["Documentation"]) # Keep existing documentation router
 
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root(
-    request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
-) -> HTMLResponse:
-    """Serves the main page listing all notes."""
-    notes = await get_all_notes(db_context)
-    return templates.TemplateResponse(
-        "index.html",  # Use consistent naming if preferred
-        {
-            "request": request,
-            "notes": notes,
-            "user": request.session.get(
-                "user"
-            ),  # Pass user info (will be None if not logged in or no session)
-            "auth_enabled": AUTH_ENABLED,  # Indicate if auth is on
-            "server_url": SERVER_URL,
-        },  # Pass SERVER_URL
-    )
-
-
-@app.get("/notes/add", response_class=HTMLResponse)
-async def add_note_form(request: Request) -> HTMLResponse:
-    """Serves the form to add a new note."""
-    return templates.TemplateResponse(
-        "edit_note.html",
-        {
-            "request": request,
-            "note": None,
-            "is_new": True,
-            "user": request.session.get("user"),
-            "auth_enabled": AUTH_ENABLED,
-        },
-    )
-
-
-@app.get("/notes/edit/{title}", response_class=HTMLResponse)
-async def edit_note_form(
-    request: Request,
-    title: str,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
-) -> HTMLResponse:
-    """Serves the form to edit an existing note."""
-    note = await get_note_by_title(db_context, title)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    return templates.TemplateResponse(
-        "edit_note.html",
-        {
-            "request": request,
-            "note": note,
-            "is_new": False,
-            "user": request.session.get("user"),
-            "auth_enabled": AUTH_ENABLED,
-        },
-    )
-
-
-@app.post("/notes/save")
-async def save_note(
-    request: Request,
-    title: Annotated[str, Form()] = ...,
-    content: Annotated[str, Form()] = ...,
-    original_title: Annotated[str | None, Form()] = None,
-    db_context: Annotated[DatabaseContext, Depends(get_db)] = None,  # noqa: B008
-) -> RedirectResponse:
-    """Handles saving a new or updated note."""
-    try:
-        if original_title and original_title != title:
-            # Title changed - need to delete old and add new (or implement rename)
-            # Simple approach: delete old, add new
-            await delete_note(db_context, original_title)  # Pass context
-            await add_or_update_note(db_context, title, content)  # Pass context
-            logger.info(
-                f"Renamed note '{original_title}' to '{title}' and updated content."
-            )
-        else:
-            # New note or updating existing without title change
-            await add_or_update_note(db_context, title, content)  # Pass context
-            logger.info(f"Saved note: {title}")
-        return RedirectResponse(url="/", status_code=303)  # Redirect back to list
-    except Exception as e:
-        logger.error(f"Error saving note '{title}': {e}", exc_info=True)
-        # You might want to return an error page instead
-        raise HTTPException(status_code=500, detail=f"Failed to save note: {e}") from e
-
-
-@app.post("/notes/delete/{title}")
-async def delete_note_post(
-    request: Request,
-    title: str,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
-) -> RedirectResponse:
-    """Handles deleting a note."""
-    deleted = await delete_note(db_context, title)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Note not found for deletion")
-    return RedirectResponse(url="/", status_code=303)  # Redirect back to list
-
+# --- Remaining Application Routes (to be moved) ---
 
 @app.post("/webhook/mail")
 async def handle_mail_webhook(
