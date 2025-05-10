@@ -198,8 +198,12 @@ class DatabaseContext:
         if self._transaction_cm is None:
             raise RuntimeError("No active transaction context manager")
 
-        # Register the callback with the transaction context manager
-        event.listen(self.conn.sync_connection, "commit", callback)
+        # Wrapper to call the original callback without arguments
+        def event_listener_wrapper(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
+            callback()
+
+        # Register the wrapper with the transaction context manager
+        event.listen(self.conn.sync_connection, "commit", event_listener_wrapper)
         return callback
 
 
