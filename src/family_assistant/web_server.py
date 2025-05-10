@@ -228,62 +228,9 @@ app.include_router(notes_router, tags=["Notes"])
 app.include_router(
     documentation_router, tags=["Documentation"]
 )  # Keep existing documentation router
+app.include_router(webhooks_router, tags=["Webhooks"]) # Include new webhooks router
 
 # --- Remaining Application Routes (to be moved) ---
-
-
-@app.post("/webhook/mail")
-async def handle_mail_webhook(
-    request: Request,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
-) -> Response:
-    """
-    Receives incoming email via webhook (expects multipart/form-data).
-    Logs the received form data for now.
-    """
-    logger.info("Received POST request on /webhook/mail")
-    try:
-        # --- Save raw request body for debugging/replay ---
-        raw_body = await request.body()
-        try:
-            os.makedirs(MAILBOX_RAW_DIR, exist_ok=True)
-            # Use timestamp for filename, as parsing form data might consume the body stream
-            # depending on the framework version/internals. Reading body first is safer.
-            now = datetime.now(timezone.utc)
-            timestamp_str = now.strftime("%Y%m%d_%H%M%S_%f")
-            # Sanitize content-type for filename part if available
-            content_type = request.headers.get("content-type", "unknown_content_type")
-            safe_content_type = (
-                re.sub(r'[<>:"/\\|?*]', "_", content_type).split(";")[0].strip()
-            )  # Get main type
-            filename = f"{timestamp_str}_{safe_content_type}.raw"
-            filepath = os.path.join(MAILBOX_RAW_DIR, filename)
-
-            async with aiofiles.open(filepath, "wb") as f:
-                await f.write(raw_body)
-            logger.info(
-                f"Saved raw webhook request body ({len(raw_body)} bytes) to: {filepath}"
-            )
-        except Exception as e:
-            # Log error but don't fail the request processing
-            logger.error(f"Failed to save raw webhook request body: {e}", exc_info=True)
-        # --- End raw request saving ---
-
-        # Mailgun sends data as multipart/form-data
-        form_data = await request.form()
-        await store_incoming_email(
-            db_context, dict(form_data)
-        )  # Pass context and parsed form data
-        # TODO: Add logic here to parse/store email content or trigger LLM processing
-        # -----------------------------------------
-
-        return Response(status_code=200, content="Email received.")
-    except Exception as e:
-        logger.error(f"Error processing mail webhook: {e}", exc_info=True)
-        # Return 500, Mailgun might retry
-        raise HTTPException(
-            status_code=500, detail="Failed to process incoming email"
-        ) from e
 
 
 @app.get("/history", response_class=HTMLResponse)
