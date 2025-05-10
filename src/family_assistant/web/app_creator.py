@@ -18,12 +18,18 @@ from family_assistant.web.auth import (
     auth_router,
 )
 from family_assistant.web.routers.api import api_router
+from family_assistant.web.routers.api_token_management import (
+    router as api_token_management_router,
+)
 from family_assistant.web.routers.documentation import documentation_router
 from family_assistant.web.routers.health import health_router
 from family_assistant.web.routers.history import history_router
 from family_assistant.web.routers.notes import notes_router
 from family_assistant.web.routers.tasks_ui import tasks_ui_router
 from family_assistant.web.routers.tools_ui import tools_ui_router
+from family_assistant.web.routers.ui_token_management import (  # New import
+    router as ui_token_management_router,
+)
 from family_assistant.web.routers.vector_search import vector_search_router
 from family_assistant.web.routers.webhooks import webhooks_router
 
@@ -123,4 +129,21 @@ app.include_router(tools_ui_router, tags=["Tools UI"])
 app.include_router(tasks_ui_router, tags=["Tasks UI"])
 app.include_router(vector_search_router, tags=["Vector Search UI"])
 app.include_router(health_router, tags=["Health Check"])
-app.include_router(api_router, prefix="/api", tags=["API Endpoints"])
+
+# General API endpoints (like /api/tools/execute, /api/documents/upload)
+app.include_router(api_router, prefix="/api", tags=["General API"])
+
+# API Token Management endpoints (like /api/me/tokens)
+# This is nested under /api as well, so the full path would be /api/me/tokens
+app.include_router(
+    api_token_management_router,
+    prefix="/api/me/tokens",  # Suggesting a "me" scope for user-specific tokens
+    tags=["API Token Management"],
+)
+
+# UI for API Token Management
+app.include_router(
+    ui_token_management_router,
+    prefix="/settings/tokens",  # UI page for managing tokens
+    tags=["Settings UI"],
+)
