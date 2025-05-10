@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import pathlib
-import re
 import uuid
 import zoneinfo
 from datetime import date, datetime, timezone
@@ -21,7 +20,6 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
-    Response,
     status,
 )
 from fastapi.responses import (
@@ -51,7 +49,6 @@ from family_assistant.embeddings import EmbeddingGenerator  # Example
 from family_assistant.storage import (
     get_all_tasks,
     get_grouped_message_history,
-    store_incoming_email,
 )
 from family_assistant.storage.context import DatabaseContext
 
