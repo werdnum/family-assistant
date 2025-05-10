@@ -67,7 +67,12 @@ class DatabaseContext:
         self.conn = await self._transaction_cm.__aenter__()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Exit the async context manager, committing or rolling back the transaction."""
         if self._transaction_cm is None:
             # This shouldn't happen if __aenter__ succeeded
