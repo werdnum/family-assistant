@@ -462,7 +462,7 @@ async def test_indexing_pipeline_pdf_processing(
                 chunk_size=500,  # Adjust as needed for test_doc.pdf content
                 chunk_overlap=50,
                 # Map the output of PDFTextExtractor to the desired chunk type
-                embedding_type_map={"extracted_markdown_content": "content_chunk"},
+                embedding_type_prefix_map={"extracted_markdown_content": "content_chunk"},
             )
             embedding_dispatcher = EmbeddingDispatchProcessor(
                 embedding_types_to_dispatch=[
