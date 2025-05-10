@@ -1,12 +1,14 @@
 import logging
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 
 from family_assistant.web.auth import AUTH_ENABLED, User, get_current_user_optional
+
+if TYPE_CHECKING:
+    from fastapi.templating import Jinja2Templates
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -16,7 +18,7 @@ router = APIRouter()
 async def get_document_upload_form(
     request: Request,
     current_user: Annotated[User | None, Depends(get_current_user_optional)] = None,
-):
+) -> HTMLResponse:
     """Serves the HTML form for uploading documents."""
     if AUTH_ENABLED and not current_user:
         # Redirect to login or show an error if auth is on and no user
@@ -47,7 +49,7 @@ async def handle_document_upload(  # noqa: PLR0913
     content_parts: Annotated[str | None, Form()] = None,
     uploaded_file: Annotated[UploadFile | None, File()] = None,
     current_user: Annotated[User | None, Depends(get_current_user_optional)] = None,
-):
+) -> HTMLResponse:
     """Handles document submission from the UI form and calls the internal API."""
     if AUTH_ENABLED and not current_user:
         # As above, handle auth if necessary
@@ -87,7 +89,7 @@ async def handle_document_upload(  # noqa: PLR0913
             # If it needs a token from the current_user, that needs to be added to headers.
             response = await client.post(api_url, data=form_data, files=files_payload)
 
-            if response.status_code == 202: # HTTP_202_ACCEPTED
+            if response.status_code == 202:  # HTTP_202_ACCEPTED
                 response_data = response.json()
                 message = response_data.get(
                     "message", "Document submitted successfully."
