@@ -106,13 +106,14 @@ class DocumentIndexer:
                 ref=file_ref,
             )
             initial_items.append(file_item)
-        elif file_ref or mime_type or original_filename: # Log if some file info is present but not all essential parts
+        elif (
+            file_ref or mime_type or original_filename
+        ):  # Log if some file info is present but not all essential parts
             logger.warning(
                 f"Incomplete file information in payload for document ID {document_id}. "
                 f"File ref: {file_ref}, MIME type: {mime_type}, Original filename: {original_filename}. "
                 "Skipping file item creation."
             )
-
 
         # Process content_parts, if present
         content_parts: dict[str, str] | None = payload.get("content_parts")
@@ -144,19 +145,19 @@ class DocumentIndexer:
                 elif key == "title":
                     embedding_type = "title"
 
-
                 item = IndexableContent(
                     content=text_content,
                     embedding_type=embedding_type,
-                    mime_type="text/plain", # Assuming content_parts are always text
+                    mime_type="text/plain",  # Assuming content_parts are always text
                     source_processor="DocumentIndexer.process_document",
                     metadata=metadata_for_item,
-                    ref=None, # Text content is inline
+                    ref=None,  # Text content is inline
                 )
                 initial_items.append(item)
         else:
-            logger.info(f"No 'content_parts' found in payload for document ID {document_id}.")
-
+            logger.info(
+                f"No 'content_parts' found in payload for document ID {document_id}."
+            )
 
         if not initial_items:
             logger.warning(
@@ -166,11 +167,14 @@ class DocumentIndexer:
             if file_ref:
                 try:
                     import os  # Import here to avoid top-level if not always needed
+
                     os.remove(file_ref)
-                    logger.info(f"Cleaned up temporary file (no items to process): {file_ref}")
+                    logger.info(
+                        f"Cleaned up temporary file (no items to process): {file_ref}"
+                    )
                 except OSError as e:
                     logger.error(f"Error cleaning up temporary file {file_ref}: {e}")
-            return # Nothing to do, task is successful
+            return  # Nothing to do, task is successful
 
         # Run the pipeline with the prepared items
         try:
