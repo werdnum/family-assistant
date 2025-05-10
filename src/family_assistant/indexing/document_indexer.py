@@ -60,12 +60,9 @@ class DocumentIndexer:
             raise ValueError("Missing DatabaseContext dependency in context.")
 
         document_id = payload.get("document_id")
-        content_parts: dict[str, str] | None = payload.get("content_parts")
-
         if not document_id:
-            raise ValueError(
-                "Missing 'document_id' in process_uploaded_document task payload."
-            )
+            logger.error("Missing 'document_id' in process_document task payload.")
+            raise ValueError("Missing 'document_id' in task payload.")
 
         # Fetch the original DocumentRecord
         try:
@@ -85,57 +82,100 @@ class DocumentIndexer:
             logger.error(str(e))
             raise  # Re-raise to mark task as failed if document not found
 
-        if not content_parts:
-            logger.warning(
-                f"No 'content_parts' found in payload for document ID {document_id}. Nothing to index."
-            )
-            return  # Nothing to do, task is successful
-
-        logger.info(
-            f"Preparing content parts for indexing pipeline for document ID: {document_id} with {len(content_parts)} part(s)."
-        )
-
         initial_items: list[IndexableContent] = []
-        for key, text_content in content_parts.items():
-            if not text_content or not isinstance(text_content, str):
-                logger.warning(
-                    f"Skipping invalid content part for key '{key}' in document {document_id}. Content: {text_content!r}"
-                )
-                continue
 
-            embedding_type = key
-            metadata_for_item = {"original_key": key}
+        # Process uploaded file reference, if present
+        file_ref: str | None = payload.get("file_ref")
+        mime_type: str | None = payload.get("mime_type")
+        original_filename: str | None = payload.get("original_filename")
 
-            if key.startswith("content_chunk_"):
-                embedding_type = "content_chunk"
-                try:
-                    parsed_chunk_index = int(key.split("_")[-1])
-                    metadata_for_item["chunk_index"] = parsed_chunk_index
-                except (IndexError, ValueError):
-                    logger.warning(
-                        f"Could not parse chunk index from key '{key}', not storing in metadata."
-                    )
-
-            item = IndexableContent(
-                content=text_content,
-                embedding_type=embedding_type,
-                mime_type="text/plain",
-                source_processor="DocumentIndexer.process_document",
-                metadata=metadata_for_item,
-                ref=None,
+        if file_ref and mime_type:
+            logger.info(
+                f"Found file reference for document ID {document_id}: path='{file_ref}', mime_type='{mime_type}', original_filename='{original_filename}'"
             )
-            initial_items.append(item)
+            file_item_metadata = {}
+            if original_filename:
+                file_item_metadata["original_filename"] = original_filename
+
+            file_item = IndexableContent(
+                content=None,  # Binary content is at file_ref
+                embedding_type="original_document_file",  # Generic type for the whole file
+                mime_type=mime_type,
+                source_processor="DocumentIndexer.process_document",
+                metadata=file_item_metadata,
+                ref=file_ref,
+            )
+            initial_items.append(file_item)
+        elif file_ref or mime_type or original_filename: # Log if some file info is present but not all essential parts
+            logger.warning(
+                f"Incomplete file information in payload for document ID {document_id}. "
+                f"File ref: {file_ref}, MIME type: {mime_type}, Original filename: {original_filename}. "
+                "Skipping file item creation."
+            )
+
+
+        # Process content_parts, if present
+        content_parts: dict[str, str] | None = payload.get("content_parts")
+        if content_parts:
+            logger.info(
+                f"Preparing content parts for indexing pipeline for document ID: {document_id} with {len(content_parts)} part(s)."
+            )
+            for key, text_content in content_parts.items():
+                if not text_content or not isinstance(text_content, str):
+                    logger.warning(
+                        f"Skipping invalid content part for key '{key}' in document {document_id}. Content: {text_content!r}"
+                    )
+                    continue
+
+                embedding_type = key
+                metadata_for_item = {"original_key": key}
+
+                if key.startswith("content_chunk_"):
+                    embedding_type = "content_chunk"
+                    try:
+                        # Example: "content_chunk_0", "content_chunk_12"
+                        parsed_chunk_index = int(key.split("_")[-1])
+                        metadata_for_item["chunk_index"] = parsed_chunk_index
+                    except (IndexError, ValueError):
+                        logger.warning(
+                            f"Could not parse chunk index from key '{key}', not storing in metadata."
+                        )
+                # Add other specific key parsings if needed, e.g., for 'title'
+                elif key == "title":
+                    embedding_type = "title"
+
+
+                item = IndexableContent(
+                    content=text_content,
+                    embedding_type=embedding_type,
+                    mime_type="text/plain", # Assuming content_parts are always text
+                    source_processor="DocumentIndexer.process_document",
+                    metadata=metadata_for_item,
+                    ref=None, # Text content is inline
+                )
+                initial_items.append(item)
+        else:
+            logger.info(f"No 'content_parts' found in payload for document ID {document_id}.")
+
 
         if not initial_items:
             logger.warning(
-                f"No valid IndexableContent items created from content_parts for document {document_id}. Skipping pipeline run."
+                f"No IndexableContent items created for document {document_id} from either file or content_parts. Nothing to index."
             )
-            return
+            # Clean up temporary file if it exists and wasn't processed
+            if file_ref:
+                try:
+                    import os  # Import here to avoid top-level if not always needed
+                    os.remove(file_ref)
+                    logger.info(f"Cleaned up temporary file (no items to process): {file_ref}")
+                except OSError as e:
+                    logger.error(f"Error cleaning up temporary file {file_ref}: {e}")
+            return # Nothing to do, task is successful
 
         # Run the pipeline with the prepared items
         try:
             logger.info(
-                f"Running indexing pipeline for document {document_id} with {len(initial_items)} initial items."
+                f"Running indexing pipeline for document {document_id} with {len(initial_items)} initial item(s)."
             )
             # Pass the list of items directly to the pipeline's run method.
             # The pipeline's run method will determine how to handle initial_content_ref from this list.
@@ -150,6 +190,9 @@ class DocumentIndexer:
                 exc_info=True,
             )
             # Re-raise to mark the task as failed
+            # Note: If the pipeline fails, the temporary file (if any) is not cleaned up here.
+            # Cleanup should ideally happen after the pipeline (or its constituent tasks)
+            # are fully done with the file. This is marked as Phase 4 in the plan.
             raise RuntimeError(
                 f"Indexing pipeline failed for document {document_id}"
             ) from e
@@ -157,7 +200,9 @@ class DocumentIndexer:
         logger.info(
             f"Indexing pipeline successfully initiated for document {document_id}."
         )
-        # Task completion is handled by the worker loop
+        # Task completion is handled by the worker loop.
+        # The temporary file (if file_ref was used) is expected to be handled
+        # by the pipeline processors or a subsequent cleanup mechanism (Phase 4).
 
 
 __all__ = ["DocumentIndexer"]
