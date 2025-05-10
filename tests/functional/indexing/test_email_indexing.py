@@ -4,7 +4,6 @@ End-to-end functional tests for the email indexing and vector search pipeline.
 
 import asyncio
 import logging
-import os  # Added import
 import re  # Add re import
 import tempfile  # Added for http_client fixture
 import uuid
@@ -157,20 +156,19 @@ async def http_client(
     # The pg_vector_db_engine fixture already patches storage.base.engine
     # so the app will use the correct test database.
 
-    original_attachment_storage_dir = os.getenv("ATTACHMENT_STORAGE_DIR")
-    with tempfile.TemporaryDirectory() as temp_attachment_dir:
-        logger.info(f"Using temporary attachment directory: {temp_attachment_dir}")
-        # Set environment variable for ATTACHMENT_STORAGE_DIR for the webhook to use
-        # This is tricky if the webhook module has already loaded it.
-        # A more robust way is to have ATTACHMENT_STORAGE_DIR configurable via app.state.config
-        # For now, we'll try patching os.environ, but this might not be reliable
-        # if webhooks.py reads it at import time.
-        # A better approach: modify webhooks.py to get ATTACHMENT_STORAGE_DIR from app.state.config
-        # and set app.state.config here.
-        # For now, let's assume the getenv in webhooks.py is dynamic enough or we accept this limitation.
-        os.environ["ATTACHMENT_STORAGE_DIR"] = temp_attachment_dir
+    original_app_config = getattr(fastapi_app.state, "config", None)
+    temp_config_for_test = {}
 
-        # If other app.state.config settings are needed, set them here.
+    if original_app_config is not None:
+        temp_config_for_test.update(original_app_config)
+
+    with tempfile.TemporaryDirectory() as temp_attachment_dir:
+        logger.info(
+            f"Test http_client: Using temporary attachment directory: {temp_attachment_dir}"
+        )
+        # Set the attachment_storage_path in the app's state config for the test
+        temp_config_for_test["attachment_storage_path"] = temp_attachment_dir
+        fastapi_app.state.config = temp_config_for_test
 
         transport = httpx.ASGITransport(app=fastapi_app)
         async with httpx.AsyncClient(
@@ -179,13 +177,13 @@ async def http_client(
             yield client
         logger.info("Test HTTP client closed.")
 
-    # Restore original environment variable if it was set
-    if original_attachment_storage_dir is not None:
-        os.environ["ATTACHMENT_STORAGE_DIR"] = original_attachment_storage_dir
-    elif "ATTACHMENT_STORAGE_DIR" in os.environ:
-        del os.environ["ATTACHMENT_STORAGE_DIR"]
-
-    # Clean up app state if modified
+    # Restore original app state config
+    if original_app_config is not None:
+        fastapi_app.state.config = original_app_config
+    elif hasattr(fastapi_app.state, "config"):
+        # If there was no original config, but we set one, remove it.
+        del fastapi_app.state.config
+    logger.info("Test http_client: Restored original app.state.config.")
 
 
 # --- Helper Function for Test Setup ---
