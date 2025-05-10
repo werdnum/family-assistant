@@ -407,8 +407,11 @@ async def test_indexing_pipeline_pdf_processing(
     # Create a dummy PDF file for testing (or copy a test PDF)
     # For simplicity, we'll use the existing test_doc.pdf from tests/data
     # and copy it to a temporary location for this test run.
-    source_pdf_path = pathlib.Path(__file__).parent.parent / "data" / "test_doc.pdf"
-    assert source_pdf_path.exists(), "Test PDF tests/data/test_doc.pdf not found"
+    # The data directory is expected to be at tests/data, so we go up three levels from the current file.
+    source_pdf_path = (
+        pathlib.Path(__file__).parent.parent.parent / "data" / "test_doc.pdf"
+    )
+    assert source_pdf_path.exists(), f"Test PDF {source_pdf_path} not found"
 
     test_pdf_filename = "test_pipeline_doc.pdf"
     temp_pdf_path = tmp_path / test_pdf_filename
