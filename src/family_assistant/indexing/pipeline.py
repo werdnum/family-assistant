@@ -86,14 +86,43 @@ class IndexingPipeline:
     ) -> None:
         """
         Initializes the pipeline with a list of processors and a configuration.
+        It also configures known processors (like TextChunker) if relevant
+        configuration is found in the pipeline's `config`.
 
         Args:
             processors: An ordered list of ContentProcessor instances.
             config: A dictionary for pipeline-level configuration.
-                     (Note: Configuration passing to individual processors not yet detailed.)
         """
         self.processors = processors
-        self.config = config  # Store config, usage TBD by specific pipeline needs
+        self.config = config
+
+        # Configure processors if applicable
+        # Import here to avoid circular dependency at module level if TextChunker imports pipeline elements
+        from family_assistant.indexing.processors.text_processors import TextChunker
+
+        for processor in self.processors:
+            if isinstance(processor, TextChunker):
+                # Config key for TextChunker is expected to be "text_chunker"
+                chunker_pipeline_config = self.config.get("text_chunker")
+                if isinstance(chunker_pipeline_config, dict):
+                    prefix_map = chunker_pipeline_config.get(
+                        "embedding_type_prefix_map"
+                    )
+                    if isinstance(prefix_map, dict):
+                        # Update the processor's map if the pipeline has one defined
+                        processor.embedding_type_prefix_map.update(prefix_map)
+                        logger.info(
+                            f"Updated TextChunker instance with embedding_type_prefix_map from pipeline config: {prefix_map}"
+                        )
+                    # Pass other TextChunker-specific configs if needed, e.g., chunk_size, chunk_overlap
+                    # This assumes TextChunker's __init__ or properties can handle these.
+                    # For now, only embedding_type_prefix_map is explicitly handled here.
+                    # If chunk_size/overlap are also in pipeline config, TextChunker needs to be
+                    # instantiated with them or have setters. Current TextChunker takes them at init.
+                    # This pipeline __init__ assumes processors are pre-instantiated.
+                    # So, this is for overriding/supplementing.
+                    # If the map was empty and pipeline provides one, it's now set.
+                    # If TextChunker had a map and pipeline provides one, it's updated (merged).
 
     async def run(
         self,
