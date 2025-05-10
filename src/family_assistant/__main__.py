@@ -382,8 +382,6 @@ parser.add_argument(
     default=None,  # Default is None, will be loaded from env/config
     help="Embedding model dimensionality (overrides config file and environment variable)",
 )
-# Add argument for config file path?
-# parser.add_argument('--config', default='config.yaml', help='Path to the main YAML configuration file.')
 
 
 # --- Signal Handlers ---
@@ -453,9 +451,7 @@ async def main_async(
     TelegramService | None, ToolsProvider | None
 ]:  # Return generic ToolsProvider
     """Initializes and runs the bot application using the provided configuration."""
-    # global application # Removed
     logger.info(f"Using model: {config['model']}")
-    # mcp_provider = None # No longer needed, composite provider is the main one
     # --- Validate Essential Config ---
     if not config.get("telegram_token"):
         raise ValueError(
@@ -548,9 +544,6 @@ async def main_async(
     async with await get_db_context() as db_ctx:
         await storage.init_vector_db(db_ctx)  # Initialize vector specific parts
 
-    # Load MCP config and connect to servers using config dict (REMOVED - Handled by provider)
-    # await load_mcp_config_and_connect(config["mcp_config"]) # Pass MCP config part
-
     # --- Instantiate Tool Providers ---
     # Scan for documentation files and update the relevant tool definition
     available_doc_files = _scan_user_docs()
@@ -582,7 +575,6 @@ async def main_async(
     # It will connect on first use (e.g., when get_tool_definitions is called)
     mcp_provider = MCPToolsProvider(
         mcp_server_configs=config.get("mcp_config", {}).get("mcpServers", {}),
-        # mcp_client=None # Optional: pass a shared mcp.Client if needed elsewhere
     )
     # Combine providers
     try:
@@ -605,13 +597,14 @@ async def main_async(
     confirm_tool_names = set(config.get("tools_requiring_confirmation", []))
     logger.info(f"Tools configured to require confirmation: {confirm_tool_names}")
 
-    confirming_provider = ConfirmingToolsProvider(  # Use the imported class name directly
-        wrapped_provider=composite_provider,
-        tools_requiring_confirmation=confirm_tool_names,  # Pass the set from config
-        calendar_config=config[
-            "calendar_config"
-        ],  # Pass calendar config for detail fetching
-        # confirmation_timeout=... # Optional: Set custom timeout if needed
+    confirming_provider = (
+        ConfirmingToolsProvider(  # Use the imported class name directly
+            wrapped_provider=composite_provider,
+            tools_requiring_confirmation=confirm_tool_names,  # Pass the set from config
+            calendar_config=config[
+                "calendar_config"
+            ],  # Pass calendar config for detail fetching
+        )
     )
     # Ensure the confirming provider loads its definitions (identifies tools needing confirmation)
     tool_definitions = await confirming_provider.get_tool_definitions()
@@ -723,7 +716,6 @@ async def main_async(
     server = uvicorn.Server(uvicorn_config)
 
     # Run Uvicorn server concurrently (polling is already running)
-    # telegram_task = asyncio.create_task(application.updater.start_polling(allowed_updates=Update.ALL_TYPES)) # Removed duplicate start_polling
     web_server_task = asyncio.create_task(server.serve())
     logger.info("Web server running on http://0.0.0.0:8000")
 
@@ -773,9 +765,6 @@ async def main_async(
     await shutdown_event.wait()
 
     logger.info("Shutdown signal received. Stopping services...")
-
-    # Stop polling using the service method (already called by shutdown_handler if setup correctly)
-    # await telegram_service.stop_polling() # This is now handled by the signal handler
 
     # Signal Uvicorn to shut down gracefully
     server.should_exit = True
@@ -855,7 +844,6 @@ def main() -> int:  # Return an exit code
         # and we need to capture it earlier in the 'try' block.
         # The previous block failed because the call to main_async wasn't updated first.
         # Assuming main_async now returns (service, mcp_provider), the call should be:
-        # telegram_service_instance, mcp_provider_instance = loop.run_until_complete(main_async(config_data))
 
         # Corrected signal handler setup using both instances:
         for sig_num, sig_name in signal_map.items():
@@ -910,11 +898,6 @@ def main() -> int:  # Return an exit code
         logger.info("Closing event loop.")
         # Ensure loop is closed only if it's running
         # Removing loop.close() as it can cause issues if called incorrectly.
-        # if loop.is_running():
-        #      loop.close()
-        #      logger.info("Event loop closed.")
-        # else:
-        #      logger.info("Event loop was already closed.")
 
         logger.info("Application finished.")
 
