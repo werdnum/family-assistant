@@ -7,8 +7,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from family_assistant.tools import (
     _scan_user_docs,  # Assuming this is the correct location
 )
-from family_assistant.web.auth import AUTH_ENABLED
-from family_assistant.web.utils import md_renderer  # Import from new location
+
+from ..auth import AUTH_ENABLED  # Use relative import
+from ..utils import md_renderer  # Use relative import
 
 logger = logging.getLogger(__name__)
 documentation_router = APIRouter()
