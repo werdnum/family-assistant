@@ -45,6 +45,7 @@ from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
+from family_assistant.indexing.processors.file_processors import PDFTextExtractor
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
 from family_assistant.indexing.processors.text_processors import TextChunker
 
@@ -671,6 +672,7 @@ async def main_async(
         "embedding_type_prefix_map": {
             "raw_body_text": "content_chunk",  # For emails
             "raw_file_text": "content_chunk",  # For general files
+            "extracted_markdown_content": "content_chunk", # For markdown from PDFs
         },
     }
     embedding_dispatcher_config = {
@@ -679,9 +681,11 @@ async def main_async(
 
     indexing_processors = [
         TitleExtractor(),
+        PDFTextExtractor(),  # Add PDFTextExtractor here
         TextChunker(
             chunk_size=text_chunker_config["chunk_size"],
             chunk_overlap=text_chunker_config["chunk_overlap"],
+            # embedding_type_prefix_map is passed via **text_chunker_config below
         ),
         EmbeddingDispatchProcessor(**embedding_dispatcher_config),
     ]
