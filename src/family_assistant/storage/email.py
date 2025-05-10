@@ -5,8 +5,10 @@ Handles storage and retrieval of received emails.
 import asyncio  # Import asyncio for Event type hint
 import logging
 import uuid  # Add uuid import
+from datetime import datetime  # Added for Pydantic models
 
 import sqlalchemy as sa
+from pydantic import BaseModel, Field  # Added for Pydantic models
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
@@ -20,6 +22,42 @@ from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+
+
+# --- Pydantic Models for Parsed Email Data ---
+class AttachmentData(BaseModel):
+    """Represents metadata for a single email attachment."""
+
+    filename: str
+    content_type: str
+    size: int | None = None
+    storage_path: str  # Path where the attachment is saved
+
+
+class ParsedEmailData(BaseModel):
+    """Represents parsed data from an incoming email webhook."""
+
+    message_id_header: str = Field(..., alias="Message-Id")
+    sender_address: str | None = Field(default=None, alias="sender")
+    from_header: str | None = Field(default=None, alias="From")
+    recipient_address: str | None = Field(default=None, alias="recipient")
+    to_header: str | None = Field(default=None, alias="To")
+    cc_header: str | None = Field(default=None, alias="Cc")
+    subject: str | None = Field(default=None, alias="subject")
+    body_plain: str | None = Field(default=None, alias="body-plain")
+    body_html: str | None = Field(default=None, alias="body-html")
+    stripped_text: str | None = Field(default=None, alias="stripped-text")
+    stripped_html: str | None = Field(default=None, alias="stripped-html")
+    email_date: datetime | None = None  # Parsed by webhook handler
+    headers_json: list[list[str]] | None = None  # Parsed by webhook handler
+    attachment_info: list[AttachmentData] | None = None  # Processed by webhook handler
+    mailgun_timestamp: str | None = Field(default=None, alias="timestamp")
+    mailgun_token: str | None = Field(default=None, alias="token")
+
+    class Config:
+        allow_population_by_field_name = True
+        # For Pydantic v2, use:
+        # model_config = {"populate_by_name": True}
 
 logger = logging.getLogger(__name__)
 # Remove engine = get_engine()
