@@ -3,14 +3,10 @@ Handles storage and retrieval of received emails.
 """
 
 import asyncio  # Import asyncio for Event type hint
-import json
 import logging
 import uuid  # Add uuid import
-from datetime import datetime, timezone
-from typing import Any
 
 import sqlalchemy as sa
-from dateutil.parser import parse as parse_datetime
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
@@ -86,77 +82,47 @@ received_emails_table = sa.Table(
 
 async def store_incoming_email(
     db_context: DatabaseContext,
-    form_data: dict[str, Any],
-    notify_event: asyncio.Event | None = None,  # Add notify_event parameter
+    parsed_email: ParsedEmailData,  # Changed from form_data
+    notify_event: asyncio.Event | None = None,
 ) -> None:
     """
-    Parses incoming email data (from Mailgun webhook form) and prepares it for storage.
-    Stores the parsed data in the `received_emails` table using the provided context,
-    optionally notifying a worker event.
+    Stores parsed email data in the `received_emails` table and enqueues an indexing task.
 
     Args:
         db_context: The DatabaseContext to use for the operation.
-        form_data: A dictionary representing the form data received from the webhook.
+        parsed_email: A Pydantic model instance containing the parsed email data.
+        notify_event: An optional asyncio.Event to notify upon task enqueueing.
     """
-    logger.info("Parsing incoming email data for storage...")
+    logger.info(
+        f"Storing parsed email data for Message-ID: {parsed_email.message_id_header}"
+    )
 
-    email_date_parsed: datetime | None = None
-    email_date_str = form_data.get("Date")
-    if email_date_str:
-        try:
-            email_date_parsed = parse_datetime(email_date_str)
-            # Ensure timezone-aware
-            if email_date_parsed.tzinfo is None:
-                # Assuming UTC if timezone is missing, adjust if needed based on common sources
-                email_date_parsed = email_date_parsed.replace(tzinfo=timezone.utc)
-        except Exception as e:
-            logger.warning(f"Could not parse email Date header '{email_date_str}': {e}")
+    # Convert Pydantic model to dict for database insertion.
+    # Use `exclude_unset=True` if you only want to insert fields that were explicitly set,
+    # or `exclude_none=True` to avoid inserting None values for nullable fields if DB handles defaults.
+    # Here, we'll use by_alias=True to ensure DB columns match model field names if they differ.
+    email_data_for_db = parsed_email.model_dump(
+        by_alias=False, exclude_none=True
+    )  # Use model_dump for Pydantic v2
 
-    # Extract headers (Mailgun sends this as a JSON string representation of list of lists)
-    headers_list = None
-    headers_raw = form_data.get("message-headers")
-    if headers_raw:
-        try:
-            headers_list = json.loads(headers_raw)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Could not decode message-headers JSON: {e}")
+    # Ensure message_id_header is present (it's non-nullable in Pydantic model and DB)
+    if not email_data_for_db.get("message_id_header"):
+        # This should ideally be caught by Pydantic validation if alias "Message-Id" is not found
+        logger.error(
+            "Cannot store email: 'message_id_header' (aliased as 'Message-Id') is missing after Pydantic parsing."
+        )
+        raise ValueError(
+            "Cannot store email: 'message_id_header' is missing after Pydantic parsing."
+        )
 
-    # Prepare data for insertion
-    parsed_data = {
-        "message_id_header": form_data.get("Message-Id"),
-        "sender_address": form_data.get("sender"),
-        "from_header": form_data.get("From"),
-        "recipient_address": form_data.get("recipient"),
-        "to_header": form_data.get("To"),
-        "cc_header": form_data.get("Cc"),  # May not be present
-        "subject": form_data.get("subject"),
-        "body_plain": form_data.get("body-plain"),
-        "body_html": form_data.get("body-html"),
-        "stripped_text": form_data.get("stripped-text"),
-        "stripped_html": form_data.get("stripped-html"),
-        "email_date": email_date_parsed,
-        "headers_json": headers_list,
-        "attachment_info": None,  # Placeholder
-        "mailgun_timestamp": form_data.get("timestamp"),
-        "mailgun_token": form_data.get("token"),
-    }
-    # Filter out None values before insertion if the column is not nullable
-    # (though most are nullable here)
-    parsed_data_filtered = {k: v for k, v in parsed_data.items() if v is not None}
-    # Ensure message_id_header is present even if None initially (it's nullable=False)
-    if (
-        "message_id_header" not in parsed_data_filtered
-        and "message_id_header" in parsed_data
-    ):
-        parsed_data_filtered["message_id_header"] = parsed_data["message_id_header"]
+    # attachment_info needs to be JSON serializable if it's a list of Pydantic models
+    if "attachment_info" in email_data_for_db and email_data_for_db["attachment_info"] is not None:
+        email_data_for_db["attachment_info"] = [
+            att.model_dump() for att in parsed_email.attachment_info # type: ignore
+        ]
 
-    if not parsed_data_filtered.get("message_id_header"):
-        logger.error("Cannot store email: Message-ID header is missing.")
-        # Decide how to handle this - raise error or just log and return?
-        # Raising an error might be better to signal failure.
-        raise ValueError("Cannot store email: Message-ID header is missing.")
 
-    logger.debug(f"Attempting to store email data: {parsed_data_filtered}")
+    logger.debug(f"Attempting to store email data: {email_data_for_db}")
 
     # --- Actual Database Insertion and Task Enqueueing ---
     email_db_id: int | None = None
@@ -165,24 +131,23 @@ async def store_incoming_email(
         # 1. Insert email and get its ID
         insert_stmt = (
             insert(received_emails_table)
-            .values(**parsed_data_filtered)
+            .values(**email_data_for_db)
             .returning(received_emails_table.c.id)
         )
         result = await db_context.execute_with_retry(insert_stmt)
         email_db_id = result.scalar_one_or_none()
 
         if not email_db_id:
-            # This shouldn't happen if insert succeeded without error, but check anyway
             raise RuntimeError(
-                f"Failed to retrieve DB ID after inserting email with Message-ID: {parsed_data_filtered['message_id_header']}"
+                f"Failed to retrieve DB ID after inserting email with Message-ID: {parsed_email.message_id_header}"
             )
 
         logger.info(
-            f"Stored email with Message-ID: {parsed_data_filtered['message_id_header']}, DB ID: {email_db_id}"
+            f"Stored email with Message-ID: {parsed_email.message_id_header}, DB ID: {email_db_id}"
         )
 
         # 2. Generate a unique task ID
-        task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"  # Add uuid for potential re-runs
+        task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
 
         # 3. Enqueue the indexing task
         await storage.enqueue_task(
@@ -190,7 +155,7 @@ async def store_incoming_email(
             task_id=task_id,
             task_type="index_email",
             payload={"email_db_id": email_db_id},
-            notify_event=notify_event,  # Pass the received event
+            notify_event=notify_event,
         )
         logger.info(f"Enqueued indexing task {task_id} for email DB ID {email_db_id}")
 
@@ -204,19 +169,23 @@ async def store_incoming_email(
         logger.info(f"Updated email {email_db_id} with indexing task ID {task_id}")
 
     except SQLAlchemyError as e:
-        # Log specific details if available
         failed_stage = "inserting email"
         if email_db_id and not task_id:
             failed_stage = "enqueueing task"
-        if email_db_id and task_id:
+        elif email_db_id and task_id:
             failed_stage = "updating email with task_id"
 
         logger.error(
-            f"Database error during {failed_stage} for email Message-ID {parsed_data_filtered.get('message_id_header', 'N/A')} (DB ID: {email_db_id}, Task ID: {task_id}): {e}",
+            f"Database error during {failed_stage} for email Message-ID {parsed_email.message_id_header} (DB ID: {email_db_id}, Task ID: {task_id}): {e}",
             exc_info=True,
         )
         raise
 
 
 # Export symbols for use elsewhere
-__all__ = ["received_emails_table", "store_incoming_email"]
+__all__ = [
+    "received_emails_table",
+    "store_incoming_email",
+    "ParsedEmailData",
+    "AttachmentData",
+]
