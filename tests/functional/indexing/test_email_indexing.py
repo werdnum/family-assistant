@@ -1275,7 +1275,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
                 # (and thus got the specific pdf_content_embedding).
                 found_pdf_result = result
                 break
-            
+
         # If not found by exact match, try again with just substring for broader check,
         # though this might pick a different chunk if the first one had issues.
         if not found_pdf_result:
@@ -1285,10 +1285,13 @@ async def test_email_with_pdf_attachment_indexing_e2e(
                     result.get("source_id") == TEST_EMAIL_MESSAGE_ID_WITH_PDF
                     and KNOWN_SUBSTRING_FROM_PDF in embedding_content
                 ):
-                    logger.warning(f"Found PDF content via substring match for result: {result.get('embedding_id')}, chunk_index: {result.get('embedding_metadata', {}).get('chunk_index')}. Original TEST_PDF_EXTRACTED_TEXT might not be an exact match to any stored chunk if this is the first hit.")
-                    found_pdf_result = result # Take the first one that contains the substring
+                    logger.warning(
+                        f"Found PDF content via substring match for result: {result.get('embedding_id')}, chunk_index: {result.get('embedding_metadata', {}).get('chunk_index')}. Original TEST_PDF_EXTRACTED_TEXT might not be an exact match to any stored chunk if this is the first hit."
+                    )
+                    found_pdf_result = (
+                        result  # Take the first one that contains the substring
+                    )
                     break
-
 
         assert_that(found_pdf_result).described_as(
             f"Ingested PDF content (from email Source ID: {TEST_EMAIL_MESSAGE_ID_WITH_PDF}) "
