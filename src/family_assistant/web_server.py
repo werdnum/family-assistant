@@ -553,8 +553,8 @@ async def handle_mail_webhook(
             filename = f"{timestamp_str}_{safe_content_type}.raw"
             filepath = os.path.join(MAILBOX_RAW_DIR, filename)
 
-            with open(filepath, "wb") as f:
-                f.write(raw_body)
+            async with aiofiles.open(filepath, "wb") as f:
+                await f.write(raw_body)
             logger.info(
                 f"Saved raw webhook request body ({len(raw_body)} bytes) to: {filepath}"
             )
