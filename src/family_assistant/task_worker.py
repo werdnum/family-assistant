@@ -410,8 +410,8 @@ class TaskWorker:
                 application=self.application,
                 timezone_str=self.timezone_str,  # Remove processing_service
                 processing_service=self.processing_service,  # Add processing service
-                embedding_generator=getattr(
-                    self.application.state, "embedding_generator", None
+                embedding_generator=self.application.bot_data.get(
+                    "embedding_generator"
                 ),  # Add embedding_generator from app state
             )
             # --- Execute Handler with Context ---
