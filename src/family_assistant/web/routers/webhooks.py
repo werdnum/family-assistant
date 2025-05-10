@@ -157,8 +157,13 @@ async def handle_mail_webhook(
                     finally:
                         await form_item.close()  # Close the upload file
                 elif form_item:  # Not an UploadFile or no filename
+                    detailed_reason = f"Type: {type(form_item)}"
+                    if isinstance(form_item, UploadFile):
+                        detailed_reason += f", Filename: '{form_item.filename}'"
+                    else:
+                        detailed_reason += f", Value: {str(form_item)[:100]}"  # Log first 100 chars if not UploadFile
                     logger.warning(
-                        f"Skipping attachment field {attachment_field_name}: not a valid UploadFile with filename."
+                        f"Skipping attachment field {attachment_field_name}: not a valid UploadFile with filename. Details: {detailed_reason}"
                     )
 
         # --- Create Pydantic Model ---
