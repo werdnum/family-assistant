@@ -155,7 +155,9 @@ class HashingWordEmbeddingGenerator:
     Input text is lowercased and special characters are removed.
     """
 
-    def __init__(self, model_name: str = "hashing-word-v1", dimensionality: int = 128):
+    def __init__(
+        self, model_name: str = "hashing-word-v1", dimensionality: int = 128
+    ) -> None:
         """
         Initializes the HashingWordEmbeddingGenerator.
 
@@ -204,10 +206,14 @@ class HashingWordEmbeddingGenerator:
         # Normalize the vector to unit length
         magnitude_sq = sum(x * x for x in vector)
         if magnitude_sq == 0:
-            return vector  # Should not happen if tokens were present, but as a safeguard
+            return (
+                vector  # Should not happen if tokens were present, but as a safeguard
+            )
 
         magnitude = math.sqrt(magnitude_sq)
-        if magnitude == 0: # Double check for safety, e.g. if all hashes collide to cancel out (highly unlikely)
+        if (
+            magnitude == 0
+        ):  # Double check for safety, e.g. if all hashes collide to cancel out (highly unlikely)
             return vector
 
         normalized_vector = [x / magnitude for x in vector]
