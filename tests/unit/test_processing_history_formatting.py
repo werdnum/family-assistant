@@ -103,7 +103,6 @@ def test_format_history_with_tool_call(processing_service: ProcessingService) ->
         # Assistant message requesting the tool
         {
             "role": "assistant",
-            # "content": None, # Formatter likely omits content when tool_calls are present
             "tool_calls": [  # This should be passed through directly
                 {
                     "id": tool_call_id,
