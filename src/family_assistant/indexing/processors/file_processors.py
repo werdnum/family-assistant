@@ -55,7 +55,7 @@ class PDFTextExtractor:
             logger.warning(
                 "markitdown library is not installed. PDFTextExtractor will not process PDFs."
             )
-            return [] # Return empty list, effectively skipping PDF processing
+            return []  # Return empty list, effectively skipping PDF processing
 
         output_items: list[IndexableContent] = []
 
@@ -78,11 +78,11 @@ class PDFTextExtractor:
                         output_items.append(
                             IndexableContent(
                                 content=markdown_content,
-                                embedding_type="extracted_markdown_content", # New type for raw markdown
+                                embedding_type="extracted_markdown_content",  # New type for raw markdown
                                 mime_type="text/markdown",
                                 source_processor=self.name,
                                 metadata=new_metadata,
-                                ref=None, # Content is now inline
+                                ref=None,  # Content is now inline
                             )
                         )
                         logger.info(
