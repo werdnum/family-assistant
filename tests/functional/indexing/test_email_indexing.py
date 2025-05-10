@@ -370,6 +370,7 @@ async def test_email_indexing_and_query_e2e(
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application_e2e,  # Use the mock app with state
+        embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
     )
@@ -580,6 +581,7 @@ async def test_vector_ranking(
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application_kw,
+        embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,
         timezone_str=dummy_timezone_str_kw,
     )
@@ -763,6 +765,7 @@ async def test_metadata_filtering(
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application_meta,
+        embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_meta,
         timezone_str=dummy_timezone_str_meta,
     )
@@ -935,6 +938,7 @@ async def test_keyword_filtering(
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
         application=mock_application_kw,
+        embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,  # Now defined
         timezone_str=dummy_timezone_str_kw,
     )
@@ -1165,6 +1169,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     worker = TaskWorker(
         processing_service=None,
         application=mock_application_pdf,
+        embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_pdf,
         timezone_str=dummy_timezone_str_pdf,
     )

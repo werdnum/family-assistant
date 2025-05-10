@@ -145,11 +145,12 @@ async def indexing_task_worker(
     mock_application = MagicMock()
     # Ensure the mock_pipeline_embedding_generator is set on the mock_application's state
     # so that TaskWorker can pick it up when creating ToolExecutionContext.
-    mock_application.state.embedding_generator = mock_pipeline_embedding_generator
+    # mock_application.state.embedding_generator = mock_pipeline_embedding_generator # No longer needed if passed directly
 
     worker = TaskWorker(
         processing_service=None,
         application=mock_application,
+        embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
         timezone_str="UTC",
     )
