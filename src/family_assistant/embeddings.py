@@ -268,26 +268,61 @@ class MockEmbeddingGenerator:
 
     def __init__(
         self,
-        embedding_map: dict[str, list[float]],
         model_name: str = "mock-embedding-model",
-        default_embedding: list[float] | None = None,
+        dimensions: int = 10,
+        embedding_map: dict[str, list[float]] | None = None,
+        default_embedding_behavior: str = "generate",
+        fixed_default_embedding: list[float] | None = None,
     ) -> None:
         """
         Initializes the mock embedding generator.
 
         Args:
-            embedding_map: A dictionary mapping input text strings to their corresponding
-                           embedding vectors (List[float]).
             model_name: The model name to report in the EmbeddingResult.
-            default_embedding: An optional default embedding to return if a text is not
-                               found in the map. If None, a LookupError is raised.
+            dimensions: The dimensionality of the embeddings to generate.
+            embedding_map: An optional dictionary mapping input text strings to their
+                           corresponding embedding vectors.
+            default_embedding_behavior: Behavior if text not in map or map not provided:
+                "generate": Generate a deterministic embedding.
+                "error": Raise LookupError (if text not in map).
+                "fixed_default": Use `fixed_default_embedding`.
+            fixed_default_embedding: A fixed default embedding to return if behavior is "fixed_default"
+                                     and text is not in map. Must match `dimensions`.
         """
-        self.embedding_map = embedding_map
         self._model_name = model_name
-        self.default_embedding = default_embedding
+        self.dimensions = dimensions
+        self.embedding_map = embedding_map or {}  # Use empty map if None
+        self.default_embedding_behavior = default_embedding_behavior
+
+        if default_embedding_behavior == "fixed_default":
+            if fixed_default_embedding is None:
+                raise ValueError(
+                    "fixed_default_embedding must be provided when behavior is 'fixed_default'"
+                )
+            if len(fixed_default_embedding) != dimensions:
+                raise ValueError(
+                    f"fixed_default_embedding length ({len(fixed_default_embedding)}) must match dimensions ({dimensions})"
+                )
+        self.fixed_default_embedding = fixed_default_embedding
+        # Remove self.default_embedding as it's superseded by the new behavior args
         logger.info(
-            f"MockEmbeddingGenerator initialized for model: {self._model_name}. Map size: {len(embedding_map)}"
+            f"MockEmbeddingGenerator initialized for model: {self._model_name}, dimensions: {self.dimensions}, map size: {len(self.embedding_map)}, default_behavior: {self.default_embedding_behavior}"
         )
+
+    def _generate_deterministic_vector(self, text: str) -> list[float]:
+        """Generates a simple deterministic vector based on text content."""
+        # Simple hash-like vector, ensuring it has `self.dimensions`
+        vector = [0.0] * self.dimensions
+        if not text:  # Handle empty string
+            return vector
+
+        for i, char_code in enumerate(text.encode("utf-8", "ignore")):
+            vector[i % self.dimensions] = (
+                vector[i % self.dimensions] + float(char_code)
+            ) / 2.0
+
+        # Normalize or scale if necessary, for now, keep it simple
+        return [val / 255.0 for val in vector]  # Basic scaling
 
     @property
     def model_name(self) -> str:
@@ -301,21 +336,57 @@ class MockEmbeddingGenerator:
         results = []
         for text in texts:
             if text in self.embedding_map:
-                results.append(self.embedding_map[text])
-            elif self.default_embedding is not None:
-                logger.warning(
-                    f"Text '{text[:1000]}...' not found in mock map, using default embedding."
+                # Ensure the stored embedding matches the expected dimensions
+                stored_embedding = self.embedding_map[text]
+                if len(stored_embedding) == self.dimensions:
+                    results.append(stored_embedding)
+                else:
+                    logger.warning(
+                        f"Embedding for '{text[:50]}...' in map has length {len(stored_embedding)}, expected {self.dimensions}. Generating new one."
+                    )
+                    # Fall through to generation/default logic if dimensions mismatch
+                    if self.default_embedding_behavior == "generate":
+                        results.append(self._generate_deterministic_vector(text))
+                    elif (
+                        self.default_embedding_behavior == "fixed_default"
+                        and self.fixed_default_embedding
+                    ):
+                        results.append(self.fixed_default_embedding)
+                    else:  # "error" or misconfiguration
+                        logger.error(
+                            f"Dimension mismatch for '{text[:50]}...' and no valid fallback. Map length: {len(stored_embedding)}, expected: {self.dimensions}."
+                        )
+                        raise ValueError(
+                            f"Dimension mismatch for '{text[:50]}...' and no valid fallback."
+                        )
+            elif self.default_embedding_behavior == "generate":
+                results.append(self._generate_deterministic_vector(text))
+            elif (
+                self.default_embedding_behavior == "fixed_default"
+                and self.fixed_default_embedding is not None
+            ):
+                logger.debug(
+                    f"Text '{text[:50]}...' not found in mock map, using fixed default embedding."
                 )
-                results.append(self.default_embedding)
-            else:
+                results.append(self.fixed_default_embedding)
+            elif self.default_embedding_behavior == "error":
                 logger.error(
-                    f"Text '{text[:1000]}...' not found in mock embedding map."
+                    f"Text '{text[:50]}...' not found in mock embedding map and behavior is 'error'."
                 )
                 raise LookupError(
-                    f"Text '{text[:1000]}...' not found in mock embedding map and no default embedding provided."
+                    f"Text '{text[:50]}...' not found in mock embedding map."
+                )
+            else:  # Should not happen with proper config
+                logger.error(
+                    f"Invalid default_embedding_behavior: {self.default_embedding_behavior} for text '{text[:50]}...'"
+                )
+                raise ValueError(
+                    f"Invalid default_embedding_behavior: {self.default_embedding_behavior}"
                 )
 
-        logger.debug(f"Mock generator returning {len(results)} embeddings.")
+        logger.debug(
+            f"Mock generator returning {len(results)} embeddings for model {self.model_name}."
+        )
         return EmbeddingResult(embeddings=results, model_name=self.model_name)
 
 
