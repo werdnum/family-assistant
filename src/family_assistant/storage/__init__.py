@@ -19,7 +19,6 @@ from sqlalchemy.exc import (
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from alembic import command as alembic_command
-
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
 
 # Import base components using absolute package paths
@@ -73,7 +72,6 @@ try:
         init_vector_db,
         query_vectors,
     )
-
 
     VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
