@@ -224,45 +224,61 @@ async def add_document(
         "doc_metadata": final_doc_metadata,
     }
 
-    # Prepare the insert statement with ON CONFLICT DO UPDATE
-    # This requires PostgreSQL dialect features
-    if db_context.engine.dialect.name != "postgresql":
-        logger.error(
-            "Database dialect is not PostgreSQL. ON CONFLICT clause is not supported. Document upsert might fail."
-        )
-        # Fallback or raise error - for now, let it potentially fail
-        stmt = insert(DocumentRecord).values(**values_to_insert)
-        # Need to fetch ID separately if ON CONFLICT is not used
-        # This part is tricky without ON CONFLICT returning the ID
-        raise NotImplementedError(
-            "add_document without ON CONFLICT returning ID is not fully implemented."
-        )
-    else:
-        stmt = insert(DocumentRecord).values(**values_to_insert)
-        # Define columns to update on conflict
-        update_dict = {
-            col: getattr(stmt.excluded, col)
-            for col in values_to_insert
-            if col != "source_id"  # Don't update the conflict target
-        }
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["source_id"],  # The unique constraint column
-            set_=update_dict,
-        ).returning(DocumentRecord.id)
-
     try:
-        # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute_with_retry(stmt)
-        doc_id = result.scalar_one()  # Get the inserted or existing ID
-        logger.info(
-            f"Successfully added/updated document with source_id {doc.source_id}, got ID: {doc_id}"
-        )
-        # Commit happens implicitly if context manager is used, or explicitly if needed
-        # Assuming execute_with_retry doesn't commit automatically unless execute_and_commit is used
-        # Let's assume the caller manages the transaction boundary.
-        # If this function should be atomic, it needs to manage the transaction.
-        # For now, assume caller handles transaction.
-        return doc_id
+        if db_context.engine.dialect.name != "postgresql":
+            logger.info(
+                "Non-PostgreSQL dialect detected for add_document. Using manual upsert logic."
+            )
+            # Manual upsert for SQLite and other non-PostgreSQL DBs
+            # 1. Try to select existing document
+            select_stmt = select(DocumentRecord.id).where(
+                DocumentRecord.source_id == doc.source_id
+            )
+            existing_doc_row = await db_context.fetch_one(select_stmt)
+
+            if existing_doc_row:
+                doc_id = existing_doc_row["id"]
+                # 2. If exists, update it
+                update_stmt = (
+                    sa.update(DocumentRecord)
+                    .where(DocumentRecord.id == doc_id)
+                    .values(**values_to_insert)
+                )
+                await db_context.execute_with_retry(update_stmt)
+                logger.info(
+                    f"Successfully updated document with source_id {doc.source_id}, ID: {doc_id}"
+                )
+            else:
+                # 3. If not exists, insert it
+                insert_stmt = (
+                    insert(DocumentRecord)
+                    .values(**values_to_insert)
+                    .returning(DocumentRecord.id)
+                )
+                result = await db_context.execute_with_retry(insert_stmt)
+                doc_id = result.scalar_one()
+                logger.info(
+                    f"Successfully inserted new document with source_id {doc.source_id}, got ID: {doc_id}"
+                )
+            return doc_id
+        else:
+            # PostgreSQL: Use ON CONFLICT DO UPDATE
+            stmt = insert(DocumentRecord).values(**values_to_insert)
+            update_dict = {
+                col: getattr(stmt.excluded, col)
+                for col in values_to_insert
+                if col != "source_id"  # Don't update the conflict target
+            }
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["source_id"],  # The unique constraint column
+                set_=update_dict,
+            ).returning(DocumentRecord.id)
+            result = await db_context.execute_with_retry(stmt)
+            doc_id = result.scalar_one()  # Get the inserted or existing ID
+            logger.info(
+                f"Successfully added/updated document (PostgreSQL) with source_id {doc.source_id}, got ID: {doc_id}"
+            )
+            return doc_id
     except SQLAlchemyError as e:
         logger.error(
             f"Database error adding/updating document with source_id {doc.source_id}: {e}",
@@ -414,36 +430,65 @@ async def add_embedding(
         "embedding_metadata": embedding_doc_metadata,
     }
 
-    if db_context.engine.dialect.name != "postgresql":
-        logger.error(
-            "Database dialect is not PostgreSQL. ON CONFLICT clause is not supported. Embedding upsert might fail."
-        )
-        # Fallback or raise error
-        stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
-        # This won't handle updates on conflict
-        raise NotImplementedError(
-            "add_embedding without ON CONFLICT is not fully implemented."
-        )
-
-    else:
-        stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
-        # Define columns to update on conflict
-        update_dict = {
-            col: getattr(stmt.excluded, col)
-            for col in values_to_insert
-            if col not in ["document_id", "chunk_index", "embedding_type"]
-        }
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["document_id", "chunk_index", "embedding_type"],
-            set_=update_dict,
-        )
-
     try:
-        # Use execute_with_retry as commit is handled by context manager
-        await db_context.execute_with_retry(stmt)
-        logger.info(
-            f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
-        )
+        if db_context.engine.dialect.name != "postgresql":
+            logger.info(
+                "Non-PostgreSQL dialect detected for add_embedding. Using manual upsert logic."
+            )
+            # Manual upsert for SQLite and other non-PostgreSQL DBs
+            # 1. Try to select existing embedding
+            select_stmt = select(DocumentEmbeddingRecord.id).where(
+                and_(
+                    DocumentEmbeddingRecord.document_id == document_id,
+                    DocumentEmbeddingRecord.chunk_index == chunk_index,
+                    DocumentEmbeddingRecord.embedding_type == embedding_type,
+                )
+            )
+            existing_embedding_row = await db_context.fetch_one(select_stmt)
+
+            if existing_embedding_row:
+                # 2. If exists, update it
+                embedding_id = existing_embedding_row["id"]
+                # Prepare update values, excluding primary key parts
+                update_values_for_embedding = {
+                    k: v
+                    for k, v in values_to_insert.items()
+                    if k not in ["document_id", "chunk_index", "embedding_type"]
+                }
+                update_stmt = (
+                    sa.update(DocumentEmbeddingRecord)
+                    .where(DocumentEmbeddingRecord.id == embedding_id)
+                    .values(**update_values_for_embedding)
+                )
+                await db_context.execute_with_retry(update_stmt)
+                logger.info(
+                    f"Successfully updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+                )
+            else:
+                # 3. If not exists, insert it
+                insert_stmt = insert(DocumentEmbeddingRecord).values(
+                    **values_to_insert
+                )
+                await db_context.execute_with_retry(insert_stmt)
+                logger.info(
+                    f"Successfully inserted new embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+                )
+        else:
+            # PostgreSQL: Use ON CONFLICT DO UPDATE
+            stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
+            update_dict = {
+                col: getattr(stmt.excluded, col)
+                for col in values_to_insert
+                if col not in ["document_id", "chunk_index", "embedding_type"]
+            }
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["document_id", "chunk_index", "embedding_type"],
+                set_=update_dict,
+            )
+            await db_context.execute_with_retry(stmt)
+            logger.info(
+                f"Successfully added/updated embedding (PostgreSQL) for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+            )
     except SQLAlchemyError as e:
         logger.error(
             f"Database error adding/updating embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}: {e}",
