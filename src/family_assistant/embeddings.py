@@ -5,7 +5,7 @@ Module defining the interface and implementations for generating text embeddings
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 # Import sentence-transformers if available, otherwise skip the class definition
 try:
