@@ -409,6 +409,156 @@ async def test_indexing_pipeline_pdf_processing(
     # and copy it to a temporary location for this test run.
     source_pdf_path = pathlib.Path(__file__).parent.parent / "data" / "test_doc.pdf"
     assert source_pdf_path.exists(), "Test PDF tests/data/test_doc.pdf not found"
+    
+    test_pdf_filename = "test_pipeline_doc.pdf"
+    temp_pdf_path = tmp_path / test_pdf_filename
+    shutil.copy(source_pdf_path, temp_pdf_path)
+    
+    doc_source_id = f"test-pdf-pipeline-{uuid.uuid4()}"
+    doc_title = "Pipeline PDF Test"
+
+    _worker, test_new_task_event, _test_shutdown_event = indexing_task_worker
+
+    db_context_for_pipeline = await get_db_context(engine=pg_vector_db_engine)
+
+    try:
+        async with db_context_for_pipeline:
+            tool_exec_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test-pdf-pipeline-conv",
+                db_context=db_context_for_pipeline,
+                calendar_config={},
+                application=MagicMock(),
+            )
+
+            test_document_protocol = MockDocumentImpl(
+                source_type="test_pdf", source_id=doc_source_id, title=doc_title
+            )
+            doc_db_id = await add_document(
+                db_context_for_pipeline, test_document_protocol
+            )
+            original_doc_record = await get_document_by_source_id(
+                db_context_for_pipeline, doc_source_id
+            )
+            assert_that(original_doc_record).is_not_none()
+
+            # Initial IndexableContent for the PDF file
+            initial_pdf_content = IndexableContent(
+                embedding_type="original_document_file",
+                source_processor="test_pdf_setup",
+                mime_type="application/pdf",
+                ref=str(temp_pdf_path), # Path to the test PDF
+                metadata={"original_filename": test_pdf_filename},
+            )
+
+            # Setup Pipeline with PDFTextExtractor
+            from family_assistant.indexing.processors.file_processors import (
+                PDFTextExtractor,  # Local import
+            )
+            
+            pdf_extractor = PDFTextExtractor()
+            # TextChunker to process the markdown output of PDFTextExtractor
+            text_chunker = TextChunker(
+                chunk_size=500, # Adjust as needed for test_doc.pdf content
+                chunk_overlap=50,
+                # Map the output of PDFTextExtractor to the desired chunk type
+                embedding_type_map={"extracted_markdown_content": "content_chunk"},
+            )
+            embedding_dispatcher = EmbeddingDispatchProcessor(
+                embedding_types_to_dispatch=["content_chunk"] # Expecting chunks from markdown
+            )
+            pipeline = IndexingPipeline(
+                processors=[pdf_extractor, text_chunker, embedding_dispatcher],
+                config={},
+            )
+
+            # --- Act ---
+            logger.info(
+                f"Running PDF indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
+            )
+            await pipeline.run(
+                [initial_pdf_content], original_doc_record, tool_exec_context
+            )
+
+        test_new_task_event.set()
+        logger.info(
+            f"Waiting for PDF processing tasks to complete for document ID {doc_db_id}..."
+        )
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            timeout_seconds=25.0, # PDF processing might take a bit longer
+        )
+        logger.info(f"PDF processing tasks reported as complete for document ID {doc_db_id}.")
+
+        # --- Assert ---
+        async with await get_db_context(
+            engine=pg_vector_db_engine
+        ) as db_context_for_asserts:
+            stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(
+                DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id
+            )
+            stored_embeddings_rows = await db_context_for_asserts.fetch_all(
+                stmt_verify_embeddings
+            )
+
+            assert_that(len(stored_embeddings_rows)).described_as(
+                "Expected embeddings from PDF extracted content"
+            ).is_greater_than_or_equal_to(1)
+
+            logger.info(f"Stored Embeddings from PDF (doc_id={doc_db_id}):")
+            found_expected_content = False
+            # Known phrase from test_doc.md (which test_doc.pdf is generated from)
+            # This phrase should be specific enough and likely to survive chunking.
+            # From "Software updates are a common and crucial aspect of using digital devices"
+            known_phrase_in_pdf = "crucial aspect of using digital devices"
+
+            for i, row_proxy_log in enumerate(stored_embeddings_rows):
+                row_dict_log = dict(row_proxy_log)
+                logger.info(
+                    f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{str(row_dict_log.get('content'))[:100]}...'"
+                )
+                if (
+                    row_dict_log.get("embedding_type") == "content_chunk" 
+                    and row_dict_log.get("content")
+                    and known_phrase_in_pdf in str(row_dict_log.get("content"))
+                ):
+                    found_expected_content = True
+            
+            assert_that(found_expected_content).described_as(
+                f"Known phrase '{known_phrase_in_pdf}' not found in any extracted PDF content chunks."
+            ).is_true()
+            
+            # Verify search (optional, but good for E2E feel)
+            # This requires knowing/mocking the embedding for the known phrase
+            # For simplicity, we'll skip vector search for this specific pipeline unit test
+            # and focus on the presence of processed content.
+
+        logger.info("PDF indexing pipeline test passed.")
+
+    finally:
+        logger.info("Test PDF processing finished, task cleanup relies on worker processing.")
+        # tmp_path fixture handles cleanup of the temp_pdf_path
+
+
+@pytest.mark.asyncio
+async def test_indexing_pipeline_pdf_processing(
+    pg_vector_db_engine: AsyncEngine,
+    mock_pipeline_embedding_generator: MockEmbeddingGenerator,
+    indexing_task_worker: tuple[TaskWorker, asyncio.Event, asyncio.Event],
+    tmp_path: pathlib.Path,  # Pytest fixture for temporary directory
+) -> None:
+    """
+    Tests the indexing pipeline with PDFTextExtractor.
+    1. Creates a dummy PDF file.
+    2. Runs an IndexableContent item for this PDF through a pipeline including PDFTextExtractor.
+    3. Verifies that text is extracted and embedding tasks are created for the extracted content.
+    """
+    # --- Arrange ---
+    # Create a dummy PDF file for testing (or copy a test PDF)
+    # For simplicity, we'll use the existing test_doc.pdf from tests/data
+    # and copy it to a temporary location for this test run.
+    source_pdf_path = pathlib.Path(__file__).parent.parent / "data" / "test_doc.pdf"
+    assert source_pdf_path.exists(), "Test PDF tests/data/test_doc.pdf not found"
 
     test_pdf_filename = "test_pipeline_doc.pdf"
     temp_pdf_path = tmp_path / test_pdf_filename
