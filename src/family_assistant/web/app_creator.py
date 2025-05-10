@@ -22,6 +22,9 @@ from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
 from family_assistant.web.routers.documentation import documentation_router
+from family_assistant.web.routers.documents_ui import (  # New import for document upload UI
+    router as documents_ui_router,
+)
 from family_assistant.web.routers.health import health_router
 from family_assistant.web.routers.history import history_router
 from family_assistant.web.routers.notes import notes_router
@@ -128,6 +131,7 @@ app.include_router(history_router, tags=["History UI"])
 app.include_router(tools_ui_router, tags=["Tools UI"])
 app.include_router(tasks_ui_router, tags=["Tasks UI"])
 app.include_router(vector_search_router, tags=["Vector Search UI"])
+app.include_router(documents_ui_router, prefix="/documents", tags=["Documents UI"]) # New router
 app.include_router(health_router, tags=["Health Check"])
 
 # General API endpoints (like /api/tools/execute, /api/documents/upload)

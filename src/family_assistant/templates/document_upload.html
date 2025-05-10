@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Document{% endblock %}
+{% block title_header %}Upload Document{% endblock %}
+
+{% block main_content %}
+<section>
+    <h2>Upload a New Document</h2>
+
+    {% if message %}
+    <div class="message success" style="padding: 1em; margin-bottom: 1em; border: 1px solid green; background-color: #e6ffe6;">
+        <p>{{ message }}</p>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="message error" style="padding: 1em; margin-bottom: 1em; border: 1px solid red; background-color: #ffe6e6;">
+        <p><strong>Error:</strong> {{ error }}</p>
+    </div>
+    {% endif %}
+
+    <form action="{{ request.app.url_path_for('handle_document_upload') }}" method="post" enctype="multipart/form-data">
+        <p>
+            <label for="source_type">Source Type (e.g., 'manual_upload', 'scanned_receipt'):</label><br>
+            <input type="text" id="source_type" name="source_type" value="{{ form_data.source_type if form_data else '' }}" required>
+        </p>
+        <p>
+            <label for="source_id">Source ID (unique within source type):</label><br>
+            <input type="text" id="source_id" name="source_id" value="{{ form_data.source_id if form_data else '' }}" required>
+        </p>
+        <p>
+            <label for="source_uri">Source URI (canonical URL/path):</label><br>
+            <input type="text" id="source_uri" name="source_uri" value="{{ form_data.source_uri if form_data else '' }}" required>
+        </p>
+        <p>
+            <label for="title">Document Title:</label><br>
+            <input type="text" id="title" name="title" value="{{ form_data.title if form_data else '' }}" required>
+        </p>
+        <p>
+            <label for="created_at">Created At (ISO 8601: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional):</label><br>
+            <input type="text" id="created_at" name="created_at" value="{{ form_data.created_at if form_data else '' }}" placeholder="e.g., 2024-01-15T10:30:00Z">
+        </p>
+        <p>
+            <label for="metadata">Metadata (JSON string, optional):</label><br>
+            <textarea id="metadata" name="metadata" rows="5" placeholder='e.g., {"author": "John Doe", "tags": ["important", "receipt"] }'>{{ form_data.metadata if form_data else '' }}</textarea>
+        </p>
+        <p>
+            <label for="content_parts">Content Parts (JSON string, optional if file uploaded):</label><br>
+            <textarea id="content_parts" name="content_parts" rows="5" placeholder='e.g., {"abstract": "Summary of the document...", "full_text": "The entire content..."}'>{{ form_data.content_parts if form_data else '' }}</textarea>
+        </p>
+        <p>
+            <label for="uploaded_file">Document File (optional if content_parts provided):</label><br>
+            <input type="file" id="uploaded_file" name="uploaded_file">
+        </p>
+        <p>
+            <button type="submit">Upload Document</button>
+        </p>
+    </form>
+    <p><small>Note: At least one of 'Content Parts' or 'Document File' must be provided.</small></p>
+</section>
+{% endblock %}
