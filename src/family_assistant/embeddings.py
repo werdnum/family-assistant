@@ -4,6 +4,8 @@ Module defining the interface and implementations for generating text embeddings
 
 import asyncio
 import logging
+import math
+import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -143,6 +145,99 @@ class LiteLLMEmbeddingGenerator:
                 model=self.model_name,
                 status_code=500,
             ) from e
+
+
+class HashingWordEmbeddingGenerator:
+    """
+    Generates embeddings by tokenizing input into words, hashing each word
+    to an index, incrementing a count at that index, and then normalizing
+    the resulting vector to unit length.
+    Input text is lowercased and special characters are removed.
+    """
+
+    def __init__(self, model_name: str = "hashing-word-v1", dimensionality: int = 128):
+        """
+        Initializes the HashingWordEmbeddingGenerator.
+
+        Args:
+            model_name: The identifier for this embedding model.
+            dimensionality: The number of dimensions for the output embedding vectors.
+        """
+        if not model_name:
+            raise ValueError("Model name cannot be empty.")
+        if dimensionality <= 0:
+            raise ValueError("Dimensionality must be a positive integer.")
+        self._model_name = model_name
+        self.dimensionality = dimensionality
+        logger.info(
+            f"HashingWordEmbeddingGenerator initialized: model='{self._model_name}', dimensions={self.dimensionality}"
+        )
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def _normalize_text(self, text: str) -> str:
+        """Converts text to lowercase and removes special characters."""
+        text = text.lower()
+        text = re.sub(r"[^a-z0-9\s]", "", text)  # Keep letters, numbers, and spaces
+        return text
+
+    def _generate_single_embedding(self, text: str) -> list[float]:
+        """Generates a single embedding vector for the given text."""
+        normalized_text = self._normalize_text(text)
+        tokens = normalized_text.split()
+
+        vector = [0.0] * self.dimensionality
+
+        if not tokens:
+            return vector  # Return zero vector for empty or whitespace-only text
+
+        for token in tokens:
+            hash_val = hash(token)
+            index = hash_val % self.dimensionality
+            # Ensure index is positive, as hash() can return negative numbers
+            if index < 0:
+                index += self.dimensionality
+            vector[index] += 1.0
+
+        # Normalize the vector to unit length
+        magnitude_sq = sum(x * x for x in vector)
+        if magnitude_sq == 0:
+            return vector  # Should not happen if tokens were present, but as a safeguard
+
+        magnitude = math.sqrt(magnitude_sq)
+        if magnitude == 0: # Double check for safety, e.g. if all hashes collide to cancel out (highly unlikely)
+            return vector
+
+        normalized_vector = [x / magnitude for x in vector]
+        return normalized_vector
+
+    async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
+        """
+        Generates embeddings for a list of input texts using the hashing method.
+        """
+        if not texts:
+            logger.warning(
+                "HashingWordEmbeddingGenerator.generate_embeddings called with empty list of texts."
+            )
+            return EmbeddingResult(embeddings=[], model_name=self.model_name)
+
+        logger.debug(
+            f"HashingWordEmbeddingGenerator ({self.model_name}) processing {len(texts)} texts."
+        )
+
+        embeddings_list: list[list[float]] = []
+        for text_content in texts:
+            # This part is CPU-bound but typically very fast per text.
+            # If it were significantly slower, asyncio.to_thread might be considered.
+            embedding = self._generate_single_embedding(text_content)
+            embeddings_list.append(embedding)
+
+        logger.debug(
+            f"HashingWordEmbeddingGenerator ({self.model_name}) generated {len(embeddings_list)} embeddings."
+        )
+        return EmbeddingResult(embeddings=embeddings_list, model_name=self.model_name)
 
 
 # --- Sentence Transformer Implementation (Conditional) ---
@@ -394,7 +489,8 @@ __all__ = [
     "EmbeddingResult",
     "EmbeddingGenerator",
     "LiteLLMEmbeddingGenerator",
-    "SentenceTransformerEmbeddingGenerator",  # Add the new class
+    "HashingWordEmbeddingGenerator",  # Added new class
+    "SentenceTransformerEmbeddingGenerator",
     "MockEmbeddingGenerator",
 ]
 
