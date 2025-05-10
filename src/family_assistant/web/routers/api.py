@@ -1,6 +1,7 @@
 import contextlib
 import json
 import logging
+import os
 import shutil
 import tempfile
 import uuid
@@ -215,7 +216,7 @@ async def upload_document(
         # Parse JSON strings if provided
         if content_parts_json:
             content_parts = json.loads(content_parts_json)
-            if not isinstance(content_parts, dict): # Allow empty dict if JSON is "{}
+            if not isinstance(content_parts, dict):  # Allow empty dict if JSON is "{}
                 raise ValueError(
                     "'content_parts' must be a valid JSON object string if provided."
                 )
@@ -225,8 +226,10 @@ async def upload_document(
                     raise ValueError(
                         f"Value for content part '{key}' must be a string."
                     )
-        elif not uploaded_file: # Should be caught by the check above, but as a safeguard
-             raise ValueError("'content_parts' must be provided if no file is uploaded.")
+        elif (
+            not uploaded_file
+        ):  # Should be caught by the check above, but as a safeguard
+            raise ValueError("'content_parts' must be provided if no file is uploaded.")
 
         if metadata_json:
             doc_metadata = json.loads(metadata_json)
@@ -305,7 +308,7 @@ async def upload_document(
         ) from json_err
     except ValueError as val_err:
         logger.error(f"Validation error for document upload {source_id}: {val_err}")
-        if file_ref: # Clean up temp file
+        if file_ref:  # Clean up temp file
             with contextlib.suppress(OSError):
                 os.remove(file_ref)
         raise HTTPException(
@@ -316,7 +319,7 @@ async def upload_document(
             f"Unexpected parsing or file handling error for document upload {source_id}: {e}",
             exc_info=True,
         )
-        if file_ref: # Clean up temp file
+        if file_ref:  # Clean up temp file
             with contextlib.suppress(OSError):
                 os.remove(file_ref)
         raise HTTPException(
@@ -326,7 +329,6 @@ async def upload_document(
     finally:
         if uploaded_file:
             await uploaded_file.close()
-
 
     # --- 3. Create Document Record in DB ---
     # Create a dictionary conforming to the Document protocol structure
@@ -413,7 +415,7 @@ async def upload_document(
         "mime_type": detected_mime_type,  # Detected MIME type or None
         "original_filename": original_filename,  # Original filename or None
     }
-    task_id = f"index-doc-{document_id}-{uuid.uuid4()}" # More robust unique task ID
+    task_id = f"index-doc-{document_id}-{uuid.uuid4()}"  # More robust unique task ID
     task_enqueued = False
     try:
         await storage.enqueue_task(
