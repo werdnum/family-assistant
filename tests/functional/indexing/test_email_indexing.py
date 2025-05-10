@@ -195,7 +195,7 @@ async def _ingest_and_index_email(
     http_client: httpx.AsyncClient,  # Changed to http_client
     engine: AsyncEngine,  # Still needed for DB checks
     form_data_dict: dict[str, Any],  # Raw form data for the API
-    files_to_upload: dict[str, Any] | None = None, # For attachments
+    files_to_upload: dict[str, Any] | None = None,  # For attachments
     task_timeout: float = 15.0,
     notify_event: asyncio.Event | None = None,
 ) -> int:
@@ -203,10 +203,14 @@ async def _ingest_and_index_email(
     Helper to ingest an email via API, notify worker, wait for indexing, and return Email DB ID.
     """
     email_db_id = None
-    indexing_task_id = None # Keep for logging, though not directly used for waiting on specific task
+    indexing_task_id = (
+        None  # Keep for logging, though not directly used for waiting on specific task
+    )
     message_id = form_data_dict.get("Message-Id", "UNKNOWN_MESSAGE_ID")
 
-    logger.info(f"Helper: Calling API to ingest test email with Message-ID: {message_id}")
+    logger.info(
+        f"Helper: Calling API to ingest test email with Message-ID: {message_id}"
+    )
     # Construct multipart data. Simple key-values go to 'data', files to 'files'.
     # Mailgun sends everything as fields in multipart/form-data.
     # httpx's `data` param handles this for string values.
@@ -215,7 +219,9 @@ async def _ingest_and_index_email(
     # For now, assuming form_data_dict contains only string data for Mailgun fields.
     # If attachments are added, files_to_upload will be e.g. {"attachment-1": ("filename.pdf", BytesIO(b"..."), "application/pdf")}
 
-    response = await http_client.post("/webhook/mail", data=form_data_dict, files=files_to_upload)
+    response = await http_client.post(
+        "/webhook/mail", data=form_data_dict, files=files_to_upload
+    )
 
     assert_that(response.status_code).described_as(
         f"API call to /webhook/mail failed: {response.status_code} - {response.text}"
@@ -235,12 +241,14 @@ async def _ingest_and_index_email(
         assert_that(email_info).described_as(
             f"Failed to retrieve ingested email {message_id} from DB after API call"
         ).is_not_none()
-        email_db_id = email_info["id"] # type: ignore
-        indexing_task_id = email_info["indexing_task_id"] # type: ignore
+        email_db_id = email_info["id"]  # type: ignore
+        indexing_task_id = email_info["indexing_task_id"]  # type: ignore
         assert_that(email_db_id).described_as(
             f"Email DB ID is null for {message_id} after API call"
         ).is_not_none()
-        logger.info(f"Helper: Email ingested via API (DB ID: {email_db_id}, Task ID: {indexing_task_id})")
+        logger.info(
+            f"Helper: Email ingested via API (DB ID: {email_db_id}, Task ID: {indexing_task_id})"
+        )
 
     # Signal the worker if an event is provided
     if notify_event:
@@ -351,15 +359,16 @@ async def test_email_indexing_and_query_e2e(
     # and set its state, similar to before.
     mock_application_e2e = MagicMock()
     mock_application_e2e.state.embedding_generator = mock_embedder
-    mock_application_e2e.state.llm_client = None # Or a mock LLM if any processor uses it
+    mock_application_e2e.state.llm_client = (
+        None  # Or a mock LLM if any processor uses it
+    )
     # If ATTACHMENT_STORAGE_DIR is needed by any task run by worker via app.state.config:
-
 
     dummy_calendar_config = {}  # Not used by email/embedding tasks
     dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
-        application=mock_application_e2e, # Use the mock app with state
+        application=mock_application_e2e,  # Use the mock app with state
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
     )
@@ -388,7 +397,7 @@ async def test_email_indexing_and_query_e2e(
                 http_client=http_client,
                 engine=pg_vector_db_engine,
                 form_data_dict=TEST_EMAIL_FORM_DATA,
-                files_to_upload=None, # No attachments for this test
+                files_to_upload=None,  # No attachments for this test
                 notify_event=test_new_task_event,
             )
 
@@ -586,13 +595,22 @@ async def test_vector_ranking(
     test_failed = False
     try:
         await _ingest_and_index_email(
-            http_client, pg_vector_db_engine, form_data1, notify_event=test_new_task_event
+            http_client,
+            pg_vector_db_engine,
+            form_data1,
+            notify_event=test_new_task_event,
         )
         await _ingest_and_index_email(
-            http_client, pg_vector_db_engine, form_data2, notify_event=test_new_task_event
+            http_client,
+            pg_vector_db_engine,
+            form_data2,
+            notify_event=test_new_task_event,
         )
         await _ingest_and_index_email(
-            http_client, pg_vector_db_engine, form_data3, notify_event=test_new_task_event
+            http_client,
+            pg_vector_db_engine,
+            form_data3,
+            notify_event=test_new_task_event,
         )
 
         # --- Act: Query Vectors ---
@@ -760,10 +778,16 @@ async def test_metadata_filtering(
     test_failed = False
     try:
         await _ingest_and_index_email(
-            http_client, pg_vector_db_engine, form_data1, notify_event=test_new_task_event
+            http_client,
+            pg_vector_db_engine,
+            form_data1,
+            notify_event=test_new_task_event,
         )
         await _ingest_and_index_email(
-            http_client, pg_vector_db_engine, form_data2, notify_event=test_new_task_event
+            http_client,
+            pg_vector_db_engine,
+            form_data2,
+            notify_event=test_new_task_event,
         )
 
         # --- Act: Query Vectors with Metadata Filter ---
@@ -926,10 +950,16 @@ async def test_keyword_filtering(
     test_failed = False
     try:
         await _ingest_and_index_email(
-            http_client, pg_vector_db_engine, form_data1, notify_event=test_new_task_event
+            http_client,
+            pg_vector_db_engine,
+            form_data1,
+            notify_event=test_new_task_event,
         )
         await _ingest_and_index_email(
-            http_client, pg_vector_db_engine, form_data2, notify_event=test_new_task_event
+            http_client,
+            pg_vector_db_engine,
+            form_data2,
+            notify_event=test_new_task_event,
         )
 
         # --- Act: Query Vectors with Keywords ---
