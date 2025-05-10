@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 documentation_router = APIRouter()
 
 # docs_user_dir and SERVER_URL will be set on app.state by app_creator
-# from ..app_creator import docs_user_dir, SERVER_URL
 
 
 @documentation_router.get("/docs/")
@@ -52,7 +51,7 @@ async def serve_documentation(request: Request, filename: str) -> HTMLResponse:
     try:
         async with aiofiles.open(doc_path, encoding="utf-8") as f:
             content_md = await f.read()
-        
+
         content_md_processed = content_md.replace("{{ SERVER_URL }}", server_url)
         content_html = md_renderer.render(content_md_processed)
         available_docs = _scan_user_docs()
