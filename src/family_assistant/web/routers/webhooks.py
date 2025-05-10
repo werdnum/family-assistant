@@ -166,8 +166,7 @@ async def handle_mail_webhook(
         )
 
         # Pass the Pydantic model instance to the storage function
-        # The notify_event could be created here if needed, or passed from a higher level
-        await store_incoming_email(db_context, parsed_email_payload, notify_event=None)
+        await store_incoming_email(db_context, parsed_email_payload)
 
         return Response(status_code=200, content="Email received and processed.")
 

@@ -2,7 +2,6 @@
 Handles storage and retrieval of received emails.
 """
 
-import asyncio  # Import asyncio for Event type hint
 import logging
 import uuid  # Add uuid import
 from datetime import datetime  # Added for Pydantic models
@@ -120,7 +119,6 @@ received_emails_table = sa.Table(
 async def store_incoming_email(
     db_context: DatabaseContext,
     parsed_email: ParsedEmailData,  # Changed from form_data
-    notify_event: asyncio.Event | None = None,
 ) -> None:
     """
     Stores parsed email data in the `received_emails` table and enqueues an indexing task.
@@ -194,7 +192,7 @@ async def store_incoming_email(
             task_id=task_id,
             task_type="index_email",
             payload={"email_db_id": email_db_id},
-            notify_event=notify_event,
+            notify_event=None,  # Explicitly None; actual worker notification needs event access
         )
         logger.info(f"Enqueued indexing task {task_id} for email DB ID {email_db_id}")
 
