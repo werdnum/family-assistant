@@ -409,11 +409,11 @@ async def test_indexing_pipeline_pdf_processing(
     # and copy it to a temporary location for this test run.
     source_pdf_path = pathlib.Path(__file__).parent.parent / "data" / "test_doc.pdf"
     assert source_pdf_path.exists(), "Test PDF tests/data/test_doc.pdf not found"
-    
+
     test_pdf_filename = "test_pipeline_doc.pdf"
     temp_pdf_path = tmp_path / test_pdf_filename
     shutil.copy(source_pdf_path, temp_pdf_path)
-    
+
     doc_source_id = f"test-pdf-pipeline-{uuid.uuid4()}"
     doc_title = "Pipeline PDF Test"
 
@@ -447,7 +447,7 @@ async def test_indexing_pipeline_pdf_processing(
                 embedding_type="original_document_file",
                 source_processor="test_pdf_setup",
                 mime_type="application/pdf",
-                ref=str(temp_pdf_path), # Path to the test PDF
+                ref=str(temp_pdf_path),  # Path to the test PDF
                 metadata={"original_filename": test_pdf_filename},
             )
 
@@ -455,17 +455,19 @@ async def test_indexing_pipeline_pdf_processing(
             from family_assistant.indexing.processors.file_processors import (
                 PDFTextExtractor,  # Local import
             )
-            
+
             pdf_extractor = PDFTextExtractor()
             # TextChunker to process the markdown output of PDFTextExtractor
             text_chunker = TextChunker(
-                chunk_size=500, # Adjust as needed for test_doc.pdf content
+                chunk_size=500,  # Adjust as needed for test_doc.pdf content
                 chunk_overlap=50,
                 # Map the output of PDFTextExtractor to the desired chunk type
                 embedding_type_map={"extracted_markdown_content": "content_chunk"},
             )
             embedding_dispatcher = EmbeddingDispatchProcessor(
-                embedding_types_to_dispatch=["content_chunk"] # Expecting chunks from markdown
+                embedding_types_to_dispatch=[
+                    "content_chunk"
+                ]  # Expecting chunks from markdown
             )
             pipeline = IndexingPipeline(
                 processors=[pdf_extractor, text_chunker, embedding_dispatcher],
@@ -486,9 +488,11 @@ async def test_indexing_pipeline_pdf_processing(
         )
         await wait_for_tasks_to_complete(
             pg_vector_db_engine,
-            timeout_seconds=25.0, # PDF processing might take a bit longer
+            timeout_seconds=25.0,  # PDF processing might take a bit longer
         )
-        logger.info(f"PDF processing tasks reported as complete for document ID {doc_db_id}.")
+        logger.info(
+            f"PDF processing tasks reported as complete for document ID {doc_db_id}."
+        )
 
         # --- Assert ---
         async with await get_db_context(
@@ -518,16 +522,16 @@ async def test_indexing_pipeline_pdf_processing(
                     f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{str(row_dict_log.get('content'))[:100]}...'"
                 )
                 if (
-                    row_dict_log.get("embedding_type") == "content_chunk" 
+                    row_dict_log.get("embedding_type") == "content_chunk"
                     and row_dict_log.get("content")
                     and known_phrase_in_pdf in str(row_dict_log.get("content"))
                 ):
                     found_expected_content = True
-            
+
             assert_that(found_expected_content).described_as(
                 f"Known phrase '{known_phrase_in_pdf}' not found in any extracted PDF content chunks."
             ).is_true()
-            
+
             # Verify search (optional, but good for E2E feel)
             # This requires knowing/mocking the embedding for the known phrase
             # For simplicity, we'll skip vector search for this specific pipeline unit test
@@ -536,5 +540,7 @@ async def test_indexing_pipeline_pdf_processing(
         logger.info("PDF indexing pipeline test passed.")
 
     finally:
-        logger.info("Test PDF processing finished, task cleanup relies on worker processing.")
+        logger.info(
+            "Test PDF processing finished, task cleanup relies on worker processing."
+        )
         # tmp_path fixture handles cleanup of the temp_pdf_path
