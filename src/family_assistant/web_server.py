@@ -88,6 +88,7 @@ from family_assistant.web.routers.documentation import (
     documentation_router,
 )  # Moved import
 from family_assistant.web.routers.notes import notes_router  # Moved import
+from family_assistant.web.routers.webhooks import webhooks_router  # New webhooks router
 from family_assistant.web.utils import md_renderer
 
 logger = logging.getLogger(__name__)
