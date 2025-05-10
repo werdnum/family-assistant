@@ -124,9 +124,11 @@ async def mock_pipeline_embedding_generator() -> MockEmbeddingGenerator:
             return await super().generate_embeddings(texts)
 
     generator = TestSpecificMockEmbeddingGenerator(
-        embedding_map=embedding_map,  # Start with empty, will populate
         model_name=TEST_EMBEDDING_MODEL_NAME,
-        default_embedding=[0.0] * TEST_EMBEDDING_DIMENSION,
+        dimensions=TEST_EMBEDDING_DIMENSION,
+        embedding_map=embedding_map,  # Start with empty, will populate
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=[0.0] * TEST_EMBEDDING_DIMENSION,
     )
     return generator
 
