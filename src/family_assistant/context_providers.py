@@ -56,7 +56,6 @@ class NotesContextProvider(ContextProvider):
             get_db_context_func: An async function that returns a DatabaseContext.
             prompts: A dictionary containing prompt templates for formatting.
         """
-        # self._db_context = db_context # Old way
         self._get_db_context_func = get_db_context_func
         self._prompts = prompts
 
@@ -144,10 +143,6 @@ class CalendarContextProvider(ContextProvider):
             logger.info(
                 f"[{self.name}] Calendar integration not configured or no sources defined."
             )
-            # Optionally, add a specific message if desired from prompts:
-            # no_calendar_msg = self._prompts.get("calendar_not_configured", "Calendar integration not configured.")
-            # if no_calendar_msg:
-            # fragments.append(no_calendar_msg)
             return []  # Return empty list as per protocol
 
         try:
@@ -189,19 +184,3 @@ class CalendarContextProvider(ContextProvider):
 
 
 # Future providers like WeatherContextProvider, EmailSummaryProvider etc. would go here.
-# Example:
-# class WeatherContextProvider(ContextProvider):
-#     def __init__(self, api_key: str, location: str, prompts: PromptsType):
-#         self._api_key = api_key
-#         self._location = location
-#         self._prompts = prompts
-#
-#     @property
-#     def name(self) -> str:
-#         return "weather"
-#
-#     async def get_context_fragments(self) -> List[str]:
-#         # ... fetch weather data ...
-#         # ... format using self._prompts ...
-#         # ... return list of formatted strings ...
-#         return []
