@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Annotated # Added Annotated
+from typing import Annotated  # Added Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -43,7 +43,10 @@ async def manage_api_tokens_ui(
         )
     except Exception as e:
         logger.error(
-            "Failed to fetch API tokens for user %s: %s", user_identifier, e, exc_info=True
+            "Failed to fetch API tokens for user %s: %s",
+            user_identifier,
+            e,
+            exc_info=True,
         )
         # Render the page with an error message or an empty list
         tokens = []
@@ -53,8 +56,12 @@ async def manage_api_tokens_ui(
         "user": current_user,
         "tokens": tokens,
         "page_title": "Manage API Tokens",
-        "server_url": request.app.state.server_url, # For constructing API call URLs in JS
-        "now_utc": datetime.now(timezone.utc), # Add current UTC time for template logic
+        "server_url": (
+            request.app.state.server_url
+        ),  # For constructing API call URLs in JS
+        "now_utc": datetime.now(
+            timezone.utc
+        ),  # Add current UTC time for template logic
     }
     return request.app.state.templates.TemplateResponse(
         "settings/api_tokens.html", context
@@ -63,7 +70,7 @@ async def manage_api_tokens_ui(
 
 @router.post("/revoke/{token_id}", name="ui_revoke_api_token")
 async def revoke_api_token_ui(
-    request: Request, # For redirecting
+    request: Request,  # For redirecting
     token_id: int,
     current_user: Annotated[dict, Depends(get_current_active_user)],
     db_context: Annotated[DatabaseContext, Depends(get_db)],
@@ -110,5 +117,6 @@ async def revoke_api_token_ui(
 
     # Redirect back to the token management page
     return RedirectResponse(
-        url=request.url_for("ui_manage_api_tokens"), status_code=status.HTTP_303_SEE_OTHER
+        url=request.url_for("ui_manage_api_tokens"),
+        status_code=status.HTTP_303_SEE_OTHER,
     )
