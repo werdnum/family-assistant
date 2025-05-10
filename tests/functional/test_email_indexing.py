@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from assertpy import assert_that
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.email_indexer import (
@@ -80,9 +81,8 @@ TEST_EMAIL_FORM_DATA = {
 
 TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/body
 
-
 # --- Debugging Helper ---
-async def dump_tables_on_failure(engine) -> None:
+async def dump_tables_on_failure(engine: AsyncEngine) -> None:
     """Logs the content of relevant tables for debugging."""
     logger.info("--- Dumping table contents on failure ---")
     async with DatabaseContext(engine=engine) as db:
@@ -136,9 +136,8 @@ async def dump_tables_on_failure(engine) -> None:
 
 # --- Helper Function for Test Setup ---
 
-
 async def _ingest_and_index_email(
-    engine,
+    engine: AsyncEngine,
     form_data: dict[str, Any],
     task_timeout: float = 15.0,
     notify_event: asyncio.Event | None = None,  # Add notify_event parameter
@@ -197,9 +196,8 @@ async def _ingest_and_index_email(
 
 # --- Test Functions ---
 
-
 @pytest.mark.asyncio
-async def test_email_indexing_and_query_e2e(pg_vector_db_engine) -> None:
+async def test_email_indexing_and_query_e2e(pg_vector_db_engine: AsyncEngine) -> None:
     """
     End-to-end test for email ingestion, indexing via task worker, and vector query retrieval.
     1. Setup Mock Embedder.
@@ -400,9 +398,8 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine) -> None:
         except Exception as e:
             logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
 
-
 @pytest.mark.asyncio
-async def test_vector_ranking(pg_vector_db_engine) -> None:
+async def test_vector_ranking(pg_vector_db_engine: AsyncEngine) -> None:
     """
     Tests if vector search returns results ranked correctly by distance.
     1. Ingest three emails with distinct content.
@@ -576,9 +573,8 @@ async def test_vector_ranking(pg_vector_db_engine) -> None:
         except asyncio.TimeoutError:
             worker_task.cancel()
 
-
 @pytest.mark.asyncio
-async def test_metadata_filtering(pg_vector_db_engine) -> None:
+async def test_metadata_filtering(pg_vector_db_engine: AsyncEngine) -> None:
     """
     Tests if metadata filters correctly exclude documents, even if they are
     vector-wise closer.
@@ -743,9 +739,8 @@ async def test_metadata_filtering(pg_vector_db_engine) -> None:
         except asyncio.TimeoutError:
             worker_task.cancel()
 
-
 @pytest.mark.asyncio
-async def test_keyword_filtering(pg_vector_db_engine) -> None:
+async def test_keyword_filtering(pg_vector_db_engine: AsyncEngine) -> None:
     """
     Tests if keyword search correctly filters results in a hybrid query.
     1. Ingest two emails with similar vector embeddings but different keywords.
