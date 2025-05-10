@@ -115,9 +115,11 @@ async def mock_embedding_generator() -> MockEmbeddingGenerator:
     generator = MockEmbeddingGenerator(
         embedding_map=embedding_map,
         model_name=TEST_EMBEDDING_MODEL,
-        default_embedding=np.zeros(
+        dimensions=TEST_EMBEDDING_DIMENSION,
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=np.zeros(
             TEST_EMBEDDING_DIMENSION
-        ).tolist(),  # Default if needed
+        ).tolist(),
     )
     # Store embeddings needed for queries later in the test
     generator._test_query_semantic_embedding = query_semantic_embedding
