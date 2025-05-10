@@ -515,7 +515,7 @@ class ProcessingService:
         request_confirmation_callback: (
             Callable[[str, str, dict[str, Any]], Awaitable[bool]] | None
         ) = None,
-    ):
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str | None]:
         """Prepares context, message history, calls the LLM processing logic,
         and returns the response, tool info, reasoning info, and any processing error traceback.
 
