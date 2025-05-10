@@ -987,9 +987,9 @@ async def handle_vector_search(
     request: Request,
     # --- Dependencies ---
     db_context: Annotated[DatabaseContext, Depends(get_db)],
-    embedding_generator: Annotated[EmbeddingGenerator, Depends(
-        get_embedding_generator_dependency
-    )],
+    embedding_generator: Annotated[
+        EmbeddingGenerator, Depends(get_embedding_generator_dependency)
+    ],
     # --- Form Inputs ---
     semantic_query: Annotated[str | None, Form()] = None,
     keywords: Annotated[str | None, Form()] = None,
@@ -1211,12 +1211,10 @@ async def execute_tool_api(
     tool_name: str,
     request: Request,  # Keep request for potential context later
     payload: ToolExecutionRequest,
-    tools_provider: Annotated[ToolsProvider, Depends(
-        get_tools_provider_dependency
-    )],
-    db_context: Annotated[DatabaseContext, Depends(
-        get_db
-    )],  # Inject DB context if tools need it
+    tools_provider: Annotated[ToolsProvider, Depends(get_tools_provider_dependency)],
+    db_context: Annotated[
+        DatabaseContext, Depends(get_db)
+    ],  # Inject DB context if tools need it
     # embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator_dependency), # Inject if tools need it
 ):
     """Executes a specified tool with the given arguments."""
