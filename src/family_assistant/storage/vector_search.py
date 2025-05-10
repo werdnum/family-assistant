@@ -130,7 +130,6 @@ async def query_vector_store(
         if not all(c.isalnum() or c in ["_", "-", "."] for c in meta_key):
             logger.warning(f"Potentially unsafe metadata key used: {meta_key}")
             # Depending on security requirements, you might raise ValueError here
-            # raise ValueError(f"Invalid metadata key format: {meta_key}")
 
         # Use parameterized value, embed validated key
         params[param_name] = meta_filter.value
