@@ -4,7 +4,6 @@ import json  # Added json import
 import logging
 
 # Import storage functions for assertion (will use the patched engine)
-# from family_assistant.storage.notes import get_note_by_title # Can use this or direct query
 import uuid  # Added for turn_id
 from typing import Any  # Added for type hints
 from unittest.mock import MagicMock  # For mocking Application
