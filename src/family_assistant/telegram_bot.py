@@ -43,7 +43,6 @@ from telegram.ext import (
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 
-
 logger = logging.getLogger(__name__)
 
 
