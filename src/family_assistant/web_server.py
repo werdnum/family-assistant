@@ -992,30 +992,30 @@ async def vector_search_form(
 async def handle_vector_search(
     request: Request,
     # --- Form Inputs ---
-    semantic_query: str | None = Form(None),  # noqa: B008
-    keywords: str | None = Form(None),  # noqa: B008
-    search_type: str = Form("hybrid"),  # 'semantic', 'keyword', 'hybrid' # noqa: B008
-    embedding_model: str | None = Form(None),  # CRUCIAL for vector search # noqa: B008
+    semantic_query: Annotated[str | None, Form(None)],
+    keywords: Annotated[str | None, Form(None)],
+    search_type: Annotated[str, Form("hybrid")],  # 'semantic', 'keyword', 'hybrid'
+    embedding_model: Annotated[str | None, Form(None)],  # CRUCIAL for vector search
     embedding_types: Annotated[list[str], Form(
         default_factory=list
     )],  # Allow multiple types
     source_types: Annotated[list[str], Form(
         default_factory=list
     )],  # Allow multiple source types
-    created_after: str | None = Form(None),  # Expect YYYY-MM-DD # noqa: B008
-    created_before: str | None = Form(None),  # Expect YYYY-MM-DD # noqa: B008
-    title_like: str | None = Form(None),  # noqa: B008
+    created_after: Annotated[str | None, Form(None)],  # Expect YYYY-MM-DD
+    created_before: Annotated[str | None, Form(None)],  # Expect YYYY-MM-DD
+    title_like: Annotated[str | None, Form(None)],
     # --- Metadata Filters (expect lists) ---
-    metadata_keys: list[str] = Form(default_factory=list), # noqa: B008
-    metadata_values: list[str] = Form(default_factory=list), # noqa: B008
+    metadata_keys: Annotated[list[str], Form(default_factory=list)],
+    metadata_values: Annotated[list[str], Form(default_factory=list)],
     # --- Control Params ---
-    limit: int = Form(10),  # noqa: B008
-    rrf_k: int = Form(60),  # noqa: B008
+    limit: Annotated[int, Form(10)],
+    rrf_k: Annotated[int, Form(60)],
     # --- Dependencies ---
-    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-    embedding_generator: EmbeddingGenerator = Depends( # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    embedding_generator: Annotated[EmbeddingGenerator, Depends(
         get_embedding_generator_dependency
-    ),
+    )],
 ):
     """Handles the vector search form submission."""
     results = None
