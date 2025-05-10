@@ -5,6 +5,7 @@ Functional test for the basic document indexing pipeline.
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -133,7 +134,7 @@ async def mock_pipeline_embedding_generator() -> MockEmbeddingGenerator:
 async def indexing_task_worker(
     pg_vector_db_engine: AsyncEngine,  # Depends on the DB engine
     mock_pipeline_embedding_generator: MockEmbeddingGenerator,  # Depends on the mock generator
-):
+) -> AsyncIterator[tuple[TaskWorker, asyncio.Event, asyncio.Event]]:
     """
     Sets up and tears down a TaskWorker instance configured for indexing tasks.
     Yields the worker, new_task_event, and shutdown_event.
