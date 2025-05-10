@@ -1339,7 +1339,7 @@ async def upload_document(
         ),
     ] = None,
     # Dependencies
-    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)] = None,  # noqa: B008
 ) -> DocumentUploadResponse:
     """
     API endpoint to upload document metadata and content parts for indexing.
@@ -1611,5 +1611,3 @@ if __name__ == "__main__":
 # Otherwise, it can be removed if __main__.py directly uses the 'app' instance
 # def get_web_app():
 #     """Returns the configured FastAPI application instance."""
-#
-#     return app
