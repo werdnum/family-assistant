@@ -42,7 +42,7 @@ from family_assistant.web.app_creator import (
 )
 
 # Import test helpers
-from tests.helpers import wait_for_tasks_to_complete
+from ...helpers import wait_for_tasks_to_complete
 
 logger = logging.getLogger(__name__)
 
