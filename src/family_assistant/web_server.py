@@ -270,7 +270,7 @@ class AuthMiddleware:
         self.auth_enabled = auth_enabled
         logger.info(f"AuthMiddleware initialized (auth_enabled={self.auth_enabled})")
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if not self.auth_enabled or scope["type"] != "http":
             # If auth is disabled or not an HTTP request, proceed without checking
             await self.app(scope, receive, send)
@@ -365,7 +365,7 @@ class DocumentUploadResponse(BaseModel):
 if AUTH_ENABLED and oauth:
 
     @app.route("/login")
-    async def login(request: Request):
+    async def login(request: Request) -> RedirectResponse:
         """Redirects the user to the OIDC provider for authentication."""
         # Construct the redirect URI for the callback endpoint
         # Ensure the scheme matches what's expected by the OIDC provider (http/https)
@@ -385,7 +385,7 @@ if AUTH_ENABLED and oauth:
         return await oauth.oidc_provider.authorize_redirect(request, redirect_uri)
 
     @app.route("/auth")  # Callback URL
-    async def auth(request: Request):
+    async def auth(request: Request) -> RedirectResponse:
         """Handles the callback from the OIDC provider after authentication."""
         try:
             token = await oauth.oidc_provider.authorize_access_token(request)
@@ -416,7 +416,7 @@ if AUTH_ENABLED and oauth:
             ) from e
 
     @app.route("/logout")
-    async def logout(request: Request):
+    async def logout(request: Request) -> RedirectResponse:
         """Clears the user session."""
         request.session.pop("user", None)
         logger.info("User logged out.")
@@ -430,7 +430,7 @@ if AUTH_ENABLED and oauth:
 @app.get("/", response_class=HTMLResponse)
 async def read_root(
     request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
-):
+) -> HTMLResponse:
     """Serves the main page listing all notes."""
     notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
@@ -448,7 +448,7 @@ async def read_root(
 
 
 @app.get("/notes/add", response_class=HTMLResponse)
-async def add_note_form(request: Request):
+async def add_note_form(request: Request) -> HTMLResponse:
     """Serves the form to add a new note."""
     return templates.TemplateResponse(
         "edit_note.html",
@@ -467,7 +467,7 @@ async def edit_note_form(
     request: Request,
     title: str,
     db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-):
+) -> HTMLResponse:
     """Serves the form to edit an existing note."""
     note = await get_note_by_title(db_context, title)
     if not note:
@@ -491,7 +491,7 @@ async def save_note(
     content: str = Form(...),
     original_title: str | None = Form(None),
     db_context: DatabaseContext = Depends(get_db),  # Add dependency # noqa: B008
-):
+) -> RedirectResponse:
     """Handles saving a new or updated note."""
     try:
         if original_title and original_title != title:
@@ -518,7 +518,7 @@ async def delete_note_post(
     request: Request,
     title: str,
     db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-):
+) -> RedirectResponse:
     """Handles deleting a note."""
     deleted = await delete_note(db_context, title)
     if not deleted:
@@ -530,7 +530,7 @@ async def delete_note_post(
 async def handle_mail_webhook(
     request: Request,
     db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-):
+) -> Response:
     """
     Receives incoming email via webhook (expects multipart/form-data).
     Logs the received form data for now.
@@ -590,7 +590,7 @@ async def view_message_history(
     per_page: int = Query(
         10, ge=1, le=100, description="Number of conversations per page"
     ),  # noqa: B008
-):
+) -> HTMLResponse:
     """Serves the page displaying message history."""
     try:
         # Get the configured timezone from app state
@@ -775,7 +775,7 @@ async def view_message_history(
 
 
 @app.get("/tools", response_class=HTMLResponse)
-async def view_tools(request: Request):
+async def view_tools(request: Request) -> HTMLResponse:
     """Serves the page displaying available tools."""
     global _tool_html_cache  # Use the global cache
     try:
@@ -822,7 +822,7 @@ async def view_tools(request: Request):
 @app.get("/tasks", response_class=HTMLResponse)
 async def view_tasks(
     request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
-):
+) -> HTMLResponse:
     """Serves the page displaying scheduled tasks."""
     try:
         tasks = await get_all_tasks(db_context, limit=200)  # Pass context, fetch tasks
@@ -844,7 +844,7 @@ async def view_tasks(
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)
-async def health_check(request: Request):
+async def health_check(request: Request) -> JSONResponse:
     """Checks basic service health and Telegram polling status."""
     telegram_service = getattr(request.app.state, "telegram_service", None)
 
@@ -915,7 +915,7 @@ async def health_check(request: Request):
 async def vector_search_form(
     request: Request,
     db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-):
+) -> HTMLResponse:
     """Serves the vector search form."""
     distinct_models = []
     distinct_types = []
@@ -1006,7 +1006,7 @@ async def handle_vector_search(
     # --- Control Params ---
     limit: Annotated[int, Form()] = 10,
     rrf_k: Annotated[int, Form()] = 60,
-):
+) -> HTMLResponse:
     """Handles the vector search form submission."""
     if metadata_values is None:
         metadata_values = []
@@ -1224,7 +1224,7 @@ async def execute_tool_api(
         DatabaseContext, Depends(get_db)
     ],  # Inject DB context if tools need it
     # embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator_dependency), # Inject if tools need it
-):
+) -> JSONResponse:
     """Executes a specified tool with the given arguments."""
     logger.info(
         f"Received execution request for tool: {tool_name} with args: {payload.arguments}"
@@ -1348,7 +1348,7 @@ async def upload_document(
     ),
     # Dependencies
     db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-):
+) -> DocumentUploadResponse:
     """
     API endpoint to upload document metadata and content parts for indexing.
     """
@@ -1442,7 +1442,7 @@ async def upload_document(
     # Define a simple class on the fly that behaves like the Document protocol
     # This avoids needing a direct import of a specific Document implementation
     class UploadedDocument:
-        def __init__(self, data) -> None:
+        def __init__(self, data: dict[str, Any]) -> None:
             self._data = data
 
         @property
@@ -1536,7 +1536,7 @@ async def upload_document(
 
 
 @app.get("/docs/")
-async def redirect_to_user_guide():
+async def redirect_to_user_guide() -> RedirectResponse:
     """Redirects the base /docs/ path to the main user guide."""
     return RedirectResponse(
         url="/docs/USER_GUIDE.md", status_code=status.HTTP_302_FOUND
@@ -1544,7 +1544,7 @@ async def redirect_to_user_guide():
 
 
 @app.get("/docs/{filename:path}", response_class=HTMLResponse)
-async def serve_documentation(request: Request, filename: str):
+async def serve_documentation(request: Request, filename: str) -> HTMLResponse:
     """Serves rendered Markdown documentation files from the docs/user directory."""
     allowed_extensions = {".md"}
     doc_path = (docs_user_dir / filename).resolve()
