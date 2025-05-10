@@ -167,8 +167,8 @@ async def upload_document(
         File(description="The document file to upload (e.g., PDF, TXT, DOCX)."),
     ] = None,
     source_uri: Annotated[
-        str | None, Form(description="Canonical URI/URL of the original document.")
-    ] = None,
+        str, Form(description="Canonical URI/URL of the original document.")
+    ] = ...,
     title: Annotated[
         str | None,
         Form(
