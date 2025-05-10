@@ -242,7 +242,9 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine: AsyncEngine) ->
     mock_embedder = MockEmbeddingGenerator(
         embedding_map=embedding_map,
         model_name=TEST_EMBEDDING_MODEL,
-        default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
+        dimensions=TEST_EMBEDDING_DIMENSION,
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
 
     # --- Arrange: Create Indexing Pipeline ---
@@ -448,9 +450,11 @@ async def test_vector_ranking(pg_vector_db_engine: AsyncEngine) -> None:
     }
     # Provide a default embedding
     mock_embedder = MockEmbeddingGenerator(
-        embedding_map,
-        TEST_EMBEDDING_MODEL,
-        default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
+        embedding_map=embedding_map,
+        model_name=TEST_EMBEDDING_MODEL,
+        dimensions=TEST_EMBEDDING_DIMENSION,
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor = TitleExtractor()
@@ -621,9 +625,11 @@ async def test_metadata_filtering(pg_vector_db_engine: AsyncEngine) -> None:
     }
     # Provide a default embedding
     mock_embedder = MockEmbeddingGenerator(
-        embedding_map,
-        TEST_EMBEDDING_MODEL,
-        default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
+        embedding_map=embedding_map,
+        model_name=TEST_EMBEDDING_MODEL,
+        dimensions=TEST_EMBEDDING_DIMENSION,
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor_meta = TitleExtractor()
@@ -784,9 +790,11 @@ async def test_keyword_filtering(pg_vector_db_engine: AsyncEngine) -> None:
     }
     # Provide a default embedding to prevent errors if other texts are encountered unexpectedly
     mock_embedder = MockEmbeddingGenerator(
-        embedding_map,
-        TEST_EMBEDDING_MODEL,
-        default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
+        embedding_map=embedding_map,
+        model_name=TEST_EMBEDDING_MODEL,
+        dimensions=TEST_EMBEDDING_DIMENSION,
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
     # --- Arrange: Create Indexing Pipeline ---
     title_extractor = TitleExtractor()
