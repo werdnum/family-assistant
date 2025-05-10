@@ -172,7 +172,6 @@ async def upload_document(
     content_parts_json: Annotated[
         str | None,
         Form(
-            default=None,
             alias="content_parts",
             description='Optional JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}). Required if no file is uploaded.',
         ),
@@ -180,14 +179,12 @@ async def upload_document(
     uploaded_file: Annotated[
         UploadFile | None,
         File(
-            default=None,
             description="The document file to upload (e.g., PDF, TXT, DOCX).",
         ),
     ] = None,
     created_at_str: Annotated[
         str | None,
         Form(
-            default=None,
             alias="created_at",
             description="Original creation timestamp (ISO 8601 format string, e.g., 'YYYY-MM-DDTHH:MM:SSZ' or 'YYYY-MM-DD'). Timezone assumed UTC if missing.",
         ),
@@ -195,7 +192,6 @@ async def upload_document(
     metadata_json: Annotated[
         str | None,
         Form(
-            default=None,
             alias="metadata",
             description="JSON string representing a dictionary of additional metadata.",
         ),
