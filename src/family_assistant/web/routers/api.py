@@ -170,11 +170,11 @@ async def upload_document(
         str, Form(description="Canonical URI/URL of the original document.")
     ] = ...,
     title: Annotated[
-        str | None,
+        str,
         Form(
             description="Primary title for the document (can also be in content_parts)."
         ),
-    ] = None,
+    ] = ...,
     created_at_str: Annotated[
         str | None,
         Form(
