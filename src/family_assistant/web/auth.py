@@ -1,6 +1,7 @@
 import logging
 import re
 from datetime import datetime, timezone
+from typing import Any
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import APIRouter, HTTPException, Request, status
@@ -65,6 +66,15 @@ PUBLIC_PATHS = [
     re.compile(r"^/static(/.*)?$"),
     re.compile(r"^/favicon.ico$"),
 ]
+
+
+# --- User type and dependency ---
+User = dict[str, Any]  # User information stored in session is a dictionary
+
+
+async def get_current_user_optional(request: Request) -> User | None:
+    """FastAPI dependency to get the current user from session, if any."""
+    return request.session.get("user")
 
 
 async def get_user_from_api_token(
