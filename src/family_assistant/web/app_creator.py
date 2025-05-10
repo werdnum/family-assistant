@@ -3,8 +3,7 @@ import logging
 import os
 import pathlib
 
-from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware import Middleware
@@ -37,9 +36,12 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 
 # --- Determine base path for templates and static files ---
 try:
-    _project_root = pathlib.Path(__file__).parent.parent.parent.resolve()
-    current_file_dir = pathlib.Path(__file__).parent.resolve()
-    package_root_dir = current_file_dir
+    # __file__ is src/family_assistant/web/app_creator.py
+    # Project root is 4 levels up from app_creator.py
+    _project_root = pathlib.Path(__file__).parent.parent.parent.parent.resolve()
+    # Package root (src/family_assistant/) is 2 levels up from app_creator.py
+    package_root_dir = pathlib.Path(__file__).parent.parent.resolve()
+
     templates_dir = package_root_dir / "templates"
     static_dir = package_root_dir / "static"
     docs_user_dir = _project_root / "docs" / "user"
@@ -58,6 +60,8 @@ except NameError:
     logger.error(
         "Could not determine package path using __file__. Static/template files might not load."
     )
+    # Fallback paths, assuming execution from project root if __file__ is not defined.
+    # This is less likely to be hit with proper packaging.
     templates = Jinja2Templates(directory="src/family_assistant/templates")
     static_dir = pathlib.Path("src/family_assistant/static")
     docs_user_dir = pathlib.Path("docs") / "user"
@@ -120,12 +124,3 @@ app.include_router(tasks_ui_router, tags=["Tasks UI"])
 app.include_router(vector_search_router, tags=["Vector Search UI"])
 app.include_router(health_router, tags=["Health Check"])
 app.include_router(api_router, prefix="/api", tags=["API Endpoints"])
-
-
-# --- Root redirect to / (Notes UI) ---
-# --- Uvicorn Runner (for standalone testing) ---
-if __name__ == "__main__":
-    import uvicorn
-
-    logger.info("Starting Uvicorn server for testing...")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
