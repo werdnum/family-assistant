@@ -466,9 +466,7 @@ async def add_embedding(
                 )
             else:
                 # 3. If not exists, insert it
-                insert_stmt = insert(DocumentEmbeddingRecord).values(
-                    **values_to_insert
-                )
+                insert_stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
                 await db_context.execute_with_retry(insert_stmt)
                 logger.info(
                     f"Successfully inserted new embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
