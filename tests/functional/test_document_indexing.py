@@ -16,6 +16,7 @@ import pytest
 import pytest_asyncio  # Import pytest_asyncio for async fixtures
 import sqlalchemy  # Import sqlalchemy for cast
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine  # Add AsyncEngine import
 
 # Import components needed for the E2E test
 from family_assistant import storage
@@ -124,7 +125,7 @@ async def mock_embedding_generator() -> MockEmbeddingGenerator:
 
 @pytest_asyncio.fixture(scope="function")
 async def http_client(
-    pg_vector_db_engine,  # Ensure DB is setup before app starts
+    pg_vector_db_engine: AsyncEngine,  # Ensure DB is setup before app starts
     mock_embedding_generator: MockEmbeddingGenerator,  # Inject the mock generator
 ) -> httpx.AsyncClient:
     """
@@ -202,7 +203,7 @@ async def _helper_handle_embed_and_store_batch(
 
 @pytest.mark.asyncio
 async def test_document_indexing_and_query_e2e(
-    pg_vector_db_engine,  # Still needed for direct DB checks/queries
+    pg_vector_db_engine: AsyncEngine,  # Still needed for direct DB checks/queries
     http_client: httpx.AsyncClient,  # Use the test client
     mock_embedding_generator: MockEmbeddingGenerator,  # Get the generator instance
 ) -> None:
