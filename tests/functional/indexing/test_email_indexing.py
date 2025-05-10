@@ -4,6 +4,7 @@ End-to-end functional tests for the email indexing and vector search pipeline.
 
 import asyncio
 import logging
+import os  # Added import
 import re  # Add re import
 import tempfile  # Added for http_client fixture
 import uuid
@@ -170,7 +171,6 @@ async def http_client(
         os.environ["ATTACHMENT_STORAGE_DIR"] = temp_attachment_dir
 
         # If other app.state.config settings are needed, set them here.
-        # Example: fastapi_app.state.config = {"some_setting": "value"}
 
         transport = httpx.ASGITransport(app=fastapi_app)
         async with httpx.AsyncClient(
@@ -186,7 +186,6 @@ async def http_client(
         del os.environ["ATTACHMENT_STORAGE_DIR"]
 
     # Clean up app state if modified
-    # if hasattr(fastapi_app.state, "config"): del fastapi_app.state.config
 
 
 # --- Helper Function for Test Setup ---
@@ -354,7 +353,6 @@ async def test_email_indexing_and_query_e2e(
     mock_application_e2e.state.embedding_generator = mock_embedder
     mock_application_e2e.state.llm_client = None # Or a mock LLM if any processor uses it
     # If ATTACHMENT_STORAGE_DIR is needed by any task run by worker via app.state.config:
-    # mock_application_e2e.state.config = {"ATTACHMENT_STORAGE_DIR": os.getenv("ATTACHMENT_STORAGE_DIR")}
 
 
     dummy_calendar_config = {}  # Not used by email/embedding tasks
