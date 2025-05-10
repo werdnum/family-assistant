@@ -45,7 +45,9 @@ async def handle_embed_and_store_batch(
 
     # Extract the actual DatabaseContext and EmbeddingGenerator from the ToolExecutionContext.
     db_context = exec_context.db_context
-    embedding_generator_instance = exec_context.embedding_generator
+    # Directly access the embedding generator from the application state
+    # to avoid issues with MagicMock application objects in tests.
+    embedding_generator_instance = exec_context.application.state.embedding_generator
 
     if not db_context:
         logger.error(
@@ -54,9 +56,11 @@ async def handle_embed_and_store_batch(
         raise ValueError("Missing DatabaseContext in execution context.")
     if not embedding_generator_instance:
         logger.error(
-            "The 'embedding_generator' parameter was None for handle_embed_and_store_batch."
+            "Embedding generator not found on application.state for handle_embed_and_store_batch."
         )
-        raise ValueError("Missing EmbeddingGenerator instance (was None).")
+        raise ValueError(
+            "Missing EmbeddingGenerator instance (application.state.embedding_generator was None)."
+        )
 
     try:
         document_id: int = payload["document_id"]
