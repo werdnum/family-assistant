@@ -298,27 +298,28 @@ async def upload_document(
             with open(target_file_path, "wb") as f:
                 shutil.copyfileobj(uploaded_file.file, f)
 
-            file_ref = str(target_file_path)
+            file_ref = str(target_file_path) # file_ref is the path to the persistently stored file
             logger.info(
                 f"Uploaded file '{original_filename}' saved to '{file_ref}' for document {source_id}."
             )
 
             # Detect MIME type using filetype library from the new persistent path
             try:
-                kind = filetype.guess(file_ref)
+                kind = filetype.guess(file_ref) # Guess from the saved file
                 if kind is None:
                     logger.warning(
-                        f"Could not determine file type for '{original_filename}' (path: {file_ref}). Falling back to client-provided content type."
+                        f"Could not determine file type for '{original_filename}' (path: {file_ref}). "
+                        f"Falling back to client-provided content type: {uploaded_file.content_type}."
                     )
-                    detected_mime_type = uploaded_file.content_type
+                    detected_mime_type = uploaded_file.content_type # Fallback
                 else:
                     detected_mime_type = kind.mime
                     logger.info(
-                        f"Detected MIME type for '{original_filename}': {detected_mime_type}"
+                        f"Detected MIME type for '{original_filename}' (path: {file_ref}): {detected_mime_type}"
                     )
             except Exception as fe:
                 logger.error(
-                    f"Error detecting file type for '{original_filename}': {fe}",
+                    f"Error detecting file type for '{original_filename}' (path: {file_ref}): {fe}",
                     exc_info=True,
                 )
                 # Fallback or error, for now, let's use client-provided if detection fails
