@@ -39,7 +39,7 @@ from family_assistant.storage.vector import (
 )
 from family_assistant.task_worker import TaskWorker  # For running the task worker
 from family_assistant.tools.types import ToolExecutionContext
-from tests.helpers import wait_for_tasks_to_complete  # For waiting for task completion
+from tests.helpers import wait_for_tasks_to_complete  # pylint: disable=import-error
 
 logger = logging.getLogger(__name__)
 
