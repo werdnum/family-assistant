@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from typing import AsyncGenerator, Generator
 from unittest.mock import MagicMock, patch
 
 import docker  # Import the docker library to catch its exceptions
@@ -27,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)  # Use pytest_asyncio.fixture
-async def test_db_engine(request):  # Add request fixture
+async def test_db_engine(
+    request: pytest.FixtureRequest,
+) -> AsyncGenerator[AsyncEngine, None]:  # Add request fixture
     """
     Pytest fixture to set up an in-memory SQLite database for testing.
 
@@ -71,7 +74,7 @@ async def test_db_engine(request):  # Add request fixture
 
 
 @pytest.fixture(scope="session")
-def postgres_container():
+def postgres_container() -> Generator[PostgresContainer, None, None]:
     """
     Starts and manages a PostgreSQL container for the test session.
     Respects DOCKER_HOST environment variable.
@@ -178,7 +181,9 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
 
 
 @pytest_asyncio.fixture(scope="function")
-async def task_worker_manager():
+async def task_worker_manager() -> (
+    AsyncGenerator[tuple[TaskWorker, asyncio.Event, asyncio.Event], None]
+):
     """
     Manages the lifecycle of a TaskWorker instance.
 
