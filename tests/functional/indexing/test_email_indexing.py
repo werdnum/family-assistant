@@ -1103,11 +1103,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     ).is_not_empty()
 
     # --- Arrange: Mock Embeddings ---
-    # Normalize text as TextChunker would for consistent mocking
-    # TEST_PDF_EXTRACTED_TEXT is what we expect to be indexed from the PDF
-    normalized_pdf_text = re.sub(r"\s+", " ", TEST_PDF_EXTRACTED_TEXT).strip()
-    normalized_email_subject = re.sub(r"\s+", " ", TEST_EMAIL_SUBJECT_WITH_PDF).strip()
-    normalized_email_body = re.sub(r"\s+", " ", TEST_EMAIL_BODY_WITH_PDF).strip()
+    # Keys in embedding_map must be the raw text that MockEmbeddingGenerator will receive.
 
     pdf_content_embedding = (
         np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.3
@@ -1124,10 +1120,12 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     ).tolist()
 
     embedding_map = {
-        normalized_pdf_text: pdf_content_embedding,
-        normalized_email_subject: email_subject_embedding,
-        normalized_email_body: email_body_embedding,
-        TEST_QUERY_TEXT_FOR_PDF: query_pdf_embedding,
+        TEST_PDF_EXTRACTED_TEXT: pdf_content_embedding,  # Use raw text constant
+        TEST_EMAIL_SUBJECT_WITH_PDF: email_subject_embedding,  # Use raw text constant
+        TEST_EMAIL_BODY_WITH_PDF: email_body_embedding,  # Use raw text constant
+        TEST_QUERY_TEXT_FOR_PDF: (
+            query_pdf_embedding
+        ),  # This is already a raw query string
     }
     mock_embedder = MockEmbeddingGenerator(
         embedding_map=embedding_map,
@@ -1160,22 +1158,22 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     text_chunker = TextChunker(
         chunk_size=text_chunker_test_config["chunk_size"],
         chunk_overlap=text_chunker_test_config["chunk_overlap"],
-        # embedding_type_prefix_map is provided via pipeline config
+        embedding_type_prefix_map=text_chunker_test_config["embedding_type_prefix_map"],
     )
 
     embedding_dispatcher = EmbeddingDispatchProcessor(
         embedding_types_to_dispatch=[
             "title_chunk",
             "title",
-            "content_chunk",
+            "content_chunk",  # This should now match TextChunker's output for PDF content
         ],
     )
     # Pass the text_chunker_test_config to the IndexingPipeline
+    # If TextChunker now gets map from constructor, this pipeline config for it might be redundant
+    # but shouldn't harm if TextChunker prioritizes constructor args or ignores if already set.
     test_pipeline_with_pdf = IndexingPipeline(
         processors=[title_extractor, pdf_extractor, text_chunker, embedding_dispatcher],
-        config={
-            "text_chunker": text_chunker_test_config  # Provide config for TextChunker
-        },
+        config={"text_chunker": text_chunker_test_config},
     )
     set_indexing_dependencies(pipeline=test_pipeline_with_pdf)
     logger.info(
