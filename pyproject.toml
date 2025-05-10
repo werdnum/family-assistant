@@ -113,6 +113,10 @@ asyncio_mode = "auto"
 testpaths = [
     "tests",
 ]
+
+[tool.pylint.main]
+source-roots = ["src"]
+
 [tool.pydantic]
 # Enable Pydantic v2 behaviors
 validate_default = false
