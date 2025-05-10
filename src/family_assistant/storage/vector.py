@@ -91,7 +91,7 @@ class DocumentRecord(Base):
 
     __tablename__ = "documents"
 
-    id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True)  # Changed to Integer
     source_type: Mapped[str] = mapped_column(sa.String(50), nullable=False, index=True)
     source_id: Mapped[str] = mapped_column(sa.Text, unique=True, nullable=False)
     source_uri: Mapped[str | None] = mapped_column(sa.Text)
@@ -124,9 +124,11 @@ class DocumentEmbeddingRecord(Base):
     """SQLAlchemy model for the 'document_embeddings' table, representing stored embeddings."""
 
     __tablename__ = "document_embeddings"
-    id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True)  # Changed to Integer
     document_id: Mapped[int] = mapped_column(
-        sa.BigInteger, sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+        sa.Integer,
+        sa.ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,  # Changed to Integer
     )
     chunk_index: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
     embedding_type: Mapped[str] = mapped_column(sa.String(50), nullable=False)
