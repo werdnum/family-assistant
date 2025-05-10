@@ -41,7 +41,7 @@ api_router = APIRouter()
 
 # Define the permanent storage path for uploaded documents
 # TODO: This should ideally be configurable via environment variables or application config
-DOCUMENT_STORAGE_PATH = pathlib.Path("/mnt/data/mailbox/documents")
+DOCUMENT_STORAGE_PATH = pathlib.Path("/mnt/data/files")
 
 
 # --- Pydantic model for Tool Execution API ---
