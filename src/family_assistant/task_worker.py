@@ -35,7 +35,6 @@ from family_assistant.tools import (
 )
 
 # Import LLM interface for type hinting if needed elsewhere
-# from family_assistant.llm import LLMInterface
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +85,6 @@ def format_llm_response_for_telegram(response_text: str) -> str:
     except Exception as md_err:
         logger.error(
             f"Failed to convert markdown: {md_err}. Falling back to escaped text. Original: {response_text[:100]}...",
-            # exc_info=True, # Optional: Add full traceback if needed
         )
         # Fallback to escaping the original text
         return escape_markdown(response_text, version=2)
