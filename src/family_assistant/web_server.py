@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import pathlib
-import re  # noqa: F401 - Used in MAILSENDER_RAW_DIR logic, keep for now # type: ignore
 import uuid
 import zoneinfo
 from datetime import date, datetime, timezone
@@ -12,7 +11,8 @@ from typing import Annotated, Any
 
 import aiofiles
 import telegram.error  # Import telegram errors for specific checking in health check
-from authlib.integrations.starlette_client import OAuth  # For OIDC # type: ignore
+
+# OAuth import removed, will be in auth.py
 from fastapi import (
     Depends,
     FastAPI,
@@ -30,13 +30,16 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from markdown_it import MarkdownIt  # For rendering docs
+
+# MarkdownIt import removed, will be in utils.py
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
-from starlette.config import Config  # For reading env vars
-from starlette.middleware import Middleware
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.types import ASGIApp, Receive, Scope, Send
+
+# Starlette Config, Middleware, SessionMiddleware, ASGIApp, Receive, Scope, Send imports might be needed by auth.py
+# For now, keep them if web_server.py still uses them directly, or remove if fully delegated.
+# Assuming SessionMiddleware is still configured here or passed to auth module.
+from starlette.middleware import Middleware  # Keep for app setup
+from starlette.middleware.sessions import SessionMiddleware  # Keep for app setup
 
 # Import storage functions using absolute package path
 from family_assistant import storage
@@ -72,6 +75,16 @@ from family_assistant.tools import (
     _scan_user_docs,  # Removed incorrect import of render_schema_as_html
 )
 from family_assistant.tools.schema import render_schema_as_html  # Correct import path
+
+# Import new auth and utils modules
+from family_assistant.web.auth import (
+    AUTH_ENABLED,
+    PUBLIC_PATHS,
+    SESSION_SECRET_KEY,
+    AuthMiddleware,
+    auth_router,
+)
+from family_assistant.web.utils import md_renderer
 
 logger = logging.getLogger(__name__)
 
@@ -131,67 +144,24 @@ except NameError:
     docs_user_dir = pathlib.Path("docs") / "user"
     logger.warning(f"Using fallback user docs directory: {docs_user_dir}")
 
-# Markdown renderer instance
-md_renderer = MarkdownIt("gfm-like")  # Use GitHub Flavored Markdown preset
+# md_renderer is now imported from family_assistant.web.utils
 
-# --- Auth Configuration ---
-# Load config from environment variables or .env file
-config = Config()  # Removed .env assumption, reads directly from env
+# --- Auth Configuration (now largely in family_assistant.web.auth) ---
+# AUTH_ENABLED, SESSION_SECRET_KEY are imported.
+# oauth object is imported but might not be directly used here anymore.
 
-# OIDC configuration
-OIDC_CLIENT_ID = config("OIDC_CLIENT_ID", default=None)
-OIDC_CLIENT_SECRET = config("OIDC_CLIENT_SECRET", default=None)
-OIDC_DISCOVERY_URL = config("OIDC_DISCOVERY_URL", default=None)
-SESSION_SECRET_KEY = config(
-    "SESSION_SECRET_KEY", default=None
-)  # Needed for session middleware
-
-# Check if OIDC is configured
-AUTH_ENABLED = bool(
-    OIDC_CLIENT_ID and OIDC_CLIENT_SECRET and OIDC_DISCOVERY_URL and SESSION_SECRET_KEY
-)
-
-oauth = None
 middleware = []
 
-# Always add SessionMiddleware if the secret key is set,
-# as routes might try to access request.session even if auth is disabled.
+# Always add SessionMiddleware if the secret key is set.
 if SESSION_SECRET_KEY:
     middleware.append(Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY))
     logger.info("SessionMiddleware added (SESSION_SECRET_KEY is set).")
-
-if AUTH_ENABLED:
-    logger.info("OIDC Authentication is ENABLED.")
-    if oauth is None:  # Initialize OAuth only if auth is fully enabled
-        # Session middleware is already added above if SESSION_SECRET_KEY is set.
-        # No need to add it again here.
-        # Initialize Authlib OAuth client
-        oauth = OAuth(config)
-        # Register the OIDC provider (e.g., Keycloak)
-        oauth.register(
-            name="oidc_provider",  # Can be any name, used internally
-            client_id=OIDC_CLIENT_ID,
-            client_secret=OIDC_CLIENT_SECRET,
-            server_metadata_url=OIDC_DISCOVERY_URL,
-            client_kwargs={
-                "scope": "openid email profile",  # Standard scopes
-                # Add any provider-specific kwargs here if needed
-            },
-        )
 else:
-    if not SESSION_SECRET_KEY:
-        logger.warning(
-            "SessionMiddleware NOT added (SESSION_SECRET_KEY is not set). Accessing request.session will fail."
-        )
-    if not (OIDC_CLIENT_ID and OIDC_CLIENT_SECRET and OIDC_DISCOVERY_URL):
-        logger.info(
-            "OIDC Authentication is DISABLED (OIDC environment variables not set)."
-        )
-    elif not SESSION_SECRET_KEY:
-        logger.warning(
-            "OIDC Authentication is DISABLED (SESSION_SECRET_KEY is not set, required for sessions)."
-        )
+    logger.warning(
+        "SessionMiddleware NOT added (SESSION_SECRET_KEY is not set). Accessing request.session will fail, which might break OIDC if it were enabled."
+    )
 
+# AuthMiddleware is imported and will be added to the middleware list later if AUTH_ENABLED.
 
 # Dependency function to retrieve the embedding generator from app state
 
@@ -234,68 +204,9 @@ async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
         )
     return provider
 
-
-# Markdown renderer instance
-md_renderer = MarkdownIt("gfm-like")  # Use GitHub Flavored Markdown preset
-
-# Define paths that should be publicly accessible (no login required)
-PUBLIC_PATHS = [
-    re.compile(r"^/login$"),
-    re.compile(r"^/logout$"),
-    re.compile(r"^/auth$"),
-    re.compile(r"^/webhook(/.*)?$"),
-    re.compile(r"^/api(/.*)?$"),  # Covers /api/docs, /api/redoc, /api/tools/* etc.
-    re.compile(r"^/health$"),
-    re.compile(r"^/static(/.*)?$"),
-    re.compile(r"^/favicon.ico$"),
-]
-
-
-# Define AuthMiddleware class
-class AuthMiddleware:
-    def __init__(
-        self, app: ASGIApp, public_paths: list[re.Pattern], auth_enabled: bool
-    ) -> None:
-        self.app = app
-        self.public_paths = public_paths
-        self.auth_enabled = auth_enabled
-        logger.info(f"AuthMiddleware initialized (auth_enabled={self.auth_enabled})")
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if not self.auth_enabled or scope["type"] != "http":
-            # If auth is disabled or not an HTTP request, proceed without checking
-            await self.app(scope, receive, send)
-            return
-
-        request = Request(scope, receive=receive)  # Need receive here for url_for
-
-        # Check if the path is explicitly public
-        for pattern in self.public_paths:
-            if pattern.match(request.url.path):
-                await self.app(scope, receive, send)
-                return
-
-        # All other paths are considered protected if auth is enabled
-        # SessionMiddleware MUST have run before this if SESSION_SECRET_KEY is set
-        # Otherwise request.session below will fail the assertion
-        user = request.session.get("user")
-        if not user:
-            # Store the intended destination URL to redirect after successful login
-            request.session["redirect_after_login"] = str(request.url)
-            logger.debug(
-                f"No user session for protected path {request.url.path}, redirecting to login."
-            )
-            # Use url_for to generate the login URL robustly
-            redirect_response = RedirectResponse(
-                url=request.url_for("login"),
-                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-            )
-            await redirect_response(scope, receive, send)
-            return
-
-        # User is logged in, proceed to the underlying app
-        await self.app(scope, receive, send)
-
+# md_renderer is imported from family_assistant.web.utils
+# PUBLIC_PATHS is imported from family_assistant.web.auth
+# AuthMiddleware class is imported from family_assistant.web.auth
 
 # --- Add AuthMiddleware to the list if enabled ---
 if AUTH_ENABLED:
@@ -304,6 +215,9 @@ if AUTH_ENABLED:
         Middleware(AuthMiddleware, public_paths=PUBLIC_PATHS, auth_enabled=AUTH_ENABLED)
     )
     logger.info("AuthMiddleware added to the application middleware stack.")
+else:
+    logger.info("AuthMiddleware NOT added as AUTH_ENABLED is false.")
+
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -312,6 +226,11 @@ app = FastAPI(
     redoc_url="/api/redoc",  # URL for ReDoc (part of /api/, public)
     middleware=middleware,  # Add configured middleware
 )
+
+# Include the authentication routes
+if AUTH_ENABLED:
+    app.include_router(auth_router, tags=["Authentication"])
+    logger.info("Authentication routes included.")
 
 
 # --- Mount Static Files (after app initialization) ---
@@ -351,68 +270,7 @@ class DocumentUploadResponse(BaseModel):
     document_id: int
     task_enqueued: bool
 
-
-# --- Auth Routes (only added if AUTH_ENABLED) ---
-if AUTH_ENABLED and oauth:
-
-    @app.route("/login")
-    async def login(request: Request) -> RedirectResponse:
-        """Redirects the user to the OIDC provider for authentication."""
-        # Construct the redirect URI for the callback endpoint
-        # Ensure the scheme matches what's expected by the OIDC provider (http/https)
-        # Use request.url.scheme or configure explicitly if behind proxy
-        redirect_uri = request.url_for("auth")
-        # Check if running behind a proxy and need to force HTTPS
-        if (
-            request.headers.get("x-forwarded-proto") == "https"
-            or request.url.scheme == "https"
-        ):
-            # Ensure redirect_uri uses https if the request indicates it.
-            redirect_uri = redirect_uri.replace(scheme="https")
-
-        logger.debug(
-            f"Initiating login redirect to OIDC provider. Callback URL: {redirect_uri}"
-        )
-        return await oauth.oidc_provider.authorize_redirect(request, redirect_uri)
-
-    @app.route("/auth")  # Callback URL
-    async def auth(request: Request) -> RedirectResponse:
-        """Handles the callback from the OIDC provider after authentication."""
-        try:
-            token = await oauth.oidc_provider.authorize_access_token(request)
-            user_info = token.get("userinfo")  # OIDC standard claim
-            if user_info:
-                request.session["user"] = dict(user_info)  # Store user info in session
-                logger.info(
-                    f"User logged in successfully: {user_info.get('email') or user_info.get('sub')}"
-                )
-                # Redirect to originally requested URL or homepage
-                redirect_url = request.session.pop("redirect_after_login", "/")
-                return RedirectResponse(url=redirect_url)
-            else:
-                logger.warning(
-                    "OIDC callback successful but no userinfo found in token."
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Could not fetch user information.",
-                )
-        except Exception as e:
-            logger.error(
-                f"Error during OIDC authentication callback: {e}", exc_info=True
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Authentication failed: {e}",
-            ) from e
-
-    @app.route("/logout")
-    async def logout(request: Request) -> RedirectResponse:
-        """Clears the user session."""
-        request.session.pop("user", None)
-        logger.info("User logged out.")
-        # Redirect to home, which will trigger login again if protected
-        return RedirectResponse(url="/")
+# --- Auth Routes are now in family_assistant.web.auth and included via auth_router ---
 
 
 # --- Application Routes ---
