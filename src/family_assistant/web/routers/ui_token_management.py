@@ -56,9 +56,6 @@ async def manage_api_tokens_ui(
         "user": current_user,
         "tokens": tokens,
         "page_title": "Manage API Tokens",
-        "server_url": (
-            request.app.state.server_url
-        ),  # For constructing API call URLs in JS
         "now_utc": datetime.now(
             timezone.utc
         ),  # Add current UTC time for template logic
