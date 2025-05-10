@@ -163,17 +163,8 @@ class DocumentIndexer:
             logger.warning(
                 f"No IndexableContent items created for document {document_id} from either file or content_parts. Nothing to index."
             )
-            # Clean up temporary file if it exists and wasn't processed
-            if file_ref:
-                try:
-                    import os  # Import here to avoid top-level if not always needed
-
-                    os.remove(file_ref)
-                    logger.info(
-                        f"Cleaned up temporary file (no items to process): {file_ref}"
-                    )
-                except OSError as e:
-                    logger.error(f"Error cleaning up temporary file {file_ref}: {e}")
+            # file_ref now points to a persistent location, so it's not removed here.
+            # The file remains in /mnt/data/mailbox/documents/ even if no initial items are processed.
             return  # Nothing to do, task is successful
 
         # Run the pipeline with the prepared items
