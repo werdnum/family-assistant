@@ -198,7 +198,9 @@ app = FastAPI(
 # --- Store shared objects on app.state ---
 app.state.templates = templates  # Make templates instance available to routers
 app.state.server_url = SERVER_URL  # Make SERVER_URL available to routers
-app.state.docs_user_dir = docs_user_dir  # Make docs_user_dir available (used by documentation_router)
+app.state.docs_user_dir = (
+    docs_user_dir  # Make docs_user_dir available (used by documentation_router)
+)
 
 
 # Include the authentication routes
@@ -223,9 +225,12 @@ else:
 # --- Include Routers ---
 # Imports were moved to the top of the file.
 app.include_router(notes_router, tags=["Notes"])
-app.include_router(documentation_router, tags=["Documentation"]) # Keep existing documentation router
+app.include_router(
+    documentation_router, tags=["Documentation"]
+)  # Keep existing documentation router
 
 # --- Remaining Application Routes (to be moved) ---
+
 
 @app.post("/webhook/mail")
 async def handle_mail_webhook(
