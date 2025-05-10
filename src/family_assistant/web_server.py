@@ -18,21 +18,20 @@ from fastapi import (
     FastAPI,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
-    Query,
     status,
 )
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
-    FileResponse,  # Added for favicon
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt  # For rendering docs
-from pydantic import BaseModel, Field, ValidationError, HttpUrl
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from starlette.config import Config  # For reading env vars
 from starlette.middleware import Middleware
@@ -46,13 +45,13 @@ from family_assistant import storage
 # Assuming it's accessible via a function or app state
 from family_assistant.embeddings import EmbeddingGenerator  # Example
 from family_assistant.storage import (
+    add_or_update_note,
     delete_note,
     get_all_notes,
     get_all_tasks,
+    get_grouped_message_history,
     get_note_by_title,
     store_incoming_email,
-    add_or_update_note,
-    get_grouped_message_history,
 )
 from family_assistant.storage.context import DatabaseContext, get_db_context
 
@@ -60,17 +59,17 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 # Import vector search components
 from family_assistant.storage.vector_search import (
     MetadataFilter,
-    query_vector_store,
     VectorSearchQuery,
+    query_vector_store,
 )
 
 # Import tool-related components
 # Import tool functions directly from the tools package
 from family_assistant.tools import (
+    ToolExecutionContext,
     ToolNotFoundError,
     ToolsProvider,
-    ToolExecutionContext,
-    _scan_user_docs, # Removed incorrect import of render_schema_as_html
+    _scan_user_docs,  # Removed incorrect import of render_schema_as_html
 )
 from family_assistant.tools.schema import render_schema_as_html  # Correct import path
 
