@@ -30,7 +30,7 @@ async def default_generator() -> HashingWordEmbeddingGenerator:
 
 @pytest.mark.asyncio
 class TestHashingWordEmbeddingGenerator:
-    async def test_dimensionality(self):
+    async def test_dimensionality(self) -> None:
         """Test that the embedding vector has the correct dimensionality."""
         dim = 64
         generator = HashingWordEmbeddingGenerator(dimensionality=dim)
@@ -40,7 +40,7 @@ class TestHashingWordEmbeddingGenerator:
         assert len(result.embeddings[0]) == dim
         assert result.model_name == "hashing-word-v1" # Default model name
 
-    async def test_model_name_override(self):
+    async def test_model_name_override(self) -> None:
         """Test that the model name can be overridden."""
         custom_model_name = "custom-hash-model"
         generator = HashingWordEmbeddingGenerator(model_name=custom_model_name, dimensionality=32)
