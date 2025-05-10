@@ -39,10 +39,6 @@ from family_assistant.web.models import DocumentUploadResponse
 logger = logging.getLogger(__name__)
 api_router = APIRouter()
 
-# Define the permanent storage path for uploaded documents
-# TODO: This should ideally be configurable via environment variables or application config
-DOCUMENT_STORAGE_PATH = pathlib.Path("/mnt/data/files")
-
 
 # --- Pydantic model for Tool Execution API ---
 class ToolExecutionRequest(BaseModel):
@@ -193,6 +189,7 @@ async def upload_document(
         ),
     ] = None,
     # Dependencies
+    request: Request,  # Inject Request to access app state
     db_context: Annotated[DatabaseContext, Depends(get_db)] = None,  # noqa: B008
 ) -> DocumentUploadResponse:
     """
@@ -201,6 +198,20 @@ async def upload_document(
     logger.info(
         f"Received document upload request for source_id: {source_id} (type: {source_type}). File provided: {uploaded_file is not None}. Content parts provided: {content_parts_json is not None}"
     )
+
+    # --- 0. Get Document Storage Path from Config ---
+    app_config = getattr(request.app.state, "config", {})
+    document_storage_path_str = app_config.get("document_storage_path")
+    if not document_storage_path_str:
+        logger.error(
+            "Document storage path not configured in application state. Upload will fail."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error: Document storage path not set.",
+        )
+    document_storage_path = pathlib.Path(document_storage_path_str)
+
 
     # --- 1. Validate at least one input type is provided ---
     if not uploaded_file and not content_parts_json:
@@ -279,10 +290,10 @@ async def upload_document(
             )
             unique_filename = f"{uuid.uuid4()}_{safe_basename}"
 
-            target_file_path = DOCUMENT_STORAGE_PATH / unique_filename
+            target_file_path = document_storage_path / unique_filename
 
             # Ensure the storage directory exists
-            DOCUMENT_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+            document_storage_path.mkdir(parents=True, exist_ok=True)
 
             # Save the file to the persistent location
             with open(target_file_path, "wb") as f:

@@ -162,6 +162,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "tools_requiring_confirmation": [],  # Default empty list
         "mcp_config": {"mcpServers": {}},  # Default empty MCP config
         "server_url": "http://localhost:8000",  # Default server URL
+        "document_storage_path": "/mnt/data/files",  # Default document storage path
     }
     logger.info("Initialized config with code defaults.")
 
@@ -210,6 +211,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     config_data["server_url"] = os.getenv(
         "SERVER_URL", config_data["server_url"]
     )  # Load SERVER_URL
+    config_data["document_storage_path"] = os.getenv(
+        "DOCUMENT_STORAGE_PATH", config_data["document_storage_path"]
+    )
     config_data["litellm_debug"] = os.getenv(
         "LITELLM_DEBUG", str(config_data["litellm_debug"])
     ).lower() in ("true", "1", "yes")
@@ -381,6 +385,11 @@ parser.add_argument(
     type=int,
     default=None,  # Default is None, will be loaded from env/config
     help="Embedding model dimensionality (overrides config file and environment variable)",
+)
+parser.add_argument(
+    "--document-storage-path",
+    default=None,
+    help="Path to store uploaded documents (overrides config file and environment variable)",
 )
 
 
@@ -812,6 +821,11 @@ def main() -> int:  # Return an exit code
         config_data["embedding_dimensions"] = args.embedding_dimensions
         logger.info(
             f"Overriding embedding dimensions with CLI argument: {args.embedding_dimensions}"
+        )
+    if args.document_storage_path is not None:
+        config_data["document_storage_path"] = args.document_storage_path
+        logger.info(
+            f"Overriding document storage path with CLI argument: {args.document_storage_path}"
         )
     # Add overrides for other CLI args if introduced (e.g., --config)
 
