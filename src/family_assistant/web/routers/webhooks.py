@@ -8,8 +8,9 @@ from typing import Annotated, Any
 
 import aiofiles
 from dateutil.parser import parse as parse_datetime
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import ValidationError
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from family_assistant.storage import store_incoming_email
 from family_assistant.storage.context import DatabaseContext
@@ -124,7 +125,7 @@ async def handle_mail_webhook(
                 attachment_field_name = f"attachment-{i}"
                 form_item = form_data.get(attachment_field_name)
 
-                if isinstance(form_item, UploadFile) and form_item.filename:
+                if isinstance(form_item, StarletteUploadFile) and form_item.filename:
                     try:
                         os.makedirs(base_attachment_dir, exist_ok=True)
                         # Sanitize filename (basic)
@@ -167,7 +168,7 @@ async def handle_mail_webhook(
                         await form_item.close()  # Close the upload file
                 elif form_item:  # Not an UploadFile or no filename
                     detailed_reason = f"Type: {type(form_item)}"
-                    if isinstance(form_item, UploadFile):
+                    if isinstance(form_item, StarletteUploadFile):
                         detailed_reason += f", Filename: '{form_item.filename}'"
                     else:
                         detailed_reason += f", Value: {str(form_item)[:100]}"  # Log first 100 chars if not UploadFile
