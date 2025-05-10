@@ -145,6 +145,7 @@ async def indexing_task_worker(
     mock_application = MagicMock()
     # Ensure the mock_pipeline_embedding_generator is set on the mock_application's state
     # so that TaskWorker can pick it up when creating ToolExecutionContext.
+    mock_application.state.embedding_generator = mock_pipeline_embedding_generator
 
     worker = TaskWorker(
         processing_service=None,
