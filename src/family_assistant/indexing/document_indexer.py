@@ -89,21 +89,23 @@ class DocumentIndexer:
         mime_type: str | None = payload.get("mime_type")
         original_filename: str | None = payload.get("original_filename")
 
-        if file_ref and mime_type: # mime_type is now the detected one from the API
+        if file_ref and mime_type:  # mime_type is now the detected one from the API
             logger.info(
                 f"Creating IndexableContent for file for document ID {document_id}: path='{file_ref}', mime_type='{mime_type}', original_filename='{original_filename}'"
             )
             file_item_metadata = {}
-            if original_filename: # original_filename comes from the uploaded file's name
+            if (
+                original_filename
+            ):  # original_filename comes from the uploaded file's name
                 file_item_metadata["original_filename"] = original_filename
 
             file_item = IndexableContent(
                 content=None,  # Binary content is at file_ref
                 embedding_type="original_document_file",  # Generic type for the whole file
-                mime_type=mime_type, # Use the detected MIME type passed in payload
+                mime_type=mime_type,  # Use the detected MIME type passed in payload
                 source_processor="DocumentIndexer.process_document",
                 metadata=file_item_metadata,
-                ref=file_ref, # file_ref is the path to the persistently stored file
+                ref=file_ref,  # file_ref is the path to the persistently stored file
             )
             initial_items.append(file_item)
         elif (
