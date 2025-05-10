@@ -6,17 +6,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const copyMessage = document.getElementById('copyMessage');
     const errorMessageDiv = document.getElementById('errorMessage');
     
-    // Retrieve server_url from a data attribute on a DOM element
-    // e.g., set on the main container div in the HTML template
-    const containerDiv = document.querySelector('.container.mt-4'); // Or a more specific ID/class
-    const serverUrl = containerDiv ? containerDiv.dataset.serverUrl : '';
-
-    if (!serverUrl) {
-        console.error("Server URL not found in data attribute. API calls will fail.");
-        errorMessageDiv.textContent = 'Configuration error: Server URL not found. Cannot create tokens.';
-        errorMessageDiv.style.display = 'block';
-        if (createTokenForm) createTokenForm.querySelector('button[type="submit"]').disabled = true;
-    }
+    // serverUrl logic is removed, API calls will use relative paths.
 
     if (createTokenForm) {
         createTokenForm.addEventListener('submit', async function (event) {
@@ -50,7 +40,8 @@ document.addEventListener('DOMContentLoaded', function () {
             };
 
             try {
-                const response = await fetch(`${serverUrl}/api/me/tokens`, {
+                // Use a relative path for the API call
+                const response = await fetch(`/api/me/tokens`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

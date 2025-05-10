@@ -5,8 +5,8 @@
 {% block title_header %}Manage API Tokens{% endblock %}
 
 {% block main_content %}
-{# Pass server_url via data attribute for the external JS #}
-<div class="container mt-4" data-server-url="{{ server_url }}">
+{# server_url is no longer needed here as JS uses relative paths #}
+<div class="container mt-4">
     <p>API tokens allow applications or scripts to authenticate as you. Treat them like passwords.</p>
 
     <hr>
