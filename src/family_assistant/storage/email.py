@@ -56,8 +56,6 @@ class ParsedEmailData(BaseModel):
 
     class Config:
         allow_population_by_field_name = True
-        # For Pydantic v2, use:
-        # model_config = {"populate_by_name": True}
 
 logger = logging.getLogger(__name__)
 # Remove engine = get_engine()
