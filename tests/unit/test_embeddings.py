@@ -99,7 +99,10 @@ class TestHashingWordEmbeddingGenerator:
             ("Special Characters!", "special characters"),
             ("  leading and trailing spaces  ", "leading and trailing spaces"),
             ("UPPERCASE TEXT", "uppercase text"),
-            ("MixEd CaSe AnD Punctu@tion.", "mixed case and punctuation"),
+            (
+                "MixEd CaSe AnD Punctuation.",
+                "mixed case and punctuation",
+            ),  # Corrected @ to a
         ],
     )
     @pytest.mark.asyncio
