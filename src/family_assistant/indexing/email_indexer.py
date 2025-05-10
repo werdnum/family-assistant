@@ -44,6 +44,7 @@ class EmailDocument(Document):
     _source_uri: str | None = None
     _base_metadata: dict[str, Any] = field(default_factory=dict)
     _content_plain: str | None = None  # Store plain text content separately
+    _attachment_info_raw: list[dict[str, Any]] | None = None  # Store raw attachment info
 
     @property
     def source_type(self) -> str:
@@ -80,6 +81,11 @@ class EmailDocument(Document):
         """The plain text content of the email (e.g., stripped_text)."""
         return self._content_plain
 
+    @property
+    def attachments(self) -> list[dict[str, Any]] | None:
+        """List of attachment metadata dictionaries (filename, content_type, size, storage_path)."""
+        return self._attachment_info_raw
+
     @classmethod
     def from_row(cls, row: RowMapping) -> "EmailDocument":
         """
@@ -115,6 +121,7 @@ class EmailDocument(Document):
 
         # Prefer stripped_text for cleaner content
         content = row.get("stripped_text") or row.get("body_plain")
+        attachment_info_data = row.get("attachment_info")  # This is a list of dicts or None
 
         return cls(
             _source_id=message_id,
@@ -122,6 +129,7 @@ class EmailDocument(Document):
             _created_at=row.get("email_date"),  # Already parsed to datetime or None
             _base_metadata=base_metadata,
             _content_plain=content,
+            _attachment_info_raw=attachment_info_data,
             # _source_uri could be set if a web view link exists, otherwise None
         )
 
@@ -226,9 +234,39 @@ async def handle_index_email(
         )
         initial_items.append(plain_text_item)
 
+    # Add attachments to the pipeline
+    if email_doc.attachments:
+        for att_meta in email_doc.attachments:
+            storage_path = att_meta.get("storage_path")
+            mime_type = att_meta.get("content_type")
+            original_filename = att_meta.get("filename")
+
+            if not storage_path or not mime_type:
+                logger.warning(
+                    f"Skipping attachment for email {email_db_id} due to missing path or mime_type: {att_meta}"
+                )
+                continue
+
+            logger.info(
+                f"Preparing attachment for pipeline: {original_filename} ({mime_type}) at {storage_path} for email {email_db_id}"
+            )
+            attachment_item = IndexableContent(
+                content=None,  # Content is in the file pointed to by ref
+                embedding_type="email_attachment_file",  # Generic type for file processors
+                mime_type=mime_type,
+                source_processor="EmailIndexer.handle_index_email.attachment",
+                metadata={
+                    "original_filename": original_filename,
+                    "email_db_id": email_db_id,  # Link back to email
+                    "email_source_id": email_doc.source_id,  # Message-ID
+                },
+                ref=storage_path,  # Path to the saved attachment file
+            )
+            initial_items.append(attachment_item)
+
     if not initial_items:
         logger.warning(
-            f"No text content (e.g., plain body) found to pass to pipeline for email {email_db_id}. Skipping pipeline run."
+            f"No text content or attachments found to pass to pipeline for email {email_db_id}. Skipping pipeline run."
         )
         # Task is considered done as the document record was created/updated.
         return
