@@ -6,6 +6,7 @@ simulating the flow initiated by the /api/documents/upload endpoint.
 import asyncio
 import json
 import logging
+import tempfile # Add tempfile import
 import uuid
 from datetime import datetime, timezone
 from typing import Any  # Add missing typing imports
@@ -141,17 +142,36 @@ async def http_client(
         "Injected mock embedding generator into FastAPI app state for test client."
     )
 
-    # The pg_vector_db_engine fixture already patches storage.base.engine
+    # --- Configure app state for document storage path ---
+    # Create a temporary directory for document storage for this test
+    with tempfile.TemporaryDirectory() as temp_doc_storage_dir:
+        original_config = getattr(fastapi_app.state, "config", {})
+        test_config = original_config.copy()
+        test_config["document_storage_path"] = temp_doc_storage_dir
+        fastapi_app.state.config = test_config
+        logger.info(
+            f"Set temporary document_storage_path for test client: {temp_doc_storage_dir}"
+        )
+
+        # The pg_vector_db_engine fixture already patches storage.base.engine
     # so the app will use the correct test database.
 
     # Use ASGITransport for testing FastAPI apps with httpx >= 0.20.0
     transport = httpx.ASGITransport(app=fastapi_app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
-    logger.info("Test HTTP client closed.")
-    # Clean up app state if necessary, though function scope might handle it
-    if hasattr(fastapi_app.state, "embedding_generator"):
-        del fastapi_app.state.embedding_generator
+        transport = httpx.ASGITransport(app=fastapi_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+        logger.info("Test HTTP client closed.")
+
+        # Clean up app state
+        if hasattr(fastapi_app.state, "embedding_generator"):
+            del fastapi_app.state.embedding_generator
+        if hasattr(fastapi_app.state, "config"): # Restore original or remove test config
+            if original_config: # if there was an original config, restore it
+                fastapi_app.state.config = original_config
+            else: # otherwise, just delete the one we set
+                del fastapi_app.state.config
+        logger.info("Cleaned up FastAPI app state after http_client fixture.")
 
 
 # --- Helper Function for Test Setup (REMOVED) ---
