@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.web.auth import AUTH_ENABLED  # Import AUTH_ENABLED
 from family_assistant.web.dependencies import get_current_active_user, get_db
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ async def manage_api_tokens_ui(
         "now_utc": datetime.now(
             timezone.utc
         ),  # Add current UTC time for template logic
+        "AUTH_ENABLED": AUTH_ENABLED,  # Add AUTH_ENABLED to the context
     }
     return request.app.state.templates.TemplateResponse(
         "settings/api_tokens.html", context
