@@ -31,6 +31,7 @@ class TextChunker(ContentProcessor):
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
         separators: Sequence[str] | None = None,
+        embedding_type_prefix_map: dict[str, str] | None = None,  # Added
     ) -> None:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -45,6 +46,9 @@ class TextChunker(ContentProcessor):
         self._separators = (
             separators if separators is not None else self.DEFAULT_SEPARATORS
         )
+        self.embedding_type_prefix_map = (
+            embedding_type_prefix_map or {}
+        )  # Store the map
 
     def _split_recursively(self, text: str, separators: Sequence[str]) -> list[str]:
         """Recursively tries to split text by the given separators."""
@@ -140,8 +144,12 @@ class TextChunker(ContentProcessor):
                                 "chunk_content_length": len(chunk_text),
                             }
                         )
+                        # Determine output embedding type using the map
+                        output_embedding_type = self.embedding_type_prefix_map.get(
+                            item.embedding_type, f"{item.embedding_type}_chunk"
+                        )
                         chunk_item = IndexableContent(
-                            embedding_type=f"{item.embedding_type}_chunk",
+                            embedding_type=output_embedding_type,
                             source_processor=self.name,
                             content=chunk_text,
                             mime_type=item.mime_type,  # Retain original mime_type or set to text/plain
@@ -149,7 +157,7 @@ class TextChunker(ContentProcessor):
                         )
                         output_items.append(chunk_item)
                     logger.debug(
-                        f"Split content from item (type: {item.embedding_type}) into {len(chunks)} chunks for document ID {original_document.source_id if hasattr(original_document, 'source_id') else 'N/A'}"
+                        f"Split content from item (type: {item.embedding_type}, mapped to: {output_embedding_type if output_embedding_type != f'{item.embedding_type}_chunk' else 'default _chunk'}) into {len(chunks)} chunks for document ID {original_document.source_id if hasattr(original_document, 'source_id') else 'N/A'}"
                     )
                 else:  # Empty content string
                     output_items.append(item)  # Pass through if content is empty
