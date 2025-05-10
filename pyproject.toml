@@ -139,4 +139,10 @@ select = [
     "SIM",
     # isort
     "I",
+    # Type annotations
+    "ANN",
+]
+ignore = [
+	# Forbids dynamic types in kwargs etc
+	"ANN4"
 ]
