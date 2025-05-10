@@ -283,7 +283,6 @@ async def test_indexing_pipeline_e2e(
         )
         await wait_for_tasks_to_complete(
             pg_vector_db_engine,
-            # task_ids=indexing_task_ids, # Removed to wait for all tasks
             timeout_seconds=20.0,
         )
         logger.info(f"Tasks {indexing_task_ids} reported as complete.")
