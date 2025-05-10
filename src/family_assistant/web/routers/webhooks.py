@@ -36,9 +36,9 @@ async def handle_mail_webhook(
         # --- Save raw request body for debugging/replay ---
         raw_body = await request.body()
         try:
-            # Ensure MAILBOX_RAW_DIR is accessible from the router
-            # If it's set on app.state, retrieve it:
-            # mailbox_raw_dir = request.app.state.mailbox_raw_dir
+            # Ensure MAILBOX_RAW_DIR is accessible from the router.
+            # If it's set on app.state, it would be retrieved like:
+            #   mailbox_raw_dir = request.app.state.mailbox_raw_dir
             # For now, using the module-level constant.
             os.makedirs(MAILBOX_RAW_DIR, exist_ok=True)
             now = datetime.now(timezone.utc)
