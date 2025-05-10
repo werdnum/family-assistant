@@ -94,8 +94,6 @@ class RuleBasedMockLLMClient(LLMInterface):
         """
         Evaluates rules against the input and returns the corresponding output.
         """
-        Evaluates rules against the input and returns the corresponding output.
-        """
         # Original logic starts here, this method will be wrapped
 
         logger.debug(f"RuleBasedMockLLM evaluating {len(self.rules)} rules...")
