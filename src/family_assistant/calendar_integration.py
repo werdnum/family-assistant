@@ -758,8 +758,8 @@ async def search_calendar_events_tool(
     matching_events_details = []
 
     # --- Synchronous CalDAV Search Logic ---
-    def search_sync():
-        found_details = []
+    def search_sync() -> list[dict[str, Any]]:
+        found_details: list[dict[str, Any]] = []
         query_lower = query_text.lower()
         events_checked = 0
         events_matched = 0
