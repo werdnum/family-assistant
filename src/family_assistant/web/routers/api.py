@@ -141,7 +141,9 @@ async def execute_tool_api(
     "stores the document record, and enqueues a background task for embedding generation.",
 )
 async def upload_document(
-    # Required fields
+    # Dependencies without Python default values
+    request: Request,  # Inject Request to access app state
+    # Required Form fields (Python defaulted with Ellipsis, FastAPI required)
     source_type: Annotated[
         str,
         Form(
@@ -152,8 +154,6 @@ async def upload_document(
         str,
         Form(description="Unique identifier for the document within its source type."),
     ] = ...,
-    # Dependencies without Python default values
-    request: Request,  # Inject Request to access app state
     # Optional Form fields (with Python default values)
     content_parts_json: Annotated[
         str | None,
@@ -211,7 +211,6 @@ async def upload_document(
             detail="Server configuration error: Document storage path not set.",
         )
     document_storage_path = pathlib.Path(document_storage_path_str)
-
 
     # --- 1. Validate at least one input type is provided ---
     if not uploaded_file and not content_parts_json:
