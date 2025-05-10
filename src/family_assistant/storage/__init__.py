@@ -20,8 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from alembic import command as alembic_command
 
-# from alembic.script import ScriptDirectory # No longer needed for manual stamping
-# from alembic import command as alembic_command # Already imported
 from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
 
 # Import base components using absolute package paths
@@ -76,8 +74,6 @@ try:
         query_vectors,
     )
 
-    # Re-export DocumentRecord and DocumentEmbeddingRecord if they are needed directly
-    # from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
 
     VECTOR_STORAGE_ENABLED = True
     logger.info("Vector storage module imported successfully.")
@@ -405,8 +401,6 @@ async def init_db() -> None:
                 logger.error(
                     f"Max retries exceeded for init_db due to error: {e}", exc_info=True
                 )
-        # finally:
-        #     logger.info(f"init_db end iteration {attempt}")
 
         # If it wasn't the last attempt and an exception occurred, wait and retry
         if attempt < max_retries - 1 and last_exception:
@@ -484,4 +478,3 @@ if (
         ]
     )
 # --- Email Storage (Moved to storage/email.py, re-exported here for compatibility) ---
-# from .email import received_emails_table, store_incoming_email
