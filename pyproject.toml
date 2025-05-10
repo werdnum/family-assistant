@@ -115,7 +115,7 @@ testpaths = [
 ]
 
 [tool.pylint.main]
-source-roots = ["src"]
+source-roots = ["src", "."]
 
 [tool.pydantic]
 # Enable Pydantic v2 behaviors

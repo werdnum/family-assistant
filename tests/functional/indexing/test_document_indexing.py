@@ -17,7 +17,7 @@ import pytest_asyncio  # Import pytest_asyncio for async fixtures
 import sqlalchemy  # Import sqlalchemy for cast
 
 # Import test helpers
-from helpers import wait_for_tasks_to_complete
+from tests.helpers import wait_for_tasks_to_complete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine  # Add AsyncEngine import
 
