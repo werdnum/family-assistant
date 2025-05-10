@@ -145,6 +145,8 @@ select = [
     "ERA",
     # FastAPI
     "FAST",
+    # Type Checking
+    "TC",
 ]
 ignore = [
 	# Forbids dynamic types in kwargs etc
