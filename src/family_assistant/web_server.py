@@ -457,7 +457,7 @@ async def add_note_form(request: Request) -> HTMLResponse:
 async def edit_note_form(
     request: Request,
     title: str,
-    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
 ) -> HTMLResponse:
     """Serves the form to edit an existing note."""
     note = await get_note_by_title(db_context, title)
@@ -478,9 +478,9 @@ async def edit_note_form(
 @app.post("/notes/save")
 async def save_note(
     request: Request,
-    title: str = Form(...),
-    content: str = Form(...),
-    original_title: str | None = Form(None),
+    title: Annotated[str, Form()] = ...,
+    content: Annotated[str, Form()] = ...,
+    original_title: Annotated[str | None, Form()] = None,
     db_context: DatabaseContext = Depends(get_db),  # Add dependency # noqa: B008
 ) -> RedirectResponse:
     """Handles saving a new or updated note."""
@@ -508,7 +508,7 @@ async def save_note(
 async def delete_note_post(
     request: Request,
     title: str,
-    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
 ) -> RedirectResponse:
     """Handles deleting a note."""
     deleted = await delete_note(db_context, title)
@@ -520,7 +520,7 @@ async def delete_note_post(
 @app.post("/webhook/mail")
 async def handle_mail_webhook(
     request: Request,
-    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
 ) -> Response:
     """
     Receives incoming email via webhook (expects multipart/form-data).
@@ -574,13 +574,13 @@ async def handle_mail_webhook(
 @app.get("/history", response_class=HTMLResponse)
 async def view_message_history(
     request: Request,
-    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
-    page: int = Query(
-        1, ge=1, description="Page number for message history"
-    ),  # noqa: B008
-    per_page: int = Query(
-        10, ge=1, le=100, description="Number of conversations per page"
-    ),  # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
+    page: Annotated[
+        int, Query(ge=1, description="Page number for message history")
+    ] = 1,  # noqa: B008
+    per_page: Annotated[
+        int, Query(ge=1, le=100, description="Number of conversations per page")
+    ] = 10,  # noqa: B008
 ) -> HTMLResponse:
     """Serves the page displaying message history."""
     try:
@@ -900,7 +900,7 @@ async def health_check(request: Request) -> JSONResponse:
 @app.get("/vector-search", response_class=HTMLResponse)
 async def vector_search_form(
     request: Request,
-    db_context: DatabaseContext = Depends(get_db),  # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
 ) -> HTMLResponse:
     """Serves the vector search form."""
     distinct_models = []
@@ -1290,7 +1290,6 @@ async def execute_tool_api(
 
 @app.post(
     "/api/documents/upload",
-    response_model=DocumentUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Upload and index a document",
     description="Accepts document metadata and content parts via multipart/form-data, "
@@ -1298,36 +1297,47 @@ async def execute_tool_api(
 )
 async def upload_document(
     # Required fields
-    source_type: str = Form(
-        ...,
-        description="Type of the source (e.g., 'manual_upload', 'scanned_receipt').",
-    ),
-    source_id: str = Form(
-        ..., description="Unique identifier for the document within its source type."
-    ),
-    content_parts_json: str = Form(
-        ...,
-        alias="content_parts",  # Allow form field name 'content_parts'
-        description='JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}).',
-    ),
+    source_type: Annotated[
+        str,
+        Form(
+            description="Type of the source (e.g., 'manual_upload', 'scanned_receipt')."
+        ),
+    ] = ...,
+    source_id: Annotated[
+        str,
+        Form(description="Unique identifier for the document within its source type."),
+    ] = ...,
+    content_parts_json: Annotated[
+        str,
+        Form(
+            alias="content_parts",
+            description='JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}).',
+        ),
+    ] = ...,
     # Optional fields
-    source_uri: str | None = Form(
-        None, description="Canonical URI/URL of the original document."
-    ),
-    title: str | None = Form(
-        None,
-        description="Primary title for the document (can also be in content_parts).",
-    ),
-    created_at_str: str | None = Form(
-        None,
-        alias="created_at",  # Allow form field name 'created_at'
-        description="Original creation timestamp (ISO 8601 format string, e.g., 'YYYY-MM-DDTHH:MM:SSZ' or 'YYYY-MM-DD'). Timezone assumed UTC if missing.",
-    ),
-    metadata_json: str | None = Form(
-        None,
-        alias="metadata",  # Allow form field name 'metadata'
-        description="JSON string representing a dictionary of additional metadata.",
-    ),
+    source_uri: Annotated[
+        str | None, Form(description="Canonical URI/URL of the original document.")
+    ] = None,
+    title: Annotated[
+        str | None,
+        Form(
+            description="Primary title for the document (can also be in content_parts)."
+        ),
+    ] = None,
+    created_at_str: Annotated[
+        str | None,
+        Form(
+            alias="created_at",
+            description="Original creation timestamp (ISO 8601 format string, e.g., 'YYYY-MM-DDTHH:MM:SSZ' or 'YYYY-MM-DD'). Timezone assumed UTC if missing.",
+        ),
+    ] = None,
+    metadata_json: Annotated[
+        str | None,
+        Form(
+            alias="metadata",
+            description="JSON string representing a dictionary of additional metadata.",
+        ),
+    ] = None,
     # Dependencies
     db_context: DatabaseContext = Depends(get_db),  # noqa: B008
 ) -> DocumentUploadResponse:
