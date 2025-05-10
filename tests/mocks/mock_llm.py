@@ -3,7 +3,7 @@ Mock LLM implementations for testing purposes.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 # Assuming LLMInterface and LLMOutput are accessible, adjust import if needed
@@ -126,8 +126,10 @@ class RuleBasedMockLLMClient(LLMInterface):
         return self.default_response
 
     # Wrapper to record calls
-    def _generate_response_wrapper(self, original_method):
-        async def wrapper(*args, **kwargs):
+    def _generate_response_wrapper(
+        self, original_method: Callable[..., Awaitable[LLMOutput]]
+    ) -> Callable[..., Awaitable[LLMOutput]]:
+        async def wrapper(*args: Any, **kwargs: Any) -> Awaitable[LLMOutput]:
             # Positional args: self, messages
             # Keyword args: tools, tool_choice
             messages = args[1] if len(args) > 1 else kwargs.get("messages")
