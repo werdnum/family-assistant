@@ -672,7 +672,7 @@ async def main_async(
         "embedding_type_prefix_map": {
             "raw_body_text": "content_chunk",  # For emails
             "raw_file_text": "content_chunk",  # For general files
-            "extracted_markdown_content": "content_chunk", # For markdown from PDFs
+            "extracted_markdown_content": "content_chunk",  # For markdown from PDFs
         },
     }
     embedding_dispatcher_config = {
