@@ -260,7 +260,6 @@ async def test_add_note_tool_usage(
     ]  # Order matters if matchers overlap
 
     # --- Mock Confirmation Manager (Not needed for add_note) ---
-    # fix.mock_confirmation_manager.request_confirmation.return_value = True # Grant confirmation
 
     # --- Mock Bot Response ---
     mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
