@@ -189,7 +189,7 @@ async def get_api_tokens_for_user(
         .order_by(api_tokens_table.c.created_at.desc())
     )
     results = await db_context.fetch_all(query)
-    return [dict(row._mapping) for row in results]
+    return [dict(row) for row in results]
 
 
 async def get_api_token_by_id_and_user(
@@ -221,7 +221,7 @@ async def get_api_token_by_id_and_user(
         api_tokens_table.c.user_identifier == user_identifier,
     )
     row = await db_context.fetch_one(query)
-    return dict(row._mapping) if row else None
+    return dict(row) if row else None
 
 
 async def revoke_api_token(
