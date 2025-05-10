@@ -3,13 +3,14 @@ import logging
 import os  # Added for path manipulation
 import random
 import traceback
-from typing import Any, Callable # Added Any and Callable
+from collections.abc import Callable  # Added Any and Callable
+from typing import Any
 
 from sqlalchemy import (
     inspect,
     text,
 )  # Import inspect, text and table creation components
-from sqlalchemy.engine import Connection # Added Connection
+from sqlalchemy.engine import Connection  # Added Connection
 from sqlalchemy.exc import (
     DBAPIError,
     OperationalError,
