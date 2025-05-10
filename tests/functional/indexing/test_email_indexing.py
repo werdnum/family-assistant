@@ -5,15 +5,21 @@ End-to-end functional tests for the email indexing and vector search pipeline.
 import asyncio
 import logging
 import re  # Add re import
+import tempfile  # Added for http_client fixture
 import uuid
+from collections.abc import (
+    AsyncGenerator,  # Add missing typing imports & AsyncGenerator
+)
 from datetime import datetime, timezone
-from typing import Any  # Add missing typing imports
+from typing import Any
 from unittest.mock import MagicMock  # Add this import
 
+import httpx  # Added for http_client
 import numpy as np
 import pytest
+import pytest_asyncio  # Added for async fixtures
 from assertpy import assert_that
-from sqlalchemy import select
+from sqlalchemy import select  # Added text for raw SQL if needed
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
@@ -29,7 +35,7 @@ from family_assistant.indexing.processors.metadata_processors import TitleExtrac
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.email import received_emails_table, store_incoming_email
+from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.tasks import (
     tasks_table,
 )  # Keep if used for direct inspection, though wait_for_tasks_to_complete is preferred
@@ -39,6 +45,9 @@ from family_assistant.storage.vector import (
     query_vectors,
 )  # Added imports
 from family_assistant.task_worker import TaskWorker
+
+# Import the FastAPI app directly for the test client
+from family_assistant.web.app_creator import app as fastapi_app
 
 # Import components needed for the E2E test
 # Import test helpers
@@ -135,59 +144,117 @@ async def dump_tables_on_failure(engine: AsyncEngine) -> None:
     logger.info("--- End table dump ---")
 
 
+# --- Fixtures ---
+@pytest_asyncio.fixture(scope="function")
+async def http_client(
+    pg_vector_db_engine: AsyncEngine,  # Ensure DB is setup before app starts
+) -> AsyncGenerator[httpx.AsyncClient, None]:
+    """
+    Provides a test client for the FastAPI application, configured with
+    a temporary directory for attachment storage.
+    """
+    # The pg_vector_db_engine fixture already patches storage.base.engine
+    # so the app will use the correct test database.
+
+    original_attachment_storage_dir = os.getenv("ATTACHMENT_STORAGE_DIR")
+    with tempfile.TemporaryDirectory() as temp_attachment_dir:
+        logger.info(f"Using temporary attachment directory: {temp_attachment_dir}")
+        # Set environment variable for ATTACHMENT_STORAGE_DIR for the webhook to use
+        # This is tricky if the webhook module has already loaded it.
+        # A more robust way is to have ATTACHMENT_STORAGE_DIR configurable via app.state.config
+        # For now, we'll try patching os.environ, but this might not be reliable
+        # if webhooks.py reads it at import time.
+        # A better approach: modify webhooks.py to get ATTACHMENT_STORAGE_DIR from app.state.config
+        # and set app.state.config here.
+        # For now, let's assume the getenv in webhooks.py is dynamic enough or we accept this limitation.
+        os.environ["ATTACHMENT_STORAGE_DIR"] = temp_attachment_dir
+
+        # If other app.state.config settings are needed, set them here.
+        # Example: fastapi_app.state.config = {"some_setting": "value"}
+
+        transport = httpx.ASGITransport(app=fastapi_app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            yield client
+        logger.info("Test HTTP client closed.")
+
+    # Restore original environment variable if it was set
+    if original_attachment_storage_dir is not None:
+        os.environ["ATTACHMENT_STORAGE_DIR"] = original_attachment_storage_dir
+    elif "ATTACHMENT_STORAGE_DIR" in os.environ:
+        del os.environ["ATTACHMENT_STORAGE_DIR"]
+
+    # Clean up app state if modified
+    # if hasattr(fastapi_app.state, "config"): del fastapi_app.state.config
+
+
 # --- Helper Function for Test Setup ---
 
 
 async def _ingest_and_index_email(
-    engine: AsyncEngine,
-    form_data: dict[str, Any],
+    http_client: httpx.AsyncClient,  # Changed to http_client
+    engine: AsyncEngine,  # Still needed for DB checks
+    form_data_dict: dict[str, Any],  # Raw form data for the API
+    files_to_upload: dict[str, Any] | None = None, # For attachments
     task_timeout: float = 15.0,
-    notify_event: asyncio.Event | None = None,  # Add notify_event parameter
+    notify_event: asyncio.Event | None = None,
 ) -> int:
     """
-    Helper to ingest an email, notify worker, wait for its indexing task, and return IDs.
-
-    Args:
-        engine: The database engine fixture.
-        form_data: The email data to ingest.
-        task_timeout: Timeout for waiting for the task.
-
-    Returns:
-        Email DB ID
+    Helper to ingest an email via API, notify worker, wait for indexing, and return Email DB ID.
     """
     email_db_id = None
-    indexing_task_id = None
-    message_id = form_data.get("Message-Id", "UNKNOWN_MESSAGE_ID")
+    indexing_task_id = None # Keep for logging, though not directly used for waiting on specific task
+    message_id = form_data_dict.get("Message-Id", "UNKNOWN_MESSAGE_ID")
 
+    logger.info(f"Helper: Calling API to ingest test email with Message-ID: {message_id}")
+    # Construct multipart data. Simple key-values go to 'data', files to 'files'.
+    # Mailgun sends everything as fields in multipart/form-data.
+    # httpx's `data` param handles this for string values.
+    # For file uploads, use the `files` param.
+    # If TEST_EMAIL_FORM_DATA contains file-like objects or paths, they need to be handled.
+    # For now, assuming form_data_dict contains only string data for Mailgun fields.
+    # If attachments are added, files_to_upload will be e.g. {"attachment-1": ("filename.pdf", BytesIO(b"..."), "application/pdf")}
+
+    response = await http_client.post("/webhook/mail", data=form_data_dict, files=files_to_upload)
+
+    assert_that(response.status_code).described_as(
+        f"API call to /webhook/mail failed: {response.status_code} - {response.text}"
+    ).is_equal_to(200)
+    logger.info(f"Helper: API call for Message-ID {message_id} successful.")
+
+    # After API call, the email should be in DB and task enqueued.
+    # Fetch the email ID and task ID from the database
     async with DatabaseContext(engine=engine) as db:
-        logger.info(f"Helper: Ingesting test email with Message-ID: {message_id}")
-        await store_incoming_email(
-            db,
-            form_data=form_data,
-            notify_event=notify_event,  # Pass the event to store_incoming_email
-        )
-
-        # Fetch the email ID and task ID
+        # Wait briefly for task to likely appear in DB after API commit
+        await asyncio.sleep(0.2)
         select_email_stmt = select(
             received_emails_table.c.id, received_emails_table.c.indexing_task_id
         ).where(received_emails_table.c.message_id_header == message_id)
         email_info = await db.fetch_one(select_email_stmt)
 
         assert_that(email_info).described_as(
-            f"Failed to retrieve ingested email {message_id}"
+            f"Failed to retrieve ingested email {message_id} from DB after API call"
         ).is_not_none()
-        email_db_id = email_info["id"]
+        email_db_id = email_info["id"] # type: ignore
+        indexing_task_id = email_info["indexing_task_id"] # type: ignore
         assert_that(email_db_id).described_as(
-            f"Email DB ID is null for {message_id}"
+            f"Email DB ID is null for {message_id} after API call"
         ).is_not_none()
-        logger.info(f"Helper: Email ingested (DB ID: {email_db_id})")
+        logger.info(f"Helper: Email ingested via API (DB ID: {email_db_id}, Task ID: {indexing_task_id})")
+
+    # Signal the worker if an event is provided
+    if notify_event:
+        notify_event.set()
+        logger.info("Helper: Notified task worker event.")
+
     # Wait for all tasks to complete
     logger.info(
         f"Helper: Waiting for all pending tasks to complete after ingesting email DB ID {email_db_id} (initial task: {indexing_task_id})..."
     )
     await wait_for_tasks_to_complete(
         engine,
-        timeout_seconds=task_timeout,  # task_ids=None (default) ensures all tasks
+        timeout_seconds=task_timeout,
     )
     logger.info(
         f"Helper: All pending tasks reported as complete for email DB ID {email_db_id}."
@@ -200,7 +267,9 @@ async def _ingest_and_index_email(
 
 
 @pytest.mark.asyncio
-async def test_email_indexing_and_query_e2e(pg_vector_db_engine: AsyncEngine) -> None:
+async def test_email_indexing_and_query_e2e(
+    http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
     """
     End-to-end test for email ingestion, indexing via task worker, and vector query retrieval.
     1. Setup Mock Embedder.
@@ -273,26 +342,26 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine: AsyncEngine) ->
     # --- Arrange: Register Task Handler ---
     # Create a TaskWorker instance for this test and register the handler
     # Provide dummy/mock values for the required arguments
-    mock_application = MagicMock()  # Mock the application object
-    # The TaskWorker needs access to the embedding_generator for handle_embed_and_store_batch
-    # We can pass it via the processing_service or by making it available in app state
-    # For simplicity here, we'll assume the TaskWorker can get it or we mock the context
+    # The TaskWorker needs access to the embedding_generator for handle_embed_and_store_batch.
+    # This is typically provided via application.state.embedding_generator.
+    # The http_client fixture doesn't set this, so we ensure it's set on the global app
+    # or pass a mock application to the TaskWorker.
+    # For consistency with document_indexer test, let's assume fastapi_app.state can be used
+    # if the TaskWorker is instantiated with `application=fastapi_app`.
+    # However, to keep test dependencies clear, we'll use a MagicMock for application
+    # and set its state, similar to before.
+    mock_application_e2e = MagicMock()
+    mock_application_e2e.state.embedding_generator = mock_embedder
+    mock_application_e2e.state.llm_client = None # Or a mock LLM if any processor uses it
+    # If ATTACHMENT_STORAGE_DIR is needed by any task run by worker via app.state.config:
+    # mock_application_e2e.state.config = {"ATTACHMENT_STORAGE_DIR": os.getenv("ATTACHMENT_STORAGE_DIR")}
 
-    # Mock the processing service or ensure embedding_generator is in app_state for TaskWorker
-    # For this test, let's assume ToolExecutionContext will provide it when handle_embed_and_store_batch is called.
-    # The `embedding_generator` is passed to `handle_embed_and_store_batch` by the task worker loop
-    # from `ToolExecutionContext.embedding_generator`.
-    # So, the `ToolExecutionContext` created by the `TaskWorker` needs to have it.
-    # We can achieve this by ensuring the `application.state.embedding_generator` is set,
-    # as `TaskWorker`'s `_create_tool_execution_context` uses it.
-    mock_application.state.embedding_generator = mock_embedder
-    mock_application.state.llm_client = None  # Or a mock LLM if any processor uses it
 
     dummy_calendar_config = {}  # Not used by email/embedding tasks
     dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
     worker = TaskWorker(
         processing_service=None,  # No processing service needed for this handler
-        application=mock_application,
+        application=mock_application_e2e, # Use the mock app with state
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
     )
@@ -314,12 +383,15 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine: AsyncEngine) ->
 
     try:
         try:
-            # --- Act: Ingest Email and Wait for Indexing ---
-            # Pass the event directly during ingestion
+            # --- Act: Ingest Email via API and Wait for Indexing ---
+            # TEST_EMAIL_FORM_DATA is a dict of strings, suitable for `data` param of httpx.post
+            # No file attachments in this basic test case yet.
             await _ingest_and_index_email(
-                pg_vector_db_engine,
-                TEST_EMAIL_FORM_DATA,
-                notify_event=test_new_task_event,  # Pass the worker's event
+                http_client=http_client,
+                engine=pg_vector_db_engine,
+                form_data_dict=TEST_EMAIL_FORM_DATA,
+                files_to_upload=None, # No attachments for this test
+                notify_event=test_new_task_event,
             )
 
             # --- Act: Query Vectors ---
@@ -405,7 +477,9 @@ async def test_email_indexing_and_query_e2e(pg_vector_db_engine: AsyncEngine) ->
 
 
 @pytest.mark.asyncio
-async def test_vector_ranking(pg_vector_db_engine: AsyncEngine) -> None:
+async def test_vector_ranking(
+    http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
     """
     Tests if vector search returns results ranked correctly by distance.
     1. Ingest three emails with distinct content.
@@ -514,13 +588,13 @@ async def test_vector_ranking(pg_vector_db_engine: AsyncEngine) -> None:
     test_failed = False
     try:
         await _ingest_and_index_email(
-            pg_vector_db_engine, form_data1, notify_event=test_new_task_event
+            http_client, pg_vector_db_engine, form_data1, notify_event=test_new_task_event
         )
         await _ingest_and_index_email(
-            pg_vector_db_engine, form_data2, notify_event=test_new_task_event
+            http_client, pg_vector_db_engine, form_data2, notify_event=test_new_task_event
         )
         await _ingest_and_index_email(
-            pg_vector_db_engine, form_data3, notify_event=test_new_task_event
+            http_client, pg_vector_db_engine, form_data3, notify_event=test_new_task_event
         )
 
         # --- Act: Query Vectors ---
@@ -583,7 +657,9 @@ async def test_vector_ranking(pg_vector_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_metadata_filtering(pg_vector_db_engine: AsyncEngine) -> None:
+async def test_metadata_filtering(
+    http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
     """
     Tests if metadata filters correctly exclude documents, even if they are
     vector-wise closer.
@@ -686,10 +762,10 @@ async def test_metadata_filtering(pg_vector_db_engine: AsyncEngine) -> None:
     test_failed = False
     try:
         await _ingest_and_index_email(
-            pg_vector_db_engine, form_data1, notify_event=test_new_task_event
+            http_client, pg_vector_db_engine, form_data1, notify_event=test_new_task_event
         )
         await _ingest_and_index_email(
-            pg_vector_db_engine, form_data2, notify_event=test_new_task_event
+            http_client, pg_vector_db_engine, form_data2, notify_event=test_new_task_event
         )
 
         # --- Act: Query Vectors with Metadata Filter ---
@@ -752,7 +828,9 @@ async def test_metadata_filtering(pg_vector_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_keyword_filtering(pg_vector_db_engine: AsyncEngine) -> None:
+async def test_keyword_filtering(
+    http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
     """
     Tests if keyword search correctly filters results in a hybrid query.
     1. Ingest two emails with similar vector embeddings but different keywords.
@@ -850,10 +928,10 @@ async def test_keyword_filtering(pg_vector_db_engine: AsyncEngine) -> None:
     test_failed = False
     try:
         await _ingest_and_index_email(
-            pg_vector_db_engine, form_data1, notify_event=test_new_task_event
+            http_client, pg_vector_db_engine, form_data1, notify_event=test_new_task_event
         )
         await _ingest_and_index_email(
-            pg_vector_db_engine, form_data2, notify_event=test_new_task_event
+            http_client, pg_vector_db_engine, form_data2, notify_event=test_new_task_event
         )
 
         # --- Act: Query Vectors with Keywords ---
