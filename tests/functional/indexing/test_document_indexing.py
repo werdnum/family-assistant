@@ -319,7 +319,7 @@ async def test_document_indexing_and_query_e2e(
             "created_at": TEST_DOC_CREATED_AT_STR,
             "metadata": TEST_DOC_METADATA_JSON,  # Send as JSON string
             "content_parts": TEST_DOC_CONTENT_PARTS_JSON,  # Send as JSON string
-            # source_uri could be added if needed
+            "source_uri": "",  # Add source_uri as an empty string
         }
         logger.info(
             f"Calling POST /api/documents/upload for source_id: {TEST_DOC_SOURCE_ID}"
