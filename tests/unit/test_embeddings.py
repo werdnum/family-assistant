@@ -28,8 +28,8 @@ async def default_generator() -> HashingWordEmbeddingGenerator:
     return HashingWordEmbeddingGenerator(dimensionality=128)
 
 
-@pytest.mark.asyncio
 class TestHashingWordEmbeddingGenerator:
+    @pytest.mark.asyncio
     async def test_dimensionality(self) -> None:
         """Test that the embedding vector has the correct dimensionality."""
         dim = 64
@@ -40,6 +40,7 @@ class TestHashingWordEmbeddingGenerator:
         assert len(result.embeddings[0]) == dim
         assert result.model_name == "hashing-word-v1"  # Default model name
 
+    @pytest.mark.asyncio
     async def test_model_name_override(self) -> None:
         """Test that the model name can be overridden."""
         custom_model_name = "custom-hash-model"
@@ -58,6 +59,7 @@ class TestHashingWordEmbeddingGenerator:
             "12345 numbers and words",
         ],
     )
+    @pytest.mark.asyncio
     async def test_identity_similarity(
         self, default_generator: HashingWordEmbeddingGenerator, text_input: str
     ) -> None:
@@ -78,6 +80,7 @@ class TestHashingWordEmbeddingGenerator:
             "short",
         ],
     )
+    @pytest.mark.asyncio
     async def test_vector_normalization(
         self, default_generator: HashingWordEmbeddingGenerator, text_input: str
     ) -> None:
@@ -99,6 +102,7 @@ class TestHashingWordEmbeddingGenerator:
             ("MixEd CaSe AnD Punctu@tion.", "mixed case and punctuation"),
         ],
     )
+    @pytest.mark.asyncio
     async def test_case_and_special_char_insensitivity(
         self, default_generator: HashingWordEmbeddingGenerator, text1: str, text2: str
     ) -> None:
@@ -115,6 +119,7 @@ class TestHashingWordEmbeddingGenerator:
         "empty_text",
         ["", "   ", "\t\n", "!!!", "...,,,###"],  # also test with only special chars
     )
+    @pytest.mark.asyncio
     async def test_empty_or_whitespace_input(
         self, default_generator: HashingWordEmbeddingGenerator, empty_text: str
     ) -> None:
@@ -131,6 +136,7 @@ class TestHashingWordEmbeddingGenerator:
             magnitude, 0.0, abs_tol=1e-9
         ), f"Magnitude of zero vector should be 0.0, was {magnitude}"
 
+    @pytest.mark.asyncio
     async def test_quote_similarity(
         self, default_generator: HashingWordEmbeddingGenerator
     ) -> None:
@@ -165,6 +171,7 @@ class TestHashingWordEmbeddingGenerator:
                 dist_source_quote, 0.0, abs_tol=1e-9
             ), "Source and its shorter quote should not be identical"
 
+    @pytest.mark.asyncio
     async def test_different_texts_different_embeddings(
         self, default_generator: HashingWordEmbeddingGenerator
     ) -> None:
@@ -182,6 +189,7 @@ class TestHashingWordEmbeddingGenerator:
         dist = cosine_distance(result1.embeddings[0], result2.embeddings[0])
         assert dist > 1e-9, f"Different texts should have non-zero distance, was {dist}"
 
+    @pytest.mark.asyncio
     async def test_batch_processing(
         self, default_generator: HashingWordEmbeddingGenerator
     ) -> None:
@@ -218,6 +226,7 @@ class TestHashingWordEmbeddingGenerator:
         ):
             HashingWordEmbeddingGenerator(dimensionality=-5)
 
+    @pytest.mark.asyncio
     async def test_empty_input_list(
         self, default_generator: HashingWordEmbeddingGenerator
     ) -> None:

@@ -180,9 +180,11 @@ class HashingWordEmbeddingGenerator:
         return self._model_name
 
     def _normalize_text(self, text: str) -> str:
-        """Converts text to lowercase and removes special characters."""
+        """Converts text to lowercase, removes special characters, and normalizes whitespace."""
         text = text.lower()
         text = re.sub(r"[^a-z0-9\s]", "", text)  # Keep letters, numbers, and spaces
+        text = re.sub(r"\s+", " ", text)  # Replace multiple spaces with a single space
+        text = text.strip()  # Remove leading/trailing spaces
         return text
 
     def _generate_single_embedding(self, text: str) -> list[float]:
