@@ -1036,34 +1036,20 @@ async def test_keyword_filtering(
 
 # Add more tests here for hybrid search nuances, different filter combinations, etc.
 
-
-# --- Helper function to create a simple PDF ---
-def create_simple_pdf_bytes(text_content: str) -> bytes:
-    """Creates a simple PDF with the given text content and returns its bytes."""
-    pdf_buffer = io.BytesIO()
-    c = canvas.Canvas(pdf_buffer, pagesize=letter)
-    # Set a standard font that's likely to be available
-    c.setFont("Helvetica", 12)
-    # Add text line by line to handle potential newlines
-    lines = text_content.split("\n")
-    y_position = 750  # Starting y position from top of page
-    for line in lines:
-        c.drawString(72, y_position, line)
-        y_position -= 15  # Move to next line
-    c.save()
-    pdf_buffer.seek(0)
-    return pdf_buffer.getvalue()
-
+# create_simple_pdf_bytes function removed
 
 # --- Test Data for PDF Attachment ---
-TEST_PDF_TEXT_CONTENT = (
-    "This is the content of the test PDF attachment for Project Zeta."
+# This should be a representative string of what's expected to be extracted from test_doc.pdf
+# by PDFTextExtractor and then processed by TextChunker.
+# For example, if test_doc.pdf contains "Project Phoenix Proposal...", this might be a chunk.
+TEST_PDF_EXTRACTED_TEXT = "Project Phoenix Proposal This document outlines the proposal for Project Phoenix, focusing on renewable energy sources. Key areas include solar panel efficiency and battery storage improvements."
+TEST_PDF_FILENAME = "test_doc.pdf"  # Using the existing test PDF
+TEST_EMAIL_SUBJECT_WITH_PDF = "E2E Test: Email with test_doc.pdf Attachment"
+TEST_EMAIL_BODY_WITH_PDF = "Please find attached the test_doc.pdf document."
+TEST_EMAIL_MESSAGE_ID_WITH_PDF = (
+    f"<e2e_email_with_test_doc_pdf_{uuid.uuid4()}@example.com>"
 )
-TEST_PDF_FILENAME = "project_zeta_details.pdf"
-TEST_EMAIL_SUBJECT_WITH_PDF = "E2E Test: Email with PDF Attachment (Project Zeta)"
-TEST_EMAIL_BODY_WITH_PDF = "Please find attached the details for Project Zeta."
-TEST_EMAIL_MESSAGE_ID_WITH_PDF = f"<e2e_email_with_pdf_{uuid.uuid4()}@example.com>"
-TEST_QUERY_TEXT_FOR_PDF = "details about Project Zeta"
+TEST_QUERY_TEXT_FOR_PDF = "information about Project Phoenix solar panels"
 
 
 @pytest.mark.asyncio
@@ -1084,7 +1070,9 @@ async def test_email_with_pdf_attachment_indexing_e2e(
             pdf_content_bytes = f.read()
     except FileNotFoundError:
         pytest.fail(f"Test PDF file not found at {pdf_file_path}")
-    assert_that(pdf_content_bytes).described_as("PDF content bytes should not be empty").is_not_empty()
+    assert_that(pdf_content_bytes).described_as(
+        "PDF content bytes should not be empty"
+    ).is_not_empty()
 
     # --- Arrange: Mock Embeddings ---
     # Normalize text as TextChunker would for consistent mocking
@@ -1235,16 +1223,17 @@ async def test_email_with_pdf_attachment_indexing_e2e(
         found_pdf_result = None
         for result in query_results:
             # We expect the content from the PDF to be associated with the email's source_id
+            # The embedding_source_content should match our TEST_PDF_EXTRACTED_TEXT
             if (
                 result.get("source_id") == TEST_EMAIL_MESSAGE_ID_WITH_PDF
-                and result.get("embedding_source_content") == TEST_PDF_TEXT_CONTENT
+                and result.get("embedding_source_content") == TEST_PDF_EXTRACTED_TEXT
             ):
                 found_pdf_result = result
                 break
 
         assert_that(found_pdf_result).described_as(
             f"Ingested PDF content (from email Source ID: {TEST_EMAIL_MESSAGE_ID_WITH_PDF}) "
-            f"not found in query results, or content mismatch. Results: {query_results}"
+            f"not found in query results, or content mismatch. Expected content: '{TEST_PDF_EXTRACTED_TEXT}'. Results: {query_results}"
         ).is_not_none()
         logger.info(f"Found matching result for PDF content: {found_pdf_result}")
 
@@ -1255,7 +1244,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
             "content_chunk"
         )  # From TextChunker
         assert_that(found_pdf_result.get("embedding_source_content")).is_equal_to(
-            TEST_PDF_TEXT_CONTENT
+            TEST_PDF_EXTRACTED_TEXT
         )
         assert_that(found_pdf_result.get("title")).is_equal_to(
             TEST_EMAIL_SUBJECT_WITH_PDF
