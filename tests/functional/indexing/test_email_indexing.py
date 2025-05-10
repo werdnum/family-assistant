@@ -1117,26 +1117,36 @@ async def test_email_with_pdf_attachment_indexing_e2e(
 
     title_extractor = TitleExtractor()
     pdf_extractor = PDFTextExtractor()
-    text_chunker = TextChunker(
-        chunk_size=500,
-        chunk_overlap=50,
-        # Ensure TextChunker is configured to produce 'content_chunk' from PDF output
-        embedding_type_prefix_map={
+
+    # Configuration for TextChunker, including the prefix map
+    text_chunker_test_config = {
+        "chunk_size": 500,
+        "chunk_overlap": 50,
+        "embedding_type_prefix_map": {
             "raw_body_text": "content_chunk",
             "extracted_markdown_content": "content_chunk",  # from PDFTextExtractor
             "title": "title_chunk",  # if titles are chunked
         },
+    }
+    # Instantiate TextChunker with its direct constructor arguments
+    text_chunker = TextChunker(
+        chunk_size=text_chunker_test_config["chunk_size"],
+        chunk_overlap=text_chunker_test_config["chunk_overlap"],
     )
+
     embedding_dispatcher = EmbeddingDispatchProcessor(
         embedding_types_to_dispatch=[
-            "title_chunk",  # or "title" if not chunked by TextChunker
-            "title",  # if TitleExtractor output is not chunked
-            "content_chunk",  # from email body and PDF
+            "title_chunk",
+            "title",
+            "content_chunk",
         ],
     )
+    # Pass the text_chunker_test_config to the IndexingPipeline
     test_pipeline_with_pdf = IndexingPipeline(
         processors=[title_extractor, pdf_extractor, text_chunker, embedding_dispatcher],
-        config={},
+        config={
+            "text_chunker": text_chunker_test_config  # Provide config for TextChunker
+        },
     )
     set_indexing_dependencies(pipeline=test_pipeline_with_pdf)
     logger.info(
