@@ -1,13 +1,25 @@
 import logging
 import re
+from datetime import datetime, timezone
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from passlib.context import CryptContext
+from sqlalchemy import select, update
 from starlette.config import Config
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from family_assistant.storage.base import api_tokens_table
+from family_assistant.storage.context import get_db_context
+
 logger = logging.getLogger(__name__)
+
+# --- CryptContext for hashing API tokens ---
+# We will use bcrypt for hashing. The actual token generation (creating the hash)
+# will be handled elsewhere (e.g., a UI or CLI tool). Here we only verify.
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 # --- Auth Configuration ---
 # Load config from environment variables
@@ -55,6 +67,78 @@ PUBLIC_PATHS = [
 ]
 
 
+async def get_user_from_api_token(
+    auth_header: str, request: Request  # pylint: disable=unused-argument
+) -> dict | None:
+    """
+    Verifies an API token and returns user information if valid.
+    Updates the token's last_used_at timestamp.
+    """
+    if not auth_header.startswith("Bearer "):
+        return None
+
+    token_value = auth_header.split(" ", 1)[1]
+
+    # Assuming the prefix is the first 8 characters of the token_value
+    # and the rest is the secret part that was hashed.
+    if len(token_value) <= 8:
+        logger.warning("API token value is too short to contain a prefix and secret.")
+        return None
+
+    token_prefix = token_value[:8]
+    token_secret_part = token_value[8:]
+
+    async with get_db_context() as db:
+        query = select(api_tokens_table).where(
+            api_tokens_table.c.prefix == token_prefix
+        )
+        token_row = await db.fetch_one(query)
+
+        if not token_row:
+            logger.debug(f"API token with prefix {token_prefix} not found.")
+            return None
+
+        if not pwd_context.verify(token_secret_part, token_row.hashed_token):
+            logger.warning(
+                f"Invalid API token provided for prefix {token_prefix}."
+            )  # Potentially log user_identifier if available and safe
+            return None
+
+        if token_row.is_revoked:
+            logger.warning(
+                f"Attempt to use revoked API token (ID: {token_row.id}, User: {token_row.user_identifier})."
+            )
+            return None
+
+        now = datetime.now(timezone.utc)
+        if token_row.expires_at and token_row.expires_at < now:
+            logger.warning(
+                f"Attempt to use expired API token (ID: {token_row.id}, User: {token_row.user_identifier})."
+            )
+            return None
+
+        # Update last_used_at
+        update_query = (
+            update(api_tokens_table)
+            .where(api_tokens_table.c.id == token_row.id)
+            .values(last_used_at=now)
+        )
+        await db.execute_with_retry(update_query)
+        # No need to commit explicitly if get_db_context handles transaction lifecycle
+
+        logger.info(
+            f"API token authenticated for user: {token_row.user_identifier} (Token ID: {token_row.id})"
+        )
+        # Mimic OIDC userinfo structure for session consistency
+        return {
+            "sub": token_row.user_identifier,
+            "name": token_row.user_identifier,  # Or a display name if available
+            "email": token_row.user_identifier,  # Or actual email if available
+            "source": "api_token",
+            "token_id": token_row.id,
+        }
+
+
 # Define AuthMiddleware class
 class AuthMiddleware:
     def __init__(
@@ -78,15 +162,27 @@ class AuthMiddleware:
                 return
 
         user = request.session.get("user")
+
+        # Attempt API token authentication if no session user
         if not user:
+            auth_header = request.headers.get("Authorization")
+            if auth_header:
+                api_user = await get_user_from_api_token(auth_header, request)
+                if api_user:
+                    request.session["user"] = api_user
+                    user = api_user  # Update user for the current request flow
+                    logger.debug(
+                        f"User authenticated via API token for path {request.url.path}"
+                    )
+
+        if not user:
+            # Store intended URL before redirecting to login (for OIDC flow)
             request.session["redirect_after_login"] = str(request.url)
             logger.debug(
-                f"No user session for protected path {request.url.path}, redirecting to login."
+                f"No user session or valid API token for protected path {request.url.path}, redirecting to OIDC login."
             )
             redirect_response = RedirectResponse(
-                url=request.url_for(
-                    "login"
-                ),  # Relies on auth_router being named 'login'
+                url=request.url_for("login"),
                 status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             )
             await redirect_response(scope, receive, send)
