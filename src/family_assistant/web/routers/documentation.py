@@ -1,7 +1,8 @@
 import logging
+from datetime import datetime, timezone  # Added
 
 import aiofiles
-from fastapi import APIRouter, HTTPException, Request, status  # Added status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from family_assistant.tools import (
@@ -16,15 +17,21 @@ documentation_router = APIRouter()
 # docs_user_dir and SERVER_URL will be set on app.state by app_creator
 
 
-@documentation_router.get("/docs/")
-async def redirect_to_user_guide() -> RedirectResponse:
+@documentation_router.get("/docs/", name="ui_list_docs")  # Name for base.html link
+async def redirect_to_user_guide(
+    request: Request,
+) -> RedirectResponse:  # Add request for url_for
     """Redirects the base /docs/ path to the main user guide."""
+    # Use url_path_for to construct the redirect URL robustly
     return RedirectResponse(
-        url="/docs/USER_GUIDE.md", status_code=status.HTTP_302_FOUND
+        url=request.app.url_path_for("ui_view_doc", filename="USER_GUIDE.md"),
+        status_code=status.HTTP_302_FOUND,
     )
 
 
-@documentation_router.get("/docs/{filename:path}", response_class=HTMLResponse)
+@documentation_router.get(
+    "/docs/{filename:path}", response_class=HTMLResponse, name="ui_view_doc"
+)
 async def serve_documentation(request: Request, filename: str) -> HTMLResponse:
     """Serves rendered Markdown documentation files from the docs/user directory."""
     templates = request.app.state.templates
@@ -63,9 +70,10 @@ async def serve_documentation(request: Request, filename: str) -> HTMLResponse:
                 "content": content_html,
                 "title": filename,
                 "available_docs": available_docs,
-                "server_url": server_url,
+                "server_url": server_url,  # Keep for {{ SERVER_URL }} replacement in md
                 "user": request.session.get("user"),
-                "auth_enabled": AUTH_ENABLED,
+                "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
+                "now_utc": datetime.now(timezone.utc),  # Pass to base template
             },
         )
     except Exception as e:

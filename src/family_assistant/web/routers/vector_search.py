@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 vector_search_router = APIRouter()
 
 
-@vector_search_router.get("/vector-search", response_class=HTMLResponse)
+@vector_search_router.get("/vector-search", response_class=HTMLResponse, name="ui_vector_search")
 async def vector_search_form(
     request: Request,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> HTMLResponse:
     """Serves the vector search form."""
     templates = request.app.state.templates
@@ -92,12 +92,13 @@ async def vector_search_form(
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys to template
             "user": request.session.get("user"),
-            "auth_enabled": AUTH_ENABLED,
+            "AUTH_ENABLED": AUTH_ENABLED, # Pass to base template
+            "now_utc": datetime.now(timezone.utc), # Pass to base template
         },
     )
 
 
-@vector_search_router.post("/vector-search", response_class=HTMLResponse)
+@vector_search_router.post("/vector-search", response_class=HTMLResponse, name="ui_vector_search_post") # Add name for POST if needed, or ensure GET is named ui_vector_search
 async def handle_vector_search(
     request: Request,
     # --- Dependencies ---
@@ -317,6 +318,7 @@ async def handle_vector_search(
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys
             "user": request.session.get("user"),
-            "auth_enabled": AUTH_ENABLED,
+            "AUTH_ENABLED": AUTH_ENABLED, # Pass to base template
+            "now_utc": datetime.now(timezone.utc), # Pass to base template
         },
     )

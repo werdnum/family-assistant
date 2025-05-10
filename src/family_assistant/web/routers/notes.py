@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone  # Added
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 notes_router = APIRouter()
 
 
-@notes_router.get("/", response_class=HTMLResponse)
+@notes_router.get("/", response_class=HTMLResponse, name="ui_list_notes")
 async def read_root(
     request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
 ) -> HTMLResponse:
@@ -33,13 +34,14 @@ async def read_root(
             "request": request,
             "notes": notes,
             "user": request.session.get("user"),
-            "auth_enabled": AUTH_ENABLED,
+            "AUTH_ENABLED": AUTH_ENABLED, # Pass to base template
+            "now_utc": datetime.now(timezone.utc), # Pass to base template
             "server_url": server_url,
         },
     )
 
 
-@notes_router.get("/notes/add", response_class=HTMLResponse)
+@notes_router.get("/notes/add", response_class=HTMLResponse, name="ui_add_note")
 async def add_note_form(request: Request) -> HTMLResponse:
     """Serves the form to add a new note."""
     templates = request.app.state.templates
@@ -50,12 +52,13 @@ async def add_note_form(request: Request) -> HTMLResponse:
             "note": None,
             "is_new": True,
             "user": request.session.get("user"),
-            "auth_enabled": AUTH_ENABLED,
+            "AUTH_ENABLED": AUTH_ENABLED, # Pass to base template
+            "now_utc": datetime.now(timezone.utc), # Pass to base template
         },
     )
 
 
-@notes_router.get("/notes/edit/{title}", response_class=HTMLResponse)
+@notes_router.get("/notes/edit/{title}", response_class=HTMLResponse, name="ui_edit_note")
 async def edit_note_form(
     request: Request,
     title: str,
@@ -73,14 +76,15 @@ async def edit_note_form(
             "note": note,
             "is_new": False,
             "user": request.session.get("user"),
-            "auth_enabled": AUTH_ENABLED,
+            "AUTH_ENABLED": AUTH_ENABLED, # Pass to base template
+            "now_utc": datetime.now(timezone.utc), # Pass to base template
         },
     )
 
 
-@notes_router.post("/notes/save")
+@notes_router.post("/notes/save", name="ui_save_note")
 async def save_note(
-    request: Request,
+    request: Request, # request is not used, but kept for consistency if needed later
     title: Annotated[str, Form()],
     content: Annotated[str, Form()],
     original_title: Annotated[str | None, Form()] = None,
@@ -89,6 +93,8 @@ async def save_note(
     """Handles saving a new or updated note."""
     try:
         if original_title and original_title != title:
+            # To rename, we delete the old and add a new one.
+            # Consider if a direct update of title is preferable if IDs are used.
             await delete_note(db_context, original_title)
             await add_or_update_note(db_context, title, content)
             logger.info(
@@ -97,15 +103,16 @@ async def save_note(
         else:
             await add_or_update_note(db_context, title, content)
             logger.info(f"Saved note: {title}")
-        return RedirectResponse(url="/", status_code=303)
+        # Redirect to the main notes list page using its route name
+        return RedirectResponse(url=request.app.url_path_for("ui_list_notes"), status_code=303)
     except Exception as e:
         logger.error(f"Error saving note '{title}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to save note: {e}") from e
 
 
-@notes_router.post("/notes/delete/{title}")
+@notes_router.post("/notes/delete/{title}", name="ui_delete_note")
 async def delete_note_post(
-    request: Request,
+    request: Request, # request is used for url_path_for
     title: str,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> RedirectResponse:
@@ -113,4 +120,4 @@ async def delete_note_post(
     deleted = await delete_note(db_context, title)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found for deletion")
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url=request.app.url_path_for("ui_list_notes"), status_code=303)

@@ -1,7 +1,7 @@
 import json
 import logging
 import zoneinfo
-from datetime import datetime
+from datetime import datetime, timezone  # Added timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 history_router = APIRouter()
 
 
-@history_router.get("/history", response_class=HTMLResponse)
+@history_router.get("/history", response_class=HTMLResponse, name="ui_message_history")
 async def view_message_history(
     request: Request,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],  # noqa: B008
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
     page: Annotated[
         int, Query(ge=1, description="Page number for message history")
     ] = 1,  # noqa: B008
@@ -199,7 +199,8 @@ async def view_message_history(
                 "paged_conversations": paged_items,  # Renamed for clarity in template
                 "pagination": pagination_info,
                 "user": request.session.get("user"),
-                "auth_enabled": AUTH_ENABLED,  # Pass auth info
+                "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
+                "now_utc": datetime.now(timezone.utc), # Pass to base template
             },
         )
     except Exception as e:
