@@ -284,6 +284,7 @@ async def test_document_indexing_and_query_e2e(
         application=fastapi_app,  # Use the real app for state access
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
+        embedding_generator=mock_embedding_generator,  # Pass the mock generator
     )
     worker.register_task_handler(
         "process_uploaded_document",

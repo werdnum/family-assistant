@@ -769,6 +769,7 @@ async def main_async(
         application=telegram_service.application,
         calendar_config=config["calendar_config"],
         timezone_str=config["timezone"],
+        embedding_generator=embedding_generator,  # Pass the generator
     )
 
     # --- Register Task Handlers with the Worker Instance ---
