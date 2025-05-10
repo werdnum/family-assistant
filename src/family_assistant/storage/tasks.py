@@ -104,7 +104,7 @@ async def enqueue_task(
         )
         if is_immediate and notify_event:
 
-            def notify(*args) -> None:
+            def notify() -> None:
                 notify_event.set()
                 logger.info(f"Notified worker about immediate task {task_id}.")
 
