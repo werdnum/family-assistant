@@ -1158,7 +1158,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     text_chunker = TextChunker(
         chunk_size=text_chunker_test_config["chunk_size"],
         chunk_overlap=text_chunker_test_config["chunk_overlap"],
-        embedding_type_prefix_map=text_chunker_test_config["embedding_type_prefix_map"],
+        # embedding_type_prefix_map is provided via pipeline config to TextChunker
     )
 
     embedding_dispatcher = EmbeddingDispatchProcessor(
