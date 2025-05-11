@@ -46,6 +46,9 @@ from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
 from family_assistant.indexing.processors.file_processors import PDFTextExtractor
+from family_assistant.indexing.processors.llm_processors import (
+    LLMIntelligenceProcessor,  # Added import
+)
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
 from family_assistant.indexing.processors.text_processors import TextChunker
 
