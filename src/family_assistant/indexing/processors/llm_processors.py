@@ -79,10 +79,14 @@ class LLMIntelligenceProcessor(ContentProcessor):
             # If item.content is None and item.ref exists, this indicates a missing step or
             # that this processor is not yet equipped to handle this item.ref type.
             if item.mime_type and "text" in item.mime_type:
-                 logger.error(f"Processor '{self.name}': Text file reading from ref '{item.ref}' not implemented yet. Content will be empty.")
+                logger.error(
+                    f"Processor '{self.name}': Text file reading from ref '{item.ref}' not implemented yet. Content will be empty."
+                )
             else:
-                logger.warning(f"Processor '{self.name}': Cannot process non-text ref '{item.ref}' with mime_type '{item.mime_type}' yet.")
-            return "" # Return empty or raise error if content cannot be prepared
+                logger.warning(
+                    f"Processor '{self.name}': Cannot process non-text ref '{item.ref}' with mime_type '{item.mime_type}' yet."
+                )
+            return ""  # Return empty or raise error if content cannot be prepared
 
         if not content_to_process:
             logger.warning(
@@ -90,7 +94,10 @@ class LLMIntelligenceProcessor(ContentProcessor):
             )
             return ""
 
-        if self.max_content_length and len(content_to_process) > self.max_content_length:
+        if (
+            self.max_content_length
+            and len(content_to_process) > self.max_content_length
+        ):
             logger.info(
                 f"Processor '{self.name}': Content for {item.embedding_type} is too long ({len(content_to_process)} chars), "
                 f"truncating to {self.max_content_length} chars."
@@ -143,7 +150,9 @@ class LLMIntelligenceProcessor(ContentProcessor):
                     "type": "function",
                     "function": {
                         "name": self.tool_name,
-                        "description": f"Extracts information according to the schema. Schema description: {self.output_schema.get('description', 'User-defined schema')}",
+                        "description": (
+                            f"Extracts information according to the schema. Schema description: {self.output_schema.get('description', 'User-defined schema')}"
+                        ),
                         "parameters": self.output_schema,
                     },
                 }
@@ -178,8 +187,12 @@ class LLMIntelligenceProcessor(ContentProcessor):
                                     mime_type="application/json",
                                     source_processor=self.name,
                                     metadata={
-                                        "original_item_embedding_type": item.embedding_type,
-                                        "original_item_source_processor": item.source_processor,
+                                        "original_item_embedding_type": (
+                                            item.embedding_type
+                                        ),
+                                        "original_item_source_processor": (
+                                            item.source_processor
+                                        ),
                                         "llm_model_used": getattr(
                                             self.llm_client, "model", "unknown"
                                         ),
