@@ -144,7 +144,6 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
     def time_conversion_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         tools = kwargs.get("tools")
-        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
 
         last_text = get_last_message_text(messages).lower()
         match_convert = "convert" in last_text
@@ -193,8 +192,6 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
     # Rule 2: Match the context after the MCP tool returns its result
     def tool_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools") # Not used by this matcher
-        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
 
         # Check for the tool result message associated with the tool call ID
         tool_message = next(
@@ -354,7 +351,6 @@ async def test_mcp_time_conversion_sse(
     def time_conversion_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         tools = kwargs.get("tools")
-        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
 
         last_text = get_last_message_text(messages).lower()
         tool_names = [t.get("function", {}).get("name") for t in tools or []]
@@ -397,8 +393,6 @@ async def test_mcp_time_conversion_sse(
     # Rule 2: Match the context after the MCP tool returns its result
     def tool_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools") # Not used by this matcher
-        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
 
         tool_message = next(
             (

@@ -78,7 +78,6 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     def schedule_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         tools = kwargs.get("tools")
-        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
 
         last_text = get_last_message_text(messages).lower()
         return (
@@ -110,8 +109,6 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # Rule 2: Match the system trigger from handle_llm_callback
     def callback_trigger_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools") # Not used by this matcher
-        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
 
         # The trigger text from handle_llm_callback is sent as a 'user' role message
         user_message = next((m for m in messages if m.get("role") == "user"), None)
