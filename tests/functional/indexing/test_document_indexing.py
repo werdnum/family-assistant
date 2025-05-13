@@ -961,9 +961,11 @@ async def test_url_indexing_e2e(
     # Configure TextChunker to process fetched markdown and output 'content_chunk'
     # This assumes default chunk_size/overlap are okay for MOCK_URL_CONTENT_MARKDOWN
     text_chunker = TextChunker(
+        chunk_size=150,  # Ensure content is split
+        chunk_overlap=20,
         embedding_type_prefix_map={
             "fetched_content_markdown": "content_chunk"
-        }  # Corrected key
+        },  # Corrected key
     )
     # EmbeddingDispatchProcessor should dispatch 'content_chunk' (from TextChunker)
     # and potentially 'title' if we add a TitleExtractor for fetched content.
