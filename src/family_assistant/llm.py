@@ -126,20 +126,36 @@ class LLMInterface(Protocol):
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """
-        Generates a response from the LLM based on the provided context.
+        Generates a response from the LLM based on a pre-structured list of messages.
+        (Existing method for direct message-based interaction)
+        """
+        ...
+
+    async def generate_response_from_file_input(
+        self,
+        system_prompt: str,
+        prompt_text: str | None,
+        file_path: str | None,
+        mime_type: str | None,
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+        max_text_length: int | None,
+    ) -> LLMOutput:
+        """
+        Generates a response from the LLM, potentially using a file.
+        The LLM client will decide how to handle the file (e.g., Gemini Files API, base64).
 
         Args:
-            messages: A list of message dictionaries representing the conversation history
-                      and the current prompt. Expected format aligns with OpenAI/LiteLLM.
-            tools: An optional list of tool definitions in OpenAI/LiteLLM format.
-            tool_choice: Optional control over tool usage (e.g., "auto", "none", {"type": "function", "function": {"name": "my_function"}}).
+            system_prompt: The system prompt for the LLM.
+            prompt_text: The user's textual prompt. Can be None if the primary input is a file.
+            file_path: Path to the file to be processed. Can be None.
+            mime_type: MIME type of the file. Required if file_path is provided.
+            tools: Optional list of tool definitions.
+            tool_choice: Optional control over tool usage.
+            max_text_length: Optional maximum length for text content truncation.
 
         Returns:
-            An LLMOutput object containing the response content and/or tool calls.
-
-        Raises:
-            Various exceptions (e.g., APIError, Timeout, ConnectionError) specific
-            to the underlying LLM client implementation upon failure.
+            An LLMOutput object.
         """
         ...
 
@@ -181,7 +197,7 @@ class LiteLLMClient:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
-        """Generates a response using LiteLLM."""
+        """Generates a response using LiteLLM from a pre-structured message list."""
         # Start with default kwargs passed during initialization
         call_kwargs = self.default_kwargs.copy()
 
@@ -346,47 +362,80 @@ class RecordingLLMClient:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
-        """Calls the wrapped client, records the interaction, and returns the result."""
-        # Prepare input data for recording
+        """Calls the wrapped client's standard generate_response, records, and returns."""
+        # This method is for the existing generate_response interface
         input_data = {
+            "method": "generate_response",
             "messages": messages,
             "tools": tools,
             "tool_choice": tool_choice,
         }
-
         try:
-            # Call the actual LLM client
             output_data = await self.wrapped_client.generate_response(
                 messages=messages, tools=tools, tool_choice=tool_choice
             )
-
-            # Record the interaction (input and output)
-            record = {
-                "input": input_data,
-                "output": output_data.__dict__,
-            }  # Use __dict__ for simple dataclass serialization
-            try:
-                async with aiofiles.open(
-                    self.recording_path, mode="a", encoding="utf-8"
-                ) as f:
-                    await f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                logger.debug(f"Recorded interaction to {self.recording_path}")
-            except Exception as file_err:
-                # Log error but don't fail the LLM call itself
-                logger.error(
-                    f"Failed to write interaction to recording file {self.recording_path}: {file_err}",
-                    exc_info=True,
-                )
-
+            await self._record_interaction(input_data, output_data)
             return output_data
-
         except Exception as e:
-            # Log the error before re-raising
+            logger.error(f"Error in RecordingLLMClient.generate_response: {e}", exc_info=True)
+            # Optionally record the error state as well, or just re-raise
+            # For now, just re-raise to ensure error propagation.
+            raise
+
+
+    async def generate_response_from_file_input(
+        self,
+        system_prompt: str,
+        prompt_text: str | None,
+        file_path: str | None,
+        mime_type: str | None,
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+        max_text_length: int | None,
+    ) -> LLMOutput:
+        """Calls the wrapped client's file input method, records, and returns."""
+        input_data = {
+            "method": "generate_response_from_file_input",
+            "system_prompt": system_prompt,
+            "prompt_text": prompt_text,
+            "file_path": file_path,
+            "mime_type": mime_type,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "max_text_length": max_text_length,
+        }
+        try:
+            output_data = await self.wrapped_client.generate_response_from_file_input(
+                system_prompt=system_prompt,
+                prompt_text=prompt_text,
+                file_path=file_path,
+                mime_type=mime_type,
+                tools=tools,
+                tool_choice=tool_choice,
+                max_text_length=max_text_length,
+            )
+            await self._record_interaction(input_data, output_data)
+            return output_data
+        except Exception as e:
+            logger.error(f"Error in RecordingLLMClient.generate_response_from_file_input: {e}", exc_info=True)
+            raise
+
+    async def _record_interaction(
+        self, input_data: dict[str, Any], output_data: LLMOutput
+    ) -> None:
+        # Ensure output_data is serializable (LLMOutput should be)
+        record = {"input": input_data, "output": output_data.__dict__}
+        try:
+            async with aiofiles.open(
+                self.recording_path, mode="a", encoding="utf-8"
+            ) as f:
+                await f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            logger.debug(f"Recorded interaction to {self.recording_path}")
+        except Exception as file_err:
             logger.error(
-                f"Error during wrapped LLM call in RecordingLLMClient: {e}",
+                f"Failed to write interaction to recording file {self.recording_path}: {file_err}",
                 exc_info=True,
             )
-            raise  # Re-raise the exception caught from the wrapped client
 
 
 class PlaybackLLMClient:
@@ -471,52 +520,73 @@ class PlaybackLLMClient:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
-        """
-        Finds a recorded interaction matching the input arguments and returns its output.
-
-        Raises:
-            LookupError: If no matching recorded interaction is found for the given input.
-        """
-        current_input = {
+        """Plays back for the standard generate_response method."""
+        current_input_args = {
+            "method": "generate_response",
             "messages": messages,
             "tools": tools,
             "tool_choice": tool_choice,
         }
-        logger.debug(
-            f"PlaybackLLMClient attempting to find match for input: {json.dumps(current_input, indent=2)[:500]}..."
-        )  # Log truncated input
+        return await self._find_and_playback(current_input_args)
 
-        # Iterate through loaded interactions to find a match
+    async def generate_response_from_file_input(
+        self,
+        system_prompt: str,
+        prompt_text: str | None,
+        file_path: str | None,
+        mime_type: str | None,
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+        max_text_length: int | None,
+    ) -> LLMOutput:
+        """Plays back for the file input method."""
+        current_input_args = {
+            "method": "generate_response_from_file_input",
+            "system_prompt": system_prompt,
+            "prompt_text": prompt_text,
+            "file_path": file_path,
+            "mime_type": mime_type,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "max_text_length": max_text_length,
+        }
+        return await self._find_and_playback(current_input_args)
+
+    async def _find_and_playback(
+        self, current_input_args: dict[str, Any]
+    ) -> LLMOutput:
+        logger.debug(
+            f"PlaybackLLMClient attempting to find match for input args: {json.dumps(current_input_args, indent=2, default=str)[:500]}..." # Added default=str
+        )
         for record in self.recorded_interactions:
-            # Simple direct comparison of the input dictionaries.
-            # NOTE: This can be brittle if there are minor variations (e.g., timestamps in system prompts, dict key order).
-            # Consider more robust matching (e.g., comparing specific fields, canonical serialization) if needed.
-            if record.get("input") == current_input:
+            # Compare based on the 'input' key which now contains the method and its specific args
+            if record.get("input") == current_input_args:
                 logger.info(f"Found matching interaction in {self.recording_path}.")
                 output_data = record["output"]
                 # Reconstruct LLMOutput from the recorded dict
                 matched_output = LLMOutput(
                     content=output_data.get("content"),
                     tool_calls=output_data.get("tool_calls"),
+                    reasoning_info=output_data.get("reasoning_info"), # Ensure reasoning_info is also played back
                 )
                 logger.debug(
                     f"Playing back matched response. Content: {bool(matched_output.content)}. Tool Calls: {len(matched_output.tool_calls) if matched_output.tool_calls else 0}"
                 )
                 return matched_output
-
+        
         # If no match is found after checking all records
         logger.error(
-            f"PlaybackLLMClient: No matching interaction found in {self.recording_path} for the provided input."
+            f"PlaybackLLMClient: No matching interaction found in {self.recording_path} for the provided input args."
         )
         # Log the input that failed to match for debugging
         try:
-            failed_input_str = json.dumps(current_input, indent=2)
+            failed_input_str = json.dumps(current_input_args, indent=2, default=str) # Added default=str
         except Exception:
             failed_input_str = str(
-                current_input
+                current_input_args
             )  # Fallback if JSON serialization fails
-        logger.error(f"Failed Input:\n{failed_input_str}")
+        logger.error(f"Failed Input Args:\n{failed_input_str}")
 
         raise LookupError(
-            f"No matching recorded interaction found in {self.recording_path} for the current input."
+            f"No matching recorded interaction found in {self.recording_path} for the current input args."
         )
