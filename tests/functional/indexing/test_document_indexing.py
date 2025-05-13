@@ -35,6 +35,10 @@ from family_assistant.indexing.processors.dispatch_processors import (
 from family_assistant.indexing.processors.llm_processors import (  # Added
     LLMSummaryGeneratorProcessor,
 )
+
+# Import processors needed for URL indexing test
+from family_assistant.indexing.processors.network_processors import WebFetcherProcessor
+from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import (
@@ -42,6 +46,10 @@ from family_assistant.storage.vector import (
 )  # Import Document protocol
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext  # Added
+from family_assistant.utils.scraping import (  # Assuming MockScraper is here
+    MockScraper,
+    ScrapeResult,
+)
 
 # Import the FastAPI app directly from app_creator
 from family_assistant.web.app_creator import (
@@ -95,6 +103,22 @@ TEST_DOC_FOR_SUMMARY_CONTENT = "This is a test document about advanced quantum c
 EXPECTED_LLM_SUMMARY = "A document discussing quantum computing, qubits, superposition, entanglement, and potential impacts on medicine and materials science."
 TEST_QUERY_FOR_SUMMARY = "quantum computing breakthroughs"
 LLM_SUMMARY_TARGET_TYPE = "llm_generated_summary"
+
+# --- Test Data for URL Indexing E2E ---
+TEST_URL_TO_SCRAPE = "https://example.com/test-page-for-indexing"
+MOCK_URL_TITLE = "Mocked Page Title"
+MOCK_URL_CONTENT_MARKDOWN = f"""
+# {MOCK_URL_TITLE}
+
+This is the first paragraph of the mocked web page content. It discusses various interesting topics.
+
+This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'.
+"""
+# Expected chunks after TextChunker processes MOCK_URL_CONTENT_MARKDOWN
+# Assuming chunk size allows these to be separate.
+EXPECTED_URL_CHUNK_0_CONTENT = f"# {MOCK_URL_TITLE}\n\nThis is the first paragraph of the mocked web page content. It discusses various interesting topics."
+EXPECTED_URL_CHUNK_1_CONTENT = "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'."
+TEST_QUERY_FOR_URL_CONTENT = "synergy and innovation"
 
 
 # --- Fixtures ---
@@ -660,10 +684,23 @@ async def test_document_indexing_with_llm_summary_e2e(
             # The LLMSummaryProcessor outputs the JSON string of the extracted data
             json.dumps({"summary": EXPECTED_LLM_SUMMARY}, indent=2): summary_embedding,
             TEST_QUERY_FOR_SUMMARY: query_summary_embedding,
+            # Add mappings for URL content
+            EXPECTED_URL_CHUNK_0_CONTENT: (
+                np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.5
+            ).tolist(),
+            EXPECTED_URL_CHUNK_1_CONTENT: (
+                np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.6
+            ).tolist(),
+            TEST_QUERY_FOR_URL_CONTENT: ( # Closer to chunk 1
+                np.array(mock_embedding_generator.embedding_map[EXPECTED_URL_CHUNK_1_CONTENT])
+                + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
+            ).tolist(),
         }
     )
     # Store for assertion
     mock_embedding_generator._test_query_summary_embedding = query_summary_embedding
+    mock_embedding_generator._test_query_url_content_embedding = mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT]
+
 
     # --- Arrange: Instantiate Pipeline with LLM Summary Processor ---
     llm_summary_processor = LLMSummaryGeneratorProcessor(
@@ -845,3 +882,221 @@ async def test_document_indexing_with_llm_summary_e2e(
                     await db_cleanup.execute_with_retry(delete_stmt)
             except Exception as e:
                 logger.warning(f"Cleanup error for task {indexing_task_id}: {e}")
+
+
+@pytest.mark.asyncio
+async def test_url_indexing_e2e(
+    pg_vector_db_engine: AsyncEngine,
+    http_client: httpx.AsyncClient,
+    mock_embedding_generator: MockEmbeddingGenerator,
+) -> None:
+    """
+    End-to-end test for URL ingestion via API, fetching with MockScraper,
+    indexing via task worker, and vector query retrieval.
+    """
+    logger.info("\n--- Running URL Indexing E2E Test via API ---")
+
+    # --- Arrange: MockScraper ---
+    mock_scraper = MockScraper()
+    mock_scrape_result = ScrapeResult(
+        url=TEST_URL_TO_SCRAPE,
+        status_code=200,
+        title=MOCK_URL_TITLE,
+        markdown_content=MOCK_URL_CONTENT_MARKDOWN,
+        mime_type="text/markdown", # WebFetcherProcessor expects markdown output
+        # binary_content and other fields can be None
+    )
+    mock_scraper.add_rule(TEST_URL_TO_SCRAPE, mock_scrape_result)
+    logger.info(f"MockScraper configured for URL: {TEST_URL_TO_SCRAPE}")
+
+    # --- Arrange: Instantiate Pipeline and Indexer for URL processing ---
+    web_fetcher_processor = WebFetcherProcessor(scraper=mock_scraper)
+    # Configure TextChunker to process fetched markdown and output 'content_chunk'
+    # This assumes default chunk_size/overlap are okay for MOCK_URL_CONTENT_MARKDOWN
+    text_chunker = TextChunker(
+        embedding_type_prefix_map={"fetched_markdown_content": "content_chunk"}
+    )
+    # EmbeddingDispatchProcessor should dispatch 'content_chunk' (from TextChunker)
+    # and potentially 'title' if we add a TitleExtractor for fetched content.
+    # For now, just dispatching chunks.
+    url_dispatch_processor = EmbeddingDispatchProcessor(
+        {"content_chunk"}, # Dispatch chunks from fetched content
+    )
+
+    url_indexing_pipeline = IndexingPipeline(
+        processors=[web_fetcher_processor, text_chunker, url_dispatch_processor],
+        config={}, # No specific pipeline config needed for this test
+    )
+    document_indexer_for_url = DocumentIndexer(pipeline=url_indexing_pipeline)
+    logger.info("DocumentIndexer for URL initialized with specific pipeline.")
+
+    # --- Arrange: Task Worker Setup ---
+    # fastapi_app.state.embedding_generator is set by http_client fixture
+    worker = TaskWorker(
+        processing_service=None,
+        application=fastapi_app, # For app.state access
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=mock_embedding_generator,
+    )
+    worker.register_task_handler(
+        "process_uploaded_document",
+        document_indexer_for_url.process_document, # Use the URL-specific indexer
+    )
+    worker.register_task_handler(
+        "embed_and_store_batch",
+        _helper_handle_embed_and_store_batch,
+    )
+
+    worker_id = f"test-url-worker-{uuid.uuid4()}"
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(test_new_task_event))
+    logger.info(f"Started background task worker {worker_id} for URL test...")
+    await asyncio.sleep(0.1)
+
+    document_db_id = None
+    indexing_task_id = None
+    try:
+        # --- Act: Call API to Ingest URL ---
+        url_doc_source_id = f"test-url-doc-{uuid.uuid4()}"
+        api_form_data_url = {
+            "source_type": "url_test_upload",
+            "source_id": url_doc_source_id,
+            "title": "Test URL Ingestion: " + MOCK_URL_TITLE, # Title for the document record
+            "url": TEST_URL_TO_SCRAPE, # Provide the URL to be scraped
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": json.dumps({"test_type": "url_indexing"}),
+            "source_uri": TEST_URL_TO_SCRAPE, # Canonical URI is the URL itself
+        }
+        logger.info(
+            f"Calling POST /api/documents/upload for URL: {TEST_URL_TO_SCRAPE}"
+        )
+        response = await http_client.post("/api/documents/upload", data=api_form_data_url)
+
+        assert (
+            response.status_code == 202
+        ), f"API call for URL failed: {response.status_code} - {response.text}"
+        response_data = response.json()
+        document_db_id = response_data["document_id"]
+        logger.info(f"API call for URL successful. Document DB ID: {document_db_id}")
+
+        # Fetch task ID
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            await asyncio.sleep(0.2) # Give task time to appear
+            select_task_stmt = (
+                select(tasks_table.c.task_id)
+                .where(
+                    tasks_table.c.payload.cast(sqlalchemy.Text).like(
+                        f'%"document_id": {document_db_id}%'
+                    )
+                )
+                .order_by(tasks_table.c.created_at.desc())
+                .limit(1)
+            )
+            task_info = await db.fetch_one(select_task_stmt)
+            assert (
+                task_info is not None
+            ), f"Could not find enqueued task for URL document ID {document_db_id}"
+            indexing_task_id = task_info["task_id"]
+            logger.info(
+                f"Found indexing task ID: {indexing_task_id} for URL document DB ID: {document_db_id}"
+            )
+
+        # Wait for indexing task and subsequent embedding tasks to complete
+        test_new_task_event.set()
+        logger.info(f"Waiting for task {indexing_task_id} (and children) to complete...")
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            task_ids={indexing_task_id}, # This task will spawn embed_and_store_batch tasks
+            timeout_seconds=25.0, # Allow a bit more time for multi-stage processing
+        )
+        logger.info(f"Task {indexing_task_id} (and children) reported as complete.")
+
+        # --- Assert: Query for the fetched URL content ---
+        url_content_query_results = None
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            logger.info(
+                f"Querying vectors for URL content using text: '{TEST_QUERY_FOR_URL_CONTENT}'"
+            )
+            url_content_query_results = await query_vectors(
+                db,
+                query_embedding=mock_embedding_generator._test_query_url_content_embedding,
+                embedding_model=TEST_EMBEDDING_MODEL,
+                limit=5,
+                filters={"source_id": url_doc_source_id}, # Filter by the document's source_id
+                embedding_type_filter=["content_chunk"], # Expecting chunks from TextChunker
+            )
+
+        assert (
+            url_content_query_results is not None
+        ), "URL content query_vectors returned None"
+        assert (
+            len(url_content_query_results) > 0
+        ), "No results returned from URL content vector query"
+        logger.info(f"URL content query returned {len(url_content_query_results)} result(s).")
+
+        # We expect two chunks from MOCK_URL_CONTENT_MARKDOWN
+        # Check if both expected chunks are present in the results for this document_id
+        found_chunk_0 = False
+        found_chunk_1 = False
+        for result in url_content_query_results:
+            if result.get("source_id") != url_doc_source_id:
+                continue # Should be filtered by query, but double check
+
+            assert result.get("embedding_type") == "content_chunk"
+            assert "distance" in result
+            assert result["distance"] < 0.1 # Expect close match for relevant query
+
+            # Check metadata from WebFetcherProcessor
+            embedding_doc_meta = result.get("embedding_doc_metadata", {})
+            assert embedding_doc_meta.get("source_url") == TEST_URL_TO_SCRAPE
+            assert embedding_doc_meta.get("mime_type") == "text/markdown" # From WebFetcher output
+            # Title might be in embedding_doc_meta if WebFetcher adds it, or in main doc title
+            # For now, WebFetcherProcessor doesn't explicitly add title to chunk metadata.
+
+            if result.get("embedding_source_content") == EXPECTED_URL_CHUNK_0_CONTENT:
+                found_chunk_0 = True
+                logger.info(f"Found expected URL chunk 0: {result}")
+            elif result.get("embedding_source_content") == EXPECTED_URL_CHUNK_1_CONTENT:
+                found_chunk_1 = True
+                logger.info(f"Found expected URL chunk 1: {result}")
+
+
+        assert found_chunk_0, f"Expected URL chunk 0 not found in query results. Content: {EXPECTED_URL_CHUNK_0_CONTENT}"
+        assert found_chunk_1, f"Expected URL chunk 1 not found in query results. Content: {EXPECTED_URL_CHUNK_1_CONTENT}"
+
+        logger.info("--- URL Indexing E2E Test via API Passed ---")
+
+    finally:
+        # Cleanup
+        logger.info(f"Stopping background task worker {worker_id} for URL test...")
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+            logger.info(f"Background task worker {worker_id} for URL test stopped.")
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+        except Exception as e:
+            logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
+
+        if document_db_id:
+            try:
+                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    await storage.delete_document(db_cleanup, document_db_id) # type: ignore
+                    logger.info(f"Cleaned up test URL document DB ID {document_db_id}")
+            except Exception as cleanup_err:
+                logger.warning(f"Error during test URL document cleanup: {cleanup_err}")
+        if indexing_task_id:
+            try:
+                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    delete_stmt = tasks_table.delete().where(
+                        tasks_table.c.task_id == indexing_task_id
+                    )
+                    await db_cleanup.execute_with_retry(delete_stmt)
+                    logger.info(f"Cleaned up test URL task ID {indexing_task_id}")
+            except Exception as cleanup_err:
+                logger.warning(f"Error during test URL task cleanup: {cleanup_err}")
