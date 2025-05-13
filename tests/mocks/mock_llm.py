@@ -3,7 +3,7 @@ Mock LLM implementations for testing purposes.
 """
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 # Assuming LLMInterface and LLMOutput are accessible, adjust import if needed
@@ -86,7 +86,9 @@ class RuleBasedMockLLMClient(LLMInterface):
             logger.debug("RuleBasedMockLLMClient using provided default response.")
 
         self._calls: list[dict[str, Any]] = []
-        logger.info(f"RuleBasedMockLLMClient initialized with {len(rules)} rules for model '{self.model}'.")
+        logger.info(
+            f"RuleBasedMockLLMClient initialized with {len(rules)} rules for model '{self.model}'."
+        )
 
     def _record_call(self, method_name: str, actual_kwargs: dict[str, Any]) -> None:
         """Helper to store call data."""
@@ -119,18 +121,23 @@ class RuleBasedMockLLMClient(LLMInterface):
         }
         self._record_call("generate_response", actual_kwargs)
 
-        logger.debug(f"RuleBasedMockLLM (generate_response) evaluating {len(self.rules)} rules...")
+        logger.debug(
+            f"RuleBasedMockLLM (generate_response) evaluating {len(self.rules)} rules..."
+        )
         for i, (matcher, response) in enumerate(self.rules):
             try:
                 if matcher("generate_response", actual_kwargs):
-                    logger.info(f"Rule {i + 1} matched for 'generate_response'. Returning predefined response.")
+                    logger.info(
+                        f"Rule {i + 1} matched for 'generate_response'. Returning predefined response."
+                    )
                     logger.debug(
                         f" -> Response Content: {bool(response.content)}, Tool Calls: {len(response.tool_calls) if response.tool_calls else 0}"
                     )
                     return response
             except Exception as e:
                 logger.error(
-                    f"Error executing matcher for rule {i + 1} (generate_response): {e}", exc_info=True
+                    f"Error executing matcher for rule {i + 1} (generate_response): {e}",
+                    exc_info=True,
                 )
                 continue
 
@@ -164,21 +171,26 @@ class RuleBasedMockLLMClient(LLMInterface):
         }
         self._record_call("generate_response_from_file_input", actual_kwargs)
 
-        logger.debug(f"RuleBasedMockLLM (generate_response_from_file_input) evaluating {len(self.rules)} rules...")
+        logger.debug(
+            f"RuleBasedMockLLM (generate_response_from_file_input) evaluating {len(self.rules)} rules..."
+        )
         for i, (matcher, response) in enumerate(self.rules):
             try:
                 if matcher("generate_response_from_file_input", actual_kwargs):
-                    logger.info(f"Rule {i + 1} matched for 'generate_response_from_file_input'. Returning predefined response.")
+                    logger.info(
+                        f"Rule {i + 1} matched for 'generate_response_from_file_input'. Returning predefined response."
+                    )
                     logger.debug(
                         f" -> Response Content: {bool(response.content)}, Tool Calls: {len(response.tool_calls) if response.tool_calls else 0}"
                     )
                     return response
             except Exception as e:
                 logger.error(
-                    f"Error executing matcher for rule {i + 1} (generate_response_from_file_input): {e}", exc_info=True
+                    f"Error executing matcher for rule {i + 1} (generate_response_from_file_input): {e}",
+                    exc_info=True,
                 )
                 continue
-        
+
         logger.warning(
             "No rules matched for 'generate_response_from_file_input'. Returning default response. Input kwargs: %r",
             actual_kwargs,

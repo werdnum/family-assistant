@@ -13,7 +13,7 @@ from family_assistant.indexing.processors.llm_processors import (
 from family_assistant.llm import LLMOutput
 
 # Assuming RuleBasedMockLLMClient is correctly exposed or imported
-from tests.mocks.mock_llm import MatcherArgs, Rule, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,9 @@ async def test_llm_processor_with_file_input_summarization(
     # 4. Instantiate LLMIntelligenceProcessor
     processor_output_schema = {
         "type": "object",
-        "properties": {"summary": {"type": "string", "description": "A concise summary"}},
+        "properties": {
+            "summary": {"type": "string", "description": "A concise summary"}
+        },
         "required": ["summary"],
         "description": "Schema for extracted summary.",
     }
@@ -92,7 +94,7 @@ async def test_llm_processor_with_file_input_summarization(
         target_embedding_type="document_summary_from_file",
         input_content_types=["original_document_file"],
         tool_name=tool_name_for_extraction,
-        max_content_length=None, # No truncation for this test
+        max_content_length=None,  # No truncation for this test
     )
 
     # 5. Create an IndexableContent item pointing to the temp file
@@ -101,19 +103,19 @@ async def test_llm_processor_with_file_input_summarization(
         source_processor="test_setup",
         ref=str(temp_text_file),
         mime_type="text/plain",
-        content="Please summarize the attached file.", # This is the prompt_text for the LLM
+        content="Please summarize the attached file.",  # This is the prompt_text for the LLM
     )
 
     # 6. Mock ToolExecutionContext and other arguments for processor.process
     mock_exec_context = MagicMock()
     mock_original_doc = MagicMock()
-    mock_original_doc.title = "Test Document Title" # For logging in pipeline
+    mock_original_doc.title = "Test Document Title"  # For logging in pipeline
 
     # 7. Call processor.process
     processed_items = await llm_processor.process(
         current_items=[input_item],
         original_document=mock_original_doc,
-        initial_content_ref=input_item, # For this test, it's the same
+        initial_content_ref=input_item,  # For this test, it's the same
         context=mock_exec_context,
     )
 
@@ -127,7 +129,10 @@ async def test_llm_processor_with_file_input_summarization(
     extracted_content_data = json.loads(new_item.content)
     assert extracted_content_data == expected_extracted_data
     assert new_item.source_processor == llm_processor.name
-    assert new_item.metadata.get("original_item_embedding_type") == "original_document_file"
+    assert (
+        new_item.metadata.get("original_item_embedding_type")
+        == "original_document_file"
+    )
     assert new_item.metadata.get("llm_model_used") == "mock-summarizer-v1"
 
     # Assert mock LLM was called correctly
@@ -138,7 +143,10 @@ async def test_llm_processor_with_file_input_summarization(
     assert call_args.get("file_path") == str(temp_text_file)
     assert call_args.get("mime_type") == "text/plain"
     assert call_args.get("prompt_text") == "Please summarize the attached file."
-    assert call_args.get("system_prompt") == "Extract a concise summary from the provided document."
-    assert call_args.get("tools")[0]["function"]["name"] == tool_name_for_extraction # type: ignore[index]
-    assert call_args.get("tools")[0]["function"]["parameters"] == processor_output_schema # type: ignore[index]
-    assert call_args.get("tool_choice")["function"]["name"] == tool_name_for_extraction # type: ignore[index]
+    assert (
+        call_args.get("system_prompt")
+        == "Extract a concise summary from the provided document."
+    )
+    assert call_args.get("tools")[0]["function"]["name"] == tool_name_for_extraction  # type: ignore[index]
+    assert call_args.get("tools")[0]["function"]["parameters"] == processor_output_schema  # type: ignore[index]
+    assert call_args.get("tool_choice")["function"]["name"] == tool_name_for_extraction  # type: ignore[index]
