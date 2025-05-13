@@ -768,10 +768,10 @@ async def test_document_indexing_with_llm_summary_e2e(
         ), "Distance for LLM summary should be small"
 
         # Verify the mock LLM was called
-        assert len(mock_llm_client.calls) > 0, "Mock LLM client was not called"
-        assert mock_llm_client.calls[0]["method_name"] == "generate_response"
+        assert len(mock_llm_client._calls) > 0, "Mock LLM client was not called"
+        assert mock_llm_client._calls[0]["method_name"] == "generate_response"
         assert (
-            mock_llm_client.calls[0]["kwargs"]["tools"][0]["function"]["name"]
+            mock_llm_client._calls[0]["kwargs"]["tools"][0]["function"]["name"]
             == "extract_summary"
         )
 
