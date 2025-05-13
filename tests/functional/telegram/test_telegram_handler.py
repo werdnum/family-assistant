@@ -23,7 +23,7 @@ from telegram.ext import ContextTypes
 from family_assistant.llm import LLMOutput
 
 # Import mock LLM helpers
-from tests.mocks.mock_llm import Rule, get_last_message_text
+from tests.mocks.mock_llm import MatcherArgs, Rule, get_last_message_text
 
 # Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
@@ -96,8 +96,6 @@ async def test_simple_text_message(
     # Define rules for the RuleBasedMockLLMClient for this specific test
     def matcher_hello(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools") # Not used by this specific matcher
-        # tool_choice = kwargs.get("tool_choice") # Not used by this specific matcher
         last_text = get_last_message_text(messages)
         logger.debug(f"Matcher_hello checking: '{last_text}' against '{user_text}'")
         return last_text == user_text
@@ -202,8 +200,6 @@ async def test_add_note_tool_usage(
     # Rule 1: Match Add Note Request -> Respond with Tool Call
     def add_note_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools")
-        # tool_choice = kwargs.get("tool_choice")
         last_text = get_last_message_text(messages).lower()
         # Basic check, adjust if needed for more robustness
         return (
@@ -232,8 +228,6 @@ async def test_add_note_tool_usage(
     # This matcher looks for a 'tool' role message with the correct tool_call_id
     def tool_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools")
-        # tool_choice = kwargs.get("tool_choice")
         if not messages:
             return False
         # Check previous messages too, as history might be added before tool result

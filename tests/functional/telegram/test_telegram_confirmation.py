@@ -17,7 +17,7 @@ from tests.functional.telegram.test_telegram_handler import (
 )
 
 # Import mock LLM helpers
-from tests.mocks.mock_llm import Rule, get_last_message_text
+from tests.mocks.mock_llm import MatcherArgs, Rule, get_last_message_text
 
 # Import the test fixture and helper functions
 from .conftest import TelegramHandlerTestFixture
@@ -57,8 +57,6 @@ async def test_confirmation_accepted(
     # 1. User asks -> LLM requests sensitive tool
     def request_delete_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools")
-        # tool_choice = kwargs.get("tool_choice")
         return user_text in get_last_message_text(messages)
 
     request_tool_output = LLMOutput(
@@ -86,8 +84,6 @@ async def test_confirmation_accepted(
     # 2. Tool result received -> LLM gives final success message
     def success_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools")
-        # tool_choice = kwargs.get("tool_choice")
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
