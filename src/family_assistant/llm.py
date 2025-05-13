@@ -331,6 +331,143 @@ class LiteLLMClient:
                 status_code=500,
             ) from e
 
+    async def generate_response_from_file_input(
+        self,
+        system_prompt: str,
+        prompt_text: str | None,
+        file_path: str | None,
+        mime_type: str | None,
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+        max_text_length: int | None,
+    ) -> LLMOutput:
+        import base64 # Import here as it's only used in this method
+        import asyncio # For running sync litellm.create_file in thread
+
+        user_content_parts: list[dict[str, Any]] = []
+        actual_prompt_text = prompt_text or "Process the provided file."
+
+        if file_path and mime_type:
+            # Attempt Gemini File API if applicable
+            if self.model.startswith("gemini/"):
+                try:
+                    logger.info(
+                        f"Attempting to upload file to Gemini: {file_path} ({mime_type})"
+                    )
+                    if not os.getenv("GEMINI_API_KEY"):
+                        raise ValueError(
+                            "GEMINI_API_KEY not found in environment for Gemini file upload."
+                        )
+
+                    async with aiofiles.open(file_path, "rb") as f_bytes_io:
+                        file_bytes_content = await f_bytes_io.read()
+
+                    loop = asyncio.get_running_loop()
+                    gemini_file_obj = await loop.run_in_executor(
+                        None,  # Default ThreadPoolExecutor
+                        litellm.create_file,
+                        file_bytes_content,
+                        "user_data",
+                        {"custom_llm_provider": "gemini"},
+                        os.path.basename(file_path), # Pass filename
+                        os.getenv("GEMINI_API_KEY"),
+                    )
+                    logger.info(f"File uploaded to Gemini, ID: {gemini_file_obj.id}")
+                    user_content_parts.append({"type": "text", "text": actual_prompt_text})
+                    user_content_parts.append(
+                        {
+                            "type": "file",
+                            "file": {
+                                "file_id": gemini_file_obj.id,
+                                "filename": os.path.basename(file_path), # Consistent filename
+                                "format": mime_type, # Use provided mime_type
+                            },
+                        }
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to upload file to Gemini or construct message: {e}. Falling back to base64/text.",
+                        exc_info=True,
+                    )
+                    # Ensure user_content_parts is cleared if Gemini upload failed, to trigger fallback
+                    user_content_parts = []
+
+
+            # Fallback or non-Gemini model file handling
+            if not user_content_parts:
+                if mime_type.startswith("image/"):
+                    try:
+                        async with aiofiles.open(file_path, "rb") as f:
+                            image_bytes = await f.read()
+                        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+                        image_url = f"data:{mime_type};base64,{encoded_image}"
+                        user_content_parts.append({"type": "text", "text": actual_prompt_text})
+                        user_content_parts.append(
+                            {"type": "image_url", "image_url": {"url": image_url}}
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to read/encode image {file_path}: {e}", exc_info=True)
+                        user_content_parts.append({"type": "text", "text": actual_prompt_text}) # Fallback to text
+                elif mime_type.startswith("text/"):
+                    try:
+                        async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+                            file_text_content = await f.read()
+                        combined_text = f"{actual_prompt_text}\n\n--- File Content ---\n{file_text_content}"
+                        if max_text_length and len(combined_text) > max_text_length:
+                            logger.info(f"Truncating combined text from {len(combined_text)} to {max_text_length} chars.")
+                            combined_text = combined_text[:max_text_length]
+                        user_content_parts.append({"type": "text", "text": combined_text})
+                    except Exception as e:
+                        logger.error(f"Failed to read text file {file_path}: {e}", exc_info=True)
+                        user_content_parts.append({"type": "text", "text": actual_prompt_text}) # Fallback to text
+                else: # Other file types - attempt generic base64 if model supports it, or just text
+                    logger.warning(
+                        f"File type {mime_type} for {file_path} not specifically handled for image/text. "
+                        "Will attempt to send as base64 encoded file if model supports, or just text prompt."
+                    )
+                    # Generic base64 encoding for "file" type in message (some models might support this)
+                    try:
+                        async with aiofiles.open(file_path, "rb") as f_bytes_io:
+                            file_bytes = await f_bytes_io.read()
+                        encoded_file_data = base64.b64encode(file_bytes).decode("utf-8")
+                        file_data_uri = f"data:{mime_type};base64,{encoded_file_data}"
+
+                        user_content_parts.append({"type": "text", "text": actual_prompt_text})
+                        user_content_parts.append(
+                            {"type": "file", "file": {"file_data": file_data_uri}}
+                        )
+                        logger.info(f"Prepared generic file {file_path} as base64 data URI for LLM.")
+                    except Exception as e:
+                        logger.error(f"Failed to read/encode generic file {file_path} as base64: {e}", exc_info=True)
+                        user_content_parts.append({"type": "text", "text": actual_prompt_text}) # Fallback to text
+
+        elif prompt_text: # Only text prompt provided
+            text_to_send = prompt_text
+            if max_text_length and len(text_to_send) > max_text_length:
+                logger.info(f"Truncating prompt text from {len(text_to_send)} to {max_text_length} chars.")
+                text_to_send = text_to_send[:max_text_length]
+            user_content_parts.append({"type": "text", "text": text_to_send})
+        else:
+            logger.error("LLM generate_response_from_file_input called with no file and no prompt text.")
+            raise ValueError("Cannot generate response with no input (file or text).")
+
+        # Construct the final messages list for the LLM
+        # If user_content_parts contains only one item and it's text, pass it directly as content.
+        # Otherwise, pass the list of parts.
+        final_user_content: str | list[dict[str, Any]]
+        if len(user_content_parts) == 1 and user_content_parts[0]["type"] == "text":
+            final_user_content = user_content_parts[0]["text"]
+        else:
+            final_user_content = user_content_parts
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": final_user_content},
+        ]
+        
+        # Call the existing generate_response method which handles the actual acompletion call
+        return await self.generate_response(messages=messages, tools=tools, tool_choice=tool_choice)
+
 
 class RecordingLLMClient:
     """

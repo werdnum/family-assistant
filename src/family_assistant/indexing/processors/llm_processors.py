@@ -2,6 +2,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+# Removed aiofiles and base64 as file handling is delegated to LLMClient
 from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
 from family_assistant.llm import LLMInterface
 
@@ -54,59 +55,7 @@ class LLMIntelligenceProcessor(ContentProcessor):
     def name(self) -> str:
         return f"LLMIntelligenceProcessor_{self.target_embedding_type}"
 
-    async def _prepare_llm_input_content(
-        self, item: IndexableContent, context: "ToolExecutionContext"  # noqa: ARG002
-    ) -> str | list[dict[str, Any]]:
-        """
-        Prepares the content from an IndexableContent item for the LLM.
-        Handles text directly. File references and image handling are future work.
-        """
-        content_to_process: str | None = None
-
-        if item.content:
-            content_to_process = item.content
-        elif item.ref:
-            # TODO: Implement robust async file reading for item.ref based on mime_type.
-            # This could involve calling other utility functions or services.
-            # For images, this might involve base64 encoding or providing a URL if the LLM supports it.
-            # For PDFs, it might involve prior text extraction if not already done.
-            logger.warning(
-                f"Processor '{self.name}': Item has a 'ref' ({item.ref}) for mime_type '{item.mime_type}'. "
-                "Content extraction from 'ref' is a placeholder. Assuming text content for now if direct content is missing."
-            )
-            # Placeholder: if it's a ref, and we expect text, this part needs to read the file.
-            # For now, we'll rely on item.content primarily.
-            # If item.content is None and item.ref exists, this indicates a missing step or
-            # that this processor is not yet equipped to handle this item.ref type.
-            if item.mime_type and "text" in item.mime_type:
-                logger.error(
-                    f"Processor '{self.name}': Text file reading from ref '{item.ref}' not implemented yet. Content will be empty."
-                )
-            else:
-                logger.warning(
-                    f"Processor '{self.name}': Cannot process non-text ref '{item.ref}' with mime_type '{item.mime_type}' yet."
-                )
-            return ""  # Return empty or raise error if content cannot be prepared
-
-        if not content_to_process:
-            logger.warning(
-                f"Processor '{self.name}': No textual content found for item: {item.embedding_type} from {item.source_processor}"
-            )
-            return ""
-
-        if (
-            self.max_content_length
-            and len(content_to_process) > self.max_content_length
-        ):
-            logger.info(
-                f"Processor '{self.name}': Content for {item.embedding_type} is too long ({len(content_to_process)} chars), "
-                f"truncating to {self.max_content_length} chars."
-            )
-            content_to_process = content_to_process[: self.max_content_length]
-
-        # For now, assuming text content. Multimodal would return a list of dicts.
-        # e.g., [{"type": "text", "text": "Describe this"}, {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}]
-        return content_to_process
+    # _prepare_llm_input_content method is removed as its logic is now in LLMClient
 
     async def process(
         self,
@@ -127,23 +76,28 @@ class LLMIntelligenceProcessor(ContentProcessor):
                 f"Processor '{self.name}': Processing item with embedding_type '{item.embedding_type}' from '{item.source_processor}'."
             )
 
-            llm_input_content = await self._prepare_llm_input_content(item, context)
+            # Extract necessary details from IndexableContent for the LLM client
+            prompt_text: str | None = item.content
+            file_path: str | None = item.ref
+            mime_type: str | None = item.mime_type
 
-            if not llm_input_content:
+            if not prompt_text and not file_path:
                 logger.warning(
-                    f"Processor '{self.name}': Skipping item due to empty prepared content: {item.embedding_type}"
+                    f"Processor '{self.name}': Skipping item {item.embedding_type} as it has no text content and no file reference."
+                )
+                processed_items.append(item)
+                continue
+            
+            if file_path and not mime_type:
+                logger.warning(
+                    f"Processor '{self.name}': Skipping item {item.embedding_type} with file_path '{file_path}' due to missing mime_type."
                 )
                 processed_items.append(item)
                 continue
 
-            system_prompt = self.system_prompt_template
-            # If system_prompt_template needs formatting with item-specific data:
-            # system_prompt = self.system_prompt_template.format(title=original_document.title, ...)
 
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": llm_input_content},
-            ]
+            system_prompt = self.system_prompt_template
+            # Future: system_prompt = self.system_prompt_template.format(title=original_document.title, ...)
 
             tools = [
                 {
@@ -157,18 +111,25 @@ class LLMIntelligenceProcessor(ContentProcessor):
                     },
                 }
             ]
+            tool_choice_for_llm = {
+                "type": "function",
+                "function": {"name": self.tool_name},
+            }
 
             try:
                 logger.debug(
-                    f"Processor '{self.name}': Sending request to LLM. System prompt: '{system_prompt[:100]}...', User content length: {len(str(llm_input_content))}"
+                    f"Processor '{self.name}': Calling LLM client for item type '{item.embedding_type}'. "
+                    f"Prompt text provided: {bool(prompt_text)}. File path provided: {file_path} ({mime_type})."
                 )
-                llm_response = await self.llm_client.generate_response(
-                    messages=messages,
+
+                llm_response = await self.llm_client.generate_response_from_file_input(
+                    system_prompt=system_prompt,
+                    prompt_text=prompt_text,
+                    file_path=file_path,
+                    mime_type=mime_type,
                     tools=tools,
-                    tool_choice={
-                        "type": "function",
-                        "function": {"name": self.tool_name},
-                    },
+                    tool_choice=tool_choice_for_llm,
+                    max_text_length=self.max_content_length,
                 )
 
                 if llm_response.tool_calls:
