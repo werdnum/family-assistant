@@ -94,11 +94,10 @@ async def test_simple_text_message(
     llm_response_text = "Hello TestUser! This is the LLM response."
 
     # Define rules for the RuleBasedMockLLMClient for this specific test
-    def matcher_hello(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def matcher_hello(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        # tools = kwargs.get("tools") # Not used by this specific matcher
+        # tool_choice = kwargs.get("tool_choice") # Not used by this specific matcher
         last_text = get_last_message_text(messages)
         logger.debug(f"Matcher_hello checking: '{last_text}' against '{user_text}'")
         return last_text == user_text
@@ -201,11 +200,10 @@ async def test_add_note_tool_usage(
 
     # --- Mock LLM Rules ---
     # Rule 1: Match Add Note Request -> Respond with Tool Call
-    def add_note_matcher(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def add_note_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        # tools = kwargs.get("tools")
+        # tool_choice = kwargs.get("tool_choice")
         last_text = get_last_message_text(messages).lower()
         # Basic check, adjust if needed for more robustness
         return (
@@ -232,11 +230,10 @@ async def test_add_note_tool_usage(
 
     # Rule 2: Match Tool Result -> Respond with Final Confirmation
     # This matcher looks for a 'tool' role message with the correct tool_call_id
-    def tool_result_matcher(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def tool_result_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        # tools = kwargs.get("tools")
+        # tool_choice = kwargs.get("tool_choice")
         if not messages:
             return False
         # Check previous messages too, as history might be added before tool result
@@ -348,11 +345,8 @@ async def test_tool_result_in_subsequent_history(
     # --- Mock LLM Rules ---
 
     # Turn 1: Add Note
-    def add_note_matcher_t1(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def add_note_matcher_t1(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
         return get_last_message_text(messages).startswith("Add note:")
 
     add_note_tool_call_t1 = LLMOutput(
@@ -372,11 +366,8 @@ async def test_tool_result_in_subsequent_history(
     )
     rule_add_note_request_t1: Rule = (add_note_matcher_t1, add_note_tool_call_t1)
 
-    def tool_result_matcher_t1(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def tool_result_matcher_t1(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
         return any(
             msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id_1
             for msg in messages
@@ -391,11 +382,8 @@ async def test_tool_result_in_subsequent_history(
     )
 
     # Turn 2: Ask about the tool result (this matcher is the key assertion)
-    def ask_result_matcher_t2(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def ask_result_matcher_t2(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
         # Check 1: Is the user asking the right question?
         last_user_msg_correct = get_last_message_text(messages) == user_text_2
         # Check 2: Does the history *before* the last user message contain the tool result from Turn 1?
