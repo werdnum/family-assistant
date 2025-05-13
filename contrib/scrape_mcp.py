@@ -14,28 +14,28 @@ MCP Server providing a tool to scrape web URLs using Playwright's Async API,
 render JavaScript, and return the content as Markdown using MarkItDown.
 """
 
-import asyncio
-import sys
 import argparse
-import logging # Changed
-from typing import Sequence # Removed Dict, Any, Tuple, Optional
+import asyncio
+import logging  # Changed
+import sys
+from collections.abc import Sequence  # Removed Dict, Any, Tuple, Optional
+
 # from urllib.parse import urlparse # No longer needed here
 # import os # No longer needed here
-
 # --- MCP Imports ---
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent, ImageContent
 from mcp.shared.exceptions import McpError
+from mcp.types import ImageContent, TextContent, Tool
 
 # --- Local Project Imports ---
 # Assuming contrib is at the same level as src, or PYTHONPATH is set up
 try:
     from family_assistant.utils.scraping import (
+        DEFAULT_USER_AGENT,  # For standalone mode user agent
         Scraper,
         ScrapeResult,
         check_playwright_is_functional,
-        DEFAULT_USER_AGENT, # For standalone mode user agent
     )
 except ImportError:
     # This allows the script to provide a more helpful error if it's run
@@ -236,7 +236,7 @@ if __name__ == "__main__":
                     print(result.content, end="")  # Print directly to stdout
                 elif result.type == "image":
                     if result.content_bytes is None or result.mime_type is None:
-                        logger.error(f"Error: Scraper returned type image but content_bytes or mime_type is None.")
+                        logger.error("Error: Scraper returned type image but content_bytes or mime_type is None.")
                         sys.exit(1)
                     if args.output_file:
                         try:
@@ -245,7 +245,7 @@ if __name__ == "__main__":
                             logger.info(
                                 f"Image content (MIME: {result.mime_type}, Source: {result.source_description}) saved to {args.output_file}"
                             )
-                        except IOError as e:
+                        except OSError as e:
                             logger.error(
                                 f"Error writing image to file {args.output_file}: {e}"
                             )
