@@ -286,9 +286,7 @@ async def test_multiple_items_processing(
     url_err = "http://example.com/error_page"
 
     scrape_map = {
-        url_md: ScrapeResult(
-            type="markdown", final_url=url_md, content="MD Content"
-        ),
+        url_md: ScrapeResult(type="markdown", final_url=url_md, content="MD Content"),
         url_img: ScrapeResult(
             type="image",
             final_url=url_img,
