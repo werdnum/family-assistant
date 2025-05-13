@@ -686,6 +686,7 @@ async def test_document_indexing_with_llm_summary_e2e(
             "title": "Document for LLM Summary Test",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "metadata": json.dumps({"test_type": "llm_summary"}),
+            "source_uri": "",  # Add missing source_uri
             # No content_parts, we are testing file processing for summary
         }
         logger.info(

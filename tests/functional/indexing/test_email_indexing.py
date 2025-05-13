@@ -162,47 +162,54 @@ async def dump_tables_on_failure(engine: AsyncEngine) -> None:
 @pytest_asyncio.fixture(scope="function")
 async def http_client(
     pg_vector_db_engine: AsyncEngine,  # Ensure DB is setup before app starts
-    monkeypatch: pytest.MonkeyPatch,  # Add monkeypatch fixture
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[httpx.AsyncClient, None]:
     """
     Provides a test client for the FastAPI application, configured with
-    a temporary directory for attachment storage.
+    a temporary directory for attachment storage and a mock embedding generator.
     """
-    # The pg_vector_db_engine fixture already patches storage.base.engine
-    # so the app will use the correct test database.
-
     original_app_state_config_present = hasattr(fastapi_app.state, "config")
     original_app_state_config_value = getattr(fastapi_app.state, "config", None)
+    original_embedding_generator = getattr(
+        fastapi_app.state, "embedding_generator", None
+    )
 
     current_test_config = {}
     if original_app_state_config_present and isinstance(
         original_app_state_config_value, dict
     ):
         current_test_config = original_app_state_config_value.copy()
-    elif original_app_state_config_present:  # It existed but wasn't a dict
+    elif original_app_state_config_present:
         logger.warning(
-            f"app.state.config was present but not a dict ({type(original_app_state_config_value)}). "
-            "Test will overwrite it with a new dict for its duration."
+            f"app.state.config was present but not a dict ({type(original_app_state_config_value)}). Overwriting."
         )
-        # current_test_config remains an empty dict, will be populated below
+
+    # Setup mock embedding generator for the app state
+    mock_embedder_for_fixture = MockEmbeddingGenerator(
+        embedding_map={},
+        model_name=TEST_EMBEDDING_MODEL,
+        dimensions=TEST_EMBEDDING_DIMENSION,
+        default_embedding_behavior="fixed_default",
+        fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
+    )
+    fastapi_app.state.embedding_generator = mock_embedder_for_fixture
+    logger.info(
+        "Test http_client: Set mock_embedding_generator on fastapi_app.state."
+    )
 
     with tempfile.TemporaryDirectory() as temp_attachment_dir:
         logger.info(
             f"Test http_client: Using temporary attachment directory: {temp_attachment_dir}"
         )
-
-        # Set/overwrite specific config values needed for the test
         current_test_config["attachment_storage_path"] = temp_attachment_dir
         current_test_config["mailbox_raw_dir"] = os.path.join(
             temp_attachment_dir, "raw_mailbox_dumps"
         )
         os.makedirs(current_test_config["mailbox_raw_dir"], exist_ok=True)
-
-        logger.info(
-            f"Test http_client: Setting mailbox_raw_dir in app.state.config to: {current_test_config['mailbox_raw_dir']}"
-        )
-        # Apply this config to the app state for the test duration
         fastapi_app.state.config = current_test_config
+        logger.info(
+            f"Test http_client: Set app.state.config with temp paths: {current_test_config}"
+        )
 
         transport = httpx.ASGITransport(app=fastapi_app)
         async with httpx.AsyncClient(
@@ -211,14 +218,18 @@ async def http_client(
             yield client
         logger.info("Test HTTP client closed.")
 
-    # Teardown: Restore original app.state.config
+    # Teardown
     if original_app_state_config_present:
         fastapi_app.state.config = original_app_state_config_value
-    else:
-        # If 'config' was not on app.state originally, remove it
-        if hasattr(fastapi_app.state, "config"):  # Check again
-            delattr(fastapi_app.state, "config")
+    elif hasattr(fastapi_app.state, "config"):
+        delattr(fastapi_app.state, "config")
     logger.info("Test http_client: Restored original app.state.config.")
+
+    if original_embedding_generator is not None:
+        fastapi_app.state.embedding_generator = original_embedding_generator
+    elif hasattr(fastapi_app.state, "embedding_generator"):
+        delattr(fastapi_app.state, "embedding_generator")
+    logger.info("Test http_client: Restored original app.state.embedding_generator.")
 
 
 # --- Helper Function for Test Setup ---
@@ -1411,20 +1422,14 @@ async def test_email_indexing_with_llm_summary_e2e(
     # It's better if the mock_embedder is scoped to the test or easily updatable.
     # Let's assume we can update the one from fastapi_app.state if it's a MockEmbeddingGenerator.
 
-    current_embedder = fastapi_app.state.embedding_generator
-    if not isinstance(current_embedder, MockEmbeddingGenerator):
-        # If not already a mock embedder (e.g. from http_client fixture), create one for this test
-        current_embedder = MockEmbeddingGenerator(
-            embedding_map={},  # Start with empty, add below
-            model_name=TEST_EMBEDDING_MODEL,
-            dimensions=TEST_EMBEDDING_DIMENSION,
-            default_embedding_behavior="fixed_default",
-            fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
-        )
-        fastapi_app.state.embedding_generator = (
-            current_embedder  # Ensure it's on app state
-        )
-
+    # The http_client fixture now ensures fastapi_app.state.embedding_generator is a MockEmbeddingGenerator.
+    current_embedder: MockEmbeddingGenerator = fastapi_app.state.embedding_generator
+    assert isinstance(
+        current_embedder, MockEmbeddingGenerator
+    ), "Embedding generator on app state is not a MockEmbeddingGenerator instance."
+    # Clear any existing map from previous tests using the same fixture instance if scope is wider than function.
+    # For function scope, this is just for safety.
+    current_embedder.embedding_map.clear()
     current_embedder.embedding_map.update(
         {
             json.dumps(
