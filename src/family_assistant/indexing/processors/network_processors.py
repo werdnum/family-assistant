@@ -69,6 +69,9 @@ class WebFetcherProcessor:
         # for static analysis. Using string literals for type hints below.
         from family_assistant.indexing.pipeline import IndexableContent
 
+        output_items: list[IndexableContent] = []
+        items_to_pass_through: list[IndexableContent] = []
+
         for item in current_items:
             if (
                 item.embedding_type in self.config.process_embedding_types
