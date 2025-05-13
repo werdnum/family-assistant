@@ -159,20 +159,40 @@ async def test_llm_processor_with_file_input_summarization(
     )
 
     # 8. Assertions
-    assert len(processed_items) == 1, "Expected one new item to be created"
-    new_item = processed_items[0]
+    assert (
+        len(processed_items) == 2
+    ), f"Expected two items (original + new), got {len(processed_items)}"
 
-    assert new_item.embedding_type == "document_summary_from_file"
-    assert new_item.mime_type == "application/json"
-    assert new_item.content is not None
+    # Check the original item is passed through (should be the first one)
+    original_item_passed = processed_items[0]
+    assert original_item_passed is input_item, "Original item was not passed through"
+
+    # Check the newly created summary item (should be the second one)
+    new_item = processed_items[1]
+    assert (
+        new_item.embedding_type == "document_summary_from_file"
+    ), f"Expected embedding_type 'document_summary_from_file', got '{new_item.embedding_type}'"
+    assert (
+        new_item.source_processor == llm_processor.name
+    ), f"Expected source_processor '{llm_processor.name}', got '{new_item.source_processor}'"
+    assert (
+        new_item.mime_type == "application/json"
+    ), f"Expected mime_type 'application/json', got '{new_item.mime_type}'"
+    assert new_item.content is not None, "Newly created item content should not be None"
     extracted_content_data = json.loads(new_item.content)
-    assert extracted_content_data == expected_extracted_data
-    assert new_item.source_processor == llm_processor.name
+    assert (
+        extracted_content_data == expected_extracted_data
+    ), f"Content mismatch. Expected:\n{json.dumps(expected_extracted_data, indent=2)}\nGot:\n{new_item.content}"
     assert (
         new_item.metadata.get("original_item_embedding_type")
         == "original_document_file"
-    )
-    assert new_item.metadata.get("llm_model_used") == "mock-summarizer-v1"
+    ), "Metadata 'original_item_embedding_type' mismatch"
+    assert (
+        new_item.metadata.get("original_item_source_processor") == "test_setup"
+    ), "Metadata 'original_item_source_processor' mismatch"
+    assert (
+        new_item.metadata.get("llm_model_used") == "mock-summarizer-v1"
+    ), "Metadata 'llm_model_used' mismatch"
 
     # Assert mock LLM was called correctly
     calls = mock_llm_client.get_calls()
