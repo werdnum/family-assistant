@@ -5,7 +5,6 @@ import logging
 
 # Import storage functions for assertion (will use the patched engine)
 import uuid  # Added for turn_id
-from typing import Any  # Added for type hints
 from unittest.mock import MagicMock  # For mocking Application
 
 import pytest
@@ -38,6 +37,7 @@ from family_assistant.tools import (
 
 # Import the rule-based mock
 from tests.mocks.mock_llm import (
+    MatcherArgs,  # Added import
     Rule,
     RuleBasedMockLLMClient,
     get_last_message_text,
@@ -79,11 +79,11 @@ async def test_add_and_retrieve_note_rule_mock(
     # --- Define Rules ---
 
     # Rule 1: Match Add Note Request
-    def add_note_matcher(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def add_note_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        tools = kwargs.get("tools")
+        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
+
         last_text = get_last_message_text(messages).lower()
         return (
             "remember this note" in last_text
@@ -113,11 +113,11 @@ async def test_add_and_retrieve_note_rule_mock(
     add_note_rule: Rule = (add_note_matcher, add_note_response)
 
     # Rule 2: Match Retrieve Note Request
-    def retrieve_note_matcher(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def retrieve_note_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        # tools = kwargs.get("tools") # Not used by this matcher
+        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
+
         last_text = get_last_message_text(messages).lower()
         # NOTE: This simple rule-based mock is stateless.
         # It doesn't know if the note was *actually* added before.

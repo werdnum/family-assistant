@@ -3,7 +3,6 @@ import json
 import logging
 import uuid  # Added for turn_id
 from datetime import datetime, timedelta, timezone
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -75,11 +74,11 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     schedule_tool_call_id = f"call_schedule_{test_run_id}"
 
     # Rule 1: Match request to schedule callback
-    def schedule_matcher(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def schedule_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        tools = kwargs.get("tools")
+        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
+
         last_text = get_last_message_text(messages).lower()
         return (
             "schedule a reminder" in last_text
@@ -108,11 +107,11 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     schedule_rule: Rule = (schedule_matcher, schedule_response)
 
     # Rule 2: Match the system trigger from handle_llm_callback
-    def callback_trigger_matcher(
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
-    ) -> bool:
+    def callback_trigger_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        # tools = kwargs.get("tools") # Not used by this matcher
+        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
+
         # The trigger text from handle_llm_callback is sent as a 'user' role message
         user_message = next((m for m in messages if m.get("role") == "user"), None)
 
