@@ -165,21 +165,19 @@ class RuleBasedMockLLMClient(LLMInterface):
     ) -> dict[str, Any]:
         """
         Mock implementation for formatting a user message with file.
-        It can be made rule-based if complex formatting tests are needed.
-        For now, it constructs a basic message structure.
+        This mock provides a direct, non-rule-based implementation.
         """
-        import os  # Added for os.path.basename
+        import os  # For os.path.basename
 
         actual_kwargs: MatcherArgs = {
             "prompt_text": prompt_text,
             "file_path": file_path,
             "mime_type": mime_type,
             "max_text_length": max_text_length,
+            # No "_method_name_for_matcher" here as this method isn't using the rule system
         }
         self._record_call("format_user_message_with_file", actual_kwargs)
 
-        # Simple mock behavior: combine text and a file placeholder.
-        # More sophisticated mocking could involve rules here too.
         content_parts: list[dict[str, Any]] = []
         final_prompt_text = prompt_text or "Process the provided file."
 
@@ -193,8 +191,6 @@ class RuleBasedMockLLMClient(LLMInterface):
         content_parts.append({"type": "text", "text": final_prompt_text})
 
         if file_path and mime_type:
-            # This mock doesn't actually read the file or base64 encode.
-            # It just simulates the structure an LLM might expect.
             if mime_type.startswith("image/"):
                 content_parts.append(
                     {
