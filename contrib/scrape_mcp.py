@@ -60,11 +60,13 @@ except ImportError:
 # Configure logging for the MCP server script
 logger = logging.getLogger(__name__)
 # Basic configuration, can be enhanced (e.g., to match main app's logging)
-logging.basicConfig(level=logging.INFO, format="MCP_SCRAPER: %(levelname)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="MCP_SCRAPER: %(levelname)s: %(message)s"
+)
 
 
 # --- Async Playwright Check (using imported function) ---
-async def check_playwright_async_wrapper() -> bool: # Renamed to avoid conflict if any
+async def check_playwright_async_wrapper() -> bool:  # Renamed to avoid conflict if any
     """Wraps the imported Playwright check for MCP server context."""
     # The check_playwright_is_functional from utils uses its own logger.
     # We can add MCP-specific logging here if needed.
@@ -82,7 +84,7 @@ async def check_playwright_async_wrapper() -> bool: # Renamed to avoid conflict 
 # --- MCP Server Implementation ---
 async def serve(verify_ssl: bool = True) -> None:
     """Sets up and runs the MCP server for web scraping using the Scraper utility."""
-    server = Server("mcp-web-scraper-async") # Keep a distinct name for the MCP server
+    server = Server("mcp-web-scraper-async")  # Keep a distinct name for the MCP server
     # Use the Scraper from utils
     # The Scraper's __init__ uses its own logger for internal messages.
     # The user_agent for the scraper will be its default or one passed here.
@@ -107,7 +109,9 @@ async def serve(verify_ssl: bool = True) -> None:
                     "properties": {
                         "url": {
                             "type": "string",
-                            "description": "The fully qualified URL to scrape (e.g., 'https://example.com').",
+                            "description": (
+                                "The fully qualified URL to scrape (e.g., 'https://example.com')."
+                            ),
                         }
                     },
                     "required": ["url"],
@@ -136,19 +140,33 @@ async def serve(verify_ssl: bool = True) -> None:
             result: ScrapeResult = await scraper_instance.scrape(url)
 
             if result.type == "markdown":
-                logger.info(f"Successfully converted content to Markdown for: {url} (Source: {result.source_description})")
-                if result.content is None: # Should not happen if type is markdown
-                    raise McpError(f"Scraper returned type markdown but content is None for {url}")
+                logger.info(
+                    f"Successfully converted content to Markdown for: {url} (Source: {result.source_description})"
+                )
+                if result.content is None:  # Should not happen if type is markdown
+                    raise McpError(
+                        f"Scraper returned type markdown but content is None for {url}"
+                    )
                 return [TextContent(type="text", text=result.content)]
             elif result.type == "text":
-                logger.info(f"Successfully retrieved text content (MIME: {result.mime_type}, Source: {result.source_description}) for: {url}")
-                if result.content is None: # Should not happen if type is text
-                    raise McpError(f"Scraper returned type text but content is None for {url}")
+                logger.info(
+                    f"Successfully retrieved text content (MIME: {result.mime_type}, Source: {result.source_description}) for: {url}"
+                )
+                if result.content is None:  # Should not happen if type is text
+                    raise McpError(
+                        f"Scraper returned type text but content is None for {url}"
+                    )
                 return [TextContent(type="text", text=result.content)]
             elif result.type == "image":
-                logger.info(f"Successfully retrieved image content (MIME: {result.mime_type}, Source: {result.source_description}) for: {url}")
-                if result.content_bytes is None or result.mime_type is None: # Should not happen
-                    raise McpError(f"Scraper returned type image but content_bytes or mime_type is None for {url}")
+                logger.info(
+                    f"Successfully retrieved image content (MIME: {result.mime_type}, Source: {result.source_description}) for: {url}"
+                )
+                if (
+                    result.content_bytes is None or result.mime_type is None
+                ):  # Should not happen
+                    raise McpError(
+                        f"Scraper returned type image but content_bytes or mime_type is None for {url}"
+                    )
                 return [
                     ImageContent(
                         type="image",
@@ -158,7 +176,9 @@ async def serve(verify_ssl: bool = True) -> None:
                 ]
             elif result.type == "error":
                 error_message = result.message or "Unknown error during scraping."
-                logger.error(f"Scraping/processing error for {url} (Source: {result.source_description}): {error_message}")
+                logger.error(
+                    f"Scraping/processing error for {url} (Source: {result.source_description}): {error_message}"
+                )
                 raise McpError(error_message)
             else:
                 unknown_error = (
@@ -168,15 +188,19 @@ async def serve(verify_ssl: bool = True) -> None:
                 raise McpError(unknown_error)
 
         except Exception as e:
-            logger.error(f"Error during scraping/conversion for {url}: {e}", exc_info=True)
-            raise McpError(f"Error processing scrape request for {url}: {str(e)}") from e
+            logger.error(
+                f"Error during scraping/conversion for {url}: {e}", exc_info=True
+            )
+            raise McpError(
+                f"Error processing scrape request for {url}: {str(e)}"
+            ) from e
 
     # --- Run the server ---
     options = server.create_initialization_options()
     logger.info("MCP Async Web Scraper Server starting. Checking Playwright...")
 
     # Perform the async check before starting the server loop
-    await check_playwright_async_wrapper() # Use the wrapper
+    await check_playwright_async_wrapper()  # Use the wrapper
 
     logger.info("Waiting for connection...")
     async with stdio_server() as (read_stream, write_stream):
@@ -215,13 +239,16 @@ if __name__ == "__main__":
             # Standalone mode
             async def standalone_scrape() -> None:
                 # Use basicConfig for standalone mode as well, or a more specific logger
-                logging.basicConfig(level=logging.INFO, format="STANDALONE_SCRAPER: %(levelname)s: %(message)s")
+                logging.basicConfig(
+                    level=logging.INFO,
+                    format="STANDALONE_SCRAPER: %(levelname)s: %(message)s",
+                )
                 logger.info(f"Scraping URL: {args.url}")
 
                 # Use the imported Scraper, providing its own default user agent
                 scraper_instance = Scraper(
                     verify_ssl=args.verify_ssl,
-                    user_agent=DEFAULT_USER_AGENT # Or a specific one for standalone
+                    user_agent=DEFAULT_USER_AGENT,  # Or a specific one for standalone
                 )
                 # Perform playwright check for standalone mode as well
                 await check_playwright_async_wrapper()
@@ -229,12 +256,16 @@ if __name__ == "__main__":
 
                 if result.type == "markdown" or result.type == "text":
                     if result.content is None:
-                         logger.error(f"Error: Scraper returned type {result.type} but content is None.")
-                         sys.exit(1)
+                        logger.error(
+                            f"Error: Scraper returned type {result.type} but content is None."
+                        )
+                        sys.exit(1)
                     print(result.content, end="")  # Print directly to stdout
                 elif result.type == "image":
                     if result.content_bytes is None or result.mime_type is None:
-                        logger.error("Error: Scraper returned type image but content_bytes or mime_type is None.")
+                        logger.error(
+                            "Error: Scraper returned type image but content_bytes or mime_type is None."
+                        )
                         sys.exit(1)
                     if args.output_file:
                         try:
