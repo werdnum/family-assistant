@@ -697,13 +697,33 @@ async def main_async(
             "extracted_markdown_content": "content_chunk",  # For markdown from PDFs
         },
     }
+    # Define the target type for LLM-generated summaries
+    llm_summary_target_type = "llm_generated_summary"
     embedding_dispatcher_config = {
-        "embedding_types_to_dispatch": ["title", "summary", "content_chunk"],
+        "embedding_types_to_dispatch": [
+            "title",
+            "summary",  # This might be a manually provided summary or other type
+            "content_chunk",
+            llm_summary_target_type,  # Add LLM summary type for dispatch
+        ],
     }
+
+    # Instantiate the LLM Summary Generator
+    llm_summary_processor = LLMSummaryGeneratorProcessor(
+        llm_client=llm_client,  # Use the existing LLM client
+        input_content_types=[
+            "original_document_file",  # For whole uploaded files
+            "raw_body_text",  # For email bodies
+            "extracted_markdown_content",  # For content from PDFs
+        ],
+        target_embedding_type=llm_summary_target_type,
+        # max_content_length can be configured if needed, e.g., 100000
+    )
 
     indexing_processors = [
         TitleExtractor(),
-        PDFTextExtractor(),  # Add PDFTextExtractor here
+        PDFTextExtractor(),
+        llm_summary_processor,  # Add the summary processor here
         TextChunker(
             chunk_size=text_chunker_config["chunk_size"],
             chunk_overlap=text_chunker_config["chunk_overlap"],
