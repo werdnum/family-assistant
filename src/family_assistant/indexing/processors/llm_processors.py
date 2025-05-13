@@ -202,3 +202,80 @@ class LLMIntelligenceProcessor(ContentProcessor):
                 processed_items.append(item)
 
         return newly_created_items + processed_items
+
+
+# --- Default Summary Generation Configuration ---
+DEFAULT_SUMMARY_SYSTEM_PROMPT_TEMPLATE = """You are an expert at summarizing documents.
+Your task is to provide a concise one or two sentence summary of the document content presented to you.
+The summary should capture the main essence of the document.
+Examples of good summaries:
+- "A receipt for in flight wifi from a united airlines flight 870 from Sydney to San Francisco on 12 May 2025"
+- "a pharmacy receipt from Turramurra pharmacy on 8 November 2024 for Espomeprazole 20mg"
+- "a confirmation from National Australia Bank (NAB) that the interest rate on a mortgage of 25 Terrigal Ave Turramurra has changed. It's dated 15 January 2024"
+
+Please use the 'extract_summary' tool to provide your summary based on the document content.
+"""
+
+DEFAULT_SUMMARY_OUTPUT_SCHEMA = {
+    "type": "object",
+    "description": "Schema for extracting a concise document summary.",
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": (
+                "A concise one or two sentence summary of the document's content."
+            ),
+        }
+    },
+    "required": ["summary"],
+}
+
+
+class LLMSummaryGeneratorProcessor(LLMIntelligenceProcessor):
+    """
+    A specialized LLM processor that generates a concise summary for input content.
+    It uses a predefined system prompt and output schema tailored for summarization.
+    """
+
+    def __init__(
+        self,
+        llm_client: LLMInterface,
+        input_content_types: list[str],
+        target_embedding_type: str = "document_summary",
+        max_content_length: int | None = None,
+        # Allow overriding defaults for advanced use cases, but provide strong defaults
+        system_prompt_template: str = DEFAULT_SUMMARY_SYSTEM_PROMPT_TEMPLATE,
+        output_schema: dict[str, Any] = DEFAULT_SUMMARY_OUTPUT_SCHEMA,
+        tool_name: str = "extract_summary",
+    ) -> None:
+        """
+        Initializes the LLMSummaryGeneratorProcessor.
+
+        Args:
+            llm_client: The LLM client instance.
+            input_content_types: List of embedding_types this processor should act upon
+                                 (e.g., ["original_document_file", "raw_body_text"]).
+            target_embedding_type: The embedding_type for the output summary IndexableContent.
+                                   Defaults to "document_summary".
+            max_content_length: Maximum length for purely textual content to be processed.
+            system_prompt_template: The system prompt template for the LLM.
+            output_schema: The JSON schema for the LLM function call.
+            tool_name: The name for the tool the LLM will call.
+        """
+        super().__init__(
+            llm_client=llm_client,
+            system_prompt_template=system_prompt_template,
+            output_schema=output_schema,
+            target_embedding_type=target_embedding_type,
+            input_content_types=input_content_types,
+            tool_name=tool_name,
+            max_content_length=max_content_length,
+        )
+        logger.info(
+            f"LLMSummaryGeneratorProcessor initialized for target_embedding_type '{target_embedding_type}' on input types: {input_content_types}"
+        )
+
+    @property
+    def name(self) -> str:
+        # Override name to be more specific for this processor type
+        return f"LLMSummaryGeneratorProcessor_{self.target_embedding_type}"
