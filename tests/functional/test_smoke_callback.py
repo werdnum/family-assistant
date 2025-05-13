@@ -32,6 +32,7 @@ from family_assistant.tools import (
 )
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (
+    MatcherArgs,  # Added import
     Rule,
     RuleBasedMockLLMClient,
     get_last_message_text,
