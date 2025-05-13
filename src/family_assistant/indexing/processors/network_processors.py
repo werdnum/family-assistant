@@ -65,10 +65,8 @@ class WebFetcherProcessor:
         """
         Processes IndexableContent items, fetches URLs, and creates new items.
         """
-        output_items: list[IndexableContent] = []
-        items_to_pass_through: list[IndexableContent] = []
-
         # Import IndexableContent here for clarity, though TYPE_CHECKING handles it
+        # for static analysis. Using string literals for type hints below.
         from family_assistant.indexing.pipeline import IndexableContent
 
         for item in current_items:
@@ -116,14 +114,19 @@ class WebFetcherProcessor:
                         suffix = ""
                         if scrape_result.mime_type:
                             # Basic mapping, can be expanded
-                            if "jpeg" in scrape_result.mime_type: suffix = ".jpg"
-                            elif "png" in scrape_result.mime_type: suffix = ".png"
-                            elif "gif" in scrape_result.mime_type: suffix = ".gif"
-                            elif "webp" in scrape_result.mime_type: suffix = ".webp"
-                        if not suffix: # Fallback to URL extension if any
+                            if "jpeg" in scrape_result.mime_type:
+                                suffix = ".jpg"
+                            elif "png" in scrape_result.mime_type:
+                                suffix = ".png"
+                            elif "gif" in scrape_result.mime_type:
+                                suffix = ".gif"
+                            elif "webp" in scrape_result.mime_type:
+                                suffix = ".webp"
+                        if not suffix:  # Fallback to URL extension if any
                             parsed_url_path = urlparse(scrape_result.final_url).path
                             _root, ext = os.path.splitext(parsed_url_path)
-                            if ext: suffix = ext
+                            if ext:
+                                suffix = ext
 
                         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".tmp") as tmp_file:
                             tmp_file.write(scrape_result.content_bytes)
