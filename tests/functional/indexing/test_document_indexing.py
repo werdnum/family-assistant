@@ -908,16 +908,20 @@ async def test_url_indexing_e2e(
     logger.info("\n--- Running URL Indexing E2E Test via API ---")
 
     # --- Arrange: MockScraper ---
-    mock_scraper = MockScraper()
+    # Instantiate ScrapeResult based on lint error feedback
     mock_scrape_result = ScrapeResult(
-        url=TEST_URL_TO_SCRAPE,
-        status_code=200,
-        title=MOCK_URL_TITLE,
-        markdown_content=MOCK_URL_CONTENT_MARKDOWN,
-        mime_type="text/markdown",  # WebFetcherProcessor expects markdown output
-        # binary_content and other fields can be None
+        type="success",  # Required argument
+        final_url=TEST_URL_TO_SCRAPE,  # Required argument
+        mime_type="text/markdown"  # Accepted keyword argument
     )
-    mock_scraper.add_rule(TEST_URL_TO_SCRAPE, mock_scrape_result)
+    # Set other attributes directly, as they were unexpected keyword args in constructor
+    mock_scrape_result.status_code = 200
+    mock_scrape_result.title = MOCK_URL_TITLE
+    mock_scrape_result.markdown_content = MOCK_URL_CONTENT_MARKDOWN
+    # Assuming 'binary_content' is an optional attribute or defaults to None if not set
+
+    # Instantiate MockScraper with url_map
+    mock_scraper = MockScraper(url_map={TEST_URL_TO_SCRAPE: mock_scrape_result})
     logger.info(f"MockScraper configured for URL: {TEST_URL_TO_SCRAPE}")
 
     # --- Arrange: Instantiate Pipeline and Indexer for URL processing ---
