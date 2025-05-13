@@ -94,85 +94,90 @@ class WebFetcherProcessor:
                         "original_url": url_to_fetch,
                         "final_url": scrape_result.final_url,
                         "source_scraper_description": scrape_result.source_description,
-                        "original_item_metadata": item.metadata,
+                        "original_item_metadata": item.metadata, # Persist metadata from the original item
+                        "fetched_title": scrape_result.title, # Add title from scrape result
                     }
 
-                    if scrape_result.type == "markdown" and scrape_result.content:
+                    processed_successfully = False
+                    # Case 1: Explicit Markdown content
+                    if scrape_result.markdown_content and \
+                       (scrape_result.type == "markdown" or \
+                        (scrape_result.type == "success" and scrape_result.mime_type == "text/markdown")):
                         output_items.append(
                             IndexableContent(
-                                content=scrape_result.content,
+                                content=scrape_result.markdown_content,
                                 embedding_type="fetched_content_markdown",
-                                mime_type="text/markdown",
+                                mime_type="text/markdown", # Explicitly markdown
                                 source_processor=self.name,
                                 metadata=common_metadata,
                             )
                         )
-                    elif scrape_result.type == "text" and scrape_result.content:
+                        processed_successfully = True
+                    # Case 2: Explicit Text content
+                    elif scrape_result.text_content and \
+                         (scrape_result.type == "text" or \
+                          (scrape_result.type == "success" and scrape_result.mime_type and \
+                           scrape_result.mime_type.startswith("text/"))):
                         output_items.append(
                             IndexableContent(
-                                content=scrape_result.content,
+                                content=scrape_result.text_content,
                                 embedding_type="fetched_content_text",
                                 mime_type=scrape_result.mime_type or "text/plain",
                                 source_processor=self.name,
                                 metadata=common_metadata,
                             )
                         )
-                    elif scrape_result.type == "image" and scrape_result.content_bytes:
-                        # Determine a sensible suffix for the temp file based on MIME type or URL
+                        processed_successfully = True
+                    # Case 3: Explicit Image/Binary content
+                    elif scrape_result.binary_content and \
+                         (scrape_result.type == "image" or \
+                          (scrape_result.type == "success" and scrape_result.mime_type and \
+                           scrape_result.mime_type.startswith("image/"))):
                         suffix = ""
                         if scrape_result.mime_type:
-                            # Basic mapping, can be expanded
-                            if "jpeg" in scrape_result.mime_type:
-                                suffix = ".jpg"
-                            elif "png" in scrape_result.mime_type:
-                                suffix = ".png"
-                            elif "gif" in scrape_result.mime_type:
-                                suffix = ".gif"
-                            elif "webp" in scrape_result.mime_type:
-                                suffix = ".webp"
-                        if not suffix:  # Fallback to URL extension if any
-                            parsed_url_path = urlparse(scrape_result.final_url).path
-                            _root, ext = os.path.splitext(parsed_url_path)
-                            if ext:
-                                suffix = ext
+                            if "jpeg" in scrape_result.mime_type: suffix = ".jpg"
+                            elif "png" in scrape_result.mime_type: suffix = ".png"
+                            elif "gif" in scrape_result.mime_type: suffix = ".gif"
+                            elif "webp" in scrape_result.mime_type: suffix = ".webp"
+                        if not suffix:
+                            _root, ext = os.path.splitext(urlparse(scrape_result.final_url).path)
+                            if ext: suffix = ext
 
-                        with tempfile.NamedTemporaryFile(
-                            delete=False, suffix=suffix or ".tmp"
-                        ) as tmp_file:
-                            tmp_file.write(scrape_result.content_bytes)
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".tmp") as tmp_file:
+                            tmp_file.write(scrape_result.binary_content)
                             temp_file_path = tmp_file.name
                         self._temp_files.append(temp_file_path)
-                        logger.debug(
-                            f"{self.name}: Stored image from {scrape_result.final_url} to temp file: {temp_file_path}"
-                        )
+                        logger.debug(f"{self.name}: Stored binary content from {scrape_result.final_url} to temp file: {temp_file_path}")
 
                         output_items.append(
                             IndexableContent(
                                 content=None,
                                 ref=temp_file_path,
                                 embedding_type="fetched_content_binary",
-                                mime_type=scrape_result.mime_type
-                                or "application/octet-stream",
+                                mime_type=scrape_result.mime_type or "application/octet-stream",
                                 source_processor=self.name,
                                 metadata={
                                     **common_metadata,
-                                    "original_filename": (
-                                        os.path.basename(
-                                            urlparse(scrape_result.final_url).path
-                                        )
-                                        or f"download{suffix}"
-                                    ),
+                                    "original_filename": (os.path.basename(urlparse(scrape_result.final_url).path) or f"download{suffix}"),
                                 },
                             )
                         )
-                    elif scrape_result.type == "error":
-                        logger.error(
-                            f"{self.name}: Failed to scrape URL '{url_to_fetch}'. Error: {scrape_result.message}"
-                        )
+                        processed_successfully = True
+                    
+                    # Case 4: Scrape resulted in an error
+                    if scrape_result.type == "error":
+                        logger.error(f"{self.name}: Failed to scrape URL '{url_to_fetch}'. Error: {scrape_result.error_message}")
+                        # Do not add to output_items, pass original item through
                         items_to_pass_through.append(item)
-                    else:
+                        processed_successfully = True # Error is a final state for processing this item
+
+                    # Case 5: Unhandled or unexpected result
+                    if not processed_successfully:
                         logger.warning(
-                            f"{self.name}: Unknown or unhandled scrape result type '{scrape_result.type}' for URL '{url_to_fetch}'. Passing original item."
+                            f"{self.name}: Unhandled scrape result for URL '{url_to_fetch}'. "
+                            f"Type: '{scrape_result.type}', Mime: '{scrape_result.mime_type}', "
+                            f"Markdown: {bool(scrape_result.markdown_content)}, Text: {bool(scrape_result.text_content)}, Binary: {bool(scrape_result.binary_content)}. "
+                            "Passing original item."
                         )
                         items_to_pass_through.append(item)
 
