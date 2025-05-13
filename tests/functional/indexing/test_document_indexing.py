@@ -604,9 +604,7 @@ async def test_document_indexing_with_llm_summary_e2e(
             }
         ],
     )
-    mock_llm_client = RuleBasedMockLLMClient(
-        rules=[(summary_matcher, mock_llm_output)]
-    )
+    mock_llm_client = RuleBasedMockLLMClient(rules=[(summary_matcher, mock_llm_output)])
 
     # --- Arrange: Update Mock Embeddings ---
     summary_embedding = (
@@ -630,7 +628,7 @@ async def test_document_indexing_with_llm_summary_e2e(
     # --- Arrange: Instantiate Pipeline with LLM Summary Processor ---
     llm_summary_processor = LLMSummaryGeneratorProcessor(
         llm_client=mock_llm_client,
-        input_content_types=["original_document_file"], # Process the uploaded file
+        input_content_types=["original_document_file"],  # Process the uploaded file
         target_embedding_type=LLM_SUMMARY_TARGET_TYPE,
     )
     dispatch_processor = EmbeddingDispatchProcessor(
@@ -647,7 +645,7 @@ async def test_document_indexing_with_llm_summary_e2e(
     # fastapi_app.state.embedding_generator is set by http_client fixture
     # fastapi_app.state.llm_client needs to be our mock for the summary processor
     original_llm_client = getattr(fastapi_app.state, "llm_client", None)
-    fastapi_app.state.llm_client = mock_llm_client # Inject mock LLM for the test
+    fastapi_app.state.llm_client = mock_llm_client  # Inject mock LLM for the test
 
     worker = TaskWorker(
         processing_service=None,
@@ -678,7 +676,7 @@ async def test_document_indexing_with_llm_summary_e2e(
         api_files_data = {
             "file": (
                 TEST_DOC_FOR_SUMMARY_FILENAME,
-                TEST_DOC_FOR_SUMMARY_CONTENT.encode("utf-8"), # Send content as bytes
+                TEST_DOC_FOR_SUMMARY_CONTENT.encode("utf-8"),  # Send content as bytes
                 "text/plain",
             )
         }
@@ -697,7 +695,9 @@ async def test_document_indexing_with_llm_summary_e2e(
             "/api/documents/upload", data=api_form_data_summary, files=api_files_data
         )
 
-        assert response.status_code == 202, f"API call failed: {response.status_code} - {response.text}"
+        assert (
+            response.status_code == 202
+        ), f"API call failed: {response.status_code} - {response.text}"
         response_data = response.json()
         document_db_id = response_data["document_id"]
 
@@ -706,52 +706,80 @@ async def test_document_indexing_with_llm_summary_e2e(
             await asyncio.sleep(0.2)
             select_task_stmt = (
                 select(tasks_table.c.task_id)
-                .where(tasks_table.c.payload.cast(sqlalchemy.Text).like(f'%"document_id": {document_db_id}%'))
-                .order_by(tasks_table.c.created_at.desc()).limit(1)
+                .where(
+                    tasks_table.c.payload.cast(sqlalchemy.Text).like(
+                        f'%"document_id": {document_db_id}%'
+                    )
+                )
+                .order_by(tasks_table.c.created_at.desc())
+                .limit(1)
             )
             task_info = await db.fetch_one(select_task_stmt)
-            assert task_info is not None, f"Could not find task for doc ID {document_db_id}"
+            assert (
+                task_info is not None
+            ), f"Could not find task for doc ID {document_db_id}"
             indexing_task_id = task_info["task_id"]
 
         # Wait for indexing
         test_new_task_event.set()
-        await wait_for_tasks_to_complete(pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=20.0)
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=20.0
+        )
 
         # --- Assert: Query for the LLM-generated summary ---
         summary_query_results = None
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(f"Querying vectors for LLM summary using text: '{TEST_QUERY_FOR_SUMMARY}'")
+            logger.info(
+                f"Querying vectors for LLM summary using text: '{TEST_QUERY_FOR_SUMMARY}'"
+            )
             summary_query_results = await query_vectors(
                 db,
                 query_embedding=mock_embedding_generator._test_query_summary_embedding,
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
-                filters={"source_id": doc_source_id_summary, "embedding_type": LLM_SUMMARY_TARGET_TYPE},
+                filters={
+                    "source_id": doc_source_id_summary,
+                    "embedding_type": LLM_SUMMARY_TARGET_TYPE,
+                },
             )
 
-        assert summary_query_results is not None, "LLM summary query_vectors returned None"
-        assert len(summary_query_results) > 0, "No results returned from LLM summary vector query"
-        
+        assert (
+            summary_query_results is not None
+        ), "LLM summary query_vectors returned None"
+        assert (
+            len(summary_query_results) > 0
+        ), "No results returned from LLM summary vector query"
+
         found_summary_result = summary_query_results[0]
         logger.info(f"Found LLM summary result: {found_summary_result}")
 
         assert found_summary_result.get("source_id") == doc_source_id_summary
         assert found_summary_result.get("embedding_type") == LLM_SUMMARY_TARGET_TYPE
         # The content stored is the JSON string of the tool call arguments
-        expected_stored_summary_content = json.dumps({"summary": EXPECTED_LLM_SUMMARY}, indent=2)
-        assert found_summary_result.get("embedding_source_content") == expected_stored_summary_content
-        assert found_summary_result.get("distance") < 0.1, "Distance for LLM summary should be small"
+        expected_stored_summary_content = json.dumps(
+            {"summary": EXPECTED_LLM_SUMMARY}, indent=2
+        )
+        assert (
+            found_summary_result.get("embedding_source_content")
+            == expected_stored_summary_content
+        )
+        assert (
+            found_summary_result.get("distance") < 0.1
+        ), "Distance for LLM summary should be small"
 
         # Verify the mock LLM was called
         assert len(mock_llm_client.calls) > 0, "Mock LLM client was not called"
         assert mock_llm_client.calls[0]["method_name"] == "generate_response"
-        assert mock_llm_client.calls[0]["kwargs"]["tools"][0]["function"]["name"] == "extract_summary"
+        assert (
+            mock_llm_client.calls[0]["kwargs"]["tools"][0]["function"]["name"]
+            == "extract_summary"
+        )
 
         logger.info("--- Document Indexing with LLM Summary E2E Test Passed ---")
 
     finally:
         # Cleanup
-        if hasattr(fastapi_app.state, "llm_client"): # Restore original LLM client
+        if hasattr(fastapi_app.state, "llm_client"):  # Restore original LLM client
             if original_llm_client:
                 fastapi_app.state.llm_client = original_llm_client
             else:
@@ -764,17 +792,19 @@ async def test_document_indexing_with_llm_summary_e2e(
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task
-        
+
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id) # type: ignore
+                    await storage.delete_document(db_cleanup, document_db_id)  # type: ignore
             except Exception as e:
                 logger.warning(f"Cleanup error for document {document_db_id}: {e}")
         if indexing_task_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    delete_stmt = tasks_table.delete().where(tasks_table.c.task_id == indexing_task_id)
+                    delete_stmt = tasks_table.delete().where(
+                        tasks_table.c.task_id == indexing_task_id
+                    )
                     await db_cleanup.execute_with_retry(delete_stmt)
             except Exception as e:
                 logger.warning(f"Cleanup error for task {indexing_task_id}: {e}")
