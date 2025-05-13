@@ -406,7 +406,11 @@ async def test_cleanup_temp_files_file_externally_deleted(
     mock_scraper = MockScraper(url_map=scrape_map)
     processor = WebFetcherProcessor(scraper=mock_scraper, config=default_config)
 
-    input_item = IndexableContent(content=url, embedding_type="extracted_link")
+    input_item = IndexableContent(
+        content=url,
+        embedding_type="extracted_link",
+        source_processor="test_source_external_delete",
+    )
     results = await processor.process(
         [input_item], mock_document, input_item, mock_tool_execution_context
     )
