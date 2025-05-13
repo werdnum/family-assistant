@@ -1415,42 +1415,52 @@ async def test_email_indexing_with_llm_summary_e2e(
     if not isinstance(current_embedder, MockEmbeddingGenerator):
         # If not already a mock embedder (e.g. from http_client fixture), create one for this test
         current_embedder = MockEmbeddingGenerator(
-            embedding_map={}, # Start with empty, add below
+            embedding_map={},  # Start with empty, add below
             model_name=TEST_EMBEDDING_MODEL,
             dimensions=TEST_EMBEDDING_DIMENSION,
             default_embedding_behavior="fixed_default",
             fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
         )
-        fastapi_app.state.embedding_generator = current_embedder # Ensure it's on app state
+        fastapi_app.state.embedding_generator = (
+            current_embedder  # Ensure it's on app state
+        )
 
     current_embedder.embedding_map.update(
         {
-            json.dumps({"summary": EXPECTED_LLM_SUMMARY_EMAIL}, indent=2): email_summary_embedding,
+            json.dumps(
+                {"summary": EXPECTED_LLM_SUMMARY_EMAIL}, indent=2
+            ): email_summary_embedding,
             TEST_QUERY_FOR_EMAIL_SUMMARY: query_email_summary_embedding,
         }
     )
     # Store for assertion
     current_embedder._test_query_email_summary_embedding = query_email_summary_embedding
 
-
     # --- Arrange: Indexing Pipeline with LLM Summary Processor ---
     llm_summary_processor_email = LLMSummaryGeneratorProcessor(
         llm_client=mock_llm_client_email,
-        input_content_types=["raw_body_text"], # Process email body
+        input_content_types=["raw_body_text"],  # Process email body
         target_embedding_type=EMAIL_LLM_SUMMARY_TARGET_TYPE,
     )
     # Use existing processors from other tests if suitable, or define new ones
-    title_extractor = TitleExtractor() # Assuming title is still extracted
-    text_chunker = TextChunker(chunk_size=500, chunk_overlap=50) # For email body if needed
+    title_extractor = TitleExtractor()  # Assuming title is still extracted
+    text_chunker = TextChunker(
+        chunk_size=500, chunk_overlap=50
+    )  # For email body if needed
     embedding_dispatcher_email = EmbeddingDispatchProcessor(
         embedding_types_to_dispatch=[
-            "title_chunk", # Or just "title" if not chunked
+            "title_chunk",  # Or just "title" if not chunked
             "raw_body_text_chunk",
-            EMAIL_LLM_SUMMARY_TARGET_TYPE, # Dispatch the summary
+            EMAIL_LLM_SUMMARY_TARGET_TYPE,  # Dispatch the summary
         ],
     )
     test_pipeline_email_summary = IndexingPipeline(
-        processors=[title_extractor, text_chunker, llm_summary_processor_email, embedding_dispatcher_email],
+        processors=[
+            title_extractor,
+            text_chunker,
+            llm_summary_processor_email,
+            embedding_dispatcher_email,
+        ],
         config={},
     )
     set_indexing_dependencies(pipeline=test_pipeline_email_summary)
@@ -1462,13 +1472,15 @@ async def test_email_indexing_with_llm_summary_e2e(
 
     worker_email_summary = TaskWorker(
         processing_service=None,
-        application=fastapi_app, # For state access
-        embedding_generator=current_embedder, # Use the updated embedder
+        application=fastapi_app,  # For state access
+        embedding_generator=current_embedder,  # Use the updated embedder
         calendar_config={},
         timezone_str="UTC",
     )
     worker_email_summary.register_task_handler("index_email", handle_index_email)
-    worker_email_summary.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
+    worker_email_summary.register_task_handler(
+        "embed_and_store_batch", handle_embed_and_store_batch
+    )
 
     worker_id = f"test-email-summary-worker-{uuid.uuid4()}"
     logger.info(f"Starting email summary worker: {worker_id}")  # Use worker_id
@@ -1483,11 +1495,13 @@ async def test_email_indexing_with_llm_summary_e2e(
         # --- Act: Ingest Email via API ---
         email_msg_id_summary = f"<email_summary_test_{uuid.uuid4()}@example.com>"
         form_data_email_summary = TEST_EMAIL_FORM_DATA.copy()
-        form_data_email_summary.update({
-            "subject": "Email for LLM Summary Test",
-            "stripped-text": TEST_EMAIL_BODY_FOR_SUMMARY,
-            "Message-Id": email_msg_id_summary,
-        })
+        form_data_email_summary.update(
+            {
+                "subject": "Email for LLM Summary Test",
+                "stripped-text": TEST_EMAIL_BODY_FOR_SUMMARY,
+                "Message-Id": email_msg_id_summary,
+            }
+        )
 
         email_db_id = await _ingest_and_index_email(
             http_client=http_client,
@@ -1499,31 +1513,55 @@ async def test_email_indexing_with_llm_summary_e2e(
         # --- Assert: Query for the LLM-generated summary ---
         email_summary_query_results = None
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(f"Querying vectors for email LLM summary using text: '{TEST_QUERY_FOR_EMAIL_SUMMARY}'")
+            logger.info(
+                f"Querying vectors for email LLM summary using text: '{TEST_QUERY_FOR_EMAIL_SUMMARY}'"
+            )
             email_summary_query_results = await query_vectors(
                 db,
                 query_embedding=current_embedder._test_query_email_summary_embedding,
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
-                filters={"source_id": email_msg_id_summary, "embedding_type": EMAIL_LLM_SUMMARY_TARGET_TYPE},
+                filters={
+                    "source_id": email_msg_id_summary,
+                    "embedding_type": EMAIL_LLM_SUMMARY_TARGET_TYPE,
+                },
             )
 
-        assert email_summary_query_results is not None, "Email LLM summary query_vectors returned None"
-        assert len(email_summary_query_results) > 0, "No results from email LLM summary vector query"
-        
+        assert (
+            email_summary_query_results is not None
+        ), "Email LLM summary query_vectors returned None"
+        assert (
+            len(email_summary_query_results) > 0
+        ), "No results from email LLM summary vector query"
+
         found_email_summary_result = email_summary_query_results[0]
         logger.info(f"Found email LLM summary result: {found_email_summary_result}")
 
         assert found_email_summary_result.get("source_id") == email_msg_id_summary
-        assert found_email_summary_result.get("embedding_type") == EMAIL_LLM_SUMMARY_TARGET_TYPE
-        expected_stored_email_summary_content = json.dumps({"summary": EXPECTED_LLM_SUMMARY_EMAIL}, indent=2)
-        assert found_email_summary_result.get("embedding_source_content") == expected_stored_email_summary_content
-        assert found_email_summary_result.get("distance") < 0.1, "Distance for email LLM summary should be small"
+        assert (
+            found_email_summary_result.get("embedding_type")
+            == EMAIL_LLM_SUMMARY_TARGET_TYPE
+        )
+        expected_stored_email_summary_content = json.dumps(
+            {"summary": EXPECTED_LLM_SUMMARY_EMAIL}, indent=2
+        )
+        assert (
+            found_email_summary_result.get("embedding_source_content")
+            == expected_stored_email_summary_content
+        )
+        assert (
+            found_email_summary_result.get("distance") < 0.1
+        ), "Distance for email LLM summary should be small"
 
         # Verify mock LLM was called
-        assert len(mock_llm_client_email.calls) > 0, "Mock LLM client for email summary was not called"
+        assert (
+            len(mock_llm_client_email.calls) > 0
+        ), "Mock LLM client for email summary was not called"
         assert mock_llm_client_email.calls[0]["method_name"] == "generate_response"
-        assert mock_llm_client_email.calls[0]["kwargs"]["tools"][0]["function"]["name"] == "extract_summary"
+        assert (
+            mock_llm_client_email.calls[0]["kwargs"]["tools"][0]["function"]["name"]
+            == "extract_summary"
+        )
 
         logger.info("--- Email Indexing with LLM Summary E2E Test Passed ---")
 
@@ -1534,10 +1572,12 @@ async def test_email_indexing_with_llm_summary_e2e(
         raise
     finally:
         # Cleanup
-        if test_failed and email_db_id: # Conditionally dump if test failed and email was ingested
+        if (
+            test_failed and email_db_id
+        ):  # Conditionally dump if test failed and email was ingested
             logger.info("Dumping tables due to test failure...")
             await dump_tables_on_failure(pg_vector_db_engine)
-        if hasattr(fastapi_app.state, "llm_client"): # Restore original LLM client
+        if hasattr(fastapi_app.state, "llm_client"):  # Restore original LLM client
             if original_llm_client:
                 fastapi_app.state.llm_client = original_llm_client
             else:
@@ -1550,7 +1590,7 @@ async def test_email_indexing_with_llm_summary_e2e(
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task
-        
+
         # Email cleanup is handled by the _ingest_and_index_email helper if it fails,
         # but successful runs might leave data. For test isolation, explicit cleanup is good.
         # However, the current structure doesn't easily return the task_id for email cleanup here.
@@ -1561,6 +1601,8 @@ async def test_email_indexing_with_llm_summary_e2e(
                     # The previous cleanup logic for email_db_id was incorrect and has been removed.
                     # Email documents are linked via source_id (Message-ID) to the documents table.
                     # A more robust cleanup would involve finding the document by source_id and deleting it.
-                    logger.warning(f"Partial cleanup for email_db_id {email_db_id}. Corresponding document in 'documents' table (if any) was not deleted. Manual check advised.")
+                    logger.warning(
+                        f"Partial cleanup for email_db_id {email_db_id}. Corresponding document in 'documents' table (if any) was not deleted. Manual check advised."
+                    )
             except Exception as e:
                 logger.warning(f"Cleanup error for email {email_db_id}: {e}")
