@@ -675,7 +675,9 @@ async def test_document_indexing_with_llm_summary_e2e(
         api_files_data = {
             "upload_file": (
                 TEST_DOC_FOR_SUMMARY_FILENAME,
-                TEST_DOC_FOR_SUMMARY_CONTENT.encode("utf-8"),  # Provide raw bytes directly
+                TEST_DOC_FOR_SUMMARY_CONTENT.encode(
+                    "utf-8"
+                ),  # Provide raw bytes directly
                 "text/plain",
             )
         }
