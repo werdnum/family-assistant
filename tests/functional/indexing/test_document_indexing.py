@@ -686,21 +686,32 @@ async def test_document_indexing_with_llm_summary_e2e(
             TEST_QUERY_FOR_SUMMARY: query_summary_embedding,
             # Add mappings for URL content
             EXPECTED_URL_CHUNK_0_CONTENT: (
-                np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.5
-            ).tolist(),
+                (
+                    np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.5
+                ).tolist()
+            ),
             EXPECTED_URL_CHUNK_1_CONTENT: (
-                np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.6
-            ).tolist(),
-            TEST_QUERY_FOR_URL_CONTENT: ( # Closer to chunk 1
-                np.array(mock_embedding_generator.embedding_map[EXPECTED_URL_CHUNK_1_CONTENT])
-                + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
-            ).tolist(),
+                (
+                    np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.6
+                ).tolist()
+            ),
+            TEST_QUERY_FOR_URL_CONTENT: (
+                (  # Closer to chunk 1
+                    np.array(
+                        mock_embedding_generator.embedding_map[
+                            EXPECTED_URL_CHUNK_1_CONTENT
+                        ]
+                    )
+                    + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
+                ).tolist()
+            ),
         }
     )
     # Store for assertion
     mock_embedding_generator._test_query_summary_embedding = query_summary_embedding
-    mock_embedding_generator._test_query_url_content_embedding = mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT]
-
+    mock_embedding_generator._test_query_url_content_embedding = (
+        mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT]
+    )
 
     # --- Arrange: Instantiate Pipeline with LLM Summary Processor ---
     llm_summary_processor = LLMSummaryGeneratorProcessor(
@@ -903,7 +914,7 @@ async def test_url_indexing_e2e(
         status_code=200,
         title=MOCK_URL_TITLE,
         markdown_content=MOCK_URL_CONTENT_MARKDOWN,
-        mime_type="text/markdown", # WebFetcherProcessor expects markdown output
+        mime_type="text/markdown",  # WebFetcherProcessor expects markdown output
         # binary_content and other fields can be None
     )
     mock_scraper.add_rule(TEST_URL_TO_SCRAPE, mock_scrape_result)
@@ -920,12 +931,12 @@ async def test_url_indexing_e2e(
     # and potentially 'title' if we add a TitleExtractor for fetched content.
     # For now, just dispatching chunks.
     url_dispatch_processor = EmbeddingDispatchProcessor(
-        {"content_chunk"}, # Dispatch chunks from fetched content
+        {"content_chunk"},  # Dispatch chunks from fetched content
     )
 
     url_indexing_pipeline = IndexingPipeline(
         processors=[web_fetcher_processor, text_chunker, url_dispatch_processor],
-        config={}, # No specific pipeline config needed for this test
+        config={},  # No specific pipeline config needed for this test
     )
     document_indexer_for_url = DocumentIndexer(pipeline=url_indexing_pipeline)
     logger.info("DocumentIndexer for URL initialized with specific pipeline.")
@@ -934,14 +945,14 @@ async def test_url_indexing_e2e(
     # fastapi_app.state.embedding_generator is set by http_client fixture
     worker = TaskWorker(
         processing_service=None,
-        application=fastapi_app, # For app.state access
+        application=fastapi_app,  # For app.state access
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
     )
     worker.register_task_handler(
         "process_uploaded_document",
-        document_indexer_for_url.process_document, # Use the URL-specific indexer
+        document_indexer_for_url.process_document,  # Use the URL-specific indexer
     )
     worker.register_task_handler(
         "embed_and_store_batch",
@@ -963,16 +974,18 @@ async def test_url_indexing_e2e(
         api_form_data_url = {
             "source_type": "url_test_upload",
             "source_id": url_doc_source_id,
-            "title": "Test URL Ingestion: " + MOCK_URL_TITLE, # Title for the document record
-            "url": TEST_URL_TO_SCRAPE, # Provide the URL to be scraped
+            "title": (
+                "Test URL Ingestion: " + MOCK_URL_TITLE
+            ),  # Title for the document record
+            "url": TEST_URL_TO_SCRAPE,  # Provide the URL to be scraped
             "created_at": datetime.now(timezone.utc).isoformat(),
             "metadata": json.dumps({"test_type": "url_indexing"}),
-            "source_uri": TEST_URL_TO_SCRAPE, # Canonical URI is the URL itself
+            "source_uri": TEST_URL_TO_SCRAPE,  # Canonical URI is the URL itself
         }
-        logger.info(
-            f"Calling POST /api/documents/upload for URL: {TEST_URL_TO_SCRAPE}"
+        logger.info(f"Calling POST /api/documents/upload for URL: {TEST_URL_TO_SCRAPE}")
+        response = await http_client.post(
+            "/api/documents/upload", data=api_form_data_url
         )
-        response = await http_client.post("/api/documents/upload", data=api_form_data_url)
 
         assert (
             response.status_code == 202
@@ -983,7 +996,7 @@ async def test_url_indexing_e2e(
 
         # Fetch task ID
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            await asyncio.sleep(0.2) # Give task time to appear
+            await asyncio.sleep(0.2)  # Give task time to appear
             select_task_stmt = (
                 select(tasks_table.c.task_id)
                 .where(
@@ -1005,11 +1018,15 @@ async def test_url_indexing_e2e(
 
         # Wait for indexing task and subsequent embedding tasks to complete
         test_new_task_event.set()
-        logger.info(f"Waiting for task {indexing_task_id} (and children) to complete...")
+        logger.info(
+            f"Waiting for task {indexing_task_id} (and children) to complete..."
+        )
         await wait_for_tasks_to_complete(
             pg_vector_db_engine,
-            task_ids={indexing_task_id}, # This task will spawn embed_and_store_batch tasks
-            timeout_seconds=25.0, # Allow a bit more time for multi-stage processing
+            task_ids={
+                indexing_task_id
+            },  # This task will spawn embed_and_store_batch tasks
+            timeout_seconds=25.0,  # Allow a bit more time for multi-stage processing
         )
         logger.info(f"Task {indexing_task_id} (and children) reported as complete.")
 
@@ -1024,8 +1041,12 @@ async def test_url_indexing_e2e(
                 query_embedding=mock_embedding_generator._test_query_url_content_embedding,
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
-                filters={"source_id": url_doc_source_id}, # Filter by the document's source_id
-                embedding_type_filter=["content_chunk"], # Expecting chunks from TextChunker
+                filters={
+                    "source_id": url_doc_source_id
+                },  # Filter by the document's source_id
+                embedding_type_filter=[
+                    "content_chunk"
+                ],  # Expecting chunks from TextChunker
             )
 
         assert (
@@ -1034,7 +1055,9 @@ async def test_url_indexing_e2e(
         assert (
             len(url_content_query_results) > 0
         ), "No results returned from URL content vector query"
-        logger.info(f"URL content query returned {len(url_content_query_results)} result(s).")
+        logger.info(
+            f"URL content query returned {len(url_content_query_results)} result(s)."
+        )
 
         # We expect two chunks from MOCK_URL_CONTENT_MARKDOWN
         # Check if both expected chunks are present in the results for this document_id
@@ -1042,16 +1065,18 @@ async def test_url_indexing_e2e(
         found_chunk_1 = False
         for result in url_content_query_results:
             if result.get("source_id") != url_doc_source_id:
-                continue # Should be filtered by query, but double check
+                continue  # Should be filtered by query, but double check
 
             assert result.get("embedding_type") == "content_chunk"
             assert "distance" in result
-            assert result["distance"] < 0.1 # Expect close match for relevant query
+            assert result["distance"] < 0.1  # Expect close match for relevant query
 
             # Check metadata from WebFetcherProcessor
             embedding_doc_meta = result.get("embedding_doc_metadata", {})
             assert embedding_doc_meta.get("source_url") == TEST_URL_TO_SCRAPE
-            assert embedding_doc_meta.get("mime_type") == "text/markdown" # From WebFetcher output
+            assert (
+                embedding_doc_meta.get("mime_type") == "text/markdown"
+            )  # From WebFetcher output
             # Title might be in embedding_doc_meta if WebFetcher adds it, or in main doc title
             # For now, WebFetcherProcessor doesn't explicitly add title to chunk metadata.
 
@@ -1062,9 +1087,12 @@ async def test_url_indexing_e2e(
                 found_chunk_1 = True
                 logger.info(f"Found expected URL chunk 1: {result}")
 
-
-        assert found_chunk_0, f"Expected URL chunk 0 not found in query results. Content: {EXPECTED_URL_CHUNK_0_CONTENT}"
-        assert found_chunk_1, f"Expected URL chunk 1 not found in query results. Content: {EXPECTED_URL_CHUNK_1_CONTENT}"
+        assert (
+            found_chunk_0
+        ), f"Expected URL chunk 0 not found in query results. Content: {EXPECTED_URL_CHUNK_0_CONTENT}"
+        assert (
+            found_chunk_1
+        ), f"Expected URL chunk 1 not found in query results. Content: {EXPECTED_URL_CHUNK_1_CONTENT}"
 
         logger.info("--- URL Indexing E2E Test via API Passed ---")
 
@@ -1086,7 +1114,7 @@ async def test_url_indexing_e2e(
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id) # type: ignore
+                    await storage.delete_document(db_cleanup, document_db_id)  # type: ignore
                     logger.info(f"Cleaned up test URL document DB ID {document_db_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test URL document cleanup: {cleanup_err}")
