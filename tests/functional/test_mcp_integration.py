@@ -29,6 +29,7 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 from tests.mocks.mock_llm import (
+    MatcherArgs,  # Added import
     Rule,
     RuleBasedMockLLMClient,
     get_last_message_text,
