@@ -3,7 +3,9 @@ End-to-end functional tests for the email indexing and vector search pipeline.
 """
 
 import asyncio
+import contextlib  # Added
 import io  # Added for BytesIO
+import json  # Added
 import logging
 import os  # Add os import
 import re  # Add re import
@@ -1469,6 +1471,7 @@ async def test_email_indexing_with_llm_summary_e2e(
     worker_email_summary.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-email-summary-worker-{uuid.uuid4()}"
+    logger.info(f"Starting email summary worker: {worker_id}")  # Use worker_id
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker_email_summary.run(test_new_task_event))
@@ -1527,11 +1530,13 @@ async def test_email_indexing_with_llm_summary_e2e(
     except Exception as e:
         test_failed = True
         logger.error(f"Test failed: {e}", exc_info=True)
-        if email_db_id: # Dump tables if test failed after ingestion
-             await dump_tables_on_failure(pg_vector_db_engine)
+        # No need to dump here, will be handled in finally if test_failed is True
         raise
     finally:
         # Cleanup
+        if test_failed and email_db_id: # Conditionally dump if test failed and email was ingested
+            logger.info("Dumping tables due to test failure...")
+            await dump_tables_on_failure(pg_vector_db_engine)
         if hasattr(fastapi_app.state, "llm_client"): # Restore original LLM client
             if original_llm_client:
                 fastapi_app.state.llm_client = original_llm_client
@@ -1543,8 +1548,8 @@ async def test_email_indexing_with_llm_summary_e2e(
             await asyncio.wait_for(worker_task, timeout=5.0)
         except asyncio.TimeoutError:
             worker_task.cancel()
-            try: await worker_task
-            except asyncio.CancelledError: pass
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
         
         # Email cleanup is handled by the _ingest_and_index_email helper if it fails,
         # but successful runs might leave data. For test isolation, explicit cleanup is good.
@@ -1552,15 +1557,16 @@ async def test_email_indexing_with_llm_summary_e2e(
         # The email_db_id is available.
         if email_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                async with DatabaseContext(engine=pg_vector_db_engine) as _db_cleanup:
                     # Delete document record (which cascades to embeddings)
-                    from family_assistant.storage.vector import (
-                        documents_table,  # Direct import for delete
-                    )
-                    delete_doc_stmt = documents_table.delete().where(documents_table.c.id == email_db_id) # Assuming email_db_id is the doc id
-                    # This is incorrect, email_db_id is from received_emails, not documents table.
-                    # Need to find the document by source_id (message_id)
-                    # For now, this cleanup might be incomplete or needs adjustment.
-                    logger.warning(f"Partial cleanup for email_db_id {email_db_id}, full document cleanup might be needed.")
+                    # from family_assistant.storage.vector import (
+                    #     documents_table,  # Direct import for delete
+                    # )
+                    # delete_doc_stmt = documents_table.delete().where(documents_table.c.id == email_db_id) # Assuming email_db_id is the doc id
+                    # # This is incorrect, email_db_id is from received_emails, not documents table.
+                    # # Need to find the document by source_id (message_id)
+                    # # For now, this cleanup might be incomplete or needs adjustment.
+                    # await _db_cleanup.execute_with_retry(delete_doc_stmt) # Would execute if kept
+                    logger.warning(f"Partial cleanup for email_db_id {email_db_id}, full document cleanup might be needed. Manual check advised.")
             except Exception as e:
                 logger.warning(f"Cleanup error for email {email_db_id}: {e}")

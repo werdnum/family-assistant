@@ -4,6 +4,7 @@ simulating the flow initiated by the /api/documents/upload endpoint.
 """
 
 import asyncio
+import contextlib  # Added
 import json
 import logging
 import tempfile  # Add tempfile import
@@ -663,6 +664,7 @@ async def test_document_indexing_with_llm_summary_e2e(
     )
 
     worker_id = f"test-doc-summary-worker-{uuid.uuid4()}"
+    logger.info(f"Starting document summary worker: {worker_id}")  # Use worker_id
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
@@ -760,8 +762,8 @@ async def test_document_indexing_with_llm_summary_e2e(
             await asyncio.wait_for(worker_task, timeout=5.0)
         except asyncio.TimeoutError:
             worker_task.cancel()
-            try: await worker_task
-            except asyncio.CancelledError: pass
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
         
         if document_db_id:
             try:
