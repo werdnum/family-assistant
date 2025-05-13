@@ -58,9 +58,9 @@ class WebFetcherProcessor:
     async def process(
         self,
         current_items: list["IndexableContent"],
-        original_document: "Document", # Passed for context, not directly used yet
-        initial_content_ref: "IndexableContent", # Passed for context
-        context: "ToolExecutionContext", # Passed for context
+        original_document: "Document",  # Passed for context, not directly used yet
+        initial_content_ref: "IndexableContent",  # Passed for context
+        context: "ToolExecutionContext",  # Passed for context
     ) -> list["IndexableContent"]:
         """
         Processes IndexableContent items, fetches URLs, and creates new items.
@@ -76,15 +76,20 @@ class WebFetcherProcessor:
             if (
                 item.embedding_type in self.config.process_embedding_types
                 and isinstance(item.content, str)
-                and (item.content.startswith("http://") or item.content.startswith("https://"))
+                and (
+                    item.content.startswith("http://")
+                    or item.content.startswith("https://")
+                )
             ):
                 url_to_fetch = item.content
                 logger.info(
                     f"{self.name}: Attempting to fetch URL '{url_to_fetch}' (original item type: {item.embedding_type})."
                 )
                 try:
-                    scrape_result: ScrapeResult = await self.scraper.scrape(url_to_fetch)
-                    
+                    scrape_result: ScrapeResult = await self.scraper.scrape(
+                        url_to_fetch
+                    )
+
                     common_metadata = {
                         "original_url": url_to_fetch,
                         "final_url": scrape_result.final_url,
@@ -131,22 +136,32 @@ class WebFetcherProcessor:
                             if ext:
                                 suffix = ext
 
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".tmp") as tmp_file:
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=suffix or ".tmp"
+                        ) as tmp_file:
                             tmp_file.write(scrape_result.content_bytes)
                             temp_file_path = tmp_file.name
                         self._temp_files.append(temp_file_path)
-                        logger.debug(f"{self.name}: Stored image from {scrape_result.final_url} to temp file: {temp_file_path}")
+                        logger.debug(
+                            f"{self.name}: Stored image from {scrape_result.final_url} to temp file: {temp_file_path}"
+                        )
 
                         output_items.append(
                             IndexableContent(
                                 content=None,
                                 ref=temp_file_path,
                                 embedding_type="fetched_content_binary",
-                                mime_type=scrape_result.mime_type or "application/octet-stream",
+                                mime_type=scrape_result.mime_type
+                                or "application/octet-stream",
                                 source_processor=self.name,
                                 metadata={
                                     **common_metadata,
-                                    "original_filename": os.path.basename(urlparse(scrape_result.final_url).path) or f"download{suffix}"
+                                    "original_filename": (
+                                        os.path.basename(
+                                            urlparse(scrape_result.final_url).path
+                                        )
+                                        or f"download{suffix}"
+                                    ),
                                 },
                             )
                         )
@@ -154,7 +169,7 @@ class WebFetcherProcessor:
                         logger.error(
                             f"{self.name}: Failed to scrape URL '{url_to_fetch}'. Error: {scrape_result.message}"
                         )
-                        items_to_pass_through.append(item) 
+                        items_to_pass_through.append(item)
                     else:
                         logger.warning(
                             f"{self.name}: Unknown or unhandled scrape result type '{scrape_result.type}' for URL '{url_to_fetch}'. Passing original item."
@@ -169,7 +184,7 @@ class WebFetcherProcessor:
                     items_to_pass_through.append(item)
             else:
                 items_to_pass_through.append(item)
-        
+
         return output_items + items_to_pass_through
 
     def cleanup_temp_files(self) -> None:
@@ -180,21 +195,29 @@ class WebFetcherProcessor:
         if not self._temp_files:
             logger.debug(f"{self.name}: No temporary files to clean up.")
             return
-            
-        logger.info(f"{self.name}: Cleaning up {len(self._temp_files)} temporary files.")
+
+        logger.info(
+            f"{self.name}: Cleaning up {len(self._temp_files)} temporary files."
+        )
         cleaned_count = 0
         for f_path in self._temp_files:
             try:
                 if os.path.exists(f_path):
                     os.remove(f_path)
                     logger.debug(f"{self.name}: Removed temporary file: {f_path}")
-                    cleaned_count +=1
+                    cleaned_count += 1
                 else:
-                    logger.warning(f"{self.name}: Temporary file not found for cleanup: {f_path}")
+                    logger.warning(
+                        f"{self.name}: Temporary file not found for cleanup: {f_path}"
+                    )
             except OSError as e:
-                logger.error(f"{self.name}: Error removing temporary file {f_path}: {e}")
-        
-        logger.info(f"{self.name}: Cleaned up {cleaned_count}/{len(self._temp_files)} temporary files.")
+                logger.error(
+                    f"{self.name}: Error removing temporary file {f_path}: {e}"
+                )
+
+        logger.info(
+            f"{self.name}: Cleaned up {cleaned_count}/{len(self._temp_files)} temporary files."
+        )
         self._temp_files.clear()
 
     def __del__(self) -> None:
