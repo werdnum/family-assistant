@@ -341,8 +341,8 @@ class LiteLLMClient:
         tool_choice: str | None,
         max_text_length: int | None,
     ) -> LLMOutput:
-        import base64 # Import here as it's only used in this method
-        import asyncio # For running sync litellm.create_file in thread
+        import asyncio  # For running sync litellm.create_file in thread
+        import base64  # Import here as it's only used in this method
 
         user_content_parts: list[dict[str, Any]] = []
         actual_prompt_text = prompt_text or "Process the provided file."
@@ -369,18 +369,22 @@ class LiteLLMClient:
                         file_bytes_content,
                         "user_data",
                         {"custom_llm_provider": "gemini"},
-                        os.path.basename(file_path), # Pass filename
+                        os.path.basename(file_path),  # Pass filename
                         os.getenv("GEMINI_API_KEY"),
                     )
                     logger.info(f"File uploaded to Gemini, ID: {gemini_file_obj.id}")
-                    user_content_parts.append({"type": "text", "text": actual_prompt_text})
+                    user_content_parts.append(
+                        {"type": "text", "text": actual_prompt_text}
+                    )
                     user_content_parts.append(
                         {
                             "type": "file",
                             "file": {
                                 "file_id": gemini_file_obj.id,
-                                "filename": os.path.basename(file_path), # Consistent filename
-                                "format": mime_type, # Use provided mime_type
+                                "filename": os.path.basename(
+                                    file_path
+                                ),  # Consistent filename
+                                "format": mime_type,  # Use provided mime_type
                             },
                         }
                     )
@@ -392,7 +396,6 @@ class LiteLLMClient:
                     # Ensure user_content_parts is cleared if Gemini upload failed, to trigger fallback
                     user_content_parts = []
 
-
             # Fallback or non-Gemini model file handling
             if not user_content_parts:
                 if mime_type.startswith("image/"):
@@ -401,26 +404,41 @@ class LiteLLMClient:
                             image_bytes = await f.read()
                         encoded_image = base64.b64encode(image_bytes).decode("utf-8")
                         image_url = f"data:{mime_type};base64,{encoded_image}"
-                        user_content_parts.append({"type": "text", "text": actual_prompt_text})
+                        user_content_parts.append(
+                            {"type": "text", "text": actual_prompt_text}
+                        )
                         user_content_parts.append(
                             {"type": "image_url", "image_url": {"url": image_url}}
                         )
                     except Exception as e:
-                        logger.error(f"Failed to read/encode image {file_path}: {e}", exc_info=True)
-                        user_content_parts.append({"type": "text", "text": actual_prompt_text}) # Fallback to text
+                        logger.error(
+                            f"Failed to read/encode image {file_path}: {e}",
+                            exc_info=True,
+                        )
+                        user_content_parts.append(
+                            {"type": "text", "text": actual_prompt_text}
+                        )  # Fallback to text
                 elif mime_type.startswith("text/"):
                     try:
-                        async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+                        async with aiofiles.open(file_path, encoding="utf-8") as f:
                             file_text_content = await f.read()
                         combined_text = f"{actual_prompt_text}\n\n--- File Content ---\n{file_text_content}"
                         if max_text_length and len(combined_text) > max_text_length:
-                            logger.info(f"Truncating combined text from {len(combined_text)} to {max_text_length} chars.")
+                            logger.info(
+                                f"Truncating combined text from {len(combined_text)} to {max_text_length} chars."
+                            )
                             combined_text = combined_text[:max_text_length]
-                        user_content_parts.append({"type": "text", "text": combined_text})
+                        user_content_parts.append(
+                            {"type": "text", "text": combined_text}
+                        )
                     except Exception as e:
-                        logger.error(f"Failed to read text file {file_path}: {e}", exc_info=True)
-                        user_content_parts.append({"type": "text", "text": actual_prompt_text}) # Fallback to text
-                else: # Other file types - attempt generic base64 if model supports it, or just text
+                        logger.error(
+                            f"Failed to read text file {file_path}: {e}", exc_info=True
+                        )
+                        user_content_parts.append(
+                            {"type": "text", "text": actual_prompt_text}
+                        )  # Fallback to text
+                else:  # Other file types - attempt generic base64 if model supports it, or just text
                     logger.warning(
                         f"File type {mime_type} for {file_path} not specifically handled for image/text. "
                         "Will attempt to send as base64 encoded file if model supports, or just text prompt."
@@ -432,23 +450,36 @@ class LiteLLMClient:
                         encoded_file_data = base64.b64encode(file_bytes).decode("utf-8")
                         file_data_uri = f"data:{mime_type};base64,{encoded_file_data}"
 
-                        user_content_parts.append({"type": "text", "text": actual_prompt_text})
+                        user_content_parts.append(
+                            {"type": "text", "text": actual_prompt_text}
+                        )
                         user_content_parts.append(
                             {"type": "file", "file": {"file_data": file_data_uri}}
                         )
-                        logger.info(f"Prepared generic file {file_path} as base64 data URI for LLM.")
+                        logger.info(
+                            f"Prepared generic file {file_path} as base64 data URI for LLM."
+                        )
                     except Exception as e:
-                        logger.error(f"Failed to read/encode generic file {file_path} as base64: {e}", exc_info=True)
-                        user_content_parts.append({"type": "text", "text": actual_prompt_text}) # Fallback to text
+                        logger.error(
+                            f"Failed to read/encode generic file {file_path} as base64: {e}",
+                            exc_info=True,
+                        )
+                        user_content_parts.append(
+                            {"type": "text", "text": actual_prompt_text}
+                        )  # Fallback to text
 
-        elif prompt_text: # Only text prompt provided
+        elif prompt_text:  # Only text prompt provided
             text_to_send = prompt_text
             if max_text_length and len(text_to_send) > max_text_length:
-                logger.info(f"Truncating prompt text from {len(text_to_send)} to {max_text_length} chars.")
+                logger.info(
+                    f"Truncating prompt text from {len(text_to_send)} to {max_text_length} chars."
+                )
                 text_to_send = text_to_send[:max_text_length]
             user_content_parts.append({"type": "text", "text": text_to_send})
         else:
-            logger.error("LLM generate_response_from_file_input called with no file and no prompt text.")
+            logger.error(
+                "LLM generate_response_from_file_input called with no file and no prompt text."
+            )
             raise ValueError("Cannot generate response with no input (file or text).")
 
         # Construct the final messages list for the LLM
@@ -459,14 +490,16 @@ class LiteLLMClient:
             final_user_content = user_content_parts[0]["text"]
         else:
             final_user_content = user_content_parts
-        
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": final_user_content},
         ]
-        
+
         # Call the existing generate_response method which handles the actual acompletion call
-        return await self.generate_response(messages=messages, tools=tools, tool_choice=tool_choice)
+        return await self.generate_response(
+            messages=messages, tools=tools, tool_choice=tool_choice
+        )
 
 
 class RecordingLLMClient:
@@ -514,11 +547,12 @@ class RecordingLLMClient:
             await self._record_interaction(input_data, output_data)
             return output_data
         except Exception as e:
-            logger.error(f"Error in RecordingLLMClient.generate_response: {e}", exc_info=True)
+            logger.error(
+                f"Error in RecordingLLMClient.generate_response: {e}", exc_info=True
+            )
             # Optionally record the error state as well, or just re-raise
             # For now, just re-raise to ensure error propagation.
             raise
-
 
     async def generate_response_from_file_input(
         self,
@@ -554,7 +588,10 @@ class RecordingLLMClient:
             await self._record_interaction(input_data, output_data)
             return output_data
         except Exception as e:
-            logger.error(f"Error in RecordingLLMClient.generate_response_from_file_input: {e}", exc_info=True)
+            logger.error(
+                f"Error in RecordingLLMClient.generate_response_from_file_input: {e}",
+                exc_info=True,
+            )
             raise
 
     async def _record_interaction(
@@ -689,11 +726,9 @@ class PlaybackLLMClient:
         }
         return await self._find_and_playback(current_input_args)
 
-    async def _find_and_playback(
-        self, current_input_args: dict[str, Any]
-    ) -> LLMOutput:
+    async def _find_and_playback(self, current_input_args: dict[str, Any]) -> LLMOutput:
         logger.debug(
-            f"PlaybackLLMClient attempting to find match for input args: {json.dumps(current_input_args, indent=2, default=str)[:500]}..." # Added default=str
+            f"PlaybackLLMClient attempting to find match for input args: {json.dumps(current_input_args, indent=2, default=str)[:500]}..."  # Added default=str
         )
         for record in self.recorded_interactions:
             # Compare based on the 'input' key which now contains the method and its specific args
@@ -704,20 +739,24 @@ class PlaybackLLMClient:
                 matched_output = LLMOutput(
                     content=output_data.get("content"),
                     tool_calls=output_data.get("tool_calls"),
-                    reasoning_info=output_data.get("reasoning_info"), # Ensure reasoning_info is also played back
+                    reasoning_info=output_data.get(
+                        "reasoning_info"
+                    ),  # Ensure reasoning_info is also played back
                 )
                 logger.debug(
                     f"Playing back matched response. Content: {bool(matched_output.content)}. Tool Calls: {len(matched_output.tool_calls) if matched_output.tool_calls else 0}"
                 )
                 return matched_output
-        
+
         # If no match is found after checking all records
         logger.error(
             f"PlaybackLLMClient: No matching interaction found in {self.recording_path} for the provided input args."
         )
         # Log the input that failed to match for debugging
         try:
-            failed_input_str = json.dumps(current_input_args, indent=2, default=str) # Added default=str
+            failed_input_str = json.dumps(
+                current_input_args, indent=2, default=str
+            )  # Added default=str
         except Exception:
             failed_input_str = str(
                 current_input_args
