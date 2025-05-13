@@ -82,7 +82,6 @@ async def test_add_and_retrieve_note_rule_mock(
     def add_note_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         tools = kwargs.get("tools")
-        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
 
         last_text = get_last_message_text(messages).lower()
         return (
@@ -115,8 +114,6 @@ async def test_add_and_retrieve_note_rule_mock(
     # Rule 2: Match Retrieve Note Request
     def retrieve_note_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # tools = kwargs.get("tools") # Not used by this matcher
-        # tool_choice = kwargs.get("tool_choice") # Not used by this matcher
 
         last_text = get_last_message_text(messages).lower()
         # NOTE: This simple rule-based mock is stateless.
