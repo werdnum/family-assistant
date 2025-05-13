@@ -159,7 +159,7 @@ class RuleBasedMockLLMClient(LLMInterface):
         It can be made rule-based if complex formatting tests are needed.
         For now, it constructs a basic message structure.
         """
-        import os # Added for os.path.basename
+        import os  # Added for os.path.basename
 
         actual_kwargs: MatcherArgs = {
             "prompt_text": prompt_text,
@@ -174,9 +174,13 @@ class RuleBasedMockLLMClient(LLMInterface):
         content_parts: list[dict[str, Any]] = []
         final_prompt_text = prompt_text or "Process the provided file."
 
-        if max_text_length and file_path is None and len(final_prompt_text) > max_text_length:
+        if (
+            max_text_length
+            and file_path is None
+            and len(final_prompt_text) > max_text_length
+        ):
             final_prompt_text = final_prompt_text[:max_text_length]
-        
+
         content_parts.append({"type": "text", "text": final_prompt_text})
 
         if file_path and mime_type:
@@ -186,27 +190,31 @@ class RuleBasedMockLLMClient(LLMInterface):
                 content_parts.append(
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,mock_image_data_for_{os.path.basename(file_path)}"},
+                        "image_url": {
+                            "url": (
+                                f"data:{mime_type};base64,mock_image_data_for_{os.path.basename(file_path)}"
+                            )
+                        },
                     }
                 )
-            else: # Generic file
-                 content_parts.append(
+            else:  # Generic file
+                content_parts.append(
                     {
-                        "type": "file_placeholder", # Custom type for mock
+                        "type": "file_placeholder",  # Custom type for mock
                         "file_reference": {
                             "file_path": file_path,
                             "mime_type": mime_type,
                             "description": "This is a mock file reference.",
-                         }
+                        },
                     }
                 )
-        
+
         user_message_content: str | list[dict[str, Any]]
         if len(content_parts) == 1 and content_parts[0]["type"] == "text":
             user_message_content = content_parts[0]["text"]
         else:
             user_message_content = content_parts
-            
+
         return {"role": "user", "content": user_message_content}
 
 
