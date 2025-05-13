@@ -31,6 +31,9 @@ from family_assistant.indexing.pipeline import IndexingPipeline  # Added
 from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )  # Added
+from family_assistant.indexing.processors.llm_processors import (  # Added
+    LLMSummaryGeneratorProcessor,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import (
@@ -38,12 +41,19 @@ from family_assistant.storage.vector import (
 )  # Import Document protocol
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext  # Added
+
+# Import the FastAPI app directly from app_creator
 from family_assistant.web.app_creator import (
-    app as fastapi_app,  # Import the FastAPI app directly from app_creator
+    app as fastapi_app,
 )
 
 # Import test helpers
 from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.mock_llm import (  # Added
+    LLMOutput,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +87,13 @@ TEST_DOC_METADATA_JSON = json.dumps(TEST_DOC_METADATA)
 
 TEST_QUERY_TEXT_SEMANTIC = "information about solar panels"  # Relevant to chunk 1
 TEST_QUERY_TEXT_KEYWORD = "Phoenix proposal"  # Relevant to title and chunk 0
+
+# --- Test Data for LLM Summary E2E ---
+TEST_DOC_FOR_SUMMARY_FILENAME = "summary_test_doc.txt"
+TEST_DOC_FOR_SUMMARY_CONTENT = "This is a test document about advanced quantum computing and its implications for future technology. It explores qubits, superposition, and entanglement, discussing potential breakthroughs in medicine and materials science."
+EXPECTED_LLM_SUMMARY = "A document discussing quantum computing, qubits, superposition, entanglement, and potential impacts on medicine and materials science."
+TEST_QUERY_FOR_SUMMARY = "quantum computing breakthroughs"
+LLM_SUMMARY_TARGET_TYPE = "llm_generated_summary"
 
 
 # --- Fixtures ---
@@ -542,3 +559,220 @@ async def test_document_indexing_and_query_e2e(
                     logger.info(f"Cleaned up test task ID {indexing_task_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test task cleanup: {cleanup_err}")
+
+
+@pytest.mark.asyncio
+async def test_document_indexing_with_llm_summary_e2e(
+    pg_vector_db_engine: AsyncEngine,
+    http_client: httpx.AsyncClient,
+    mock_embedding_generator: MockEmbeddingGenerator,
+) -> None:
+    """
+    End-to-end test for document ingestion with LLM-generated summary.
+    """
+    logger.info("\n--- Running Document Indexing with LLM Summary E2E Test ---")
+
+    # --- Arrange: Mock LLM Client for Summarization ---
+    def summary_matcher(method_name: str, actual_kwargs: dict[str, Any]) -> bool:
+        if method_name != "generate_response":
+            return False
+        # Check if the LLM is being asked to extract a summary
+        if not (
+            actual_kwargs.get("tools")
+            and actual_kwargs["tools"][0].get("function", {}).get("name")
+            == "extract_summary"
+        ):
+            return False
+        # Check if the input content is present in messages
+        # The LLMSummaryGeneratorProcessor uses format_user_message_with_file,
+        # which might put content in various parts of the message structure.
+        # For a text file, it's likely in messages[1]['content'] or messages[1]['content'][0]['text']
+        user_message_content = get_last_message_text(actual_kwargs["messages"])
+        return TEST_DOC_FOR_SUMMARY_CONTENT in user_message_content
+
+    mock_llm_output = LLMOutput(
+        content=None,
+        tool_calls=[
+            {
+                "id": "call_summary_123",
+                "type": "function",
+                "function": {
+                    "name": "extract_summary",
+                    "arguments": json.dumps({"summary": EXPECTED_LLM_SUMMARY}),
+                },
+            }
+        ],
+    )
+    mock_llm_client = RuleBasedMockLLMClient(
+        rules=[(summary_matcher, mock_llm_output)]
+    )
+
+    # --- Arrange: Update Mock Embeddings ---
+    summary_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.4
+    ).tolist()
+    query_summary_embedding = (
+        np.array(summary_embedding)
+        + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
+    ).tolist()
+
+    mock_embedding_generator.embedding_map.update(
+        {
+            # The LLMSummaryProcessor outputs the JSON string of the extracted data
+            json.dumps({"summary": EXPECTED_LLM_SUMMARY}, indent=2): summary_embedding,
+            TEST_QUERY_FOR_SUMMARY: query_summary_embedding,
+        }
+    )
+    # Store for assertion
+    mock_embedding_generator._test_query_summary_embedding = query_summary_embedding
+
+    # --- Arrange: Instantiate Pipeline with LLM Summary Processor ---
+    llm_summary_processor = LLMSummaryGeneratorProcessor(
+        llm_client=mock_llm_client,
+        input_content_types=["original_document_file"], # Process the uploaded file
+        target_embedding_type=LLM_SUMMARY_TARGET_TYPE,
+    )
+    dispatch_processor = EmbeddingDispatchProcessor(
+        # Ensure the summary type is dispatched
+        {"title", "content_chunk", LLM_SUMMARY_TARGET_TYPE},
+    )
+    indexing_pipeline_with_summary = IndexingPipeline(
+        processors=[llm_summary_processor, dispatch_processor],
+        config={},
+    )
+    document_indexer = DocumentIndexer(pipeline=indexing_pipeline_with_summary)
+
+    # --- Arrange: Task Worker Setup ---
+    # fastapi_app.state.embedding_generator is set by http_client fixture
+    # fastapi_app.state.llm_client needs to be our mock for the summary processor
+    original_llm_client = getattr(fastapi_app.state, "llm_client", None)
+    fastapi_app.state.llm_client = mock_llm_client # Inject mock LLM for the test
+
+    worker = TaskWorker(
+        processing_service=None,
+        application=fastapi_app,
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=mock_embedding_generator,
+    )
+    worker.register_task_handler(
+        "process_uploaded_document", document_indexer.process_document
+    )
+    worker.register_task_handler(
+        "embed_and_store_batch", _helper_handle_embed_and_store_batch
+    )
+
+    worker_id = f"test-doc-summary-worker-{uuid.uuid4()}"
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(test_new_task_event))
+    await asyncio.sleep(0.1)
+
+    document_db_id = None
+    indexing_task_id = None
+    try:
+        # --- Act: Call API to Ingest Document (as a file upload) ---
+        doc_source_id_summary = f"test-doc-summary-{uuid.uuid4()}"
+        api_files_data = {
+            "file": (
+                TEST_DOC_FOR_SUMMARY_FILENAME,
+                TEST_DOC_FOR_SUMMARY_CONTENT.encode("utf-8"), # Send content as bytes
+                "text/plain",
+            )
+        }
+        api_form_data_summary = {
+            "source_type": "summary_test_upload",
+            "source_id": doc_source_id_summary,
+            "title": "Document for LLM Summary Test",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": json.dumps({"test_type": "llm_summary"}),
+            # No content_parts, we are testing file processing for summary
+        }
+        logger.info(
+            f"Calling POST /api/documents/upload for LLM summary test, source_id: {doc_source_id_summary}"
+        )
+        response = await http_client.post(
+            "/api/documents/upload", data=api_form_data_summary, files=api_files_data
+        )
+
+        assert response.status_code == 202, f"API call failed: {response.status_code} - {response.text}"
+        response_data = response.json()
+        document_db_id = response_data["document_id"]
+
+        # Fetch task ID
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            await asyncio.sleep(0.2)
+            select_task_stmt = (
+                select(tasks_table.c.task_id)
+                .where(tasks_table.c.payload.cast(sqlalchemy.Text).like(f'%"document_id": {document_db_id}%'))
+                .order_by(tasks_table.c.created_at.desc()).limit(1)
+            )
+            task_info = await db.fetch_one(select_task_stmt)
+            assert task_info is not None, f"Could not find task for doc ID {document_db_id}"
+            indexing_task_id = task_info["task_id"]
+
+        # Wait for indexing
+        test_new_task_event.set()
+        await wait_for_tasks_to_complete(pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=20.0)
+
+        # --- Assert: Query for the LLM-generated summary ---
+        summary_query_results = None
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            logger.info(f"Querying vectors for LLM summary using text: '{TEST_QUERY_FOR_SUMMARY}'")
+            summary_query_results = await query_vectors(
+                db,
+                query_embedding=mock_embedding_generator._test_query_summary_embedding,
+                embedding_model=TEST_EMBEDDING_MODEL,
+                limit=5,
+                filters={"source_id": doc_source_id_summary, "embedding_type": LLM_SUMMARY_TARGET_TYPE},
+            )
+
+        assert summary_query_results is not None, "LLM summary query_vectors returned None"
+        assert len(summary_query_results) > 0, "No results returned from LLM summary vector query"
+        
+        found_summary_result = summary_query_results[0]
+        logger.info(f"Found LLM summary result: {found_summary_result}")
+
+        assert found_summary_result.get("source_id") == doc_source_id_summary
+        assert found_summary_result.get("embedding_type") == LLM_SUMMARY_TARGET_TYPE
+        # The content stored is the JSON string of the tool call arguments
+        expected_stored_summary_content = json.dumps({"summary": EXPECTED_LLM_SUMMARY}, indent=2)
+        assert found_summary_result.get("embedding_source_content") == expected_stored_summary_content
+        assert found_summary_result.get("distance") < 0.1, "Distance for LLM summary should be small"
+
+        # Verify the mock LLM was called
+        assert len(mock_llm_client.calls) > 0, "Mock LLM client was not called"
+        assert mock_llm_client.calls[0]["method_name"] == "generate_response"
+        assert mock_llm_client.calls[0]["kwargs"]["tools"][0]["function"]["name"] == "extract_summary"
+
+        logger.info("--- Document Indexing with LLM Summary E2E Test Passed ---")
+
+    finally:
+        # Cleanup
+        if hasattr(fastapi_app.state, "llm_client"): # Restore original LLM client
+            if original_llm_client:
+                fastapi_app.state.llm_client = original_llm_client
+            else:
+                delattr(fastapi_app.state, "llm_client")
+
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            worker_task.cancel()
+            try: await worker_task
+            except asyncio.CancelledError: pass
+        
+        if document_db_id:
+            try:
+                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    await storage.delete_document(db_cleanup, document_db_id) # type: ignore
+            except Exception as e:
+                logger.warning(f"Cleanup error for document {document_db_id}: {e}")
+        if indexing_task_id:
+            try:
+                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    delete_stmt = tasks_table.delete().where(tasks_table.c.task_id == indexing_task_id)
+                    await db_cleanup.execute_with_retry(delete_stmt)
+            except Exception as e:
+                logger.warning(f"Cleanup error for task {indexing_task_id}: {e}")
