@@ -47,42 +47,52 @@ async def test_llm_processor_with_file_input_summarization(
     def generate_response_matcher(method_name: str, kwargs: MatcherArgs) -> bool:
         if method_name != "generate_response":
             return False
-        
+
         messages = kwargs.get("messages", [])
-        if not messages or len(messages) < 2: # Expect system + user
+        if not messages or len(messages) < 2:  # Expect system + user
             return False
 
         system_message = messages[0]
         user_message = messages[1]
 
         # Check system prompt
-        if system_message.get("role") != "system" or system_message.get("content") != "Extract a concise summary from the provided document.":
+        if (
+            system_message.get("role") != "system"
+            or system_message.get("content")
+            != "Extract a concise summary from the provided document."
+        ):
             return False
 
         # Check user message structure (assuming mock_format_user_message_with_file created this structure)
         if user_message.get("role") != "user":
             return False
-        
+
         content = user_message.get("content")
         if not isinstance(content, list) or len(content) < 2:
-            return False # Expecting text part and file part
+            return False  # Expecting text part and file part
 
         text_part = content[0]
         file_part = content[1]
 
-        if not (text_part.get("type") == "text" and text_part.get("text") == "Please summarize the attached file."):
+        if not (
+            text_part.get("type") == "text"
+            and text_part.get("text") == "Please summarize the attached file."
+        ):
             return False
-        
+
         # Check the mock file placeholder part
-        if not (file_part.get("type") == "file_placeholder" and 
-                file_part.get("file_reference", {}).get("file_path") == str(temp_text_file) and
-                file_part.get("file_reference", {}).get("mime_type") == "text/plain"):
+        if not (
+            file_part.get("type") == "file_placeholder"
+            and file_part.get("file_reference", {}).get("file_path")
+            == str(temp_text_file)
+            and file_part.get("file_reference", {}).get("mime_type") == "text/plain"
+        ):
             return False
-            
+
         # Check tool choice
-        if kwargs.get("tool_choice")["function"]["name"] != tool_name_for_extraction: # type: ignore[index]
+        if kwargs.get("tool_choice")["function"]["name"] != tool_name_for_extraction:  # type: ignore[index]
             return False
-            
+
         logger.debug(f"generate_response_matcher matched with kwargs: {kwargs}")
         return True
 
@@ -167,9 +177,11 @@ async def test_llm_processor_with_file_input_summarization(
 
     # Assert mock LLM was called correctly
     calls = mock_llm_client.get_calls()
-    assert len(calls) == 2 # format_user_message_with_file + generate_response
-    
-    format_call = next(c for c in calls if c["method_name"] == "format_user_message_with_file")
+    assert len(calls) == 2  # format_user_message_with_file + generate_response
+
+    format_call = next(
+        c for c in calls if c["method_name"] == "format_user_message_with_file"
+    )
     generate_call = next(c for c in calls if c["method_name"] == "generate_response")
 
     # Assert call to format_user_message_with_file
@@ -177,12 +189,12 @@ async def test_llm_processor_with_file_input_summarization(
     assert format_call_args.get("file_path") == str(temp_text_file)
     assert format_call_args.get("mime_type") == "text/plain"
     assert format_call_args.get("prompt_text") == "Please summarize the attached file."
-    assert format_call_args.get("max_text_length") is None # As set in processor
+    assert format_call_args.get("max_text_length") is None  # As set in processor
 
     # Assert call to generate_response (already partially checked by matcher)
     generate_call_args = generate_call["kwargs"]
-    assert generate_call_args.get("messages")[0]["role"] == "system" # type: ignore[index]
-    assert generate_call_args.get("messages")[0]["content"] == "Extract a concise summary from the provided document." # type: ignore[index]
+    assert generate_call_args.get("messages")[0]["role"] == "system"  # type: ignore[index]
+    assert generate_call_args.get("messages")[0]["content"] == "Extract a concise summary from the provided document."  # type: ignore[index]
     # User message structure is verified by the matcher.
     assert generate_call_args.get("tools")[0]["function"]["name"] == tool_name_for_extraction  # type: ignore[index]
     assert generate_call_args.get("tools")[0]["function"]["parameters"] == processor_output_schema  # type: ignore[index]
