@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+from _pytest.logging import LogCaptureFixture
 
 from family_assistant.indexing.pipeline import IndexableContent
 from family_assistant.indexing.processors.network_processors import (
@@ -49,7 +50,7 @@ async def test_fetch_markdown_content_success(
     default_config: WebFetcherProcessorConfig,
     mock_document: "Document",
     mock_tool_execution_context: "ToolExecutionContext",
-):
+) -> None:
     """Test successful fetching and processing of Markdown content."""
     url = "http://example.com/markdown"
     scrape_map = {
@@ -87,7 +88,7 @@ async def test_fetch_text_content_success(
     default_config: WebFetcherProcessorConfig,
     mock_document: "Document",
     mock_tool_execution_context: "ToolExecutionContext",
-):
+) -> None:
     """Test successful fetching and processing of plain text content."""
     url = "http://example.com/text"
     scrape_map = {
@@ -122,7 +123,7 @@ async def test_fetch_image_content_success(
     default_config: WebFetcherProcessorConfig,
     mock_document: "Document",
     mock_tool_execution_context: "ToolExecutionContext",
-):
+) -> None:
     """Test successful fetching and storing of image content."""
     url = "http://example.com/image.png"
     image_bytes = b"fake_image_data_png"
@@ -173,7 +174,7 @@ async def test_scraper_error_passes_through_item(
     default_config: WebFetcherProcessorConfig,
     mock_document: "Document",
     mock_tool_execution_context: "ToolExecutionContext",
-):
+) -> None:
     """Test that if scraper returns an error, the original item is passed through."""
     url = "http://example.com/will_error"
     scrape_map = {
@@ -204,7 +205,7 @@ async def test_non_target_embedding_type_passes_through(
     default_config: WebFetcherProcessorConfig,
     mock_document: "Document",
     mock_tool_execution_context: "ToolExecutionContext",
-):
+) -> None:
     """Test that items with non-target embedding_types are passed through."""
     url = "http://example.com/ignored_type"
     # Scraper map can be empty as it shouldn't be called
@@ -228,7 +229,7 @@ async def test_non_url_content_passes_through(
     default_config: WebFetcherProcessorConfig,
     mock_document: "Document",
     mock_tool_execution_context: "ToolExecutionContext",
-):
+) -> None:
     """Test that items with non-URL content are passed through."""
     mock_scraper = MockScraper(url_map={}) # Should not be called
     processor = WebFetcherProcessor(scraper=mock_scraper, config=default_config)
@@ -252,7 +253,7 @@ async def test_empty_input_list(
     default_config: WebFetcherProcessorConfig,
     mock_document: "Document",
     mock_tool_execution_context: "ToolExecutionContext",
-):
+) -> None:
     """Test that an empty list of input items results in an empty list."""
     mock_scraper = MockScraper(url_map={})
     processor = WebFetcherProcessor(scraper=mock_scraper, config=default_config)
@@ -269,7 +270,7 @@ async def test_multiple_items_processing(
     default_config: WebFetcherProcessorConfig,
     mock_document: "Document",
     mock_tool_execution_context: "ToolExecutionContext",
-):
+) -> None:
     """Test processing a mix of items: successful fetch, error, and pass-through."""
     url_md = "http://example.com/markdown"
     url_img = "http://example.com/image.jpg"
@@ -331,7 +332,7 @@ async def test_multiple_items_processing(
 
 
 @pytest.mark.asyncio
-async def test_cleanup_temp_files_no_files(default_config: WebFetcherProcessorConfig):
+async def test_cleanup_temp_files_no_files(default_config: WebFetcherProcessorConfig) -> None:
     """Test cleanup_temp_files when no temporary files were created."""
     mock_scraper = MockScraper(url_map={})
     processor = WebFetcherProcessor(scraper=mock_scraper, config=default_config)
@@ -344,7 +345,11 @@ async def test_cleanup_temp_files_no_files(default_config: WebFetcherProcessorCo
 
 
 @pytest.mark.asyncio
-async def test_cleanup_temp_files_file_externally_deleted(default_config: WebFetcherProcessorConfig, mock_document, mock_tool_execution_context):
+async def test_cleanup_temp_files_file_externally_deleted(
+    default_config: WebFetcherProcessorConfig,
+    mock_document: "Document",
+    mock_tool_execution_context: "ToolExecutionContext",
+) -> None:
     """Test cleanup_temp_files when a tracked file was deleted externally."""
     url = "http://example.com/image.gif"
     scrape_map = {
@@ -370,7 +375,9 @@ async def test_cleanup_temp_files_file_externally_deleted(default_config: WebFet
     assert len(processor._temp_files) == 0 # List should be cleared
 
 
-def test_del_cleanup_fallback(default_config: WebFetcherProcessorConfig, caplog):
+def test_del_cleanup_fallback(
+    default_config: WebFetcherProcessorConfig, caplog: LogCaptureFixture
+) -> None:
     """Test that __del__ attempts cleanup if temp files remain (simulated)."""
     processor = WebFetcherProcessor(scraper=MockScraper({}), config=default_config)
     
