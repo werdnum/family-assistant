@@ -94,7 +94,7 @@ class ScrapeResult:
 
 
 @runtime_checkable
-class ScraperInterface(Protocol):
+class Scraper(Protocol):
     """Interface for web content scrapers."""
 
     async def scrape(self, url: str) -> ScrapeResult:
@@ -108,11 +108,11 @@ class ScraperInterface(Protocol):
         ...
 
 
-class Scraper:
+class PlaywrightScraper:
     """
     Scrapes web content asynchronously using httpx and Playwright,
     and converts HTML to Markdown using MarkItDown.
-    Implements the ScraperInterface.
+    Implements the Scraper protocol.
     """
 
     def __init__(self, verify_ssl: bool = True, user_agent: str | None = None) -> None:
@@ -516,7 +516,7 @@ async def check_playwright_is_functional() -> bool:
 
 class MockScraper:
     """
-    A mock implementation of the ScraperInterface that returns predefined
+    A mock implementation of the Scraper protocol that returns predefined
     ScrapeResult objects based on a URL map.
     """
 
