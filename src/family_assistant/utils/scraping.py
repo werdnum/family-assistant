@@ -9,6 +9,7 @@ import logging
 import os
 from dataclasses import dataclass
 from importlib.metadata import version
+from typing import Protocol, runtime_checkable
 from urllib.parse import urlparse
 
 import httpx
@@ -92,8 +93,27 @@ class ScrapeResult:
     )
 
 
+@runtime_checkable
+class ScraperInterface(Protocol):
+    """Interface for web content scrapers."""
+
+    async def scrape(self, url: str) -> ScrapeResult:
+        """
+        Asynchronously retrieves content from a URL and processes it based on type.
+        Returns a ScrapeResult object.
+
+        Args:
+            url: The URL to scrape.
+        """
+        ...
+
+
 class Scraper:
-    """Scrapes web content asynchronously and converts HTML to Markdown using MarkItDown."""
+    """
+    Scrapes web content asynchronously using httpx and Playwright,
+    and converts HTML to Markdown using MarkItDown.
+    Implements the ScraperInterface.
+    """
 
     def __init__(self, verify_ssl: bool = True, user_agent: str | None = None) -> None:
         """
@@ -492,3 +512,44 @@ async def check_playwright_is_functional() -> bool:
         if browser:
             await browser.close()
             logger.debug("Playwright browser closed after check.")
+
+
+class MockScraper:
+    """
+    A mock implementation of the ScraperInterface that returns predefined
+    ScrapeResult objects based on a URL map.
+    """
+
+    def __init__(self, url_map: dict[str, ScrapeResult]) -> None:
+        """
+        Initializes the MockScraper with a map of URLs to ScrapeResult objects.
+
+        Args:
+            url_map: A dictionary where keys are URLs and values are the
+                     ScrapeResult objects to be returned for those URLs.
+        """
+        self.url_map = url_map
+        logger.info(f"MockScraper initialized with {len(url_map)} URL mappings.")
+
+    async def scrape(self, url: str) -> ScrapeResult:
+        """
+        Returns a predefined ScrapeResult for the given URL if it's in the map.
+        Otherwise, returns an error ScrapeResult.
+        """
+        logger.debug(f"MockScraper attempting to scrape URL: {url}")
+        if url in self.url_map:
+            result = self.url_map[url]
+            logger.info(
+                f"MockScraper found match for URL '{url}'. Returning predefined result: type='{result.type}', final_url='{result.final_url}'"
+            )
+            return result
+        else:
+            logger.warning(
+                f"MockScraper: No predefined result for URL '{url}'. Returning error result."
+            )
+            return ScrapeResult(
+                type="error",
+                final_url=url,
+                message=f"MockScraper: No mock data configured for URL: {url}",
+                source_description="mock-scraper-url-not-found",
+            )
