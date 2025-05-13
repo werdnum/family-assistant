@@ -64,7 +64,6 @@ async def test_fetch_markdown_content_success(
         url: ScrapeResult(
             type="markdown",
             final_url=url,
-            title="Mock Title",
             content="## Hello Markdown",
             mime_type="text/markdown",
             source_description="mock-markdown",
@@ -103,7 +102,6 @@ async def test_fetch_text_content_success(
         url: ScrapeResult(
             type="text",
             final_url=url,
-            title="Mock Title",
             content="Plain text content.",
             mime_type="text/plain",
             source_description="mock-text",
@@ -140,7 +138,6 @@ async def test_fetch_image_content_success(
         url: ScrapeResult(
             type="image",
             final_url=url,
-            title="Mock Title",
             content_bytes=image_bytes,
             mime_type="image/png",
             source_description="mock-image",
@@ -290,12 +287,11 @@ async def test_multiple_items_processing(
 
     scrape_map = {
         url_md: ScrapeResult(
-            type="markdown", final_url=url_md, title="Mock Title", content="MD Content"
+            type="markdown", final_url=url_md, content="MD Content"
         ),
         url_img: ScrapeResult(
             type="image",
             final_url=url_img,
-            title="Mock Title",
             content_bytes=b"img",
             mime_type="image/jpeg",
         ),
@@ -405,7 +401,6 @@ async def test_cleanup_temp_files_file_externally_deleted(
         url: ScrapeResult(
             type="image",
             final_url=url,
-            title="Mock Title",
             content_bytes=b"gif_data",
             mime_type="image/gif",
         )
