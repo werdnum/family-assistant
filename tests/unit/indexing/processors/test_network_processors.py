@@ -298,20 +298,36 @@ async def test_multiple_items_processing(
     mock_scraper = MockScraper(url_map=scrape_map)
     processor = WebFetcherProcessor(scraper=mock_scraper, config=default_config)
 
-    item_md = IndexableContent(content=url_md, embedding_type="extracted_link", source_processor="test_source_md")
-    item_img = IndexableContent(content=url_img, embedding_type="raw_url", source_processor="test_source_img")
-    item_err = IndexableContent(content=url_err, embedding_type="extracted_link", source_processor="test_source_err")
+    item_md = IndexableContent(
+        content=url_md,
+        embedding_type="extracted_link",
+        source_processor="test_source_md",
+    )
+    item_img = IndexableContent(
+        content=url_img, embedding_type="raw_url", source_processor="test_source_img"
+    )
+    item_err = IndexableContent(
+        content=url_err,
+        embedding_type="extracted_link",
+        source_processor="test_source_err",
+    )
     item_pass_type = IndexableContent(
-        content="http://example.com/pass", embedding_type="other_type", source_processor="test_source_pass_type"
+        content="http://example.com/pass",
+        embedding_type="other_type",
+        source_processor="test_source_pass_type",
     )
     item_pass_content = IndexableContent(
-        content="not a url", embedding_type="extracted_link", source_processor="test_source_pass_content"
+        content="not a url",
+        embedding_type="extracted_link",
+        source_processor="test_source_pass_content",
     )
 
     initial_items = [item_md, item_img, item_err, item_pass_type, item_pass_content]
     # Create a mock for initial_content_ref, can be one of the items or a generic one
     mock_initial_ref = IndexableContent(
-        content="initial", embedding_type="initial_type", source_processor="test_initial_ref_source"
+        content="initial",
+        embedding_type="initial_type",
+        source_processor="test_initial_ref_source",
     )
 
     results = await processor.process(
