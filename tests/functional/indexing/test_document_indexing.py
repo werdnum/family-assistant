@@ -673,7 +673,7 @@ async def test_document_indexing_with_llm_summary_e2e(
         # --- Act: Call API to Ingest Document (as a file upload) ---
         doc_source_id_summary = f"test-doc-summary-{uuid.uuid4()}"
         api_files_data = {
-            "upload_file": (
+            "uploaded_file": (
                 TEST_DOC_FOR_SUMMARY_FILENAME,
                 TEST_DOC_FOR_SUMMARY_CONTENT.encode(
                     "utf-8"
