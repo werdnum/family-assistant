@@ -126,9 +126,16 @@ class RuleBasedMockLLMClient(LLMInterface):
         logger.debug(
             f"RuleBasedMockLLM (generate_response) evaluating {len(self.rules)} rules..."
         )
+        # Add method name to kwargs for the matcher, if it needs it.
+        matcher_kwargs_with_method_name = {
+            **actual_kwargs,
+            "_method_name_for_matcher": "generate_response",
+        }
         for i, (matcher, response) in enumerate(self.rules):
             try:
-                if matcher("generate_response", actual_kwargs):
+                if matcher(
+                    matcher_kwargs_with_method_name
+                ):  # Use the new combined kwargs
                     logger.info(
                         f"Rule {i + 1} matched for 'generate_response'. Returning predefined response."
                     )
