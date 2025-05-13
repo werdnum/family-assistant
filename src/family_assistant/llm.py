@@ -576,9 +576,6 @@ class RecordingLLMClient:
 
     async def _write_record_to_file(self, record: dict[str, Any]) -> None:
         """Helper method to write a generic record to the recording file."""
-    ) -> None:
-        # Ensure output_data is serializable (LLMOutput should be)
-        record = {"input": input_data, "output": output_data.__dict__}
         try:
             async with aiofiles.open(
                 self.recording_path, mode="a", encoding="utf-8"
