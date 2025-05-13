@@ -128,7 +128,8 @@ class RuleBasedMockLLMClient(LLMInterface):
         # The matcher directly receives the kwargs for generate_response.
         for i, (matcher, response) in enumerate(self.rules):
             try:
-                if matcher(actual_kwargs):  # Pass actual_kwargs directly
+                # Pass both method_name and actual_kwargs to the matcher
+                if matcher("generate_response", actual_kwargs):
                     logger.info(
                         f"Rule {i + 1} matched for 'generate_response'. Returning predefined response."
                     )
