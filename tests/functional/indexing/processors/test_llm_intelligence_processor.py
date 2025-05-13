@@ -45,10 +45,8 @@ async def test_llm_processor_with_file_input_summarization(
 
     # 1. Define a matcher for the mock LLM's generate_response method
     def generate_response_matcher(kwargs: MatcherArgs) -> bool:
-        # Check if the matcher is being called for the correct method
-        if kwargs.get("_method_name_for_matcher") != "generate_response":
-            return False
-
+        # The matcher now only receives kwargs for generate_response.
+        # The _method_name_for_matcher check is no longer needed.
         messages = kwargs.get("messages", [])
         if not messages or len(messages) < 2:  # Expect system + user
             return False
