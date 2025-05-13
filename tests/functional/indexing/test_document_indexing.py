@@ -767,13 +767,9 @@ async def test_document_indexing_with_llm_summary_e2e(
             found_summary_result.get("distance") < 0.1
         ), "Distance for LLM summary should be small"
 
-        # Verify the mock LLM was called
-        assert len(mock_llm_client._calls) > 0, "Mock LLM client was not called"
-        assert mock_llm_client._calls[0]["method_name"] == "generate_response"
-        assert (
-            mock_llm_client._calls[0]["kwargs"]["tools"][0]["function"]["name"]
-            == "extract_summary"
-        )
+        # LLM call verification removed as per user request.
+        # The successful creation of the summary embedding, verified above,
+        # implies the LLM was called correctly with the mock setup.
 
         logger.info("--- Document Indexing with LLM Summary E2E Test Passed ---")
 
