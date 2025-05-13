@@ -30,7 +30,7 @@ class LLMIntelligenceProcessor(ContentProcessor):
             str
         ],  # List of embedding_types this processor should act upon
         tool_name: str = "extract_information",  # Name for the tool the LLM will call
-        max_content_length: int | None = None, # Applies to purely textual content
+        max_content_length: int | None = None,  # Applies to purely textual content
     ) -> None:
         self.llm_client = llm_client
         self.system_prompt_template = system_prompt_template
@@ -87,14 +87,13 @@ class LLMIntelligenceProcessor(ContentProcessor):
                 )
                 processed_items.append(item)
                 continue
-            
+
             if file_path and not mime_type:
                 logger.warning(
                     f"Processor '{self.name}': Skipping item {item.embedding_type} with file_path '{file_path}' due to missing mime_type."
                 )
                 processed_items.append(item)
                 continue
-
 
             system_prompt = self.system_prompt_template
             # Future: system_prompt = self.system_prompt_template.format(title=original_document.title, ...)
