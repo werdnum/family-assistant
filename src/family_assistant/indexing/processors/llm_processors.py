@@ -117,18 +117,28 @@ class LLMIntelligenceProcessor(ContentProcessor):
 
             try:
                 logger.debug(
-                    f"Processor '{self.name}': Calling LLM client for item type '{item.embedding_type}'. "
+                    f"Processor '{self.name}': Formatting user message for item type '{item.embedding_type}'. "
                     f"Prompt text provided: {bool(prompt_text)}. File path provided: {file_path} ({mime_type})."
                 )
-
-                llm_response = await self.llm_client.generate_response_from_file_input(
-                    system_prompt=system_prompt,
+                user_message = await self.llm_client.format_user_message_with_file(
                     prompt_text=prompt_text,
                     file_path=file_path,
                     mime_type=mime_type,
+                    max_text_length=self.max_content_length,
+                )
+
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    user_message, # Add the formatted user message
+                ]
+
+                logger.debug(
+                    f"Processor '{self.name}': Sending request to LLM. System prompt: '{system_prompt[:100]}...'. User message: {json.dumps(user_message, default=str)[:200]}..."
+                )
+                llm_response = await self.llm_client.generate_response(
+                    messages=messages,
                     tools=tools,
                     tool_choice=tool_choice_for_llm,
-                    max_text_length=self.max_content_length,
                 )
 
                 if llm_response.tool_calls:

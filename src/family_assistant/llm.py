@@ -131,31 +131,26 @@ class LLMInterface(Protocol):
         """
         ...
 
-    async def generate_response_from_file_input(
+    async def format_user_message_with_file(
         self,
-        system_prompt: str,
         prompt_text: str | None,
         file_path: str | None,
         mime_type: str | None,
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
         max_text_length: int | None,
-    ) -> LLMOutput:
+    ) -> dict[str, Any]:
         """
-        Generates a response from the LLM, potentially using a file.
-        The LLM client will decide how to handle the file (e.g., Gemini Files API, base64).
+        Formats a user message, potentially including file content.
+        The client decides how to represent the file (e.g., Gemini Files API ref, base64 data URI).
 
         Args:
-            system_prompt: The system prompt for the LLM.
             prompt_text: The user's textual prompt. Can be None if the primary input is a file.
             file_path: Path to the file to be processed. Can be None.
             mime_type: MIME type of the file. Required if file_path is provided.
-            tools: Optional list of tool definitions.
-            tool_choice: Optional control over tool usage.
-            max_text_length: Optional maximum length for text content truncation.
+            max_text_length: Optional maximum length for text content truncation (applies if no file or text file).
 
         Returns:
-            An LLMOutput object.
+            A dictionary representing a single user message, e.g.,
+            {"role": "user", "content": "..."} or {"role": "user", "content": [...]}.
         """
         ...
 
@@ -603,7 +598,7 @@ class RecordingLLMClient:
             async with aiofiles.open(
                 self.recording_path, mode="a", encoding="utf-8"
             ) as f:
-                await f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                await f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n") # Added default=str
             logger.debug(f"Recorded interaction to {self.recording_path}")
         except Exception as file_err:
             logger.error(
