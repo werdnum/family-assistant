@@ -1428,12 +1428,24 @@ async def test_email_indexing_with_llm_summary_e2e(
     # Clear any existing map from previous tests using the same fixture instance if scope is wider than function.
     # For function scope, this is just for safety.
     current_embedder.embedding_map.clear()
+
+    # Add embeddings for the body and title that will be chunked, and for the summary
+    email_body_for_summary_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.6
+    ).tolist()
+    # The title of the email being summarized is "Email for LLM Summary Test"
+    email_title_for_summary_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.7
+    ).tolist()
+
     current_embedder.embedding_map.update(
         {
             json.dumps(
                 {"summary": EXPECTED_LLM_SUMMARY_EMAIL}, indent=2
             ): email_summary_embedding,
             TEST_QUERY_FOR_EMAIL_SUMMARY: query_email_summary_embedding,
+            TEST_EMAIL_BODY_FOR_SUMMARY: email_body_for_summary_embedding,
+            "Email for LLM Summary Test": email_title_for_summary_embedding,
         }
     )
     # Store for assertion
@@ -1459,10 +1471,10 @@ async def test_email_indexing_with_llm_summary_e2e(
     )
     test_pipeline_email_summary = IndexingPipeline(
         processors=[
-            title_extractor,
-            text_chunker,
-            llm_summary_processor_email,
-            embedding_dispatcher_email,
+            title_extractor,  # Extracts title from email_doc
+            llm_summary_processor_email,  # Generates summary from raw_body_text
+            text_chunker,  # Chunks title and raw_body_text
+            embedding_dispatcher_email,  # Dispatches title_chunk, raw_body_text_chunk, and summary
         ],
         config={},
     )
@@ -1524,10 +1536,8 @@ async def test_email_indexing_with_llm_summary_e2e(
                 query_embedding=current_embedder._test_query_email_summary_embedding,
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
-                filters={
-                    "source_id": email_msg_id_summary,
-                    "embedding_type": EMAIL_LLM_SUMMARY_TARGET_TYPE,
-                },
+                filters={"source_id": email_msg_id_summary},
+                embedding_type_filter=[EMAIL_LLM_SUMMARY_TARGET_TYPE],
             )
 
         assert (

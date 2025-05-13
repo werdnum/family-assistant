@@ -196,12 +196,20 @@ class LLMIntelligenceProcessor(ContentProcessor):
 
             except Exception as e:
                 logger.error(
-                    f"Processor '{self.name}': Error during LLM call or processing response: {e}",
+                    f"Processor '{self.name}': Error during LLM call or processing response for item type '{item.embedding_type}': {e}",
                     exc_info=True,
                 )
-                processed_items.append(item)
+                # Original item is already in output_items if we adopt the new strategy below.
+                # If not, and an error occurs, the original item might be lost if not re-added.
+                # For now, assuming errors mean no new item is generated, original passes.
 
-        return newly_created_items + processed_items
+        # Ensure all original items are passed through, plus any newly created items.
+        # The original `current_items` should be the base for `output_items` if they are always passed.
+        # Let's adjust the logic to explicitly build the output list.
+        final_output_items = list(current_items)  # Start with all original items
+        final_output_items.extend(newly_created_items)  # Add any new items generated
+
+        return final_output_items
 
 
 # --- Default Summary Generation Configuration ---
