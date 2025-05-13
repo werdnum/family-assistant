@@ -574,9 +574,8 @@ async def test_document_indexing_with_llm_summary_e2e(
     logger.info("\n--- Running Document Indexing with LLM Summary E2E Test ---")
 
     # --- Arrange: Mock LLM Client for Summarization ---
-    def summary_matcher(method_name: str, actual_kwargs: dict[str, Any]) -> bool:
-        if method_name != "generate_response":
-            return False
+    def summary_matcher(actual_kwargs: dict[str, Any]) -> bool:
+        # method_name argument removed as it's no longer passed or needed
         # Check if the LLM is being asked to extract a summary
         if not (
             actual_kwargs.get("tools")

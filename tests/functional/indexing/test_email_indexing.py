@@ -1375,9 +1375,8 @@ async def test_email_indexing_with_llm_summary_e2e(
     logger.info("\n--- Running Email Indexing with LLM Summary E2E Test ---")
 
     # --- Arrange: Mock LLM Client for Summarization ---
-    def email_summary_matcher(method_name: str, actual_kwargs: dict[str, Any]) -> bool:
-        if method_name != "generate_response":
-            return False
+    def email_summary_matcher(actual_kwargs: dict[str, Any]) -> bool:
+        # method_name argument removed as it's no longer passed or needed
         if not (
             actual_kwargs.get("tools")
             and actual_kwargs["tools"][0].get("function", {}).get("name")
