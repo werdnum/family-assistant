@@ -1,9 +1,8 @@
 """Unit tests for network_processors.py."""
 
-import asyncio
 import os
 import tempfile
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -405,7 +404,7 @@ def test_del_cleanup_fallback(default_config: WebFetcherProcessorConfig, caplog)
     
     # We can check if the log message from __del__ was emitted.
     assert f"{WebFetcherProcessor(MockScraper({}), default_config).name} instance being deleted" in caplog.text
-    assert f"Attempting cleanup now." in caplog.text
+    assert "Attempting cleanup now." in caplog.text
     
     # And check if the file was actually deleted by the fallback
     if os.path.exists(fake_temp_file_path):
