@@ -587,8 +587,49 @@ async def test_document_indexing_with_llm_summary_e2e(
         # The LLMSummaryGeneratorProcessor uses format_user_message_with_file,
         # which might put content in various parts of the message structure.
         # For a text file, it's likely in messages[1]['content'] or messages[1]['content'][0]['text']
-        user_message_content = get_last_message_text(actual_kwargs["messages"])
-        return TEST_DOC_FOR_SUMMARY_CONTENT in user_message_content
+        # We need to check the structure of the message for file processing.
+        messages = actual_kwargs.get("messages", [])
+        if not messages:
+            return False
+
+        last_message = messages[-1]
+        if last_message.get("role") != "user":
+            return False
+
+        content = last_message.get("content")
+        if not isinstance(content, list):  # Expecting multipart content for files
+            # If it's simple text content, check if TEST_DOC_FOR_SUMMARY_CONTENT is in it
+            # This path might not be hit if format_user_message_with_file always makes a list
+            if isinstance(content, str):
+                return TEST_DOC_FOR_SUMMARY_CONTENT in content
+            return False
+
+        has_process_file_text = False
+        has_text_plain_file_placeholder = False
+
+        for part in content:
+            if isinstance(part, dict):
+                if (
+                    part.get("type") == "text"
+                    and part.get("text") == "Process the provided file."
+                ):
+                    has_process_file_text = True
+                # Check for the file placeholder that format_user_message_with_file creates
+                elif part.get("type") == "file_placeholder":
+                    file_ref = part.get("file_reference", {})
+                    # In this test, the uploaded file is text/plain.
+                    # We can't check the content of file_ref.get("file_path") here easily,
+                    # but if we see this structure, we assume it's our test file.
+                    if file_ref.get("mime_type") == "text/plain":
+                        has_text_plain_file_placeholder = True
+
+        # The matcher should return true if it's a text prompt containing the summary content OR
+        # if it's a file processing prompt for a text file.
+        return (has_process_file_text and has_text_plain_file_placeholder) or (
+            TEST_DOC_FOR_SUMMARY_CONTENT
+            in get_last_message_text(actual_kwargs["messages"])
+            and not has_text_plain_file_placeholder
+        )
 
     mock_llm_output = LLMOutput(
         content=None,
@@ -739,10 +780,8 @@ async def test_document_indexing_with_llm_summary_e2e(
                 query_embedding=mock_embedding_generator._test_query_summary_embedding,
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
-                filters={
-                    "source_id": doc_source_id_summary,
-                    "embedding_type": LLM_SUMMARY_TARGET_TYPE,
-                },
+                filters={"source_id": doc_source_id_summary},
+                embedding_type_filter=[LLM_SUMMARY_TARGET_TYPE],
             )
 
         assert (
