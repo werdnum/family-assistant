@@ -193,9 +193,7 @@ async def http_client(
         fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
     fastapi_app.state.embedding_generator = mock_embedder_for_fixture
-    logger.info(
-        "Test http_client: Set mock_embedding_generator on fastapi_app.state."
-    )
+    logger.info("Test http_client: Set mock_embedding_generator on fastapi_app.state.")
 
     with tempfile.TemporaryDirectory() as temp_attachment_dir:
         logger.info(
