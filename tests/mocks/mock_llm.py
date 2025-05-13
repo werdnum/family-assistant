@@ -147,55 +147,67 @@ class RuleBasedMockLLMClient(LLMInterface):
         )
         return self.default_response
 
-    async def generate_response_from_file_input(
+    async def format_user_message_with_file(
         self,
-        system_prompt: str,
         prompt_text: str | None,
         file_path: str | None,
         mime_type: str | None,
-        tools: list[dict[str, Any]] | None,
-        tool_choice: str | None,
         max_text_length: int | None,
-    ) -> LLMOutput:
+    ) -> dict[str, Any]:
         """
-        Evaluates rules against the input for 'generate_response_from_file_input' and returns the corresponding output.
+        Mock implementation for formatting a user message with file.
+        It can be made rule-based if complex formatting tests are needed.
+        For now, it constructs a basic message structure.
         """
+        import os # Added for os.path.basename
+
         actual_kwargs: MatcherArgs = {
-            "system_prompt": system_prompt,
             "prompt_text": prompt_text,
             "file_path": file_path,
             "mime_type": mime_type,
-            "tools": tools,
-            "tool_choice": tool_choice,
             "max_text_length": max_text_length,
         }
-        self._record_call("generate_response_from_file_input", actual_kwargs)
+        self._record_call("format_user_message_with_file", actual_kwargs)
 
-        logger.debug(
-            f"RuleBasedMockLLM (generate_response_from_file_input) evaluating {len(self.rules)} rules..."
-        )
-        for i, (matcher, response) in enumerate(self.rules):
-            try:
-                if matcher("generate_response_from_file_input", actual_kwargs):
-                    logger.info(
-                        f"Rule {i + 1} matched for 'generate_response_from_file_input'. Returning predefined response."
-                    )
-                    logger.debug(
-                        f" -> Response Content: {bool(response.content)}, Tool Calls: {len(response.tool_calls) if response.tool_calls else 0}"
-                    )
-                    return response
-            except Exception as e:
-                logger.error(
-                    f"Error executing matcher for rule {i + 1} (generate_response_from_file_input): {e}",
-                    exc_info=True,
+        # Simple mock behavior: combine text and a file placeholder.
+        # More sophisticated mocking could involve rules here too.
+        content_parts: list[dict[str, Any]] = []
+        final_prompt_text = prompt_text or "Process the provided file."
+
+        if max_text_length and file_path is None and len(final_prompt_text) > max_text_length:
+            final_prompt_text = final_prompt_text[:max_text_length]
+        
+        content_parts.append({"type": "text", "text": final_prompt_text})
+
+        if file_path and mime_type:
+            # This mock doesn't actually read the file or base64 encode.
+            # It just simulates the structure an LLM might expect.
+            if mime_type.startswith("image/"):
+                content_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,mock_image_data_for_{os.path.basename(file_path)}"},
+                    }
                 )
-                continue
-
-        logger.warning(
-            "No rules matched for 'generate_response_from_file_input'. Returning default response. Input kwargs: %r",
-            actual_kwargs,
-        )
-        return self.default_response
+            else: # Generic file
+                 content_parts.append(
+                    {
+                        "type": "file_placeholder", # Custom type for mock
+                        "file_reference": {
+                            "file_path": file_path,
+                            "mime_type": mime_type,
+                            "description": "This is a mock file reference.",
+                         }
+                    }
+                )
+        
+        user_message_content: str | list[dict[str, Any]]
+        if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+            user_message_content = content_parts[0]["text"]
+        else:
+            user_message_content = content_parts
+            
+        return {"role": "user", "content": user_message_content}
 
 
 # --- Helper function to extract text from messages ---
