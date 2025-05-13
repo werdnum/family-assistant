@@ -20,8 +20,6 @@ import logging  # Changed
 import sys
 from collections.abc import Sequence  # Removed Dict, Any, Tuple, Optional
 
-# from urllib.parse import urlparse # No longer needed here
-# import os # No longer needed here
 # --- MCP Imports ---
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -66,7 +64,7 @@ logging.basicConfig(level=logging.INFO, format="MCP_SCRAPER: %(levelname)s: %(me
 
 
 # --- Async Playwright Check (using imported function) ---
-async def check_playwright_async_wrapper(): # Renamed to avoid conflict if any
+async def check_playwright_async_wrapper() -> bool: # Renamed to avoid conflict if any
     """Wraps the imported Playwright check for MCP server context."""
     # The check_playwright_is_functional from utils uses its own logger.
     # We can add MCP-specific logging here if needed.
@@ -171,7 +169,7 @@ async def serve(verify_ssl: bool = True) -> None:
 
         except Exception as e:
             logger.error(f"Error during scraping/conversion for {url}: {e}", exc_info=True)
-            raise McpError(f"Error processing scrape request for {url}: {str(e)}")
+            raise McpError(f"Error processing scrape request for {url}: {str(e)}") from e
 
     # --- Run the server ---
     options = server.create_initialization_options()
@@ -215,7 +213,7 @@ if __name__ == "__main__":
     try:
         if args.url:
             # Standalone mode
-            async def standalone_scrape():
+            async def standalone_scrape() -> None:
                 # Use basicConfig for standalone mode as well, or a more specific logger
                 logging.basicConfig(level=logging.INFO, format="STANDALONE_SCRAPER: %(levelname)s: %(message)s")
                 logger.info(f"Scraping URL: {args.url}")
