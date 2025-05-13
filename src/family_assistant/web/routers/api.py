@@ -173,13 +173,19 @@ async def upload_document(
         str | None,
         Form(
             alias="content_parts",
-            description='Optional JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}). Required if no file is uploaded.',
+            description='Optional JSON string representing a dictionary of content parts to be indexed. Keys determine embedding type (e.g., {"title": "Doc Title", "content_chunk_0": "First paragraph..."}). Required if no file is uploaded or URL provided.',
         ),
     ] = None,
     uploaded_file: Annotated[
         UploadFile | None,
         File(
-            description="The document file to upload (e.g., PDF, TXT, DOCX).",
+            description="The document file to upload (e.g., PDF, TXT, DOCX). Required if no content_parts or URL provided.",
+        ),
+    ] = None,
+    url: Annotated[
+        str | None,
+        Form(
+            description="URL to scrape and index. Required if no file or content_parts provided."
         ),
     ] = None,
     created_at_str: Annotated[
@@ -203,7 +209,10 @@ async def upload_document(
     API endpoint to upload document metadata and content parts for indexing.
     """
     logger.info(
-        f"Received document upload request for source_id: {source_id} (type: {source_type}). File provided: {uploaded_file is not None}. Content parts provided: {content_parts_json is not None}"
+        f"Received document upload request for source_id: {source_id} (type: {source_type}). "
+        f"File provided: {uploaded_file is not None}. "
+        f"Content parts provided: {content_parts_json is not None}. "
+        f"URL provided: {url is not None}"
     )
 
     # --- 0. Get Document Storage Path from Config ---
@@ -220,10 +229,10 @@ async def upload_document(
     document_storage_path = pathlib.Path(document_storage_path_str)
 
     # --- 1. Validate at least one input type is provided ---
-    if not uploaded_file and not content_parts_json:
+    if not uploaded_file and not content_parts_json and not url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either a file must be uploaded or content_parts_json must be provided.",
+            detail="Either a file must be uploaded, content_parts_json must be provided, or a URL must be provided.",
         )
 
     # --- 2. Parse and Validate Inputs ---
@@ -248,10 +257,10 @@ async def upload_document(
                     raise ValueError(
                         f"Value for content part '{key}' must be a string."
                     )
-        elif (
-            not uploaded_file
-        ):  # Should be caught by the check above, but as a safeguard
-            raise ValueError("'content_parts' must be provided if no file is uploaded.")
+        elif not uploaded_file and not url:  # Safeguard if primary check is bypassed
+            raise ValueError(
+                "'content_parts' must be provided if no file or URL is uploaded."
+            )
 
         if metadata_json:
             doc_metadata = json.loads(metadata_json)
@@ -446,9 +455,10 @@ async def upload_document(
     task_payload = {
         "document_id": document_id,
         "content_parts": content_parts,  # Parsed dictionary or None
-        "file_ref": file_ref,  # Path to temp file or None
+        "file_ref": file_ref,  # Path to persistent file or None
         "mime_type": detected_mime_type,  # Detected MIME type or None
         "original_filename": original_filename,  # Original filename or None
+        "url_to_scrape": url,  # Pass the URL if provided
     }
     task_id = f"index-doc-{document_id}-{uuid.uuid4()}"  # More robust unique task ID
     task_enqueued = False

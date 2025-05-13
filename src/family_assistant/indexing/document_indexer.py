@@ -124,7 +124,7 @@ class DocumentIndexer:
                 f"Preparing content parts for indexing pipeline for document ID: {document_id} with {len(content_parts)} part(s)."
             )
             for key, text_content in content_parts.items():
-                if not text_content or not isinstance(text_content, str):
+                if not text_content or not isinstance(text_content, str):  # type: ignore[redundant-expr]
                     logger.warning(
                         f"Skipping invalid content part for key '{key}' in document {document_id}. Content: {text_content!r}"
                     )
@@ -161,9 +161,29 @@ class DocumentIndexer:
                 f"No 'content_parts' found in payload for document ID {document_id}."
             )
 
+        # Process URL to scrape, if present
+        url_to_scrape: str | None = payload.get("url_to_scrape")
+        if url_to_scrape:
+            logger.info(
+                f"Creating IndexableContent for URL for document ID {document_id}: url='{url_to_scrape}'"
+            )
+            url_item = IndexableContent(
+                content=url_to_scrape,
+                embedding_type="raw_url",  # WebFetcherProcessor will look for this type
+                mime_type="text/plain",  # The content of *this* item is a plain text URL
+                source_processor="DocumentIndexer.process_document",
+                metadata={"original_url": url_to_scrape},  # Example metadata
+                ref=None,
+            )
+            initial_items.append(url_item)
+        else:
+            logger.info(
+                f"No 'url_to_scrape' found in payload for document ID {document_id}."
+            )
+
         if not initial_items:
             logger.warning(
-                f"No IndexableContent items created for document {document_id} from either file or content_parts. Nothing to index."
+                f"No IndexableContent items created for document {document_id} from file, content_parts, or URL. Nothing to index."
             )
             # file_ref now points to a persistent location, so it's not removed here.
             # The file remains in /mnt/data/mailbox/documents/ even if no initial items are processed.
