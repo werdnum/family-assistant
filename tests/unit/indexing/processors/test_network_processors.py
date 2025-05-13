@@ -64,6 +64,7 @@ async def test_fetch_markdown_content_success(
         url: ScrapeResult(
             type="markdown",
             final_url=url,
+            title="Mock Markdown Title",
             content="## Hello Markdown",
             mime_type="text/markdown",
             source_description="mock-markdown",
@@ -86,6 +87,7 @@ async def test_fetch_markdown_content_success(
     assert result_item.mime_type == "text/markdown"
     assert result_item.source_processor == processor.name
     assert result_item.metadata["original_url"] == url
+    assert result_item.metadata["fetched_title"] == "Mock Markdown Title"
     assert result_item.metadata["source_scraper_description"] == "mock-markdown"
     processor.cleanup_temp_files()
 
@@ -102,6 +104,7 @@ async def test_fetch_text_content_success(
         url: ScrapeResult(
             type="text",
             final_url=url,
+            title="Mock Text Title",
             content="Plain text content.",
             mime_type="text/plain",
             source_description="mock-text",
@@ -138,6 +141,7 @@ async def test_fetch_image_content_success(
         url: ScrapeResult(
             type="image",
             final_url=url,
+            title="Mock Image Title",
             content_bytes=image_bytes,
             mime_type="image/png",
             source_description="mock-image",
@@ -286,14 +290,25 @@ async def test_multiple_items_processing(
     url_err = "http://example.com/error_page"
 
     scrape_map = {
-        url_md: ScrapeResult(type="markdown", final_url=url_md, content="MD Content"),
+        url_md: ScrapeResult(
+            type="markdown",
+            final_url=url_md,
+            title="MD Page Title",
+            content="MD Content",
+        ),
         url_img: ScrapeResult(
             type="image",
             final_url=url_img,
+            title="Image Page Title",
             content_bytes=b"img",
             mime_type="image/jpeg",
         ),
-        url_err: ScrapeResult(type="error", final_url=url_err, message="Failed fetch"),
+        url_err: ScrapeResult(
+            type="error",
+            final_url=url_err,
+            title="Error Page Title",  # Title might still be present on error pages
+            message="Failed fetch",
+        ),
     }
     mock_scraper = MockScraper(url_map=scrape_map)
     processor = WebFetcherProcessor(scraper=mock_scraper, config=default_config)
@@ -399,6 +414,7 @@ async def test_cleanup_temp_files_file_externally_deleted(
         url: ScrapeResult(
             type="image",
             final_url=url,
+            title="GIF Page Title",
             content_bytes=b"gif_data",
             mime_type="image/gif",
         )

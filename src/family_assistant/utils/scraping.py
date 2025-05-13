@@ -87,6 +87,7 @@ class ScrapeResult:
     content_bytes: bytes | None = None  # For images
     mime_type: str | None = None  # Detected MIME type
     encoding: str | None = None
+    title: str | None = None  # Page title, if available
     message: str | None = None  # Error message if type is "error"
     source_description: str = (
         "unknown"  # e.g. "Playwright-rendered HTML", "httpx-fetched PDF"
@@ -257,16 +258,22 @@ class PlaywrightScraper:
             logger.info(f"Detected HTML MIME type for {url}.")
             html_source_bytes: bytes | None = None
             source_description = ""
+            page_title: str | None = None
 
             if self.playwright_available:
                 logger.info(f"Attempting JS rendering with Playwright for {url}")
-                playwright_html_str, _ = await self._fetch_with_playwright(url)
+                (
+                    playwright_html_str,
+                    _,
+                    playwright_title,
+                ) = await self._fetch_with_playwright(url)
                 if playwright_html_str:
                     logger.info(f"Playwright successfully rendered HTML for {url}")
                     html_source_bytes = playwright_html_str.encode(
                         "utf-8", errors="replace"
                     )
                     source_description = "Playwright-rendered HTML"
+                    page_title = playwright_title
                 else:
                     logger.warning(
                         f"Playwright rendering failed for {url}. Falling back to httpx-fetched HTML."
@@ -291,6 +298,7 @@ class PlaywrightScraper:
                     return ScrapeResult(
                         type="markdown",
                         final_url=final_url,  # Should be final_url from playwright if it succeeded, or httpx's
+                        title=page_title,
                         content=markdown_content,
                         mime_type="text/markdown",  # Output is markdown
                         encoding="utf-8",  # Markdown is text
@@ -306,6 +314,7 @@ class PlaywrightScraper:
                     return ScrapeResult(
                         type="text",  # Fallback to raw text
                         final_url=final_url,
+                        title=page_title, # Preserve title even if conversion to MD fails
                         content=decoded_html_fallback,
                         mime_type=HTML_MIME_TYPE,  # Original HTML mime type
                         encoding=encoding,
@@ -342,18 +351,23 @@ class PlaywrightScraper:
                 source_description=f"httpx-fetched ({mime_type or 'unknown'}), MarkItDown failed",
             )
 
-    async def _fetch_with_playwright(self, url: str) -> tuple[str | None, str | None]:
-        """Internal: Scrapes using Playwright Async API. Returns (html_content_str, final_mime_type)."""
+    async def _fetch_with_playwright(
+        self, url: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """
+        Internal: Scrapes using Playwright Async API.
+        Returns (html_content_str, final_mime_type, page_title_str).
+        """
         if not async_playwright or not self.playwright_available:
-            # Ensure playwright_available is False if async_playwright itself is None
             self.playwright_available = False
             logger.warning(
                 "Playwright library or browser not available for _fetch_with_playwright."
             )
-            return None, None
+            return None, None, None
 
         content_str: str | None = None
         final_mime_type: str | None = None
+        page_title_str: str | None = None
         browser = None
         context = None
         page = None
@@ -361,7 +375,6 @@ class PlaywrightScraper:
         try:
             async with async_playwright() as p:
                 try:
-                    # Use a more standard UA + custom part
                     effective_user_agent = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 {self.user_agent}"
                     browser = await p.chromium.launch()
                     context = await browser.new_context(
@@ -369,7 +382,6 @@ class PlaywrightScraper:
                         user_agent=effective_user_agent,
                     )
                     page = await context.new_page()
-
                     response = None
                     try:
                         logger.debug(f"Playwright navigating to {url}")
@@ -381,7 +393,6 @@ class PlaywrightScraper:
                         logger.warning(
                             f"Playwright timed out waiting for network idle at {url}. Content might be incomplete."
                         )
-                        # Proceed to get content anyway
                     except PlaywrightError as e:
                         if "net::ERR_" in str(e):
                             logger.error(
@@ -389,10 +400,11 @@ class PlaywrightScraper:
                             )
                         else:
                             logger.error(f"Playwright navigation error for {url}: {e}")
-                        return None, None
+                        return None, None, None
 
                     try:
                         content_str = await page.content()
+                        page_title_str = await page.title()  # Fetch page title
                         if response:
                             headers = await response.all_headers()
                             content_type_header = headers.get("content-type")
@@ -401,11 +413,12 @@ class PlaywrightScraper:
                                     content_type_header.split(";")[0].strip().lower()
                                 )
                         logger.debug(
-                            f"Playwright successfully fetched content for {url}. Length: {len(content_str or '')}"
+                            f"Playwright successfully fetched content for {url}. Title: '{page_title_str}', Length: {len(content_str or '')}"
                         )
                     except PlaywrightError as e:
                         logger.error(f"Playwright error getting content for {url}: {e}")
-                        content_str = None  # Ensure content is None on error
+                        content_str = None
+                        page_title_str = None
 
                 except PlaywrightError as e:
                     logger.error(f"Playwright execution error: {e}", exc_info=True)
@@ -416,14 +429,14 @@ class PlaywrightScraper:
                             "Playwright browser not found or failed to launch. "
                             "Please run: python -m playwright install --with-deps chromium"
                         )
-                        self.playwright_available = False  # Mark as unavailable for future calls in this instance
-                    return None, None
+                        self.playwright_available = False
+                    return None, None, None
                 except Exception as e:
                     logger.error(
                         f"Unexpected error during Playwright scraping context: {e}",
                         exc_info=True,
                     )
-                    return None, None
+                    return None, None, None
                 finally:
                     if page:
                         await page.close()
@@ -440,9 +453,9 @@ class PlaywrightScraper:
                 or "Browser process exited" in str(e)
             ):
                 self.playwright_available = False
-            return None, None
+            return None, None, None
 
-        return content_str, final_mime_type
+        return content_str, final_mime_type, page_title_str
 
     async def _fetch_with_httpx(
         self, url: str
