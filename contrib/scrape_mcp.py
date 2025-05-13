@@ -31,7 +31,7 @@ from mcp.types import ImageContent, TextContent, Tool
 try:
     from family_assistant.utils.scraping import (
         DEFAULT_USER_AGENT,  # For standalone mode user agent
-        Scraper,
+        PlaywrightScraper,
         ScrapeResult,
         check_playwright_is_functional,
     )
@@ -86,10 +86,10 @@ async def serve(verify_ssl: bool = True) -> None:
     """Sets up and runs the MCP server for web scraping using the Scraper utility."""
     server = Server("mcp-web-scraper-async")  # Keep a distinct name for the MCP server
     # Use the Scraper from utils
-    # The Scraper's __init__ uses its own logger for internal messages.
+    # The PlaywrightScraper's __init__ uses its own logger for internal messages.
     # The user_agent for the scraper will be its default or one passed here.
     # For an MCP tool, it's often good to let the utility handle its default UA.
-    scraper_instance = Scraper(verify_ssl=verify_ssl)
+    scraper_instance = PlaywrightScraper(verify_ssl=verify_ssl)
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -245,8 +245,8 @@ if __name__ == "__main__":
                 )
                 logger.info(f"Scraping URL: {args.url}")
 
-                # Use the imported Scraper, providing its own default user agent
-                scraper_instance = Scraper(
+                # Use the imported PlaywrightScraper, providing its own default user agent
+                scraper_instance = PlaywrightScraper(
                     verify_ssl=args.verify_ssl,
                     user_agent=DEFAULT_USER_AGENT,  # Or a specific one for standalone
                 )
