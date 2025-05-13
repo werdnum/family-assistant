@@ -129,7 +129,7 @@ class LLMIntelligenceProcessor(ContentProcessor):
 
                 messages = [
                     {"role": "system", "content": system_prompt},
-                    user_message, # Add the formatted user message
+                    user_message,  # Add the formatted user message
                 ]
 
                 logger.debug(
