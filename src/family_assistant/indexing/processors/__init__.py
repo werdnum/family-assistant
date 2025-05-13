@@ -7,12 +7,16 @@ for a specific task, such as extracting text, generating summaries,
 chunking content, or dispatching items for embedding.
 """
 
-from .dispatch_processors import EmbeddingDispatchProcessor
-from .file_processors import PDFTextExtractor
-from .llm_processors import LLMIntelligenceProcessor
-from .metadata_processors import TitleExtractor
-from .network_processors import WebFetcherProcessor  # Added import
-from .text_processors import TextChunker
+from family_assistant.indexing.processors.dispatch_processors import (
+    EmbeddingDispatchProcessor,
+)
+from family_assistant.indexing.processors.file_processors import PDFTextExtractor
+from family_assistant.indexing.processors.llm_processors import LLMIntelligenceProcessor
+from family_assistant.indexing.processors.metadata_processors import TitleExtractor
+from family_assistant.indexing.processors.network_processors import (
+    WebFetcherProcessor,  # Added import
+)
+from family_assistant.indexing.processors.text_processors import TextChunker
 
 __all__ = [
     "EmbeddingDispatchProcessor",
