@@ -13,29 +13,17 @@ from datetime import datetime, timedelta, timezone  # Added Union
 from typing import Any
 
 from dateutil import rrule
-
-# Import the new document indexer CLASS
-# Import functools for partial application
-# Import Application for type hinting
+from telegram.constants import ParseMode
 from telegram.ext import Application
 from telegram.helpers import escape_markdown
 from telegramify_markdown import markdownify
 
-# Use absolute imports based on the package structure
-from family_assistant import storage  # Import for task queue operations
-
-# Import LLM interface for type hinting if needed elsewhere
-from family_assistant.embeddings import EmbeddingGenerator  # Import EmbeddingGenerator
-from family_assistant.indexing.email_indexer import (
-    handle_index_email,
-)  # Import email indexer
-from family_assistant.processing import ProcessingService  # Import the service
+from family_assistant import storage
+from family_assistant.embeddings import EmbeddingGenerator
+from family_assistant.indexing.email_indexer import handle_index_email
+from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
-
-# Import tool definitions and context from the tools module
-from family_assistant.tools import (
-    ToolExecutionContext,  # Import the context class
-)
+from family_assistant.tools import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +209,7 @@ async def handle_llm_callback(
                     else conversation_id
                 ),  # Assuming TG ID is int convertible
                 text=formatted_response,
-                parse_mode="MARKDOWN_V2",
+                parse_mode=ParseMode.MARKDOWN_V2,
                 # Note: We don't have an original message ID to reply to here.
             )
             logger.info(
