@@ -5,6 +5,7 @@ simulating the flow initiated by the /api/documents/upload endpoint.
 
 import asyncio
 import contextlib  # Added
+import io  # Add io import
 import json
 import logging
 import tempfile  # Add tempfile import
@@ -675,7 +676,9 @@ async def test_document_indexing_with_llm_summary_e2e(
         api_files_data = {
             "file": (
                 TEST_DOC_FOR_SUMMARY_FILENAME,
-                TEST_DOC_FOR_SUMMARY_CONTENT.encode("utf-8"),  # Send content as bytes
+                io.BytesIO(
+                    TEST_DOC_FOR_SUMMARY_CONTENT.encode("utf-8")
+                ),  # Wrap bytes in BytesIO
                 "text/plain",
             )
         }
