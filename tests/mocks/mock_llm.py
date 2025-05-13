@@ -43,8 +43,10 @@ logger = logging.getLogger(__name__)
 # Define type aliases for clarity
 # MatcherArgs represents the keyword arguments passed to the LLM method
 MatcherArgs = dict[str, Any]
-# MatcherFunction takes (method_name, all_kwargs_of_the_method) -> bool
-MatcherFunction = Callable[[str, MatcherArgs], bool]
+# MatcherFunction now takes a single dictionary of arguments.
+# The calling method (e.g., generate_response) will add a special key
+# like "_method_name_for_matcher" to this dict if the matcher needs to know the method.
+MatcherFunction = Callable[[MatcherArgs], bool]
 Rule = tuple[MatcherFunction, LLMOutput]
 
 
