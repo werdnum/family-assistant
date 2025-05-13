@@ -924,12 +924,46 @@ async def test_url_indexing_e2e(
     mock_scraper = MockScraper(url_map={TEST_URL_TO_SCRAPE: mock_scrape_result})
     logger.info(f"MockScraper configured for URL: {TEST_URL_TO_SCRAPE}")
 
+    # --- Arrange: Update Mock Embeddings for URL content ---
+    # Ensure the mock_embedding_generator used in this test has the necessary embeddings
+    url_chunk0_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.7
+    ).tolist()  # Different multiplier for uniqueness
+    url_chunk1_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.8
+    ).tolist()
+
+    mock_embedding_generator.embedding_map[EXPECTED_URL_CHUNK_0_CONTENT] = (
+        url_chunk0_embedding
+    )
+    mock_embedding_generator.embedding_map[EXPECTED_URL_CHUNK_1_CONTENT] = (
+        url_chunk1_embedding
+    )
+
+    query_url_content_embedding = (
+        np.array(url_chunk1_embedding)  # Closer to chunk 1
+        + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
+    ).tolist()
+    mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT] = (
+        query_url_content_embedding
+    )
+
+    # Store for assertion, this was causing the AttributeError
+    mock_embedding_generator._test_query_url_content_embedding = (
+        query_url_content_embedding
+    )
+    logger.info(
+        "Updated mock_embedding_generator with URL-specific embeddings for test_url_indexing_e2e."
+    )
+
     # --- Arrange: Instantiate Pipeline and Indexer for URL processing ---
     web_fetcher_processor = WebFetcherProcessor(scraper=mock_scraper)
     # Configure TextChunker to process fetched markdown and output 'content_chunk'
     # This assumes default chunk_size/overlap are okay for MOCK_URL_CONTENT_MARKDOWN
     text_chunker = TextChunker(
-        embedding_type_prefix_map={"fetched_markdown_content": "content_chunk"}
+        embedding_type_prefix_map={
+            "fetched_content_markdown": "content_chunk"
+        }  # Corrected key
     )
     # EmbeddingDispatchProcessor should dispatch 'content_chunk' (from TextChunker)
     # and potentially 'title' if we add a TitleExtractor for fetched content.
