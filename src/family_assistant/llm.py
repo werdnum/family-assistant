@@ -385,10 +385,12 @@ class LiteLLMClient:
                         f"Failed to upload file to Gemini or construct message: {e}. Falling back to base64/text.",
                         exc_info=True,
                     )
-                    user_content_parts = [] # Ensure fallback if Gemini fails
+                    user_content_parts = []  # Ensure fallback if Gemini fails
 
             # Fallback or non-Gemini model file handling
-            if not user_content_parts: # Only if Gemini part didn't populate or wasn't attempted
+            if (
+                not user_content_parts
+            ):  # Only if Gemini part didn't populate or wasn't attempted
                 if mime_type.startswith("image/"):
                     try:
                         async with aiofiles.open(file_path, "rb") as f:
@@ -411,7 +413,9 @@ class LiteLLMClient:
                         )  # Fallback to text
                 elif mime_type.startswith("text/"):
                     try:
-                        async with aiofiles.open(file_path, "r", encoding="utf-8") as f: # Changed from "r" to "rb" for consistency, but text files should be "r"
+                        async with aiofiles.open(
+                            file_path, encoding="utf-8"
+                        ) as f:  # Changed from "r" to "rb" for consistency, but text files should be "r"
                             file_text_content = await f.read()
                         combined_text = f"{actual_prompt_text}\n\n--- File Content ---\n{file_text_content}"
                         if max_text_length and len(combined_text) > max_text_length:
@@ -455,7 +459,7 @@ class LiteLLMClient:
                         )
                         user_content_parts.append(
                             {"type": "text", "text": actual_prompt_text}
-                        ) # Fallback to text
+                        )  # Fallback to text
 
         elif prompt_text:  # Only text prompt provided
             text_to_send = prompt_text
@@ -466,7 +470,9 @@ class LiteLLMClient:
                 text_to_send = text_to_send[:max_text_length]
             user_content_parts.append({"type": "text", "text": text_to_send})
         else:
-            logger.error("format_user_message_with_file called with no file and no prompt text.")
+            logger.error(
+                "format_user_message_with_file called with no file and no prompt text."
+            )
             raise ValueError("Cannot format user message with no input (file or text).")
 
         # Determine final content structure for the user message
@@ -475,7 +481,7 @@ class LiteLLMClient:
             final_user_content = user_content_parts[0]["text"]
         else:
             final_user_content = user_content_parts
-        
+
         return {"role": "user", "content": final_user_content}
 
 
@@ -568,7 +574,9 @@ class RecordingLLMClient:
             raise
 
     async def _record_interaction(
-        self, input_data: dict[str, Any], output_data: LLMOutput # This is for generate_response
+        self,
+        input_data: dict[str, Any],
+        output_data: LLMOutput,  # This is for generate_response
     ) -> None:
         # Ensure output_data is serializable (LLMOutput should be)
         record = {"input": input_data, "output": output_data.__dict__}
@@ -580,7 +588,9 @@ class RecordingLLMClient:
             async with aiofiles.open(
                 self.recording_path, mode="a", encoding="utf-8"
             ) as f:
-                await f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n") # Added default=str
+                await f.write(
+                    json.dumps(record, ensure_ascii=False, default=str) + "\n"
+                )  # Added default=str
             logger.debug(f"Recorded interaction to {self.recording_path}")
         except Exception as file_err:
             logger.error(
@@ -709,9 +719,15 @@ class PlaybackLLMClient:
             if record.get("input") == current_input_args:
                 logger.info(f"Found matching interaction in {self.recording_path}.")
                 output_data = record["output"]
-                if not isinstance(output_data, dict) or not all(k in output_data for k in ["content", "tool_calls"]): # Basic check for LLMOutput structure
-                    logger.error(f"Recorded output for matched input is not a valid LLMOutput structure: {output_data}")
-                    raise LookupError("Matched recorded output is not a valid LLMOutput structure.")
+                if not isinstance(output_data, dict) or not all(
+                    k in output_data for k in ["content", "tool_calls"]
+                ):  # Basic check for LLMOutput structure
+                    logger.error(
+                        f"Recorded output for matched input is not a valid LLMOutput structure: {output_data}"
+                    )
+                    raise LookupError(
+                        "Matched recorded output is not a valid LLMOutput structure."
+                    )
 
                 matched_output = LLMOutput(
                     content=output_data.get("content"),
@@ -722,7 +738,7 @@ class PlaybackLLMClient:
                     f"Playing back matched LLMOutput. Content: {bool(matched_output.content)}. Tool Calls: {len(matched_output.tool_calls) if matched_output.tool_calls else 0}"
                 )
                 return matched_output
-        
+
         await self._log_no_match_error(current_input_args)
         raise LookupError(
             f"No matching LLMOutput recorded interaction found in {self.recording_path} for the current input args."
@@ -740,7 +756,9 @@ class PlaybackLLMClient:
                 logger.info(f"Found matching interaction in {self.recording_path}.")
                 output_data = record["output"]
                 if not isinstance(output_data, dict):
-                    logger.error(f"Recorded output for matched input is not a dict: {output_data}")
+                    logger.error(
+                        f"Recorded output for matched input is not a dict: {output_data}"
+                    )
                     raise LookupError("Matched recorded output is not a dictionary.")
                 logger.debug(f"Playing back matched dict: {output_data}")
                 return output_data
@@ -756,9 +774,7 @@ class PlaybackLLMClient:
             f"PlaybackLLMClient: No matching interaction found in {self.recording_path} for the provided input args."
         )
         try:
-            failed_input_str = json.dumps(
-                current_input_args, indent=2, default=str
-            )
+            failed_input_str = json.dumps(current_input_args, indent=2, default=str)
         except Exception:
             failed_input_str = str(current_input_args)
         logger.error(f"Failed Input Args:\n{failed_input_str}")
