@@ -1555,11 +1555,11 @@ async def test_email_indexing_with_llm_summary_e2e(
 
         # Verify mock LLM was called
         assert (
-            len(mock_llm_client_email.calls) > 0
+            len(mock_llm_client_email._calls) > 0
         ), "Mock LLM client for email summary was not called"
-        assert mock_llm_client_email.calls[0]["method_name"] == "generate_response"
+        assert mock_llm_client_email._calls[0]["method_name"] == "generate_response"
         assert (
-            mock_llm_client_email.calls[0]["kwargs"]["tools"][0]["function"]["name"]
+            mock_llm_client_email._calls[0]["kwargs"]["tools"][0]["function"]["name"]
             == "extract_summary"
         )
 
