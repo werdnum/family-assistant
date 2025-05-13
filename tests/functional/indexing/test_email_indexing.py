@@ -1566,14 +1566,26 @@ async def test_email_indexing_with_llm_summary_e2e(
         ), "Distance for email LLM summary should be small"
 
         # Verify mock LLM was called
+        # The LLMIntelligenceProcessor first calls format_user_message_with_file, then generate_response.
+        # So, we expect at least two calls.
         assert (
-            len(mock_llm_client_email._calls) > 0
-        ), "Mock LLM client for email summary was not called"
-        assert mock_llm_client_email._calls[0]["method_name"] == "generate_response"
+            len(mock_llm_client_email._calls) >= 2
+        ), f"Expected at least 2 calls to mock LLM, got {len(mock_llm_client_email._calls)}"
+
+        # The first call should be format_user_message_with_file
         assert (
-            mock_llm_client_email._calls[0]["kwargs"]["tools"][0]["function"]["name"]
+            mock_llm_client_email._calls[0]["method_name"]
+            == "format_user_message_with_file"
+        ), "First call to LLM should be format_user_message_with_file"
+
+        # The second call should be generate_response
+        assert (
+            mock_llm_client_email._calls[1]["method_name"] == "generate_response"
+        ), "Second call to LLM should be generate_response"
+        assert (
+            mock_llm_client_email._calls[1]["kwargs"]["tools"][0]["function"]["name"]
             == "extract_summary"
-        )
+        ), "Tool name in generate_response call is incorrect"
 
         logger.info("--- Email Indexing with LLM Summary E2E Test Passed ---")
 
