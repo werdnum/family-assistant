@@ -29,7 +29,7 @@ class LLMIntelligenceProcessor(ContentProcessor):
             str
         ],  # List of embedding_types this processor should act upon
         tool_name: str = "extract_information",  # Name for the tool the LLM will call
-        max_content_length: int | None = None,
+        max_content_length: int | None = None, # Applies to purely textual content
     ) -> None:
         self.llm_client = llm_client
         self.system_prompt_template = system_prompt_template
