@@ -912,7 +912,7 @@ async def test_url_indexing_e2e(
     mock_scrape_result = ScrapeResult(
         type="success",  # Required argument
         final_url=TEST_URL_TO_SCRAPE,  # Required argument
-        mime_type="text/markdown"  # Accepted keyword argument
+        mime_type="text/markdown",  # Accepted keyword argument
     )
     # Set other attributes directly, as they were unexpected keyword args in constructor
     mock_scrape_result.status_code = 200
