@@ -1558,15 +1558,9 @@ async def test_email_indexing_with_llm_summary_e2e(
         if email_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as _db_cleanup:
-                    # Delete document record (which cascades to embeddings)
-                    # from family_assistant.storage.vector import (
-                    #     documents_table,  # Direct import for delete
-                    # )
-                    # delete_doc_stmt = documents_table.delete().where(documents_table.c.id == email_db_id) # Assuming email_db_id is the doc id
-                    # # This is incorrect, email_db_id is from received_emails, not documents table.
-                    # # Need to find the document by source_id (message_id)
-                    # # For now, this cleanup might be incomplete or needs adjustment.
-                    # await _db_cleanup.execute_with_retry(delete_doc_stmt) # Would execute if kept
-                    logger.warning(f"Partial cleanup for email_db_id {email_db_id}, full document cleanup might be needed. Manual check advised.")
+                    # The previous cleanup logic for email_db_id was incorrect and has been removed.
+                    # Email documents are linked via source_id (Message-ID) to the documents table.
+                    # A more robust cleanup would involve finding the document by source_id and deleting it.
+                    logger.warning(f"Partial cleanup for email_db_id {email_db_id}. Corresponding document in 'documents' table (if any) was not deleted. Manual check advised.")
             except Exception as e:
                 logger.warning(f"Cleanup error for email {email_db_id}: {e}")
