@@ -314,7 +314,7 @@ class PlaywrightScraper:
                     return ScrapeResult(
                         type="text",  # Fallback to raw text
                         final_url=final_url,
-                        title=page_title, # Preserve title even if conversion to MD fails
+                        title=page_title,  # Preserve title even if conversion to MD fails
                         content=decoded_html_fallback,
                         mime_type=HTML_MIME_TYPE,  # Original HTML mime type
                         encoding=encoding,
