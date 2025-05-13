@@ -1,5 +1,6 @@
 """Unit tests for network_processors.py."""
 
+import logging
 import os
 import tempfile
 from typing import TYPE_CHECKING
@@ -84,9 +85,7 @@ async def test_fetch_markdown_content_success(
     with soft_assertions():
         assert_that(results).is_length(1)
         result_item = results[0]
-        assert_that(result_item.embedding_type).is_equal_to(
-            "fetched_content_markdown"
-        )
+        assert_that(result_item.embedding_type).is_equal_to("fetched_content_markdown")
         assert_that(result_item.content).is_equal_to("## Hello Markdown")
         assert_that(result_item.mime_type).is_equal_to("text/markdown")
         assert_that(result_item.source_processor).is_equal_to(processor.name)
@@ -169,9 +168,7 @@ async def test_fetch_image_content_success(
     with soft_assertions():
         assert_that(results).is_length(1)
         result_item = results[0]
-        assert_that(result_item.embedding_type).is_equal_to(
-            "fetched_content_binary"
-        )
+        assert_that(result_item.embedding_type).is_equal_to("fetched_content_binary")
         assert_that(result_item.content).is_none()
         assert_that(result_item.ref).is_not_none()
         assert_that(result_item.mime_type).is_equal_to("image/png")
