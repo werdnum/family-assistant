@@ -52,9 +52,7 @@ except Exception:
 APP_NAME = "FamilyAssistantScraper"  # Updated App Name
 APP_VERSION = "1.0.0"
 WEBSITE_URL = "https://github.com/your_repo/family-assistant"  # Replace if you have one
-DEFAULT_USER_AGENT = (
-    f"{APP_NAME}/{APP_VERSION} (FamilyAssistantInternalTool/{_lib_version}; +{WEBSITE_URL})"
-)
+DEFAULT_USER_AGENT = f"{APP_NAME}/{APP_VERSION} (FamilyAssistantInternalTool/{_lib_version}; +{WEBSITE_URL})"
 
 IMAGE_MIME_TYPES = [
     "image/jpeg",
@@ -89,7 +87,9 @@ class ScrapeResult:
     mime_type: str | None = None  # Detected MIME type
     encoding: str | None = None
     message: str | None = None  # Error message if type is "error"
-    source_description: str = "unknown" # e.g. "Playwright-rendered HTML", "httpx-fetched PDF"
+    source_description: str = (
+        "unknown"  # e.g. "Playwright-rendered HTML", "httpx-fetched PDF"
+    )
 
 
 class Scraper:
@@ -175,7 +175,7 @@ class Scraper:
             logger.warning(f"Failed to retrieve content using httpx from {url}")
             return ScrapeResult(
                 type="error",
-                final_url=url, # Original URL as final_url might not be known
+                final_url=url,  # Original URL as final_url might not be known
                 message=f"Failed to retrieve content from URL: {url} using basic HTTP GET.",
                 source_description="httpx fetch failed",
             )
@@ -239,12 +239,8 @@ class Scraper:
             source_description = ""
 
             if self.playwright_available:
-                logger.info(
-                    f"Attempting JS rendering with Playwright for {url}"
-                )
-                playwright_html_str, _ = await self._fetch_with_playwright(
-                    url
-                )
+                logger.info(f"Attempting JS rendering with Playwright for {url}")
+                playwright_html_str, _ = await self._fetch_with_playwright(url)
                 if playwright_html_str:
                     logger.info(f"Playwright successfully rendered HTML for {url}")
                     html_source_bytes = playwright_html_str.encode(
@@ -274,10 +270,10 @@ class Scraper:
                 if markdown_content:
                     return ScrapeResult(
                         type="markdown",
-                        final_url=final_url, # Should be final_url from playwright if it succeeded, or httpx's
+                        final_url=final_url,  # Should be final_url from playwright if it succeeded, or httpx's
                         content=markdown_content,
-                        mime_type="text/markdown", # Output is markdown
-                        encoding="utf-8", # Markdown is text
+                        mime_type="text/markdown",  # Output is markdown
+                        encoding="utf-8",  # Markdown is text
                         source_description=source_description + " -> MarkItDown",
                     )
                 else:
@@ -288,12 +284,13 @@ class Scraper:
                         encoding or "utf-8", errors="replace"
                     )
                     return ScrapeResult(
-                        type="text", # Fallback to raw text
+                        type="text",  # Fallback to raw text
                         final_url=final_url,
                         content=decoded_html_fallback,
-                        mime_type=HTML_MIME_TYPE, # Original HTML mime type
+                        mime_type=HTML_MIME_TYPE,  # Original HTML mime type
                         encoding=encoding,
-                        source_description=source_description + " (MarkItDown failed, raw HTML)",
+                        source_description=source_description
+                        + " (MarkItDown failed, raw HTML)",
                     )
 
         # 4. General MarkItDown Conversion (PDF, DOCX, etc., or fallback for unknown types)
@@ -308,7 +305,7 @@ class Scraper:
                 type="markdown",
                 final_url=final_url,
                 content=markdown_content,
-                mime_type="text/markdown", # Output is markdown
+                mime_type="text/markdown",  # Output is markdown
                 encoding="utf-8",
                 source_description=f"httpx-fetched ({mime_type or 'unknown'}) -> MarkItDown",
             )
@@ -325,14 +322,14 @@ class Scraper:
                 source_description=f"httpx-fetched ({mime_type or 'unknown'}), MarkItDown failed",
             )
 
-    async def _fetch_with_playwright(
-        self, url: str
-    ) -> tuple[str | None, str | None]:
+    async def _fetch_with_playwright(self, url: str) -> tuple[str | None, str | None]:
         """Internal: Scrapes using Playwright Async API. Returns (html_content_str, final_mime_type)."""
         if not async_playwright or not self.playwright_available:
             # Ensure playwright_available is False if async_playwright itself is None
             self.playwright_available = False
-            logger.warning("Playwright library or browser not available for _fetch_with_playwright.")
+            logger.warning(
+                "Playwright library or browser not available for _fetch_with_playwright."
+            )
             return None, None
 
         content_str: str | None = None
@@ -348,7 +345,8 @@ class Scraper:
                     effective_user_agent = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 {self.user_agent}"
                     browser = await p.chromium.launch()
                     context = await browser.new_context(
-                        ignore_https_errors=not self.verify_ssl, user_agent=effective_user_agent
+                        ignore_https_errors=not self.verify_ssl,
+                        user_agent=effective_user_agent,
                     )
                     page = await context.new_page()
 
@@ -370,9 +368,7 @@ class Scraper:
                                 f"Playwright navigation network error for {url}: {e}"
                             )
                         else:
-                            logger.error(
-                                f"Playwright navigation error for {url}: {e}"
-                            )
+                            logger.error(f"Playwright navigation error for {url}: {e}")
                         return None, None
 
                     try:
@@ -381,22 +377,26 @@ class Scraper:
                             headers = await response.all_headers()
                             content_type_header = headers.get("content-type")
                             if content_type_header:
-                                final_mime_type = content_type_header.split(";")[0].strip().lower()
-                        logger.debug(f"Playwright successfully fetched content for {url}. Length: {len(content_str or '')}")
-                    except PlaywrightError as e:
-                        logger.error(
-                            f"Playwright error getting content for {url}: {e}"
+                                final_mime_type = (
+                                    content_type_header.split(";")[0].strip().lower()
+                                )
+                        logger.debug(
+                            f"Playwright successfully fetched content for {url}. Length: {len(content_str or '')}"
                         )
-                        content_str = None # Ensure content is None on error
+                    except PlaywrightError as e:
+                        logger.error(f"Playwright error getting content for {url}: {e}")
+                        content_str = None  # Ensure content is None on error
 
                 except PlaywrightError as e:
                     logger.error(f"Playwright execution error: {e}", exc_info=True)
-                    if "Executable doesn't exist" in str(e) or "Browser process exited" in str(e):
+                    if "Executable doesn't exist" in str(
+                        e
+                    ) or "Browser process exited" in str(e):
                         logger.error(
                             "Playwright browser not found or failed to launch. "
                             "Please run: python -m playwright install --with-deps chromium"
                         )
-                        self.playwright_available = False # Mark as unavailable for future calls in this instance
+                        self.playwright_available = False  # Mark as unavailable for future calls in this instance
                     return None, None
                 except Exception as e:
                     logger.error(
@@ -412,8 +412,13 @@ class Scraper:
                     if browser:
                         await browser.close()
         except Exception as e:
-            logger.error(f"Error setting up/tearing down Playwright: {e}", exc_info=True)
-            if isinstance(e, PlaywrightError) and ("Executable doesn't exist" in str(e) or "Browser process exited" in str(e)):
+            logger.error(
+                f"Error setting up/tearing down Playwright: {e}", exc_info=True
+            )
+            if isinstance(e, PlaywrightError) and (
+                "Executable doesn't exist" in str(e)
+                or "Browser process exited" in str(e)
+            ):
                 self.playwright_available = False
             return None, None
 
@@ -441,7 +446,9 @@ class Scraper:
                 content_type_header = response.headers.get("content-type")
                 final_url = str(response.url)
                 encoding = response.encoding
-                logger.debug(f"httpx GET successful for {url}. Status: {response.status_code}, Final URL: {final_url}")
+                logger.debug(
+                    f"httpx GET successful for {url}. Status: {response.status_code}, Final URL: {final_url}"
+                )
                 return raw_bytes, content_type_header, final_url, encoding
         except httpx.HTTPStatusError as http_err:
             logger.error(
@@ -454,15 +461,13 @@ class Scraper:
                 f"An unexpected error occurred during async httpx request for {url}: {err}",
                 exc_info=True,
             )
-        return None, None, url, None # Return original URL on failure here
+        return None, None, url, None  # Return original URL on failure here
 
 
 async def check_playwright_is_functional() -> bool:
     """Checks if Playwright async API and browser are functional."""
     if not _playwright_installed or not async_playwright:
-        logger.warning(
-            "Playwright library not installed, skipping browser check."
-        )
+        logger.warning("Playwright library not installed, skipping browser check.")
         return False
 
     browser = None
