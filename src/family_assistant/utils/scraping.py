@@ -95,7 +95,7 @@ class ScrapeResult:
 class Scraper:
     """Scrapes web content asynchronously and converts HTML to Markdown using MarkItDown."""
 
-    def __init__(self, verify_ssl: bool = True, user_agent: str | None = None):
+    def __init__(self, verify_ssl: bool = True, user_agent: str | None = None) -> None:
         """
         Initializes the scraper.
 
