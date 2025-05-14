@@ -78,6 +78,13 @@ async def process_document_ingestion_request(
     if doc_metadata is None:
         doc_metadata = {}
 
+    # Ensure original_url and original_filename are in doc_metadata if applicable,
+    # without overwriting if they were explicitly provided in metadata_json.
+    if url_to_scrape and "original_url" not in doc_metadata:
+        doc_metadata["original_url"] = url_to_scrape
+    if original_filename_for_task and "original_filename" not in doc_metadata:
+        doc_metadata["original_filename"] = original_filename_for_task
+
     try:
         # Process uploaded file content if present
         if uploaded_file_content and uploaded_file_filename:
