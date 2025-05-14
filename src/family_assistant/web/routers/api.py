@@ -2,14 +2,10 @@ import contextlib
 import json
 import logging
 import pathlib
-
-# import re # No longer used directly here
-# import shutil # No longer used directly here
 import uuid
 from datetime import date, datetime, timezone
 from typing import Annotated, Any
 
-# import filetype # No longer used directly here
 from fastapi import (
     APIRouter,
     Depends,
