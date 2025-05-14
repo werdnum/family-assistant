@@ -18,6 +18,7 @@ from typing import (
 from zoneinfo import ZoneInfo
 
 import aiofiles
+import httpx  # Added for making HTTP requests
 import telegramify_markdown  # For escaping confirmation prompts
 from dateutil import rrule
 from dateutil.parser import isoparse
@@ -627,6 +628,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "get_full_document_content": get_full_document_content_tool,
     "get_message_history": get_message_history_tool,
     "get_user_documentation_content": get_user_documentation_content_tool,
+    "ingest_document_from_url": ingest_document_from_url_tool,
     # Calendar tools now imported from calendar_integration module
     "add_calendar_event": calendar_integration.add_calendar_event_tool,
     "search_calendar_events": calendar_integration.search_calendar_events_tool,
@@ -1003,6 +1005,42 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["filename"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ingest_document_from_url",
+            "description": (
+                "Submits a document from a given URL for ingestion and indexing by the system. The document will be fetched from the URL, its content extracted, processed, and stored to be made searchable. Provide a unique source_id for tracking this ingestion request."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url_to_ingest": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "The fully qualified URL of the document to ingest.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "The primary title to assign to this document.",
+                    },
+                    "source_type": {
+                        "type": "string",
+                        "description": "A category or type for this document source, e.g., 'llm_url_ingestion', 'user_link_submission'.",
+                    },
+                    "source_id": {
+                        "type": "string",
+                        "description": "A unique identifier for this specific document within its source_type. This should be unique for each ingestion request to avoid conflicts. A UUID is a good choice if one is not readily available.",
+                    },
+                    "metadata_json": {
+                        "type": "string",
+                        "description": "Optional. A JSON string representing a dictionary of additional key-value metadata to associate with the document (e.g., '{\"category\": \"research\", \"tags\": [\"ai\", \"llm\"]}').",
+                    },
+                },
+                "required": ["url_to_ingest", "title", "source_type", "source_id"],
             },
         },
     },
