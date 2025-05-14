@@ -177,7 +177,7 @@ async def process_document_ingestion_request(
             return {
                 "message": "Document received and accepted for processing.",
                 "document_id": document_id,
-                "task_enqueued": True,
+                "task_enqueued": task_enqueued, # Use the variable
                 "error_detail": None,
             }
         except Exception as task_err:
