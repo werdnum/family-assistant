@@ -426,6 +426,105 @@ async def get_full_document_content_tool(
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
 
 
+async def ingest_document_from_url_tool(
+    exec_context: ToolExecutionContext,
+    url_to_ingest: str,
+    title: str,
+    source_type: str,
+    source_id: str,
+    metadata_json: str | None = None,
+) -> str:
+    """
+    Submits a document from a given URL for ingestion and indexing.
+    The document will be fetched from the URL by the server, processed, and made searchable.
+
+    Args:
+        exec_context: The execution context.
+        url_to_ingest: The URL of the document to ingest.
+        title: The primary title for the document.
+        source_type: Type of the source (e.g., 'llm_url_ingestion', 'user_submitted_link').
+        source_id: A unique identifier for this document within its source type.
+        metadata_json: Optional JSON string representing a dictionary of additional metadata.
+
+    Returns:
+        A string message indicating success or failure.
+    """
+    logger.info(
+        f"Executing ingest_document_from_url_tool for URL: '{url_to_ingest}', Title: '{title}'"
+    )
+
+    base_api_url = None
+    if exec_context.processing_service and exec_context.processing_service.app_config:
+        base_api_url = exec_context.processing_service.app_config.get("SERVER_URL")
+
+    if not base_api_url:
+        base_api_url = os.getenv("SERVER_URL")
+        if not base_api_url:
+            logger.warning(
+                "SERVER_URL not found in app_config or environment, defaulting to http://localhost:8000 for ingest_document_from_url_tool"
+            )
+            base_api_url = "http://localhost:8000"
+
+    api_endpoint = f"{base_api_url}/api/documents/upload"
+
+    form_data = {
+        "source_type": source_type,
+        "source_id": source_id,
+        "source_uri": url_to_ingest,  # Canonical URI is the URL itself
+        "title": title,
+        "url": url_to_ingest,  # This is the 'url' parameter for the endpoint to scrape
+    }
+    if metadata_json:
+        form_data["metadata"] = metadata_json  # API expects 'metadata' for metadata_json
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(api_endpoint, data=form_data)
+            response.raise_for_status()  # Raise HTTPStatusError for bad responses (4xx or 5xx)
+
+            response_data = response.json()
+            doc_id = response_data.get("document_id")
+            task_enqueued = response_data.get("task_enqueued")
+            api_message = response_data.get("message", "Submission processed.")
+
+            logger.info(
+                f"Successfully submitted URL '{url_to_ingest}' for ingestion. API Response: {api_message}, Doc ID: {doc_id}, Task Enqueued: {task_enqueued}"
+            )
+            return f"URL submitted. Server response: {api_message}. Document ID: {doc_id}. Task Enqueued: {task_enqueued}."
+        except httpx.HTTPStatusError as e:
+            error_detail = e.response.text
+            try:
+                # Attempt to parse JSON error detail for better logging/reporting
+                json_error = e.response.json()
+                error_detail_msg = json_error.get("detail", error_detail)
+            except json.JSONDecodeError:
+                error_detail_msg = error_detail
+
+            logger.error(
+                f"API error submitting URL '{url_to_ingest}' for ingestion: {e.response.status_code} - {error_detail_msg}",
+                exc_info=True,
+            )
+            return f"Error submitting URL for ingestion: API returned {e.response.status_code}. Details: {error_detail_msg}"
+        except httpx.RequestError as e:
+            logger.error(
+                f"Request error submitting URL '{url_to_ingest}' for ingestion: {e}",
+                exc_info=True,
+            )
+            return f"Error submitting URL for ingestion: Request failed. {e}"
+        except json.JSONDecodeError as e: # If response.json() fails
+            logger.error(
+                f"Failed to parse JSON response from API for URL '{url_to_ingest}': {e}. Response text: {response.text}",
+                exc_info=True
+            )
+            return f"Error: Failed to parse API response. {e}"
+        except Exception as e:
+            logger.error(
+                f"Unexpected error submitting URL '{url_to_ingest}' for ingestion: {e}",
+                exc_info=True,
+            )
+            return f"Error: An unexpected error occurred while submitting the URL. {e}"
+
+
 async def get_message_history_tool(
     exec_context: ToolExecutionContext,
     limit: int = 10,
