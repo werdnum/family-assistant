@@ -18,7 +18,7 @@ from typing import (
 from zoneinfo import ZoneInfo
 
 import aiofiles
-import httpx  # Added for making HTTP requests
+# import httpx # No longer needed here
 import telegramify_markdown  # For escaping confirmation prompts
 from dateutil import rrule
 from dateutil.parser import isoparse
@@ -28,6 +28,7 @@ from sqlalchemy.sql import text
 # Import calendar helper functions AND tool implementations
 from family_assistant import calendar_integration, storage
 from family_assistant.embeddings import EmbeddingGenerator
+from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.storage import get_recent_history
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
@@ -452,79 +453,71 @@ async def ingest_document_from_url_tool(
     logger.info(
         f"Executing ingest_document_from_url_tool for URL: '{url_to_ingest}', Title: '{title}'"
     )
+    db_context = exec_context.db_context
 
-    base_api_url = None
-    if exec_context.processing_service and exec_context.processing_service.app_config:
-        base_api_url = exec_context.processing_service.app_config.get("SERVER_URL")
-
-    if not base_api_url:
-        base_api_url = os.getenv("SERVER_URL")
-        if not base_api_url:
-            logger.warning(
-                "SERVER_URL not found in app_config or environment, defaulting to http://localhost:8000 for ingest_document_from_url_tool"
-            )
-            base_api_url = "http://localhost:8000"
-
-    api_endpoint = f"{base_api_url}/api/documents/upload"
-
-    form_data = {
-        "source_type": source_type,
-        "source_id": source_id,
-        "source_uri": url_to_ingest,  # Canonical URI is the URL itself
-        "title": title,
-        "url": url_to_ingest,  # This is the 'url' parameter for the endpoint to scrape
-    }
+    doc_metadata: dict[str, Any] | None = None
     if metadata_json:
-        form_data["metadata"] = (
-            metadata_json  # API expects 'metadata' for metadata_json
+        try:
+            doc_metadata = json.loads(metadata_json)
+            if not isinstance(doc_metadata, dict):
+                logger.warning("Invalid JSON in metadata_json, proceeding without it.")
+                doc_metadata = None
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse metadata_json, proceeding without it.")
+            doc_metadata = None
+
+    # Get document_storage_path from config
+    document_storage_path_str = None
+    if exec_context.processing_service and exec_context.processing_service.app_config:
+        document_storage_path_str = exec_context.processing_service.app_config.get(
+            "document_storage_path"
         )
 
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(api_endpoint, data=form_data)
-            response.raise_for_status()  # Raise HTTPStatusError for bad responses (4xx or 5xx)
+    if not document_storage_path_str:
+        document_storage_path_str = os.getenv("DOCUMENT_STORAGE_PATH")
 
-            response_data = response.json()
-            doc_id = response_data.get("document_id")
-            task_enqueued = response_data.get("task_enqueued")
-            api_message = response_data.get("message", "Submission processed.")
+    if not document_storage_path_str:
+        logger.error(
+            "DOCUMENT_STORAGE_PATH not found in app_config or environment for ingest_document_from_url_tool."
+        )
+        return "Error: Server configuration missing (document storage path)."
 
-            logger.info(
-                f"Successfully submitted URL '{url_to_ingest}' for ingestion. API Response: {api_message}, Doc ID: {doc_id}, Task Enqueued: {task_enqueued}"
-            )
-            return f"URL submitted. Server response: {api_message}. Document ID: {doc_id}. Task Enqueued: {task_enqueued}."
-        except httpx.HTTPStatusError as e:
-            error_detail = e.response.text
-            try:
-                # Attempt to parse JSON error detail for better logging/reporting
-                json_error = e.response.json()
-                error_detail_msg = json_error.get("detail", error_detail)
-            except json.JSONDecodeError:
-                error_detail_msg = error_detail
+    document_storage_path = pathlib.Path(document_storage_path_str)
 
+    try:
+        ingestion_result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=document_storage_path,
+            source_type=source_type,
+            source_id=source_id,
+            source_uri=url_to_ingest, # For URL ingestion, source_uri is the URL itself
+            title=title,
+            url_to_scrape=url_to_ingest,
+            doc_metadata=doc_metadata,
+            # No file content or content_parts for this tool, only URL
+        )
+
+        if ingestion_result.get("error_detail"):
             logger.error(
-                f"API error submitting URL '{url_to_ingest}' for ingestion: {e.response.status_code} - {error_detail_msg}",
-                exc_info=True,
+                f"Ingestion service failed for URL '{url_to_ingest}': {ingestion_result['message']} - {ingestion_result['error_detail']}"
             )
-            return f"Error submitting URL for ingestion: API returned {e.response.status_code}. Details: {error_detail_msg}"
-        except httpx.RequestError as e:
-            logger.error(
-                f"Request error submitting URL '{url_to_ingest}' for ingestion: {e}",
-                exc_info=True,
-            )
-            return f"Error submitting URL for ingestion: Request failed. {e}"
-        except json.JSONDecodeError as e:  # If response.json() fails
-            logger.error(
-                f"Failed to parse JSON response from API for URL '{url_to_ingest}': {e}. Response text: {response.text}",
-                exc_info=True,
-            )
-            return f"Error: Failed to parse API response. {e}"
-        except Exception as e:
-            logger.error(
-                f"Unexpected error submitting URL '{url_to_ingest}' for ingestion: {e}",
-                exc_info=True,
-            )
-            return f"Error: An unexpected error occurred while submitting the URL. {e}"
+            return f"Error submitting URL for ingestion: {ingestion_result['message']}. Details: {ingestion_result['error_detail']}"
+
+        doc_id = ingestion_result.get("document_id")
+        task_enqueued = ingestion_result.get("task_enqueued")
+        service_message = ingestion_result.get("message", "Submission processed.")
+
+        logger.info(
+            f"Successfully submitted URL '{url_to_ingest}' via service. Response: {service_message}, Doc ID: {doc_id}, Task Enqueued: {task_enqueued}"
+        )
+        return f"URL submitted. Service response: {service_message}. Document ID: {doc_id}. Task Enqueued: {task_enqueued}."
+
+    except Exception as e:
+        logger.error(
+            f"Unexpected error calling ingestion service for URL '{url_to_ingest}': {e}",
+            exc_info=True,
+        )
+        return f"Error: An unexpected error occurred while submitting the URL. {e}"
 
 
 async def get_message_history_tool(

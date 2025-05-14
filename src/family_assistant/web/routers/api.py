@@ -3,13 +3,13 @@ import json
 import logging
 import os
 import pathlib
-import re
-import shutil
+# import re # No longer used directly here
+# import shutil # No longer used directly here
 import uuid
 from datetime import date, datetime, timezone
 from typing import Annotated, Any
 
-import filetype
+# import filetype # No longer used directly here
 from fastapi import (
     APIRouter,
     Depends,
@@ -23,7 +23,8 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
-from family_assistant import storage
+# from family_assistant import storage # No longer used directly here
+from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     ToolExecutionContext,
@@ -219,9 +220,7 @@ async def upload_document(
     app_config = getattr(request.app.state, "config", {})
     document_storage_path_str = app_config.get("document_storage_path")
     if not document_storage_path_str:
-        logger.error(
-            "Document storage path not configured in application state. Upload will fail."
-        )
+        logger.error("Document storage path not configured. Upload will fail.")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Server configuration error: Document storage path not set.",
@@ -235,255 +234,91 @@ async def upload_document(
             detail="Either a file must be uploaded, content_parts_json must be provided, or a URL must be provided.",
         )
 
-    # --- 2. Parse and Validate Inputs ---
+    # --- 2. Parse and Prepare Inputs for Service Function ---
     content_parts: dict[str, str] | None = None
     doc_metadata: dict[str, Any] = {}
     created_at_dt: datetime | None = None
-    file_ref: str | None = None
-    detected_mime_type: str | None = None
+    uploaded_file_content_bytes: bytes | None = None
     original_filename: str | None = None
+    client_content_type: str | None = None
 
     try:
-        # Parse JSON strings if provided
         if content_parts_json:
             content_parts = json.loads(content_parts_json)
-            if not isinstance(content_parts, dict):  # Allow empty dict if JSON is "{}
-                raise ValueError(
-                    "'content_parts' must be a valid JSON object string if provided."
-                )
-            # Validate content parts values are strings
+            if not isinstance(content_parts, dict):
+                raise ValueError("'content_parts' must be a valid JSON object string.")
             for key, value in content_parts.items():
                 if not isinstance(value, str):
-                    raise ValueError(
-                        f"Value for content part '{key}' must be a string."
-                    )
-        elif not uploaded_file and not url:  # Safeguard if primary check is bypassed
-            raise ValueError(
-                "'content_parts' must be provided if no file or URL is uploaded."
-            )
+                    raise ValueError(f"Value for content part '{key}' must be a string.")
+        elif not uploaded_file and not url:
+            raise ValueError("'content_parts' must be provided if no file or URL.")
 
         if metadata_json:
             doc_metadata = json.loads(metadata_json)
             if not isinstance(doc_metadata, dict):
-                raise ValueError(
-                    "'metadata' must be a valid JSON object string if provided."
-                )
+                raise ValueError("'metadata' must be a valid JSON object string.")
 
-        # Parse date string (handle date vs datetime)
         if created_at_str:
             try:
-                # Try parsing as full ISO 8601 datetime first
-                created_at_dt = datetime.fromisoformat(
-                    created_at_str.replace("Z", "+00:00")
-                )
-                # Ensure timezone-aware (assume UTC if naive)
+                created_at_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
                 if created_at_dt.tzinfo is None:
                     created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
             except ValueError:
-                # Try parsing as YYYY-MM-DD date
                 try:
                     created_date = date.fromisoformat(created_at_str)
-                    # Convert date to datetime (start of day, UTC)
-                    created_at_dt = datetime.combine(
-                        created_date, datetime.min.time(), tzinfo=timezone.utc
-                    )
+                    created_at_dt = datetime.combine(created_date, datetime.min.time(), tzinfo=timezone.utc)
                 except ValueError:
-                    raise ValueError(
-                        "Invalid 'created_at' format. Use ISO 8601 datetime (YYYY-MM-DDTHH:MM:SSZ) or date (YYYY-MM-DD)."
-                    ) from None
-
-        # Process uploaded file if present
+                    raise ValueError("Invalid 'created_at' format. Use ISO 8601 datetime or date.") from None
+        
         if uploaded_file:
             original_filename = uploaded_file.filename
-
-            # Sanitize filename and create a unique name
-            # Use os.path.basename to prevent directory traversal from malicious filenames
-            safe_basename = re.sub(
-                r"[^a-zA-Z0-9_.-]",
-                "_",
-                os.path.basename(original_filename or "unknown_file"),
-            )
-            unique_filename = f"{uuid.uuid4()}_{safe_basename}"
-
-            target_file_path = document_storage_path / unique_filename
-
-            # Ensure the storage directory exists
-            document_storage_path.mkdir(parents=True, exist_ok=True)
-
-            # Save the file to the persistent location
-            with open(target_file_path, "wb") as f:
-                shutil.copyfileobj(uploaded_file.file, f)
-
-            file_ref = str(
-                target_file_path
-            )  # file_ref is the path to the persistently stored file
-            logger.info(
-                f"Uploaded file '{original_filename}' saved to '{file_ref}' for document {source_id}."
-            )
-
-            # Detect MIME type using filetype library from the new persistent path
-            try:
-                kind = filetype.guess(file_ref)  # Guess from the saved file
-                if kind is None:
-                    logger.warning(
-                        f"Could not determine file type for '{original_filename}' (path: {file_ref}). "
-                        f"Falling back to client-provided content type: {uploaded_file.content_type}."
-                    )
-                    detected_mime_type = uploaded_file.content_type  # Fallback
-                else:
-                    detected_mime_type = kind.mime
-                    logger.info(
-                        f"Detected MIME type for '{original_filename}' (path: {file_ref}): {detected_mime_type}"
-                    )
-            except Exception as fe:
-                logger.error(
-                    f"Error detecting file type for '{original_filename}' (path: {file_ref}): {fe}",
-                    exc_info=True,
-                )
-                # Fallback or error, for now, let's use client-provided if detection fails
-                detected_mime_type = uploaded_file.content_type
-                logger.warning(
-                    f"Using client-provided content type '{detected_mime_type}' due to detection error for {original_filename}."
-                )
+            client_content_type = uploaded_file.content_type
+            uploaded_file_content_bytes = await uploaded_file.read()
 
     except json.JSONDecodeError as json_err:
-        logger.error(f"JSON parsing error for document upload {source_id}: {json_err}")
-        # file_ref now points to a persistent location, so we don't remove it here.
-        # If saving the file itself failed, file_ref would be None or point to a non-existent path.
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid JSON format: {json_err}",
-        ) from json_err
+        logger.error(f"JSON parsing error for upload {source_id}: {json_err}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid JSON: {json_err}") from json_err
     except ValueError as val_err:
-        logger.error(f"Validation error for document upload {source_id}: {val_err}")
-        # file_ref points to a persistent location.
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err)
-        ) from val_err
-    except Exception as e:
-        logger.error(
-            f"Unexpected parsing or file handling error for document upload {source_id}: {e}",
-            exc_info=True,
-        )
-        # file_ref points to a persistent location.
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing request data or file.",
-        ) from e
+        logger.error(f"Validation error for upload {source_id}: {val_err}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err)) from val_err
+    except Exception as e: # Catch errors during file read
+        logger.error(f"Error reading uploaded file for {source_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing uploaded file.") from e
     finally:
         if uploaded_file:
             await uploaded_file.close()
 
-    # --- 3. Create Document Record in DB ---
-    # Create a dictionary conforming to the Document protocol structure
-    # Use provided title if available, otherwise None
-    document_data = {
-        "_source_type": source_type,
-        "_source_id": source_id,
-        "_source_uri": source_uri,
-        "_title": title,  # Use the dedicated title field if provided
-        "_created_at": created_at_dt,
-        "_base_metadata": doc_metadata,
-        # These properties are part of the protocol definition
-        "source_type": property(lambda self: self["_source_type"]),
-        "source_id": property(lambda self: self["_source_id"]),
-        "source_uri": property(lambda self: self["_source_uri"]),
-        "title": property(lambda self: self["_title"]),
-        "created_at": property(lambda self: self["_created_at"]),
-        "metadata": property(lambda self: self["_base_metadata"]),
-    }
+    # --- 3. Call the Ingestion Service Function ---
+    ingestion_result = await process_document_ingestion_request(
+        db_context=db_context,
+        document_storage_path=document_storage_path,
+        source_type=source_type,
+        source_id=source_id,
+        source_uri=source_uri,
+        title=title,
+        content_parts=content_parts,
+        uploaded_file_content=uploaded_file_content_bytes,
+        uploaded_file_filename=original_filename,
+        uploaded_file_content_type=client_content_type,
+        url_to_scrape=url,
+        created_at_dt=created_at_dt,
+        doc_metadata=doc_metadata,
+    )
 
-    # Define a simple class on the fly that behaves like the Document protocol
-    # This avoids needing a direct import of a specific Document implementation
-    class UploadedDocument:
-        def __init__(self, data: dict[str, Any]) -> None:
-            self._data = data
-
-        @property
-        def source_type(self) -> str:
-            return self._data["_source_type"]
-
-        @property
-        def source_id(self) -> str:
-            return self._data["_source_id"]
-
-        @property
-        def source_uri(self) -> str | None:
-            return self._data["_source_uri"]
-
-        @property
-        def title(self) -> str | None:
-            return self._data["_title"]
-
-        @property
-        def created_at(self) -> datetime | None:
-            return self._data["_created_at"]
-
-        @property
-        def metadata(self) -> dict[str, Any] | None:
-            return self._data["_base_metadata"]
-
-    doc_for_storage = UploadedDocument(document_data)
-
-    try:
-        document_id: int = await storage.add_document(
-            db_context=db_context,
-            doc=doc_for_storage,
-            # No separate enriched metadata here, it's already merged
-        )
-        logger.info(f"Stored document record for {source_id}, got DB ID: {document_id}")
-    except Exception as db_err:
-        logger.error(
-            f"Database error storing document record for {source_id}: {db_err}",
-            exc_info=True,
-        )
-        # Check for unique constraint violation (source_id already exists)
-        # This check might be dialect-specific or require inspecting the exception details
-        if "UNIQUE constraint failed" in str(
-            db_err
-        ) or "duplicate key value violates unique constraint" in str(db_err):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Document with source_type '{source_type}' and source_id '{source_id}' already exists.",
-            ) from db_err
+    # --- 4. Handle Result and Return Response ---
+    if ingestion_result.get("error_detail"):
+        status_code = ingestion_result.get("status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Ensure status_code is a valid HTTP status int
+        if not isinstance(status_code, int) or not (100 <= status_code <= 599):
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error storing document.",
-        ) from db_err
-
-    # --- 4. Enqueue Background Task for Embedding ---
-    task_payload = {
-        "document_id": document_id,
-        "content_parts": content_parts,  # Parsed dictionary or None
-        "file_ref": file_ref,  # Path to persistent file or None
-        "mime_type": detected_mime_type,  # Detected MIME type or None
-        "original_filename": original_filename,  # Original filename or None
-        "url_to_scrape": url,  # Pass the URL if provided
-    }
-    task_id = f"index-doc-{document_id}-{uuid.uuid4()}"  # More robust unique task ID
-    task_enqueued = False
-    try:
-        await storage.enqueue_task(
-            db_context=db_context,
-            task_id=task_id,
-            task_type="process_uploaded_document",  # Matches the handler registration
-            payload=task_payload,
+            status_code=status_code,
+            detail=ingestion_result["message"], # Use message from result as detail
         )
-        task_enqueued = True
-        logger.info(f"Enqueued task '{task_id}' to process document ID {document_id}")
-    except Exception as task_err:
-        logger.error(
-            f"Failed to enqueue indexing task for document ID {document_id}: {task_err}",
-            exc_info=True,
-        )
-        # Document record exists, but indexing won't happen automatically.
-        # Return success but indicate task failure? Or return an error?
-        # Let's return success for the upload but log the task error clearly.
-        # The response model will indicate task_enqueued=False.
 
-    # --- 4. Return Response ---
     return DocumentUploadResponse(
-        message="Document received and accepted for processing.",
-        document_id=document_id,
-        task_enqueued=task_enqueued,
+        message=ingestion_result["message"],
+        document_id=ingestion_result["document_id"],
+        task_enqueued=ingestion_result["task_enqueued"],
     )
