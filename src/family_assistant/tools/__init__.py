@@ -475,7 +475,9 @@ async def ingest_document_from_url_tool(
         "url": url_to_ingest,  # This is the 'url' parameter for the endpoint to scrape
     }
     if metadata_json:
-        form_data["metadata"] = metadata_json  # API expects 'metadata' for metadata_json
+        form_data["metadata"] = (
+            metadata_json  # API expects 'metadata' for metadata_json
+        )
 
     async with httpx.AsyncClient() as client:
         try:
@@ -511,10 +513,10 @@ async def ingest_document_from_url_tool(
                 exc_info=True,
             )
             return f"Error submitting URL for ingestion: Request failed. {e}"
-        except json.JSONDecodeError as e: # If response.json() fails
+        except json.JSONDecodeError as e:  # If response.json() fails
             logger.error(
                 f"Failed to parse JSON response from API for URL '{url_to_ingest}': {e}. Response text: {response.text}",
-                exc_info=True
+                exc_info=True,
             )
             return f"Error: Failed to parse API response. {e}"
         except Exception as e:
@@ -1120,7 +1122,9 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     "url_to_ingest": {
                         "type": "string",
                         "format": "uri",
-                        "description": "The fully qualified URL of the document to ingest.",
+                        "description": (
+                            "The fully qualified URL of the document to ingest."
+                        ),
                     },
                     "title": {
                         "type": "string",
@@ -1128,15 +1132,21 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "source_type": {
                         "type": "string",
-                        "description": "A category or type for this document source, e.g., 'llm_url_ingestion', 'user_link_submission'.",
+                        "description": (
+                            "A category or type for this document source, e.g., 'llm_url_ingestion', 'user_link_submission'."
+                        ),
                     },
                     "source_id": {
                         "type": "string",
-                        "description": "A unique identifier for this specific document within its source_type. This should be unique for each ingestion request to avoid conflicts. A UUID is a good choice if one is not readily available.",
+                        "description": (
+                            "A unique identifier for this specific document within its source_type. This should be unique for each ingestion request to avoid conflicts. A UUID is a good choice if one is not readily available."
+                        ),
                     },
                     "metadata_json": {
                         "type": "string",
-                        "description": "Optional. A JSON string representing a dictionary of additional key-value metadata to associate with the document (e.g., '{\"category\": \"research\", \"tags\": [\"ai\", \"llm\"]}').",
+                        "description": (
+                            'Optional. A JSON string representing a dictionary of additional key-value metadata to associate with the document (e.g., \'{"category": "research", "tags": ["ai", "llm"]}\').'
+                        ),
                     },
                 },
                 "required": ["url_to_ingest", "title", "source_type", "source_id"],
