@@ -134,7 +134,9 @@ async def process_document_ingestion_request(
                 "message": "Ingestion request failed: No content provided.",
                 "document_id": None,
                 "task_enqueued": False,
-                "error_detail": "No file content, URL, or content_parts provided for ingestion.",
+                "error_detail": (
+                    "No file content, URL, or content_parts provided for ingestion."
+                ),
             }
 
         # Create Document Record in DB
@@ -173,11 +175,13 @@ async def process_document_ingestion_request(
                 payload=task_payload,
             )
             task_enqueued = True
-            logger.info(f"Enqueued task '{task_id}' to process document ID {document_id}")
+            logger.info(
+                f"Enqueued task '{task_id}' to process document ID {document_id}"
+            )
             return {
                 "message": "Document received and accepted for processing.",
                 "document_id": document_id,
-                "task_enqueued": task_enqueued, # Use the variable
+                "task_enqueued": task_enqueued,  # Use the variable
                 "error_detail": None,
             }
         except Exception as task_err:
@@ -186,46 +190,66 @@ async def process_document_ingestion_request(
                 exc_info=True,
             )
             return {
-                "message": "Document record stored, but failed to enqueue indexing task.",
+                "message": (
+                    "Document record stored, but failed to enqueue indexing task."
+                ),
                 "document_id": document_id,
                 "task_enqueued": False,
                 "error_detail": str(task_err),
             }
 
-    except (ValueError, json.JSONDecodeError) as val_err: # Should be caught by caller usually
-        logger.error(f"Validation or JSON error during ingestion processing for {source_id}: {val_err}", exc_info=True)
+    except (
+        ValueError,
+        json.JSONDecodeError,
+    ) as val_err:  # Should be caught by caller usually
+        logger.error(
+            f"Validation or JSON error during ingestion processing for {source_id}: {val_err}",
+            exc_info=True,
+        )
         return {
             "message": "Ingestion request failed due to validation or JSON error.",
             "document_id": None,
             "task_enqueued": False,
             "error_detail": str(val_err),
         }
-    except FileNotFoundError as fnf_err: # If document_storage_path is invalid during file ops
-        logger.error(f"File not found error during ingestion processing for {source_id}: {fnf_err}", exc_info=True)
+    except (
+        FileNotFoundError
+    ) as fnf_err:  # If document_storage_path is invalid during file ops
+        logger.error(
+            f"File not found error during ingestion processing for {source_id}: {fnf_err}",
+            exc_info=True,
+        )
         return {
-            "message": "Ingestion request failed due to file system error (path not found).",
+            "message": (
+                "Ingestion request failed due to file system error (path not found)."
+            ),
             "document_id": None,
             "task_enqueued": False,
             "error_detail": str(fnf_err),
         }
-    except Exception as db_err: # Covers storage.add_document errors primarily
+    except Exception as db_err:  # Covers storage.add_document errors primarily
         logger.error(
             f"Database or unexpected error storing document record for {source_id}: {db_err}",
             exc_info=True,
         )
         error_detail = str(db_err)
-        if "UNIQUE constraint failed" in error_detail or "duplicate key value violates unique constraint" in error_detail:
+        if (
+            "UNIQUE constraint failed" in error_detail
+            or "duplicate key value violates unique constraint" in error_detail
+        ):
             return {
-                "message": f"Document with source_type '{source_type}' and source_id '{source_id}' already exists.",
-                "document_id": None, # Or fetch existing ID if needed
+                "message": (
+                    f"Document with source_type '{source_type}' and source_id '{source_id}' already exists."
+                ),
+                "document_id": None,  # Or fetch existing ID if needed
                 "task_enqueued": False,
                 "error_detail": "Conflict: Document already exists.",
-                "status_code": 409 # Hint for API layer
+                "status_code": 409,  # Hint for API layer
             }
         return {
             "message": "Ingestion request failed due to database or unexpected error.",
             "document_id": None,
             "task_enqueued": False,
             "error_detail": error_detail,
-            "status_code": 500 # Hint for API layer
+            "status_code": 500,  # Hint for API layer
         }
