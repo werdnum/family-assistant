@@ -244,7 +244,9 @@ async def upload_document(
                 raise ValueError("'content_parts' must be a valid JSON object string.")
             for key, value in content_parts.items():
                 if not isinstance(value, str):
-                    raise ValueError(f"Value for content part '{key}' must be a string.")
+                    raise ValueError(
+                        f"Value for content part '{key}' must be a string."
+                    )
         elif not uploaded_file and not url:
             raise ValueError("'content_parts' must be provided if no file or URL.")
 
@@ -255,16 +257,22 @@ async def upload_document(
 
         if created_at_str:
             try:
-                created_at_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                created_at_dt = datetime.fromisoformat(
+                    created_at_str.replace("Z", "+00:00")
+                )
                 if created_at_dt.tzinfo is None:
                     created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
             except ValueError:
                 try:
                     created_date = date.fromisoformat(created_at_str)
-                    created_at_dt = datetime.combine(created_date, datetime.min.time(), tzinfo=timezone.utc)
+                    created_at_dt = datetime.combine(
+                        created_date, datetime.min.time(), tzinfo=timezone.utc
+                    )
                 except ValueError:
-                    raise ValueError("Invalid 'created_at' format. Use ISO 8601 datetime or date.") from None
-        
+                    raise ValueError(
+                        "Invalid 'created_at' format. Use ISO 8601 datetime or date."
+                    ) from None
+
         if uploaded_file:
             original_filename = uploaded_file.filename
             client_content_type = uploaded_file.content_type
@@ -272,13 +280,20 @@ async def upload_document(
 
     except json.JSONDecodeError as json_err:
         logger.error(f"JSON parsing error for upload {source_id}: {json_err}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid JSON: {json_err}") from json_err
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid JSON: {json_err}"
+        ) from json_err
     except ValueError as val_err:
         logger.error(f"Validation error for upload {source_id}: {val_err}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err)) from val_err
-    except Exception as e: # Catch errors during file read
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err)
+        ) from val_err
+    except Exception as e:  # Catch errors during file read
         logger.error(f"Error reading uploaded file for {source_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing uploaded file.") from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing uploaded file.",
+        ) from e
     finally:
         if uploaded_file:
             await uploaded_file.close()
@@ -302,14 +317,16 @@ async def upload_document(
 
     # --- 4. Handle Result and Return Response ---
     if ingestion_result.get("error_detail"):
-        status_code = ingestion_result.get("status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
+        status_code = ingestion_result.get(
+            "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
         # Ensure status_code is a valid HTTP status int
         if not isinstance(status_code, int) or not (100 <= status_code <= 599):
             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-            
+
         raise HTTPException(
             status_code=status_code,
-            detail=ingestion_result["message"], # Use message from result as detail
+            detail=ingestion_result["message"],  # Use message from result as detail
         )
 
     return DocumentUploadResponse(
