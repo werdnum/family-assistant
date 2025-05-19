@@ -312,12 +312,14 @@ async def test_document_indexing_and_query_e2e(
     }
     # Instantiate DocumentIndexer with the test-specific pipeline config
     # No LLM or Scraper needed for this basic indexing test
-    mock_llm_client_dummy = RuleBasedMockLLMClient(rules=[]) # Dummy, not used by this pipeline
-    mock_scraper_dummy = MockScraper(url_map={}) # Dummy, not used
+    mock_llm_client_dummy = RuleBasedMockLLMClient(
+        rules=[]
+    )  # Dummy, not used by this pipeline
+    mock_scraper_dummy = MockScraper(url_map={})  # Dummy, not used
 
     document_indexer = DocumentIndexer(
         pipeline_config=test_pipeline_config,
-        llm_client=mock_llm_client_dummy, # type: ignore
+        llm_client=mock_llm_client_dummy,  # type: ignore
         embedding_generator=mock_embedding_generator,
         scraper=mock_scraper_dummy,
     )
@@ -700,7 +702,7 @@ async def test_document_indexing_with_llm_summary_e2e(
         + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
     ).tolist()
 
-    mock_embedding_generator.embedding_map.update( # type: ignore
+    mock_embedding_generator.embedding_map.update(  # type: ignore
         {
             # The LLMSummaryProcessor outputs the JSON string of the extracted data
             json.dumps({"summary": EXPECTED_LLM_SUMMARY}, indent=2): summary_embedding,
@@ -712,8 +714,8 @@ async def test_document_indexing_with_llm_summary_e2e(
         }
     )
     # Store for assertion
-    mock_embedding_generator._test_query_summary_embedding = query_summary_embedding # type: ignore
-    mock_embedding_generator._test_query_url_content_embedding = ( # type: ignore
+    mock_embedding_generator._test_query_summary_embedding = query_summary_embedding  # type: ignore
+    mock_embedding_generator._test_query_url_content_embedding = (  # type: ignore
         query_for_url_content_embedding_val
     )
 
@@ -744,7 +746,7 @@ async def test_document_indexing_with_llm_summary_e2e(
 
     document_indexer = DocumentIndexer(
         pipeline_config=test_pipeline_config_summary,
-        llm_client=mock_llm_client, # type: ignore
+        llm_client=mock_llm_client,  # type: ignore
         embedding_generator=mock_embedding_generator,
         scraper=mock_scraper_dummy,
     )
@@ -984,7 +986,7 @@ async def test_url_indexing_e2e(
     # Define Pipeline Config for URL Indexing Test
     test_pipeline_config_url = {
         "processors": [
-            {"type": "WebFetcher", "config": {}}, # Scraper injected by DocumentIndexer
+            {"type": "WebFetcher", "config": {}},  # Scraper injected by DocumentIndexer
             {
                 "type": "TextChunker",
                 "config": {
@@ -1006,9 +1008,9 @@ async def test_url_indexing_e2e(
 
     document_indexer_for_url = DocumentIndexer(
         pipeline_config=test_pipeline_config_url,
-        llm_client=mock_llm_client_dummy, # type: ignore
+        llm_client=mock_llm_client_dummy,  # type: ignore
         embedding_generator=mock_embedding_generator,
-        scraper=mock_scraper, # Pass the mock_scraper for WebFetcher
+        scraper=mock_scraper,  # Pass the mock_scraper for WebFetcher
     )
     logger.info("DocumentIndexer for URL initialized with specific pipeline config.")
 
