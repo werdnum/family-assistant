@@ -149,8 +149,8 @@ async def dequeue_task(
             .limit(1)
             .with_for_update(skip_locked=True)  # Lock the selected row
         )
-        # Execute within the transaction, using the context's retry logic
-        result = await db_context.execute_with_retry(stmt)
+        # Execute directly on the connection within the existing transaction
+        result = await db_context.conn.execute(stmt)
         task_row = result.fetchone()  # Use fetchone directly on the result proxy
 
         if task_row:
@@ -162,8 +162,8 @@ async def dequeue_task(
                 )  # Ensure status hasn't changed
                 .values(status="processing", locked_by=worker_id, locked_at=now)
             )
-            # Execute update within the same transaction
-            update_result = await db_context.execute_with_retry(update_stmt)
+            # Execute update directly on the connection
+            update_result = await db_context.conn.execute(update_stmt)
 
             if update_result.rowcount == 1:
                 # No need to call db_context.commit() here, context manager handles it
