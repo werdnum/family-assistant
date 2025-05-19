@@ -117,6 +117,9 @@ class WebFetcherProcessor:
                         "fetched_title": (
                             scrape_result.title
                         ),  # Add title from scrape result
+                        "mime_type": (
+                            scrape_result.mime_type
+                        ),  # Add mime_type from scrape result
                     }
 
                     # If original_url was not in original_document.metadata (and thus not in base_metadata_from_doc),
