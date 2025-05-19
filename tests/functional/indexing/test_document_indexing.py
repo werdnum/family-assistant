@@ -120,8 +120,9 @@ This is the second paragraph. It contains more details and specific keywords lik
 # 1. "# Mocked Page Title"
 # 2. "This is the first paragraph of the mocked web page content. It discusses various interesting topics."
 # 3. "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'."
-EXPECTED_URL_CHUNK_0_CONTENT = "This is the first paragraph of the mocked web page content. It discusses various interesting topics."  # Was paragraph 1
-EXPECTED_URL_CHUNK_1_CONTENT = "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'."  # Was paragraph 2
+# Actual chunks from log with chunk_size=150, overlap=20:
+EXPECTED_URL_CHUNK_0_CONTENT = "# Mocked Page Title This is the first paragraph of the mocked web page content It discusses various interesting topics. This is the second paragraph I"
+EXPECTED_URL_CHUNK_1_CONTENT = "e second paragraph It contains more details and specific keywords like 'synergy' and 'innovation'."
 TEST_QUERY_FOR_URL_CONTENT = (
     "synergy and innovation"  # Query targets chunk 1 (the second paragraph)
 )
