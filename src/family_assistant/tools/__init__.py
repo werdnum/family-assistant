@@ -429,30 +429,38 @@ async def get_full_document_content_tool(
 async def ingest_document_from_url_tool(
     exec_context: ToolExecutionContext,
     url_to_ingest: str,
-    title: str,
     source_type: str,
     source_id: str,
+    title: str | None = None,  # Title is now optional
     metadata_json: str | None = None,
 ) -> str:
     """
     Submits a document from a given URL for ingestion and indexing.
     The document will be fetched from the URL by the server, processed, and made searchable.
+    If a title is not provided, it will be attempted to be extracted during indexing.
 
     Args:
         exec_context: The execution context.
         url_to_ingest: The URL of the document to ingest.
-        title: The primary title for the document.
         source_type: Type of the source (e.g., 'llm_url_ingestion', 'user_submitted_link').
         source_id: A unique identifier for this document within its source type.
+        title: Optional. The primary title for the document. If None, a placeholder will be used and the actual title will be extracted during indexing.
         metadata_json: Optional JSON string representing a dictionary of additional metadata.
 
     Returns:
         A string message indicating success or failure.
     """
     logger.info(
-        f"Executing ingest_document_from_url_tool for URL: '{url_to_ingest}', Title: '{title}'"
+        f"Executing ingest_document_from_url_tool for URL: '{url_to_ingest}', Provided Title: '{title}'"
     )
     db_context = exec_context.db_context
+
+    title_to_use = title
+    if title_to_use is None:
+        # Use a placeholder if no title is provided by the LLM.
+        # The actual title will be determined by DocumentTitleUpdaterProcessor.
+        title_to_use = f"URL Ingest: {url_to_ingest}"
+        logger.info(f"No title provided, using placeholder: '{title_to_use}'")
 
     doc_metadata: dict[str, Any] | None = None
     if metadata_json:
@@ -490,7 +498,7 @@ async def ingest_document_from_url_tool(
             source_type=source_type,
             source_id=source_id,
             source_uri=url_to_ingest,  # For URL ingestion, source_uri is the URL itself
-            title=title,
+            title=title_to_use,  # Use the resolved title (provided or placeholder)
             url_to_scrape=url_to_ingest,
             doc_metadata=doc_metadata,
             # No file content or content_parts for this tool, only URL
@@ -1120,7 +1128,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "title": {
                         "type": "string",
-                        "description": "The primary title to assign to this document.",
+                        "description": "Optional. The primary title to assign to this document. If omitted, the title will be extracted automatically during the indexing process from the web page content.",
                     },
                     "source_type": {
                         "type": "string",
@@ -1141,7 +1149,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                         ),
                     },
                 },
-                "required": ["url_to_ingest", "title", "source_type", "source_id"],
+                "required": ["url_to_ingest", "source_type", "source_id"],
             },
         },
     },
