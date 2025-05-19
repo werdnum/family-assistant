@@ -1128,7 +1128,9 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "title": {
                         "type": "string",
-                        "description": "Optional. The primary title to assign to this document. If omitted, the title will be extracted automatically during the indexing process from the web page content.",
+                        "description": (
+                            "Optional. The primary title to assign to this document. If omitted, the title will be extracted automatically during the indexing process from the web page content."
+                        ),
                     },
                     "source_type": {
                         "type": "string",
