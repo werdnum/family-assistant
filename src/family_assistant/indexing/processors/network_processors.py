@@ -92,15 +92,13 @@ class WebFetcherProcessor:
 
                     # Start with metadata from the original document
                     base_metadata_from_doc = {}
-                    if original_document and original_document.metadata:
-                        if "original_url" in original_document.metadata:
-                            base_metadata_from_doc["original_url"] = (
-                                original_document.metadata["original_url"]
-                            )
-                        if "original_filename" in original_document.metadata:
-                            base_metadata_from_doc["original_filename"] = (
-                                original_document.metadata["original_filename"]
-                            )
+                    # Safely access original_document.metadata using getattr
+                    doc_meta = getattr(original_document, "metadata", None)
+                    if original_document and doc_meta:
+                        if "original_url" in doc_meta:
+                            base_metadata_from_doc["original_url"] = doc_meta["original_url"]
+                        if "original_filename" in doc_meta:
+                            base_metadata_from_doc["original_filename"] = doc_meta["original_filename"]
 
                     common_metadata = {
                         **base_metadata_from_doc,  # Inherit original_url/filename from original_document
