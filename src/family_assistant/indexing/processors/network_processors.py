@@ -103,36 +103,54 @@ class WebFetcherProcessor:
                     }
 
                     processed_successfully = False
-                    # Case 1: Explicit Markdown content
-                    if scrape_result.markdown_content and (
+
+                    # Safely get content attributes
+                    markdown_content = getattr(scrape_result, "markdown_content", None)
+                    text_content = getattr(scrape_result, "text_content", None)
+                    binary_content = getattr(scrape_result, "binary_content", None)
+                    error_message = getattr(
+                        scrape_result, "error_message", "Unknown error"
+                    )
+
+                    if scrape_result.type == "error":
+                        logger.error(
+                            f"{self.name}: Failed to scrape URL '{url_to_fetch}'. Error: {error_message}"
+                        )
+                        items_to_pass_through.append(item)
+                        processed_successfully = (
+                            True  # Error is a final state for this item
+                        )
+
+                    # Case 1: Markdown content
+                    elif (
                         scrape_result.type == "markdown"
                         or (
                             scrape_result.type == "success"
                             and scrape_result.mime_type == "text/markdown"
                         )
-                    ):
+                    ) and markdown_content:
                         output_items.append(
                             IndexableContent(
-                                content=scrape_result.markdown_content,
+                                content=markdown_content,
                                 embedding_type="fetched_content_markdown",
-                                mime_type="text/markdown",  # Explicitly markdown
+                                mime_type="text/markdown",
                                 source_processor=self.name,
                                 metadata=common_metadata,
                             )
                         )
                         processed_successfully = True
-                    # Case 2: Explicit Text content
-                    elif scrape_result.text_content and (
+                    # Case 2: Text content
+                    elif (
                         scrape_result.type == "text"
                         or (
                             scrape_result.type == "success"
                             and scrape_result.mime_type
                             and scrape_result.mime_type.startswith("text/")
                         )
-                    ):
+                    ) and text_content:
                         output_items.append(
                             IndexableContent(
-                                content=scrape_result.text_content,
+                                content=text_content,
                                 embedding_type="fetched_content_text",
                                 mime_type=scrape_result.mime_type or "text/plain",
                                 source_processor=self.name,
@@ -140,15 +158,18 @@ class WebFetcherProcessor:
                             )
                         )
                         processed_successfully = True
-                    # Case 3: Explicit Image/Binary content
-                    elif scrape_result.binary_content and (
+                    # Case 3: Image/Binary content
+                    elif (
                         scrape_result.type == "image"
                         or (
                             scrape_result.type == "success"
                             and scrape_result.mime_type
-                            and scrape_result.mime_type.startswith("image/")
+                            and (
+                                scrape_result.mime_type.startswith("image/")
+                                or scrape_result.mime_type == "application/octet-stream"
+                            )
                         )
-                    ):
+                    ) and binary_content:
                         suffix = ""
                         if scrape_result.mime_type:
                             if "jpeg" in scrape_result.mime_type:
@@ -197,23 +218,14 @@ class WebFetcherProcessor:
                         )
                         processed_successfully = True
 
-                    # Case 4: Scrape resulted in an error
-                    if scrape_result.type == "error":
-                        logger.error(
-                            f"{self.name}: Failed to scrape URL '{url_to_fetch}'. Error: {scrape_result.error_message}"
-                        )
-                        # Do not add to output_items, pass original item through
-                        items_to_pass_through.append(item)
-                        processed_successfully = (
-                            True  # Error is a final state for processing this item
-                        )
-
-                    # Case 5: Unhandled or unexpected result
-                    if not processed_successfully:
+                    # Case 4: Unhandled or unexpected result (if not error and not processed by cases above)
+                    if (
+                        not processed_successfully
+                    ):  # This implies it wasn't an error type and didn't match content types
                         logger.warning(
                             f"{self.name}: Unhandled scrape result for URL '{url_to_fetch}'. "
                             f"Type: '{scrape_result.type}', Mime: '{scrape_result.mime_type}', "
-                            f"Markdown: {bool(scrape_result.markdown_content)}, Text: {bool(scrape_result.text_content)}, Binary: {bool(scrape_result.binary_content)}. "
+                            f"Markdown: {bool(markdown_content)}, Text: {bool(text_content)}, Binary: {bool(binary_content)}. "
                             "Passing original item."
                         )
                         items_to_pass_through.append(item)
