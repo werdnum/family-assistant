@@ -40,17 +40,6 @@ from family_assistant.indexing.email_indexer import (
     # set_indexing_dependencies, # Removed as master_indexing_pipeline is removed
 )
 
-# Import pipeline and processors for indexing # Removed imports for individual processors
-# from family_assistant.indexing.pipeline import IndexingPipeline
-# from family_assistant.indexing.processors.dispatch_processors import (
-# EmbeddingDispatchProcessor,
-# )
-# from family_assistant.indexing.processors.file_processors import PDFTextExtractor
-# from family_assistant.indexing.processors.llm_processors import (
-# LLMSummaryGeneratorProcessor,
-# )
-# from family_assistant.indexing.processors.metadata_processors import TitleExtractor
-# from family_assistant.indexing.processors.text_processors import TextChunker
 # Import the specific task handler for embedding
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm import (
@@ -771,7 +760,6 @@ async def main_async(
     logger.info(
         "DocumentIndexer initialized using 'indexing_pipeline_config' from application configuration."
     )
-    # Removed: set_indexing_dependencies(pipeline=master_indexing_pipeline)
 
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
