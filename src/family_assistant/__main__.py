@@ -737,7 +737,6 @@ async def main_async(
         max_history_messages=config["max_history_messages"],
         history_max_age_hours=config["history_max_age_hours"],
         server_url=config["server_url"],
-        app_config=config,  # Pass full app config
     )
     logger.info("ProcessingService initialized with configuration.")
 
