@@ -269,6 +269,93 @@ async def reschedule_task_for_retry(
         raise
 
 
+async def manually_retry_task(
+    db_context: DatabaseContext,
+    internal_task_id: int,  # This is tasks_table.c.id
+    notify_event: asyncio.Event | None = None,
+) -> bool:
+    """
+    Manually retries a task that has failed or exhausted its retries.
+    Increments max_retries, sets status to pending, and schedules for immediate run.
+    """
+    now = datetime.now(timezone.utc)
+    try:
+        # Fetch the task by its internal ID
+        select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)
+        task_row = await db_context.fetch_one(select_stmt)
+
+        if not task_row:
+            logger.warning(
+                f"Manual retry requested for non-existent task with internal ID {internal_task_id}."
+            )
+            return False
+
+        # Check if task is eligible for manual retry
+        is_failed_status = task_row.status == "failed"
+        is_pending_exhausted = (
+            task_row.status == "pending"
+            and task_row.retry_count >= task_row.max_retries
+        )
+
+        if not (is_failed_status or is_pending_exhausted):
+            logger.warning(
+                f"Task with internal ID {internal_task_id} (status: {task_row.status}, retries: {task_row.retry_count}/{task_row.max_retries}) "
+                "is not eligible for manual retry."
+            )
+            return False
+
+        update_values = {
+            "status": "pending",
+            "max_retries": task_row.max_retries + 1,
+            "scheduled_at": now,
+            "error": None,  # Clear previous error
+            "locked_by": None,
+            "locked_at": None,
+            # retry_count remains as is, it will be compared against the new max_retries
+        }
+
+        update_stmt = (
+            update(tasks_table)
+            .where(tasks_table.c.id == internal_task_id)
+            .values(**update_values)
+        )
+
+        result = await db_context.execute_with_retry(update_stmt)
+
+        if result.rowcount > 0:
+            logger.info(
+                f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row.max_retries + 1}."
+            )
+            if notify_event:
+
+                def notify() -> None:
+                    notify_event.set()
+                    logger.info(
+                        f"Notified worker about manual retry for task internal ID {internal_task_id}."
+                    )
+
+                db_context.on_commit(notify)
+            return True
+        else:
+            logger.error(
+                f"Failed to update task with internal ID {internal_task_id} for manual retry, though it was found and eligible. Rowcount: {result.rowcount}."
+            )
+            return False
+
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error during manual retry for task internal ID {internal_task_id}: {e}",
+            exc_info=True,
+        )
+        raise  # Re-raise to be handled by context manager or caller
+    except Exception as e:
+        logger.error(
+            f"Unexpected error during manual retry for task internal ID {internal_task_id}: {e}",
+            exc_info=True,
+        )
+        raise
+
+
 async def get_all_tasks(
     db_context: DatabaseContext, limit: int = 100
 ) -> list[dict[str, Any]]:

@@ -3,10 +3,11 @@ from datetime import datetime, timezone  # Added
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse  # Added RedirectResponse
 
 from family_assistant.storage import get_all_tasks
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.tasks import manually_retry_task  # Added
 from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.dependencies import get_db
 
@@ -35,3 +36,40 @@ async def view_tasks(
     except Exception as e:
         logger.error(f"Error fetching tasks: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch tasks") from e
+
+
+@tasks_ui_router.post(
+    "/tasks/{internal_task_id}/retry", name="ui_retry_task"
+)  # New route
+async def retry_task_manually_endpoint(
+    request: Request,
+    internal_task_id: int,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> RedirectResponse:
+    """Handles the request to manually retry a task."""
+    notify_event = getattr(
+        request.app.state, "new_task_event", None
+    )  # Safely get event
+
+    try:
+        success = await manually_retry_task(db_context, internal_task_id, notify_event)
+        if success:
+            logger.info(
+                f"Successfully queued manual retry for task with internal ID {internal_task_id}"
+            )
+            # TODO: Add flash message for success if a system is in place
+        else:
+            logger.warning(
+                f"Failed to queue manual retry for task with internal ID {internal_task_id}. It might not exist or not be in a retryable state."
+            )
+            # TODO: Add flash message for failure if a system is in place
+    except Exception as e:
+        logger.error(
+            f"Error during manual retry attempt for task internal ID {internal_task_id}: {e}",
+            exc_info=True,
+        )
+        # TODO: Add flash message for error if a system is in place
+        # Fall through to redirect even on error
+    return RedirectResponse(
+        url=request.url_for("ui_list_tasks"), status_code=303
+    )  # PRG pattern
