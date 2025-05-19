@@ -1120,12 +1120,12 @@ async def test_url_indexing_e2e(
             assert result["distance"] < 0.1  # Expect close match for relevant query
 
             # Check metadata from WebFetcherProcessor
-            embedding_doc_meta = result.get("embedding_doc_metadata", {})
+            embedding_meta = result.get("embedding_metadata", {})  # Corrected key name
             assert (
-                embedding_doc_meta.get("original_url") == TEST_URL_TO_SCRAPE
+                embedding_meta.get("original_url") == TEST_URL_TO_SCRAPE
             )  # Corrected key
             assert (
-                embedding_doc_meta.get("mime_type") == "text/markdown"
+                embedding_meta.get("mime_type") == "text/markdown"
             )  # From WebFetcher output
             # Title might be in embedding_doc_meta if WebFetcher adds it, or in main doc title
             # For now, WebFetcherProcessor doesn't explicitly add title to chunk metadata.
