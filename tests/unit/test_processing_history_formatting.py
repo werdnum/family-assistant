@@ -41,6 +41,7 @@ def processing_service() -> ProcessingService:
         max_history_messages=10,  # Not used
         server_url="http://test.com",  # Not used
         history_max_age_hours=1,  # Not used
+        app_config={},  # Add dummy app_config
     )
 
 
