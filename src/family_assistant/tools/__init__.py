@@ -489,7 +489,7 @@ async def ingest_document_from_url_tool(
             document_storage_path=document_storage_path,
             source_type=source_type,
             source_id=source_id,
-            source_uri=url_to_ingest, # For URL ingestion, source_uri is the URL itself
+            source_uri=url_to_ingest,  # For URL ingestion, source_uri is the URL itself
             title=title,
             url_to_scrape=url_to_ingest,
             doc_metadata=doc_metadata,
@@ -1106,7 +1106,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "ingest_document_from_url",
             "description": (
-                "Submits a document from a given URL for ingestion and indexing by the system. The document will be fetched from the URL, its content extracted, processed, and stored to be made searchable. Provide a unique source_id for tracking this ingestion request."
+                "Submits a document from a given URL for ingestion and indexing by the system. Use this tool if the user asks you to 'save' a web page. The document will be fetched from the URL, its content extracted, processed, and stored to be made searchable. Provide a unique source_id for tracking this ingestion request."
             ),
             "parameters": {
                 "type": "object",
