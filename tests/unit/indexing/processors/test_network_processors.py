@@ -18,19 +18,73 @@ from family_assistant.indexing.processors.network_processors import (
 from family_assistant.utils.scraping import MockScraper, ScrapeResult
 
 if TYPE_CHECKING:
-    from family_assistant.storage.vector import Document  # Protocol
     from family_assistant.tools.types import ToolExecutionContext
 
+
+from datetime import datetime, timezone  # Added for MockDocumentImpl
+from typing import Any  # Added for MockDocumentImpl
 
 # --- Mocks and Fixtures ---
 
 
+class MockDocumentImpl:  # Copied from tests/functional/indexing/test_indexing_pipeline.py
+    """Simple implementation of the Document protocol for test data."""
+
+    def __init__(
+        self,
+        source_type: str,
+        source_id: str,
+        title: str | None = None,
+        created_at: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
+        source_uri: str | None = None,
+    ) -> None:
+        self._source_type = source_type
+        self._source_id = source_id
+        self._title = title
+        self._created_at = (
+            created_at.astimezone(timezone.utc)
+            if created_at and created_at.tzinfo is None
+            else created_at
+        )
+        self._metadata = metadata or {}
+        self._source_uri = source_uri
+
+    @property
+    def source_type(self) -> str:
+        return self._source_type
+
+    @property
+    def source_id(self) -> str:
+        return self._source_id
+
+    @property
+    def source_uri(self) -> str | None:
+        return self._source_uri
+
+    @property
+    def title(self) -> str | None:
+        return self._title
+
+    @property
+    def created_at(self) -> datetime | None:
+        return self._created_at
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        return self._metadata
+
+
 @pytest.fixture
-def mock_document() -> MagicMock:
-    """Provides a mock Document object."""
-    doc = MagicMock(spec=["title"])  # Add other attributes if processor uses them
-    doc.title = "Test Document"
-    return doc
+def mock_document() -> MockDocumentImpl:  # Changed return type
+    """Provides a mock Document object using MockDocumentImpl."""
+    # Provide some default values, tests can override metadata if needed
+    return MockDocumentImpl(
+        source_type="test_doc_type",
+        source_id="test_doc_id_123",
+        title="Test Document Title from Fixture",
+        metadata={"fixture_key": "fixture_value"},  # Example metadata
+    )
 
 
 @pytest.fixture
@@ -57,7 +111,7 @@ def default_config() -> WebFetcherProcessorConfig:
 @pytest.mark.asyncio
 async def test_fetch_markdown_content_success(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test successful fetching and processing of Markdown content."""
@@ -102,7 +156,7 @@ async def test_fetch_markdown_content_success(
 @pytest.mark.asyncio
 async def test_fetch_text_content_success(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test successful fetching and processing of plain text content."""
@@ -139,7 +193,7 @@ async def test_fetch_text_content_success(
 @pytest.mark.asyncio
 async def test_fetch_image_content_success(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test successful fetching and storing of image content."""
@@ -195,7 +249,7 @@ async def test_fetch_image_content_success(
 @pytest.mark.asyncio
 async def test_scraper_error_passes_through_item(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test that if scraper returns an error, the original item is passed through."""
@@ -227,7 +281,7 @@ async def test_scraper_error_passes_through_item(
 @pytest.mark.asyncio
 async def test_non_target_embedding_type_passes_through(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test that items with non-target embedding_types are passed through."""
@@ -252,7 +306,7 @@ async def test_non_target_embedding_type_passes_through(
 @pytest.mark.asyncio
 async def test_non_url_content_passes_through(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test that items with non-URL content are passed through."""
@@ -277,7 +331,7 @@ async def test_non_url_content_passes_through(
 @pytest.mark.asyncio
 async def test_empty_input_list(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test that an empty list of input items results in an empty list."""
@@ -294,7 +348,7 @@ async def test_empty_input_list(
 @pytest.mark.asyncio
 async def test_multiple_items_processing(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test processing a mix of items: successful fetch, error, and pass-through."""
@@ -417,7 +471,7 @@ async def test_cleanup_temp_files_no_files(
 @pytest.mark.asyncio
 async def test_cleanup_temp_files_file_externally_deleted(
     default_config: WebFetcherProcessorConfig,
-    mock_document: "Document",
+    mock_document: MockDocumentImpl,  # Changed type hint
     mock_tool_execution_context: "ToolExecutionContext",
 ) -> None:
     """Test cleanup_temp_files when a tracked file was deleted externally."""
