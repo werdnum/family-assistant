@@ -248,6 +248,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
+    dummy_app_config = {}  # Add dummy app_config
 
     processing_service = ProcessingService(
         llm_client=llm_client,
@@ -259,6 +260,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
         history_max_age_hours=dummy_history_age,
         server_url=None,
         context_providers=[],  # Added context_providers
+        app_config=dummy_app_config,  # Pass dummy app_config
     )
 
     # --- Execute the Request ---
@@ -449,6 +451,7 @@ async def test_mcp_time_conversion_sse(
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
+    dummy_app_config = {}  # Add dummy app_config
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
@@ -459,6 +462,7 @@ async def test_mcp_time_conversion_sse(
         history_max_age_hours=dummy_history_age,
         server_url=None,
         context_providers=[],  # Added context_providers
+        app_config=dummy_app_config,  # Pass dummy app_config
     )
 
     # --- Execute the Request ---

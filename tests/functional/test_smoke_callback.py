@@ -154,6 +154,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
+    dummy_app_config = {}  # Add dummy app_config
 
     processing_service = ProcessingService(
         llm_client=llm_client,
@@ -165,6 +166,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         context_providers=[],  # Added missing argument
         history_max_age_hours=dummy_history_age,
         server_url=None,  # Added missing argument
+        app_config=dummy_app_config,  # Pass dummy app_config
     )
 
     # Mock Telegram Application and Bot

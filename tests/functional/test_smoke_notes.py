@@ -155,6 +155,7 @@ async def test_add_and_retrieve_note_rule_mock(
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
+    dummy_app_config = {}  # Add dummy app_config
 
     # --- Instantiate Context Providers ---
     # Function to get DB context for the specific test engine
@@ -178,6 +179,7 @@ async def test_add_and_retrieve_note_rule_mock(
         context_providers=[notes_provider],  # Pass the notes provider
         history_max_age_hours=dummy_history_age,
         server_url=None,  # Added missing argument
+        app_config=dummy_app_config,  # Pass dummy app_config
     )
     logger.info(
         f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__} and dummy config"
