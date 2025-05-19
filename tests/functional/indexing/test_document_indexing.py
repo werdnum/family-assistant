@@ -926,8 +926,9 @@ async def test_url_indexing_e2e(
     """
     End-to-end test for URL ingestion via API, fetching with MockScraper,
     indexing via task worker, and vector query retrieval.
+    This test explicitly PROVIDES a title during ingestion.
     """
-    logger.info("\n--- Running URL Indexing E2E Test via API ---")
+    logger.info("\n--- Running URL Indexing E2E Test (Manual Title) via API ---")
 
     # --- Arrange: MockScraper ---
     # Instantiate ScrapeResult based on lint error feedback
@@ -1012,7 +1013,9 @@ async def test_url_indexing_e2e(
         embedding_generator=mock_embedding_generator,
         scraper=mock_scraper,  # Pass the mock_scraper for WebFetcher
     )
-    logger.info("DocumentIndexer for URL initialized with specific pipeline config.")
+    logger.info(
+        "DocumentIndexer for URL (manual title) initialized with specific pipeline config."
+    )
 
     # --- Arrange: Task Worker Setup ---
     # fastapi_app.state.embedding_generator is set by http_client fixture
@@ -1208,3 +1211,231 @@ async def test_url_indexing_e2e(
                     logger.info(f"Cleaned up test URL task ID {indexing_task_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test URL task cleanup: {cleanup_err}")
+
+
+    @pytest.mark.asyncio
+    async def test_url_indexing_auto_title_e2e(
+        pg_vector_db_engine: AsyncEngine,
+        http_client: httpx.AsyncClient,
+        mock_embedding_generator: MockEmbeddingGenerator,
+    ) -> None:
+        """
+        End-to-end test for URL ingestion where the title is NOT provided,
+        expecting it to be automatically extracted and updated by DocumentTitleUpdaterProcessor.
+        """
+        logger.info("\n--- Running URL Indexing E2E Test (Auto Title) via API ---")
+
+        # --- Arrange: MockScraper ---
+        mock_scrape_result = ScrapeResult(
+            type="success",
+            final_url=TEST_URL_TO_SCRAPE,
+            mime_type="text/markdown",
+        )
+        mock_scrape_result.status_code = 200
+        mock_scrape_result.title = MOCK_URL_TITLE  # This title should be auto-extracted
+        mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
+
+        mock_scraper = MockScraper(url_map={TEST_URL_TO_SCRAPE: mock_scrape_result})
+        logger.info(f"MockScraper configured for URL: {TEST_URL_TO_SCRAPE}")
+
+        # --- Arrange: Update Mock Embeddings for URL content ---
+        url_chunk_0_embedding_val = (
+            np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.75 # Slightly different from other test
+        ).tolist()
+        url_chunk_1_embedding_val = (
+            np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.85
+        ).tolist()
+        mock_embedding_generator.embedding_map[EXPECTED_URL_CHUNK_0_CONTENT] = (
+            url_chunk_0_embedding_val
+        )
+        mock_embedding_generator.embedding_map[EXPECTED_URL_CHUNK_1_CONTENT] = (
+            url_chunk_1_embedding_val
+        )
+        query_url_content_embedding = (
+            np.array(url_chunk_1_embedding_val)
+            + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
+        ).tolist()
+        mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT] = (
+            query_url_content_embedding
+        )
+        mock_embedding_generator._test_query_url_content_embedding = ( # type: ignore
+            query_url_content_embedding
+        )
+        logger.info(
+            "Updated mock_embedding_generator for URL auto-title test."
+        )
+
+        # --- Arrange: Instantiate Pipeline and Indexer for URL auto-title processing ---
+        test_pipeline_config_auto_title = {
+            "processors": [
+                {"type": "WebFetcher", "config": {}},
+                {"type": "DocumentTitleUpdater", "config": {}}, # Key addition
+                {
+                    "type": "TextChunker",
+                    "config": {
+                        "chunk_size": 150,
+                        "chunk_overlap": 20,
+                        "embedding_type_prefix_map": {
+                            "fetched_content_markdown": "content_chunk"
+                        },
+                    },
+                },
+                {
+                    "type": "EmbeddingDispatch",
+                    "config": {"embedding_types_to_dispatch": ["content_chunk"]},
+                },
+            ]
+        }
+        mock_llm_client_dummy = RuleBasedMockLLMClient(rules=[])
+        document_indexer_auto_title = DocumentIndexer(
+            pipeline_config=test_pipeline_config_auto_title,
+            llm_client=mock_llm_client_dummy,  # type: ignore
+            embedding_generator=mock_embedding_generator,
+            scraper=mock_scraper,
+        )
+        logger.info("DocumentIndexer for URL (auto title) initialized.")
+
+        # --- Arrange: Task Worker Setup ---
+        worker = TaskWorker(
+            processing_service=None,
+            application=fastapi_app,
+            calendar_config={},
+            timezone_str="UTC",
+            embedding_generator=mock_embedding_generator,
+        )
+        worker.register_task_handler(
+            "process_uploaded_document",
+            document_indexer_auto_title.process_document,
+        )
+        worker.register_task_handler(
+            "embed_and_store_batch",
+            _helper_handle_embed_and_store_batch,
+        )
+
+        worker_id = f"test-auto-title-worker-{uuid.uuid4()}"
+        test_shutdown_event = asyncio.Event()
+        test_new_task_event = asyncio.Event()
+        worker_task = asyncio.create_task(worker.run(test_new_task_event))
+        logger.info(f"Started background task worker {worker_id} for auto-title test...")
+        await asyncio.sleep(0.1)
+
+        document_db_id = None
+        indexing_task_id = None
+        try:
+            # --- Act: Call API to Ingest URL (NO title provided) ---
+            url_doc_source_id = f"test-auto-title-doc-{uuid.uuid4()}"
+            api_form_data_url_no_title = {
+                "source_type": "url_auto_title_test",
+                "source_id": url_doc_source_id,
+                # "title": "This title should be overridden", # INTENTIONALLY OMITTED
+                "url": TEST_URL_TO_SCRAPE,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "metadata": json.dumps({"test_type": "url_auto_title_indexing"}),
+                "source_uri": TEST_URL_TO_SCRAPE,
+            }
+            logger.info(f"Calling POST /api/documents/upload for URL (no title): {TEST_URL_TO_SCRAPE}")
+            response = await http_client.post(
+                "/api/documents/upload", data=api_form_data_url_no_title
+            )
+
+            assert (
+                response.status_code == 202
+            ), f"API call for URL (no title) failed: {response.status_code} - {response.text}"
+            response_data = response.json()
+            document_db_id = response_data["document_id"]
+            logger.info(f"API call for URL (no title) successful. Document DB ID: {document_db_id}")
+
+            # Fetch task ID
+            async with DatabaseContext(engine=pg_vector_db_engine) as db:
+                await asyncio.sleep(0.2)
+                select_task_stmt = (
+                    select(tasks_table.c.task_id)
+                    .where(
+                        tasks_table.c.payload.cast(sqlalchemy.Text).like(
+                            f'%"document_id": {document_db_id}%'
+                        )
+                    )
+                    .order_by(tasks_table.c.created_at.desc())
+                    .limit(1)
+                )
+                task_info = await db.fetch_one(select_task_stmt)
+                assert (
+                    task_info is not None
+                ), f"Could not find task for auto-title doc ID {document_db_id}"
+                indexing_task_id = task_info["task_id"]
+
+            # Wait for indexing
+            test_new_task_event.set()
+            await wait_for_tasks_to_complete(
+                pg_vector_db_engine,
+                task_ids=None, # Wait for all, including spawned embedding tasks
+                timeout_seconds=25.0,
+            )
+
+            # --- Assert: Verify Document Title in DB ---
+            async with DatabaseContext(engine=pg_vector_db_engine) as db:
+                doc_record = await storage.get_document_by_id(db, document_db_id) # type: ignore
+                assert doc_record is not None, f"Document record {document_db_id} not found in DB."
+                assert doc_record.title == MOCK_URL_TITLE, \
+                    f"Document title was not updated. Expected '{MOCK_URL_TITLE}', got '{doc_record.title}'"
+                logger.info(f"Verified document title in DB: '{doc_record.title}'")
+
+
+            # --- Assert: Query for the fetched URL content ---
+            url_content_query_results = None
+            async with DatabaseContext(engine=pg_vector_db_engine) as db:
+                url_content_query_results = await query_vectors(
+                    db,
+                    query_embedding=mock_embedding_generator._test_query_url_content_embedding, # type: ignore
+                    embedding_model=TEST_EMBEDDING_MODEL,
+                    limit=5,
+                    filters={"source_id": url_doc_source_id},
+                    embedding_type_filter=["content_chunk"],
+                )
+
+            assert url_content_query_results is not None
+            assert len(url_content_query_results) > 0
+
+            found_chunk_1 = False
+            for result in url_content_query_results:
+                if result.get("source_id") != url_doc_source_id:
+                    continue
+                # Crucially, check that the title in the query result is the auto-updated one
+                assert result.get("title") == MOCK_URL_TITLE, \
+                    f"Query result title mismatch. Expected '{MOCK_URL_TITLE}', got '{result.get('title')}'"
+
+                if result.get("embedding_source_content") == EXPECTED_URL_CHUNK_1_CONTENT:
+                    found_chunk_1 = True
+                    assert result["distance"] < 0.1
+                    logger.info(f"Found targeted URL chunk 1 with auto-updated title: {result}")
+
+            assert found_chunk_1, "Expected URL chunk 1 not found in query results for auto-title test."
+
+            logger.info("--- URL Indexing E2E Test (Auto Title) via API Passed ---")
+
+        finally:
+            # Cleanup
+            logger.info(f"Stopping background task worker {worker_id} for auto-title test...")
+            test_shutdown_event.set()
+            try:
+                await asyncio.wait_for(worker_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                worker_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await worker_task
+        
+            if document_db_id:
+                try:
+                    async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                        await storage.delete_document(db_cleanup, document_db_id) # type: ignore
+                except Exception as e:
+                    logger.warning(f"Cleanup error for auto-title document {document_db_id}: {e}")
+            if indexing_task_id:
+                try:
+                    async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                        delete_stmt = tasks_table.delete().where(
+                            tasks_table.c.task_id == indexing_task_id
+                        )
+                        await db_cleanup.execute_with_retry(delete_stmt)
+                except Exception as e:
+                    logger.warning(f"Cleanup error for auto-title task {indexing_task_id}: {e}")
