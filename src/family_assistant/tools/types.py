@@ -36,6 +36,9 @@ class ToolExecutionContext:
     embedding_generator: Optional["EmbeddingGenerator"] = (
         None  # Add embedding_generator
     )
+    embedding_generator: Optional["EmbeddingGenerator"] = (
+        None  # Add embedding_generator
+    )
 
 
 class ToolNotFoundError(LookupError):
