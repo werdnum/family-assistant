@@ -106,8 +106,8 @@ async def query_vector_store(
 
     # Document Filters
     if query.source_types:
-        params["doc_source_types"] = tuple(query.source_types)
-        doc_where_clauses.append("d.source_type IN :doc_source_types")
+        params["doc_source_types_array"] = query.source_types  # Pass as list for ANY
+        doc_where_clauses.append("d.source_type = ANY(:doc_source_types_array)")
     if query.created_after:
         params["doc_created_gte"] = query.created_after
         doc_where_clauses.append("d.created_at >= :doc_created_gte")
@@ -141,8 +141,8 @@ async def query_vector_store(
 
     # Embedding Filters
     if query.embedding_types:
-        params["embed_types"] = tuple(query.embedding_types)
-        embed_where_clauses.append("de.embedding_type IN :embed_types")
+        params["embed_types_array"] = query.embedding_types  # Pass as list for ANY
+        embed_where_clauses.append("de.embedding_type = ANY(:embed_types_array)")
     # Model filter is applied within CTEs where needed
 
     embed_where_sql = " AND ".join(embed_where_clauses)
