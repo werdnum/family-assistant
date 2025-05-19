@@ -920,7 +920,7 @@ async def test_url_indexing_e2e(
     # Set other attributes directly, as they were unexpected keyword args in constructor
     mock_scrape_result.status_code = 200
     mock_scrape_result.title = MOCK_URL_TITLE
-    mock_scrape_result.markdown_content = MOCK_URL_CONTENT_MARKDOWN
+    mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN  # Correct attribute
     # Assuming 'binary_content' is an optional attribute or defaults to None if not set
 
     # Instantiate MockScraper with url_map
