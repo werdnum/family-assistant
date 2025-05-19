@@ -1117,10 +1117,8 @@ async def test_url_indexing_e2e(
 
             assert result.get("embedding_type") == "content_chunk"
             assert "distance" in result
-            assert result["distance"] < 0.1  # Expect close match for relevant query
-
             # Check metadata from WebFetcherProcessor
-            embedding_meta = result.get("embedding_metadata", {})  # Corrected key name
+            embedding_meta = result.get("embedding_metadata", {})
             assert (
                 embedding_meta.get("original_url") == TEST_URL_TO_SCRAPE
             )  # Corrected key
@@ -1133,9 +1131,16 @@ async def test_url_indexing_e2e(
             if result.get("embedding_source_content") == EXPECTED_URL_CHUNK_0_CONTENT:
                 found_chunk_0 = True
                 logger.info(f"Found expected URL chunk 0: {result}")
+                # No strict distance check for chunk 0 with this specific query,
+                # as the query is tailored for chunk 1.
             elif result.get("embedding_source_content") == EXPECTED_URL_CHUNK_1_CONTENT:
                 found_chunk_1 = True
                 logger.info(f"Found expected URL chunk 1: {result}")
+                # Apply strict distance check only for the chunk targeted by the query
+                assert result["distance"] < 0.1, (
+                    f"Distance for targeted chunk 1 ({result['distance']}) was not < 0.1. "
+                    f"Query: '{TEST_QUERY_FOR_URL_CONTENT}', Chunk content: '{EXPECTED_URL_CHUNK_1_CONTENT}'"
+                )
 
         assert (
             found_chunk_0
