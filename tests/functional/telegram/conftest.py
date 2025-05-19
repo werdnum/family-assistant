@@ -129,6 +129,7 @@ async def telegram_handler_fixture(
         context_providers=[],  # Added missing argument
         server_url="http://test-server:8000",  # Placeholder URL for tests
         history_max_age_hours=24,
+        app_config={},  # Add dummy app_config
     )
 
     # Function to get DB context for the specific test engine
