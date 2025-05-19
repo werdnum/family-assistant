@@ -40,7 +40,7 @@ indexing_pipeline_config:
         # Scraper instance is injected by DocumentIndexer, not configured here
         # Default user agent or other WebFetcherProcessor specific settings could go here
         # e.g. max_content_length: 1000000
-        pass # No specific config other than scraper injection for now
+        {} # No specific config other than scraper injection for now
     - type: "LLMSummaryGenerator"
       config:
         # llm_client is injected by DocumentIndexer

@@ -85,7 +85,18 @@ class DocumentIndexer:
                 continue
 
             proc_type = proc_conf_item.get("type")
-            proc_specific_config = proc_conf_item.get("config", {})
+            proc_specific_config_raw = proc_conf_item.get("config")
+
+            # Ensure proc_specific_config is a dictionary, default to empty if None or not a dict
+            if isinstance(proc_specific_config_raw, dict):
+                proc_specific_config = proc_specific_config_raw
+            elif proc_specific_config_raw is None:
+                proc_specific_config = {}
+            else:
+                logger.warning(
+                    f"Processor config for type '{proc_type}' is not a dictionary (got {type(proc_specific_config_raw)}: {proc_specific_config_raw}). Using empty config."
+                )
+                proc_specific_config = {}
 
             if not proc_type:
                 logger.warning(
