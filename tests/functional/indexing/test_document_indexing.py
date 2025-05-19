@@ -1212,7 +1212,6 @@ async def test_url_indexing_e2e(
             except Exception as cleanup_err:
                 logger.warning(f"Error during test URL task cleanup: {cleanup_err}")
 
-
     @pytest.mark.asyncio
     async def test_url_indexing_auto_title_e2e(
         pg_vector_db_engine: AsyncEngine,
@@ -1240,7 +1239,8 @@ async def test_url_indexing_e2e(
 
         # --- Arrange: Update Mock Embeddings for URL content ---
         url_chunk_0_embedding_val = (
-            np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.75 # Slightly different from other test
+            np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32)
+            * 0.75  # Slightly different from other test
         ).tolist()
         url_chunk_1_embedding_val = (
             np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.85
@@ -1258,18 +1258,16 @@ async def test_url_indexing_e2e(
         mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT] = (
             query_url_content_embedding
         )
-        mock_embedding_generator._test_query_url_content_embedding = ( # type: ignore
+        mock_embedding_generator._test_query_url_content_embedding = (  # type: ignore
             query_url_content_embedding
         )
-        logger.info(
-            "Updated mock_embedding_generator for URL auto-title test."
-        )
+        logger.info("Updated mock_embedding_generator for URL auto-title test.")
 
         # --- Arrange: Instantiate Pipeline and Indexer for URL auto-title processing ---
         test_pipeline_config_auto_title = {
             "processors": [
                 {"type": "WebFetcher", "config": {}},
-                {"type": "DocumentTitleUpdater", "config": {}}, # Key addition
+                {"type": "DocumentTitleUpdater", "config": {}},  # Key addition
                 {
                     "type": "TextChunker",
                     "config": {
@@ -1316,7 +1314,9 @@ async def test_url_indexing_e2e(
         test_shutdown_event = asyncio.Event()
         test_new_task_event = asyncio.Event()
         worker_task = asyncio.create_task(worker.run(test_new_task_event))
-        logger.info(f"Started background task worker {worker_id} for auto-title test...")
+        logger.info(
+            f"Started background task worker {worker_id} for auto-title test..."
+        )
         await asyncio.sleep(0.1)
 
         document_db_id = None
@@ -1332,7 +1332,9 @@ async def test_url_indexing_e2e(
                 "metadata": json.dumps({"test_type": "url_auto_title_indexing"}),
                 "source_uri": TEST_URL_TO_SCRAPE,
             }
-            logger.info(f"Calling POST /api/documents/upload for URL (no title): {TEST_URL_TO_SCRAPE}")
+            logger.info(
+                f"Calling POST /api/documents/upload for URL (no title): {TEST_URL_TO_SCRAPE}"
+            )
             response = await http_client.post(
                 "/api/documents/upload", data=api_form_data_url_no_title
             )
@@ -1342,7 +1344,9 @@ async def test_url_indexing_e2e(
             ), f"API call for URL (no title) failed: {response.status_code} - {response.text}"
             response_data = response.json()
             document_db_id = response_data["document_id"]
-            logger.info(f"API call for URL (no title) successful. Document DB ID: {document_db_id}")
+            logger.info(
+                f"API call for URL (no title) successful. Document DB ID: {document_db_id}"
+            )
 
             # Fetch task ID
             async with DatabaseContext(engine=pg_vector_db_engine) as db:
@@ -1367,25 +1371,27 @@ async def test_url_indexing_e2e(
             test_new_task_event.set()
             await wait_for_tasks_to_complete(
                 pg_vector_db_engine,
-                task_ids=None, # Wait for all, including spawned embedding tasks
+                task_ids=None,  # Wait for all, including spawned embedding tasks
                 timeout_seconds=25.0,
             )
 
             # --- Assert: Verify Document Title in DB ---
             async with DatabaseContext(engine=pg_vector_db_engine) as db:
-                doc_record = await storage.get_document_by_id(db, document_db_id) # type: ignore
-                assert doc_record is not None, f"Document record {document_db_id} not found in DB."
-                assert doc_record.title == MOCK_URL_TITLE, \
-                    f"Document title was not updated. Expected '{MOCK_URL_TITLE}', got '{doc_record.title}'"
+                doc_record = await storage.get_document_by_id(db, document_db_id)  # type: ignore
+                assert (
+                    doc_record is not None
+                ), f"Document record {document_db_id} not found in DB."
+                assert (
+                    doc_record.title == MOCK_URL_TITLE
+                ), f"Document title was not updated. Expected '{MOCK_URL_TITLE}', got '{doc_record.title}'"
                 logger.info(f"Verified document title in DB: '{doc_record.title}'")
-
 
             # --- Assert: Query for the fetched URL content ---
             url_content_query_results = None
             async with DatabaseContext(engine=pg_vector_db_engine) as db:
                 url_content_query_results = await query_vectors(
                     db,
-                    query_embedding=mock_embedding_generator._test_query_url_content_embedding, # type: ignore
+                    query_embedding=mock_embedding_generator._test_query_url_content_embedding,  # type: ignore
                     embedding_model=TEST_EMBEDDING_MODEL,
                     limit=5,
                     filters={"source_id": url_doc_source_id},
@@ -1400,21 +1406,31 @@ async def test_url_indexing_e2e(
                 if result.get("source_id") != url_doc_source_id:
                     continue
                 # Crucially, check that the title in the query result is the auto-updated one
-                assert result.get("title") == MOCK_URL_TITLE, \
-                    f"Query result title mismatch. Expected '{MOCK_URL_TITLE}', got '{result.get('title')}'"
+                assert (
+                    result.get("title") == MOCK_URL_TITLE
+                ), f"Query result title mismatch. Expected '{MOCK_URL_TITLE}', got '{result.get('title')}'"
 
-                if result.get("embedding_source_content") == EXPECTED_URL_CHUNK_1_CONTENT:
+                if (
+                    result.get("embedding_source_content")
+                    == EXPECTED_URL_CHUNK_1_CONTENT
+                ):
                     found_chunk_1 = True
                     assert result["distance"] < 0.1
-                    logger.info(f"Found targeted URL chunk 1 with auto-updated title: {result}")
+                    logger.info(
+                        f"Found targeted URL chunk 1 with auto-updated title: {result}"
+                    )
 
-            assert found_chunk_1, "Expected URL chunk 1 not found in query results for auto-title test."
+            assert (
+                found_chunk_1
+            ), "Expected URL chunk 1 not found in query results for auto-title test."
 
             logger.info("--- URL Indexing E2E Test (Auto Title) via API Passed ---")
 
         finally:
             # Cleanup
-            logger.info(f"Stopping background task worker {worker_id} for auto-title test...")
+            logger.info(
+                f"Stopping background task worker {worker_id} for auto-title test..."
+            )
             test_shutdown_event.set()
             try:
                 await asyncio.wait_for(worker_task, timeout=5.0)
@@ -1422,19 +1438,27 @@ async def test_url_indexing_e2e(
                 worker_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await worker_task
-        
+
             if document_db_id:
                 try:
-                    async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                        await storage.delete_document(db_cleanup, document_db_id) # type: ignore
+                    async with DatabaseContext(
+                        engine=pg_vector_db_engine
+                    ) as db_cleanup:
+                        await storage.delete_document(db_cleanup, document_db_id)  # type: ignore
                 except Exception as e:
-                    logger.warning(f"Cleanup error for auto-title document {document_db_id}: {e}")
+                    logger.warning(
+                        f"Cleanup error for auto-title document {document_db_id}: {e}"
+                    )
             if indexing_task_id:
                 try:
-                    async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    async with DatabaseContext(
+                        engine=pg_vector_db_engine
+                    ) as db_cleanup:
                         delete_stmt = tasks_table.delete().where(
                             tasks_table.c.task_id == indexing_task_id
                         )
                         await db_cleanup.execute_with_retry(delete_stmt)
                 except Exception as e:
-                    logger.warning(f"Cleanup error for auto-title task {indexing_task_id}: {e}")
+                    logger.warning(
+                        f"Cleanup error for auto-title task {indexing_task_id}: {e}"
+                    )
