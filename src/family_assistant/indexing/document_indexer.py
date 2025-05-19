@@ -53,7 +53,7 @@ class DocumentIndexer:
         pipeline_config: dict[str, Any],
         llm_client: LLMInterface,
         embedding_generator: EmbeddingGenerator,
-        scraper: Scraper, # For WebFetcherProcessor
+        scraper: Scraper,  # For WebFetcherProcessor
     ) -> None:
         """
         Initializes the DocumentIndexer.
@@ -100,7 +100,9 @@ class DocumentIndexer:
                     processors.append(PDFTextExtractor(**proc_specific_config))
                 elif proc_type == "WebFetcher":
                     processors.append(
-                        WebFetcherProcessor(scraper=self.scraper, **proc_specific_config)
+                        WebFetcherProcessor(
+                            scraper=self.scraper, **proc_specific_config
+                        )
                     )
                 elif proc_type == "LLMSummaryGenerator":
                     processors.append(
@@ -124,10 +126,7 @@ class DocumentIndexer:
                     exc_info=True,
                 )
                 # Optionally re-raise or handle more gracefully
-                raise ValueError(
-                    f"Error instantiating processor '{proc_type}'"
-                ) from e
-
+                raise ValueError(f"Error instantiating processor '{proc_type}'") from e
 
         self.pipeline = IndexingPipeline(
             processors=processors,
