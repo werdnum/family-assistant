@@ -685,38 +685,37 @@ async def test_document_indexing_with_llm_summary_e2e(
         + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
     ).tolist()
 
+    # Define URL chunk embeddings first
+    url_chunk_0_embedding_val = (
+        (np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.5).tolist()
+    )
+    url_chunk_1_embedding_val = (
+        (np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.6).tolist()
+    )
+
+    # Define query for URL content embedding using the pre-defined chunk embedding
+    query_for_url_content_embedding_val = (
+        (
+            np.array(url_chunk_1_embedding_val)  # Use the variable here
+            + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
+        ).tolist()
+    )
+
     mock_embedding_generator.embedding_map.update(
         {
             # The LLMSummaryProcessor outputs the JSON string of the extracted data
             json.dumps({"summary": EXPECTED_LLM_SUMMARY}, indent=2): summary_embedding,
             TEST_QUERY_FOR_SUMMARY: query_summary_embedding,
             # Add mappings for URL content
-            EXPECTED_URL_CHUNK_0_CONTENT: (
-                (
-                    np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.5
-                ).tolist()
-            ),
-            EXPECTED_URL_CHUNK_1_CONTENT: (
-                (
-                    np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.6
-                ).tolist()
-            ),
-            TEST_QUERY_FOR_URL_CONTENT: (
-                (  # Closer to chunk 1
-                    np.array(
-                        mock_embedding_generator.embedding_map[
-                            EXPECTED_URL_CHUNK_1_CONTENT
-                        ]
-                    )
-                    + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
-                ).tolist()
-            ),
+            EXPECTED_URL_CHUNK_0_CONTENT: url_chunk_0_embedding_val,
+            EXPECTED_URL_CHUNK_1_CONTENT: url_chunk_1_embedding_val,
+            TEST_QUERY_FOR_URL_CONTENT: query_for_url_content_embedding_val,
         }
     )
     # Store for assertion
     mock_embedding_generator._test_query_summary_embedding = query_summary_embedding
     mock_embedding_generator._test_query_url_content_embedding = (
-        mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT]
+        query_for_url_content_embedding_val
     )
 
     # --- Arrange: Instantiate Pipeline with LLM Summary Processor ---
