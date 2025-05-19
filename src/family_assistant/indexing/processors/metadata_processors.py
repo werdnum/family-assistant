@@ -19,9 +19,7 @@ class DocumentTitleUpdaterProcessorConfig:
 
     # Example: Prioritize title from metadata key 'fetched_title'
     title_metadata_key: str = "fetched_title"
-    # Example: Only update if current document title is a placeholder
-    # placeholder_prefixes: list[str] = field(default_factory=lambda: ["URL Ingest:", "Title to be determined"])
-    min_title_length: int = 3 # Minimum length for a title to be considered valid
+    min_title_length: int = 3  # Minimum length for a title to be considered valid
 
 
 class TitleExtractor(ContentProcessor):
@@ -86,19 +84,23 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
     async def process(
         self,
         current_items: list[IndexableContent],
-        original_document: Document, # This should be the DocumentRecord instance
-        initial_content_ref: IndexableContent, # Not directly used here
+        original_document: Document,  # This should be the DocumentRecord instance
+        initial_content_ref: IndexableContent,  # Not directly used here
         context: ToolExecutionContext,
     ) -> list[IndexableContent]:
         """
         Checks for a fetched title in item metadata and updates the document record.
         """
-        if not hasattr(original_document, 'id') or not original_document.id:
-            logger.error(f"[{self.name}] Original document is missing a valid 'id'. Cannot update title.")
+        if not hasattr(original_document, "id") or not original_document.id:
+            logger.error(
+                f"[{self.name}] Original document is missing a valid 'id'. Cannot update title."
+            )
             return current_items
 
         document_id = original_document.id
-        current_doc_title = original_document.title # Get current title to potentially avoid overwriting good titles
+        current_doc_title = (
+            original_document.title
+        )  # Get current title to potentially avoid overwriting good titles
 
         # Check if current title is already good enough (e.g. not a placeholder)
         # This logic can be expanded based on placeholder_prefixes in config
@@ -110,14 +112,15 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
             if item.metadata and self.config.title_metadata_key in item.metadata:
                 fetched_title_candidate = item.metadata[self.config.title_metadata_key]
                 if (
-                    isinstance(fetched_title_candidate, str) and
-                    len(fetched_title_candidate.strip()) >= self.config.min_title_length
+                    isinstance(fetched_title_candidate, str)
+                    and len(fetched_title_candidate.strip())
+                    >= self.config.min_title_length
                 ):
                     potential_title = fetched_title_candidate.strip()
                     logger.info(
                         f"[{self.name}] Found potential title '{potential_title}' from metadata key '{self.config.title_metadata_key}' for document ID {document_id}."
                     )
-                    break # Found a candidate, stop searching
+                    break  # Found a candidate, stop searching
 
         if potential_title and potential_title != current_doc_title:
             try:
