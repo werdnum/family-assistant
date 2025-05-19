@@ -37,21 +37,20 @@ from family_assistant.indexing.document_indexer import (
 # Import indexing components
 from family_assistant.indexing.email_indexer import (
     handle_index_email,
-    set_indexing_dependencies,
+    # set_indexing_dependencies, # Removed as master_indexing_pipeline is removed
 )
 
-# Import pipeline and processors for indexing
-from family_assistant.indexing.pipeline import IndexingPipeline
-from family_assistant.indexing.processors.dispatch_processors import (
-    EmbeddingDispatchProcessor,
-)
-from family_assistant.indexing.processors.file_processors import PDFTextExtractor
-from family_assistant.indexing.processors.llm_processors import (  # Added import
-    LLMSummaryGeneratorProcessor,
-)
-from family_assistant.indexing.processors.metadata_processors import TitleExtractor
-from family_assistant.indexing.processors.text_processors import TextChunker
-
+# Import pipeline and processors for indexing # Removed imports for individual processors
+# from family_assistant.indexing.pipeline import IndexingPipeline
+# from family_assistant.indexing.processors.dispatch_processors import (
+# EmbeddingDispatchProcessor,
+# )
+# from family_assistant.indexing.processors.file_processors import PDFTextExtractor
+# from family_assistant.indexing.processors.llm_processors import (
+# LLMSummaryGeneratorProcessor,
+# )
+# from family_assistant.indexing.processors.metadata_processors import TitleExtractor
+# from family_assistant.indexing.processors.text_processors import TextChunker
 # Import the specific task handler for embedding
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm import (
@@ -102,13 +101,14 @@ from family_assistant.tools import (
     ToolsProvider,  # Import protocol for type hinting
     _scan_user_docs,  # Import the scanner function
 )
+from family_assistant.utils.scraping import PlaywrightScraper  # Added
 
 # Import the FastAPI app
 from family_assistant.web.app_creator import app as fastapi_app
 
 # Import calendar functions
 # Import the Telegram service class
-from .telegram_bot import TelegramService  # Updated import
+from .telegram_bot import TelegramService
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -170,6 +170,48 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "attachment_storage_path": (
             "/mnt/data/mailbox/attachments"
         ),  # Default attachment storage path
+        "indexing_pipeline_config": { # Default indexing pipeline config
+            "processors": [
+                {"type": "TitleExtractor"},
+                {"type": "PDFTextExtractor"},
+                {"type": "WebFetcher"},
+                {
+                    "type": "LLMSummaryGenerator",
+                    "config": {
+                        "input_content_types": [
+                            "original_document_file",
+                            "raw_body_text",
+                            "extracted_markdown_content",
+                            "fetched_content_markdown",
+                        ],
+                        "target_embedding_type": "llm_generated_summary",
+                    },
+                },
+                {
+                    "type": "TextChunker",
+                    "config": {
+                        "chunk_size": 1000,
+                        "chunk_overlap": 100,
+                        "embedding_type_prefix_map": {
+                            "raw_body_text": "content_chunk",
+                            "raw_file_text": "content_chunk",
+                            "extracted_markdown_content": "content_chunk",
+                            "fetched_content_markdown": "content_chunk",
+                        },
+                    },
+                },
+                {
+                    "type": "EmbeddingDispatch",
+                    "config": {
+                        "embedding_types_to_dispatch": [
+                            "title",
+                            "content_chunk",
+                            "llm_generated_summary",
+                        ]
+                    },
+                },
+            ]
+        },
     }
     logger.info("Initialized config with code defaults.")
 
@@ -333,6 +375,20 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         logger.info(f"{mcp_config_path} not found. MCP features may be disabled.")
     except json.JSONDecodeError as e:
         logger.error(f"Error decoding {mcp_config_path}: {e}")
+
+    # Indexing pipeline config from environment (overrides YAML)
+    indexing_pipeline_config_env = os.getenv("INDEXING_PIPELINE_CONFIG_JSON")
+    if indexing_pipeline_config_env:
+        try:
+            loaded_env_pipeline_config = json.loads(indexing_pipeline_config_env)
+            if isinstance(loaded_env_pipeline_config, dict):
+                config_data["indexing_pipeline_config"] = loaded_env_pipeline_config
+                logger.info("Loaded indexing_pipeline_config from environment variable.")
+            else:
+                logger.warning("INDEXING_PIPELINE_CONFIG_JSON from env is not a valid dictionary. Using previous value.")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing INDEXING_PIPELINE_CONFIG_JSON from env: {e}. Using previous value.")
+
 
     # Log final loaded non-secret config for verification
     loggable_config = copy.deepcopy(
@@ -569,6 +625,9 @@ async def main_async(
     # --- Store generator in app state for web server access ---
     fastapi_app.state.embedding_generator = embedding_generator
     logger.info("Stored embedding generator in FastAPI app state.")
+    fastapi_app.state.llm_client = llm_client # Store llm_client for processors
+    logger.info("Stored LLM client in FastAPI app state.")
+
 
     # Initialize database schema first
     # init_db uses the engine configured in storage/base.py, which reads DATABASE_URL env var.
@@ -684,73 +743,36 @@ async def main_async(
         timezone_str=config["timezone"],
         max_history_messages=config["max_history_messages"],
         history_max_age_hours=config["history_max_age_hours"],
-        server_url=config["server_url"],  # Pass server URL
+        server_url=config["server_url"],
+        app_config=config, # Pass full app config
     )
     logger.info("ProcessingService initialized with configuration.")
 
-    # --- Instantiate Indexers ---
-    # Basic pipeline configuration
-    # These would ideally come from a config file or be more dynamically configured
-    text_chunker_config = {
-        "chunk_size": 1000,
-        "chunk_overlap": 100,
-        "embedding_type_prefix_map": {
-            "raw_body_text": "content_chunk",  # For emails
-            "raw_file_text": "content_chunk",  # For general files
-            "extracted_markdown_content": "content_chunk",  # For markdown from PDFs
-        },
-    }
-    # Define the target type for LLM-generated summaries
-    llm_summary_target_type = "llm_generated_summary"
-    embedding_dispatcher_config = {
-        "embedding_types_to_dispatch": [
-            "title",
-            "summary",  # This might be a manually provided summary or other type
-            "content_chunk",
-            llm_summary_target_type,  # Add LLM summary type for dispatch
-        ],
-    }
+    # --- Instantiate Scraper ---
+    # For now, PlaywrightScraper is instantiated directly.
+    # Future: Could be made configurable (e.g. httpx scraper vs playwright)
+    scraper_instance = PlaywrightScraper() # Default user agent
+    fastapi_app.state.scraper = scraper_instance # Store scraper for DocumentIndexer
+    logger.info(f"Scraper instance ({type(scraper_instance).__name__}) created and stored in app state.")
 
-    # Instantiate the LLM Summary Generator
-    llm_summary_processor = LLMSummaryGeneratorProcessor(
-        llm_client=llm_client,  # Use the existing LLM client
-        input_content_types=[
-            "original_document_file",  # For whole uploaded files
-            "raw_body_text",  # For email bodies
-            "extracted_markdown_content",  # For content from PDFs
-        ],
-        target_embedding_type=llm_summary_target_type,
-        # max_content_length can be configured if needed, e.g., 100000
-    )
 
-    indexing_processors = [
-        TitleExtractor(),
-        PDFTextExtractor(),
-        llm_summary_processor,  # Add the summary processor here
-        TextChunker(
-            chunk_size=text_chunker_config["chunk_size"],
-            chunk_overlap=text_chunker_config["chunk_overlap"],
-            # embedding_type_prefix_map is passed via **text_chunker_config below
-        ),
-        EmbeddingDispatchProcessor(**embedding_dispatcher_config),
-    ]
+    # --- Instantiate Document Indexer ---
+    # Load pipeline config from the main config dictionary
+    pipeline_config_for_indexer = config.get("indexing_pipeline_config", {})
+    if not pipeline_config_for_indexer.get("processors"): # Basic validation
+        logger.warning("No processors defined in 'indexing_pipeline_config'. Document indexing might be limited.")
 
-    master_indexing_pipeline = IndexingPipeline(
-        processors=indexing_processors,
-        # Pass global config or specific processor configs if pipeline supports it
-        config={
-            "text_chunker": text_chunker_config,
-            "embedding_dispatcher": embedding_dispatcher_config,
-        },
+    document_indexer = DocumentIndexer(
+        pipeline_config=pipeline_config_for_indexer,
+        llm_client=llm_client, # Pass the main LLM client
+        embedding_generator=embedding_generator, # Pass the main embedding generator
+        scraper=scraper_instance, # Pass the scraper instance
     )
     logger.info(
-        f"Master IndexingPipeline initialized with {len(indexing_processors)} processors."
+        "DocumentIndexer initialized using 'indexing_pipeline_config' from application configuration."
     )
+    # Removed: set_indexing_dependencies(pipeline=master_indexing_pipeline)
 
-    document_indexer = DocumentIndexer(pipeline=master_indexing_pipeline)
-    set_indexing_dependencies(
-        pipeline=master_indexing_pipeline,
-    )
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
         telegram_token=config["telegram_token"],

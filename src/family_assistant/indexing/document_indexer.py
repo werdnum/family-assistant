@@ -8,14 +8,33 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
+from family_assistant.embeddings import EmbeddingGenerator  # Added
 from family_assistant.indexing.pipeline import (
     IndexableContent,
     IndexingPipeline,
-)  # Added
+)
 
-# Import the Document protocol from the correct location (though not directly used here, good practice)
-from family_assistant.storage.vector import get_document_by_id  # Added import
-from family_assistant.tools import ToolExecutionContext  # Import the context class
+# Import all necessary processor types
+from family_assistant.indexing.processors.dispatch_processors import (  # Added
+    EmbeddingDispatchProcessor,
+)
+from family_assistant.indexing.processors.file_processors import (
+    PDFTextExtractor,  # Added
+)
+from family_assistant.indexing.processors.llm_processors import (  # Added
+    LLMSummaryGeneratorProcessor,
+)
+from family_assistant.indexing.processors.metadata_processors import (
+    TitleExtractor,  # Added
+)
+from family_assistant.indexing.processors.network_processors import (
+    WebFetcherProcessor,  # Added
+)
+from family_assistant.indexing.processors.text_processors import TextChunker  # Added
+from family_assistant.llm import LLMInterface  # Added
+from family_assistant.storage.vector import get_document_by_id
+from family_assistant.tools import ToolExecutionContext
+from family_assistant.utils.scraping import Scraper  # Added
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +45,98 @@ logger = logging.getLogger(__name__)
 class DocumentIndexer:
     """
     Handles the indexing process for documents, primarily those uploaded via API.
-    Takes dependencies via constructor.
+    Takes dependencies via constructor and builds its pipeline from configuration.
     """
 
-    def __init__(self, pipeline: IndexingPipeline) -> None:  # Modified
+    def __init__(
+        self,
+        pipeline_config: dict[str, Any],
+        llm_client: LLMInterface,
+        embedding_generator: EmbeddingGenerator,
+        scraper: Scraper, # For WebFetcherProcessor
+    ) -> None:
         """
         Initializes the DocumentIndexer.
 
         Args:
-            pipeline: An instance of IndexingPipeline. # Modified
+            pipeline_config: Configuration dictionary defining the processors and their settings.
+            llm_client: An instance of LLMInterface for processors that need LLM capabilities.
+            embedding_generator: An instance of EmbeddingGenerator for processors that generate embeddings.
+            scraper: An instance of Scraper for the WebFetcherProcessor.
         """
-        if not pipeline:
-            raise ValueError("IndexingPipeline instance is required.")
-        self.pipeline = pipeline
+        self.llm_client = llm_client
+        self.embedding_generator = embedding_generator
+        self.scraper = scraper
+        self.pipeline_config = pipeline_config
+
+        processors = []
+        processor_configs = self.pipeline_config.get("processors", [])
+        if not isinstance(processor_configs, list):
+            logger.error(
+                f"Pipeline configuration 'processors' must be a list, got: {type(processor_configs)}"
+            )
+            raise ValueError("Pipeline config 'processors' must be a list.")
+
+        for proc_conf_item in processor_configs:
+            if not isinstance(proc_conf_item, dict):
+                logger.warning(
+                    f"Skipping invalid processor config item (not a dict): {proc_conf_item}"
+                )
+                continue
+
+            proc_type = proc_conf_item.get("type")
+            proc_specific_config = proc_conf_item.get("config", {})
+
+            if not proc_type:
+                logger.warning(
+                    f"Processor config item missing 'type': {proc_conf_item}. Skipping."
+                )
+                continue
+
+            try:
+                if proc_type == "TitleExtractor":
+                    processors.append(TitleExtractor(**proc_specific_config))
+                elif proc_type == "PDFTextExtractor":
+                    processors.append(PDFTextExtractor(**proc_specific_config))
+                elif proc_type == "WebFetcher":
+                    processors.append(
+                        WebFetcherProcessor(scraper=self.scraper, **proc_specific_config)
+                    )
+                elif proc_type == "LLMSummaryGenerator":
+                    processors.append(
+                        LLMSummaryGeneratorProcessor(
+                            llm_client=self.llm_client, **proc_specific_config
+                        )
+                    )
+                elif proc_type == "TextChunker":
+                    processors.append(TextChunker(**proc_specific_config))
+                elif proc_type == "EmbeddingDispatch":
+                    processors.append(
+                        EmbeddingDispatchProcessor(**proc_specific_config)
+                    )
+                else:
+                    logger.warning(
+                        f"Unknown processor type '{proc_type}' in pipeline config. Skipping."
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Failed to instantiate processor type '{proc_type}' with config {proc_specific_config}: {e}",
+                    exc_info=True,
+                )
+                # Optionally re-raise or handle more gracefully
+                raise ValueError(
+                    f"Error instantiating processor '{proc_type}'"
+                ) from e
+
+
+        self.pipeline = IndexingPipeline(
+            processors=processors,
+            config=self.pipeline_config.get(
+                "global_pipeline_config", {}
+            ),  # Optional global config for the pipeline itself
+        )
         logger.info(
-            f"DocumentIndexer initialized with pipeline: {type(pipeline).__name__}"
+            f"DocumentIndexer initialized with dynamically built pipeline including {len(processors)} processors: {[type(p).__name__ for p in processors]}"
         )
 
     async def process_document(
