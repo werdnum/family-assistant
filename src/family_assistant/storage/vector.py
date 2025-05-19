@@ -748,7 +748,9 @@ async def update_document_title_in_db(
         new_title: The new title for the document.
     """
     if not new_title or not new_title.strip():
-        logger.warning(f"Attempted to update document {document_id} with an empty title. Skipping.")
+        logger.warning(
+            f"Attempted to update document {document_id} with an empty title. Skipping."
+        )
         return
 
     stmt = (
@@ -771,13 +773,13 @@ async def update_document_title_in_db(
             f"Database error updating title for document ID {document_id}: {e}",
             exc_info=True,
         )
-        raise # Re-raise to allow task retry or failure handling
+        raise  # Re-raise to allow task retry or failure handling
 
 
 # Export functions explicitly for clarity when importing elsewhere
 __all__ = [
     "init_vector_db",
-    "update_document_title_in_db", # Add new function to __all__
+    "update_document_title_in_db",  # Add new function to __all__
     "add_document",
     "get_document_by_source_id",
     "get_document_by_id",
