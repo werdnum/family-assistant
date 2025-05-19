@@ -26,6 +26,13 @@
                 <pre>{{ task.error if task.error else 'None' }}</pre>
             </div>
              <div class="task-detail task-internal-id"><span class="task-label">Internal ID:</span> <span class="task-value">{{ task.id }}</span></div>
+            {% if task.status == 'failed' or (task.status == 'pending' and task.retry_count >= task.max_retries) %}
+            <div class="task-actions" style="margin-top: 10px;">
+                <form action="{{ url_for('ui_retry_task', internal_task_id=task.id) }}" method="post" style="display: inline;">
+                    <button type="submit" class="button-retry">Retry Manually</button>
+                </form>
+            </div>
+            {% endif %}
         </article>
         {% endfor %}
     </div>
