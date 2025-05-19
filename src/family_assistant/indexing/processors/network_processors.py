@@ -90,17 +90,27 @@ class WebFetcherProcessor:
                         url_to_fetch
                     )
 
+                    # Start with metadata from the original document
+                    base_metadata_from_doc = {}
+                    if original_document and original_document.metadata:
+                        if "original_url" in original_document.metadata:
+                            base_metadata_from_doc["original_url"] = original_document.metadata["original_url"]
+                        if "original_filename" in original_document.metadata:
+                            base_metadata_from_doc["original_filename"] = original_document.metadata["original_filename"]
+                    
                     common_metadata = {
-                        "original_url": url_to_fetch,
+                        **base_metadata_from_doc, # Inherit original_url/filename from original_document
+                        "fetched_url": url_to_fetch, # URL specifically fetched by this processor
                         "final_url": scrape_result.final_url,
                         "source_scraper_description": scrape_result.source_description,
-                        "original_item_metadata": (
-                            item.metadata
-                        ),  # Persist metadata from the original item
-                        "fetched_title": (
-                            scrape_result.title
-                        ),  # Add title from scrape result
+                        "original_item_metadata": item.metadata or {}, # Metadata from the input item (e.g., the 'extracted_link' item)
+                        "fetched_title": scrape_result.title, # Add title from scrape result
                     }
+                    
+                    # If original_url was not in original_document.metadata (and thus not in base_metadata_from_doc),
+                    # set it to url_to_fetch as a fallback for the primary 'original_url' key.
+                    if "original_url" not in common_metadata:
+                        common_metadata["original_url"] = url_to_fetch
 
                     processed_successfully = False
 
@@ -205,17 +215,32 @@ class WebFetcherProcessor:
                                 mime_type=scrape_result.mime_type
                                 or "application/octet-stream",
                                 source_processor=self.name,
-                                metadata={
-                                    **common_metadata,
-                                    "original_filename": (
-                                        os.path.basename(
-                                            urlparse(scrape_result.final_url).path
-                                        )
-                                        or f"download{suffix}"
-                                    ),
-                                },
-                            )
-                        )
+                                derived_filename_for_binary = (
+                                    os.path.basename(
+                                        urlparse(scrape_result.final_url).path
+                                    )
+                                    or f"download{suffix}"
+                                )
+                                binary_metadata = {**common_metadata}
+                                # Add derived_filename, ensure original_filename (if from doc) is preserved
+                                binary_metadata["derived_filename"] = derived_filename_for_binary
+                                
+                                # If original_filename was not in original_document.metadata (and thus not in common_metadata),
+                                # set it to the derived_filename_for_binary as a fallback for the primary 'original_filename' key.
+                                if "original_filename" not in binary_metadata:
+                                    binary_metadata["original_filename"] = derived_filename_for_binary
+                                
+                                output_items.append(
+                                    IndexableContent(
+                                        content=None,
+                                        ref=temp_file_path,
+                                        embedding_type="fetched_content_binary",
+                                        mime_type=scrape_result.mime_type
+                                        or "application/octet-stream",
+                                        source_processor=self.name,
+                                        metadata=binary_metadata,
+                                    )
+                                )
                         processed_successfully = True
 
                     # Case 4: Unhandled or unexpected result (if not error and not processed by cases above)
