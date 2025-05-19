@@ -687,19 +687,17 @@ async def test_document_indexing_with_llm_summary_e2e(
 
     # Define URL chunk embeddings first
     url_chunk_0_embedding_val = (
-        (np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.5).tolist()
-    )
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.5
+    ).tolist()
     url_chunk_1_embedding_val = (
-        (np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.6).tolist()
-    )
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.6
+    ).tolist()
 
     # Define query for URL content embedding using the pre-defined chunk embedding
     query_for_url_content_embedding_val = (
-        (
-            np.array(url_chunk_1_embedding_val)  # Use the variable here
-            + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
-        ).tolist()
-    )
+        np.array(url_chunk_1_embedding_val)  # Use the variable here
+        + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
+    ).tolist()
 
     mock_embedding_generator.embedding_map.update(
         {
