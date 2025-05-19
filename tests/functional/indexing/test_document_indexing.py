@@ -120,9 +120,11 @@ This is the second paragraph. It contains more details and specific keywords lik
 # 1. "# Mocked Page Title"
 # 2. "This is the first paragraph of the mocked web page content. It discusses various interesting topics."
 # 3. "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'."
-EXPECTED_URL_CHUNK_0_CONTENT = "This is the first paragraph of the mocked web page content. It discusses various interesting topics." # Was paragraph 1
-EXPECTED_URL_CHUNK_1_CONTENT = "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'." # Was paragraph 2
-TEST_QUERY_FOR_URL_CONTENT = "synergy and innovation" # Query targets chunk 1 (the second paragraph)
+EXPECTED_URL_CHUNK_0_CONTENT = "This is the first paragraph of the mocked web page content. It discusses various interesting topics."  # Was paragraph 1
+EXPECTED_URL_CHUNK_1_CONTENT = "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'."  # Was paragraph 2
+TEST_QUERY_FOR_URL_CONTENT = (
+    "synergy and innovation"  # Query targets chunk 1 (the second paragraph)
+)
 
 
 # --- Fixtures ---
@@ -930,7 +932,7 @@ async def test_url_indexing_e2e(
 
     # --- Arrange: Update Mock Embeddings for URL content ---
     # Ensure the mock_embedding_generator used in this test has the necessary embeddings
-    
+
     # Embedding for the first paragraph (now EXPECTED_URL_CHUNK_0_CONTENT)
     url_para1_embedding = (
         np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.7
@@ -1074,7 +1076,9 @@ async def test_url_indexing_e2e(
             task_ids=None,  # Wait for ALL tasks to complete, including spawned ones
             timeout_seconds=25.0,
         )
-        logger.info(f"All tasks related to {indexing_task_id} (and children) reported as complete.")
+        logger.info(
+            f"All tasks related to {indexing_task_id} (and children) reported as complete."
+        )
 
         # --- Assert: Query for the fetched URL content ---
         url_content_query_results = None
@@ -1119,7 +1123,9 @@ async def test_url_indexing_e2e(
 
             # Check metadata from WebFetcherProcessor
             embedding_doc_meta = result.get("embedding_doc_metadata", {})
-            assert embedding_doc_meta.get("original_url") == TEST_URL_TO_SCRAPE # Corrected key
+            assert (
+                embedding_doc_meta.get("original_url") == TEST_URL_TO_SCRAPE
+            )  # Corrected key
             assert (
                 embedding_doc_meta.get("mime_type") == "text/markdown"
             )  # From WebFetcher output
