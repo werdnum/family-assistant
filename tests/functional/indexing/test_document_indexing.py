@@ -116,9 +116,13 @@ This is the second paragraph. It contains more details and specific keywords lik
 """
 # Expected chunks after TextChunker processes MOCK_URL_CONTENT_MARKDOWN
 # Assuming chunk size allows these to be separate.
-EXPECTED_URL_CHUNK_0_CONTENT = f"# {MOCK_URL_TITLE}\n\nThis is the first paragraph of the mocked web page content. It discusses various interesting topics."
-EXPECTED_URL_CHUNK_1_CONTENT = "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'."
-TEST_QUERY_FOR_URL_CONTENT = "synergy and innovation"
+# Actual chunks produced by TextChunker (recursive=True, split by \n\n) from MOCK_URL_CONTENT_MARKDOWN:
+# 1. "# Mocked Page Title"
+# 2. "This is the first paragraph of the mocked web page content. It discusses various interesting topics."
+# 3. "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'."
+EXPECTED_URL_CHUNK_0_CONTENT = "This is the first paragraph of the mocked web page content. It discusses various interesting topics." # Was paragraph 1
+EXPECTED_URL_CHUNK_1_CONTENT = "This is the second paragraph. It contains more details and specific keywords like 'synergy' and 'innovation'." # Was paragraph 2
+TEST_QUERY_FOR_URL_CONTENT = "synergy and innovation" # Query targets chunk 1 (the second paragraph)
 
 
 # --- Fixtures ---
@@ -926,22 +930,26 @@ async def test_url_indexing_e2e(
 
     # --- Arrange: Update Mock Embeddings for URL content ---
     # Ensure the mock_embedding_generator used in this test has the necessary embeddings
-    url_chunk0_embedding = (
+    
+    # Embedding for the first paragraph (now EXPECTED_URL_CHUNK_0_CONTENT)
+    url_para1_embedding = (
         np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.7
-    ).tolist()  # Different multiplier for uniqueness
-    url_chunk1_embedding = (
+    ).tolist()
+    # Embedding for the second paragraph (now EXPECTED_URL_CHUNK_1_CONTENT)
+    url_para2_embedding = (
         np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.8
     ).tolist()
 
     mock_embedding_generator.embedding_map[EXPECTED_URL_CHUNK_0_CONTENT] = (
-        url_chunk0_embedding
+        url_para1_embedding
     )
     mock_embedding_generator.embedding_map[EXPECTED_URL_CHUNK_1_CONTENT] = (
-        url_chunk1_embedding
+        url_para2_embedding
     )
 
+    # Query embedding is made close to the embedding of the second paragraph (EXPECTED_URL_CHUNK_1_CONTENT)
     query_url_content_embedding = (
-        np.array(url_chunk1_embedding)  # Closer to chunk 1
+        np.array(url_para2_embedding)
         + np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.01
     ).tolist()
     mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT] = (
@@ -1063,12 +1071,10 @@ async def test_url_indexing_e2e(
         )
         await wait_for_tasks_to_complete(
             pg_vector_db_engine,
-            task_ids={
-                indexing_task_id
-            },  # This task will spawn embed_and_store_batch tasks
-            timeout_seconds=25.0,  # Allow a bit more time for multi-stage processing
+            task_ids=None,  # Wait for ALL tasks to complete, including spawned ones
+            timeout_seconds=25.0,
         )
-        logger.info(f"Task {indexing_task_id} (and children) reported as complete.")
+        logger.info(f"All tasks related to {indexing_task_id} (and children) reported as complete.")
 
         # --- Assert: Query for the fetched URL content ---
         url_content_query_results = None
@@ -1113,7 +1119,7 @@ async def test_url_indexing_e2e(
 
             # Check metadata from WebFetcherProcessor
             embedding_doc_meta = result.get("embedding_doc_metadata", {})
-            assert embedding_doc_meta.get("source_url") == TEST_URL_TO_SCRAPE
+            assert embedding_doc_meta.get("original_url") == TEST_URL_TO_SCRAPE # Corrected key
             assert (
                 embedding_doc_meta.get("mime_type") == "text/markdown"
             )  # From WebFetcher output
