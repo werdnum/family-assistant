@@ -159,7 +159,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "attachment_storage_path": (
             "/mnt/data/mailbox/attachments"
         ),  # Default attachment storage path
-        "indexing_pipeline_config": { # Default indexing pipeline config
+        "indexing_pipeline_config": {  # Default indexing pipeline config
             "processors": [
                 {"type": "TitleExtractor"},
                 {"type": "PDFTextExtractor"},
@@ -372,12 +372,17 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             loaded_env_pipeline_config = json.loads(indexing_pipeline_config_env)
             if isinstance(loaded_env_pipeline_config, dict):
                 config_data["indexing_pipeline_config"] = loaded_env_pipeline_config
-                logger.info("Loaded indexing_pipeline_config from environment variable.")
+                logger.info(
+                    "Loaded indexing_pipeline_config from environment variable."
+                )
             else:
-                logger.warning("INDEXING_PIPELINE_CONFIG_JSON from env is not a valid dictionary. Using previous value.")
+                logger.warning(
+                    "INDEXING_PIPELINE_CONFIG_JSON from env is not a valid dictionary. Using previous value."
+                )
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing INDEXING_PIPELINE_CONFIG_JSON from env: {e}. Using previous value.")
-
+            logger.error(
+                f"Error parsing INDEXING_PIPELINE_CONFIG_JSON from env: {e}. Using previous value."
+            )
 
     # Log final loaded non-secret config for verification
     loggable_config = copy.deepcopy(
@@ -614,9 +619,8 @@ async def main_async(
     # --- Store generator in app state for web server access ---
     fastapi_app.state.embedding_generator = embedding_generator
     logger.info("Stored embedding generator in FastAPI app state.")
-    fastapi_app.state.llm_client = llm_client # Store llm_client for processors
+    fastapi_app.state.llm_client = llm_client  # Store llm_client for processors
     logger.info("Stored LLM client in FastAPI app state.")
-
 
     # Initialize database schema first
     # init_db uses the engine configured in storage/base.py, which reads DATABASE_URL env var.
@@ -733,29 +737,32 @@ async def main_async(
         max_history_messages=config["max_history_messages"],
         history_max_age_hours=config["history_max_age_hours"],
         server_url=config["server_url"],
-        app_config=config, # Pass full app config
+        app_config=config,  # Pass full app config
     )
     logger.info("ProcessingService initialized with configuration.")
 
     # --- Instantiate Scraper ---
     # For now, PlaywrightScraper is instantiated directly.
     # Future: Could be made configurable (e.g. httpx scraper vs playwright)
-    scraper_instance = PlaywrightScraper() # Default user agent
-    fastapi_app.state.scraper = scraper_instance # Store scraper for DocumentIndexer
-    logger.info(f"Scraper instance ({type(scraper_instance).__name__}) created and stored in app state.")
-
+    scraper_instance = PlaywrightScraper()  # Default user agent
+    fastapi_app.state.scraper = scraper_instance  # Store scraper for DocumentIndexer
+    logger.info(
+        f"Scraper instance ({type(scraper_instance).__name__}) created and stored in app state."
+    )
 
     # --- Instantiate Document Indexer ---
     # Load pipeline config from the main config dictionary
     pipeline_config_for_indexer = config.get("indexing_pipeline_config", {})
-    if not pipeline_config_for_indexer.get("processors"): # Basic validation
-        logger.warning("No processors defined in 'indexing_pipeline_config'. Document indexing might be limited.")
+    if not pipeline_config_for_indexer.get("processors"):  # Basic validation
+        logger.warning(
+            "No processors defined in 'indexing_pipeline_config'. Document indexing might be limited."
+        )
 
     document_indexer = DocumentIndexer(
         pipeline_config=pipeline_config_for_indexer,
-        llm_client=llm_client, # Pass the main LLM client
-        embedding_generator=embedding_generator, # Pass the main embedding generator
-        scraper=scraper_instance, # Pass the scraper instance
+        llm_client=llm_client,  # Pass the main LLM client
+        embedding_generator=embedding_generator,  # Pass the main embedding generator
+        scraper=scraper_instance,  # Pass the scraper instance
     )
     logger.info(
         "DocumentIndexer initialized using 'indexing_pipeline_config' from application configuration."
