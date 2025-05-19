@@ -60,6 +60,7 @@ class ProcessingService:
         max_history_messages: int,
         server_url: str | None,  # Added server_url
         history_max_age_hours: int,  # Recommended value is now 1
+        app_config: dict[str, Any],  # NEW: Add app_config
     ) -> None:
         """
         Initializes the ProcessingService.
@@ -74,6 +75,7 @@ class ProcessingService:
             max_history_messages: Max number of history messages to fetch.
             server_url: The base URL of the web server.
             history_max_age_hours: Max age of history messages to fetch (in hours). Recommended: 1.
+            app_config: The main application configuration dictionary.
         """
         self.llm_client = llm_client
         self.tools_provider = tools_provider
@@ -86,6 +88,7 @@ class ProcessingService:
             server_url or "http://localhost:8000"
         )  # Default if not provided
         self.history_max_age_hours = history_max_age_hours
+        self.app_config = app_config  # Store app_config
         # Store the confirmation callback function if provided at init? No, get from context.
 
     async def _aggregate_context_from_providers(self) -> str:
