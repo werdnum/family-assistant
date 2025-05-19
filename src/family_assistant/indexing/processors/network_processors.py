@@ -126,13 +126,11 @@ class WebFetcherProcessor:
 
                     processed_successfully = False
 
-                    # Safely get content attributes
-                    markdown_content = getattr(scrape_result, "markdown_content", None)
-                    text_content = getattr(scrape_result, "text_content", None)
-                    binary_content = getattr(scrape_result, "binary_content", None)
-                    error_message = getattr(
-                        scrape_result, "error_message", "Unknown error"
-                    )
+                    # Safely get content attributes from ScrapeResult
+                    actual_content_str = getattr(scrape_result, "content", None)
+                    actual_content_bytes = getattr(scrape_result, "content_bytes", None)
+                    # ScrapeResult uses 'message' for errors
+                    error_message = getattr(scrape_result, "message", "Unknown error")
 
                     if scrape_result.type == "error":
                         logger.error(
@@ -150,10 +148,10 @@ class WebFetcherProcessor:
                             scrape_result.type == "success"
                             and scrape_result.mime_type == "text/markdown"
                         )
-                    ) and markdown_content:
+                    ) and actual_content_str:  # Use actual_content_str
                         output_items.append(
                             IndexableContent(
-                                content=markdown_content,
+                                content=actual_content_str,  # Use actual_content_str
                                 embedding_type="fetched_content_markdown",
                                 mime_type="text/markdown",
                                 source_processor=self.name,
@@ -169,10 +167,10 @@ class WebFetcherProcessor:
                             and scrape_result.mime_type
                             and scrape_result.mime_type.startswith("text/")
                         )
-                    ) and text_content:
+                    ) and actual_content_str:  # Use actual_content_str
                         output_items.append(
                             IndexableContent(
-                                content=text_content,
+                                content=actual_content_str,  # Use actual_content_str
                                 embedding_type="fetched_content_text",
                                 mime_type=scrape_result.mime_type or "text/plain",
                                 source_processor=self.name,
@@ -191,7 +189,7 @@ class WebFetcherProcessor:
                                 or scrape_result.mime_type == "application/octet-stream"
                             )
                         )
-                    ) and binary_content:
+                    ) and actual_content_bytes:  # Use actual_content_bytes
                         suffix = ""
                         if scrape_result.mime_type:
                             if "jpeg" in scrape_result.mime_type:
@@ -212,7 +210,9 @@ class WebFetcherProcessor:
                         with tempfile.NamedTemporaryFile(
                             delete=False, suffix=suffix or ".tmp"
                         ) as tmp_file:
-                            tmp_file.write(scrape_result.binary_content)
+                            tmp_file.write(
+                                actual_content_bytes
+                            )  # Use actual_content_bytes
                             temp_file_path = tmp_file.name
                         self._temp_files.append(temp_file_path)
                         logger.debug(
@@ -256,7 +256,7 @@ class WebFetcherProcessor:
                         logger.warning(
                             f"{self.name}: Unhandled scrape result for URL '{url_to_fetch}'. "
                             f"Type: '{scrape_result.type}', Mime: '{scrape_result.mime_type}', "
-                            f"Markdown: {bool(markdown_content)}, Text: {bool(text_content)}, Binary: {bool(binary_content)}. "
+                            f"ScrapeResult.content (str): {bool(actual_content_str)}, ScrapeResult.content_bytes (bytes): {bool(actual_content_bytes)}. "
                             "Passing original item."
                         )
                         items_to_pass_through.append(item)
