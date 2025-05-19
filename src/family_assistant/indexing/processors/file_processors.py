@@ -53,9 +53,9 @@ class PDFTextExtractor:
         """
         if MarkItDown is None:  # Check for the class
             logger.warning(
-                "markitdown library is not installed. PDFTextExtractor will not process PDFs."
+                "markitdown library is not installed. PDFTextExtractor will not process PDFs. Passing through all items."
             )
-            return []  # Return empty list, effectively skipping PDF processing
+            return current_items  # Pass through all items
 
         output_items: list[IndexableContent] = []
         # Instantiate the converter. If it's stateless, doing it per call is fine.
@@ -109,10 +109,10 @@ class PDFTextExtractor:
                         f"Error converting PDF '{item.metadata.get('original_filename', item.ref)}' with markitdown: {e}",
                         exc_info=True,
                     )
-            # This processor only handles 'application/pdf'.
-            # It consumes PDF items and produces new markdown items, or nothing if conversion fails.
-            # Other item types are implicitly filtered out as they are not added to output_items.
-            # The pipeline orchestrator passes the output of one processor (output_items from this one)
-            # as input to the next.
+                # If PDF processing failed or resulted in no content, the original PDF item is consumed
+                # and not added to output_items.
+            else:
+                # If the item is not a PDF to be processed by this stage, pass it through.
+                output_items.append(item)
 
         return output_items
