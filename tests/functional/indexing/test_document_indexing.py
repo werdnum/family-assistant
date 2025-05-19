@@ -28,16 +28,6 @@ from family_assistant.embeddings import (
 from family_assistant.indexing.document_indexer import (
     DocumentIndexer,
 )
-
-# from family_assistant.indexing.pipeline import IndexingPipeline # Removed
-# from family_assistant.indexing.processors.dispatch_processors import ( # Removed
-# EmbeddingDispatchProcessor,
-# )
-# from family_assistant.indexing.processors.llm_processors import ( # Removed
-# LLMSummaryGeneratorProcessor,
-# )
-# from family_assistant.indexing.processors.network_processors import WebFetcherProcessor # Removed
-# from family_assistant.indexing.processors.text_processors import TextChunker # Removed
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import (
