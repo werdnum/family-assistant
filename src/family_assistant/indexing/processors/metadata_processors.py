@@ -3,12 +3,25 @@ Content processors focused on extracting or generating metadata-related Indexabl
 """
 
 import logging
+from dataclasses import dataclass
 
 from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
-from family_assistant.storage.vector import Document
+from family_assistant.storage.vector import Document, update_document_title_in_db
 from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+# Configuration for DocumentTitleUpdaterProcessor (can be extended later)
+@dataclass
+class DocumentTitleUpdaterProcessorConfig:
+    """Configuration for the DocumentTitleUpdaterProcessor."""
+
+    # Example: Prioritize title from metadata key 'fetched_title'
+    title_metadata_key: str = "fetched_title"
+    # Example: Only update if current document title is a placeholder
+    # placeholder_prefixes: list[str] = field(default_factory=lambda: ["URL Ingest:", "Title to be determined"])
+    min_title_length: int = 3 # Minimum length for a title to be considered valid
 
 
 class TitleExtractor(ContentProcessor):
@@ -53,3 +66,84 @@ class TitleExtractor(ContentProcessor):
             )
 
         return output_items
+
+
+class DocumentTitleUpdaterProcessor(ContentProcessor):
+    """
+    Updates the main document's title in the database if a suitable title
+    is found in the metadata of processed IndexableContent items (e.g., from WebFetcher).
+    """
+
+    def __init__(
+        self, config: DocumentTitleUpdaterProcessorConfig | None = None
+    ) -> None:
+        self.config = config or DocumentTitleUpdaterProcessorConfig()
+
+    @property
+    def name(self) -> str:
+        return "document_title_updater_processor"
+
+    async def process(
+        self,
+        current_items: list[IndexableContent],
+        original_document: Document, # This should be the DocumentRecord instance
+        initial_content_ref: IndexableContent, # Not directly used here
+        context: ToolExecutionContext,
+    ) -> list[IndexableContent]:
+        """
+        Checks for a fetched title in item metadata and updates the document record.
+        """
+        if not hasattr(original_document, 'id') or not original_document.id:
+            logger.error(f"[{self.name}] Original document is missing a valid 'id'. Cannot update title.")
+            return current_items
+
+        document_id = original_document.id
+        current_doc_title = original_document.title # Get current title to potentially avoid overwriting good titles
+
+        # Check if current title is already good enough (e.g. not a placeholder)
+        # This logic can be expanded based on placeholder_prefixes in config
+        # For now, we'll update if a fetched_title is found and is different.
+
+        potential_title: str | None = None
+
+        for item in current_items:
+            if item.metadata and self.config.title_metadata_key in item.metadata:
+                fetched_title_candidate = item.metadata[self.config.title_metadata_key]
+                if (
+                    isinstance(fetched_title_candidate, str) and
+                    len(fetched_title_candidate.strip()) >= self.config.min_title_length
+                ):
+                    potential_title = fetched_title_candidate.strip()
+                    logger.info(
+                        f"[{self.name}] Found potential title '{potential_title}' from metadata key '{self.config.title_metadata_key}' for document ID {document_id}."
+                    )
+                    break # Found a candidate, stop searching
+
+        if potential_title and potential_title != current_doc_title:
+            try:
+                logger.info(
+                    f"[{self.name}] Attempting to update title for document ID {document_id} from '{current_doc_title}' to '{potential_title}'."
+                )
+                await update_document_title_in_db(
+                    db_context=context.db_context,
+                    document_id=document_id,
+                    new_title=potential_title,
+                )
+                # Note: The original_document object in memory won't reflect this change
+                # unless re-fetched. This is generally fine as its primary use here is for its ID.
+            except Exception as e:
+                logger.error(
+                    f"[{self.name}] Failed to update title for document ID {document_id}: {e}",
+                    exc_info=True,
+                )
+        elif potential_title and potential_title == current_doc_title:
+            logger.info(
+                f"[{self.name}] Potential title '{potential_title}' is same as current for document ID {document_id}. No update needed."
+            )
+        else:
+            logger.info(
+                f"[{self.name}] No suitable new title found in metadata for document ID {document_id} or title is same as current. Current title: '{current_doc_title}'"
+            )
+
+        # This processor does not modify the list of items, only updates the DB.
+        return current_items

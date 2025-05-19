@@ -736,9 +736,48 @@ async def query_vectors(
         raise
 
 
+async def update_document_title_in_db(
+    db_context: DatabaseContext, document_id: int, new_title: str
+) -> None:
+    """
+    Updates the title of a specific document in the database.
+
+    Args:
+        db_context: The DatabaseContext to use for the operation.
+        document_id: The ID of the document to update.
+        new_title: The new title for the document.
+    """
+    if not new_title or not new_title.strip():
+        logger.warning(f"Attempted to update document {document_id} with an empty title. Skipping.")
+        return
+
+    stmt = (
+        sa.update(DocumentRecord)
+        .where(DocumentRecord.id == document_id)
+        .values(title=new_title.strip())
+    )
+    try:
+        result = await db_context.execute_with_retry(stmt)
+        if result.rowcount > 0:
+            logger.info(
+                f"Successfully updated title for document ID {document_id} to '{new_title.strip()}'."
+            )
+        else:
+            logger.warning(
+                f"No document found with ID {document_id} to update title, or title was already the same."
+            )
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error updating title for document ID {document_id}: {e}",
+            exc_info=True,
+        )
+        raise # Re-raise to allow task retry or failure handling
+
+
 # Export functions explicitly for clarity when importing elsewhere
 __all__ = [
     "init_vector_db",
+    "update_document_title_in_db", # Add new function to __all__
     "add_document",
     "get_document_by_source_id",
     "get_document_by_id",

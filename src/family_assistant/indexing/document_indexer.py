@@ -25,7 +25,8 @@ from family_assistant.indexing.processors.llm_processors import (  # Added
     LLMSummaryGeneratorProcessor,
 )
 from family_assistant.indexing.processors.metadata_processors import (
-    TitleExtractor,  # Added
+    DocumentTitleUpdaterProcessor,  # Added
+    TitleExtractor,
 )
 from family_assistant.indexing.processors.network_processors import (
     WebFetcherProcessor,  # Added
@@ -126,6 +127,10 @@ class DocumentIndexer:
                 elif proc_type == "EmbeddingDispatch":
                     processors.append(
                         EmbeddingDispatchProcessor(**proc_specific_config)
+                    )
+                elif proc_type == "DocumentTitleUpdater":
+                    processors.append(
+                        DocumentTitleUpdaterProcessor(**proc_specific_config)
                     )
                 else:
                     logger.warning(
