@@ -1327,7 +1327,6 @@ async def test_url_indexing_e2e(
             api_form_data_url_no_title = {
                 "source_type": "url_auto_title_test",
                 "source_id": url_doc_source_id,
-                # "title": "This title should be overridden", # INTENTIONALLY OMITTED
                 "url": TEST_URL_TO_SCRAPE,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "metadata": json.dumps({"test_type": "url_auto_title_indexing"}),
