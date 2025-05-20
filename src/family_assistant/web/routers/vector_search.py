@@ -96,6 +96,8 @@ async def vector_search_form(
             "user": request.session.get("user"),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
             "now_utc": datetime.now(timezone.utc),  # Pass to base template
+            "float_inf": float("inf"),
+            "float_neg_inf": -float("inf"),
         },
     )
 
@@ -423,5 +425,7 @@ async def handle_vector_search(
             "user": request.session.get("user"),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
             "now_utc": datetime.now(timezone.utc),  # Pass to base template
+            "float_inf": float("inf"),
+            "float_neg_inf": -float("inf"),
         },
     )

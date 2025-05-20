@@ -153,9 +153,9 @@
                 <details class="debug-details">
                     <summary>Document Scores (Best of Snippets)</summary>
                     <div>
-                        <span>Best RRF Score:</span> {{ "%.4f"|format(doc_result.best_rrf_score) if doc_result.best_rrf_score != -float('inf') else 'N/A' }}<br>
-                        <span>Best FTS Score:</span> {{ "%.4f"|format(doc_result.best_fts_score) if doc_result.best_fts_score != -float('inf') else 'N/A' }}<br>
-                        <span>Min Distance:</span> {{ "%.4f"|format(doc_result.min_distance) if doc_result.min_distance != float('inf') else 'N/A' }}
+                        <span>Best RRF Score:</span> {{ "%.4f"|format(doc_result.best_rrf_score) if doc_result.best_rrf_score != float_neg_inf else 'N/A' }}<br>
+                        <span>Best FTS Score:</span> {{ "%.4f"|format(doc_result.best_fts_score) if doc_result.best_fts_score != float_neg_inf else 'N/A' }}<br>
+                        <span>Min Distance:</span> {{ "%.4f"|format(doc_result.min_distance) if doc_result.min_distance != float_inf else 'N/A' }}
                     </div>
                 </details>
 
