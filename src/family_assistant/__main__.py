@@ -37,7 +37,7 @@ from family_assistant.indexing.document_indexer import (
 # Import indexing components
 from family_assistant.indexing.email_indexer import (
     handle_index_email,
-    # set_indexing_dependencies, # Removed as master_indexing_pipeline is removed
+    set_indexing_dependencies,  # Added this import
 )
 
 # Import the specific task handler for embedding
