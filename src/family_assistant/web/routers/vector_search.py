@@ -356,7 +356,6 @@ async def handle_vector_search(
         else:
             results = []
 
-
     except ValueError as ve:
         logger.warning(f"Validation error during vector search: {ve}")
         error = str(ve)
