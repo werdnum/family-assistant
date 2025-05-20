@@ -141,7 +141,9 @@ async def dequeue_task(
                     tasks_table.c.scheduled_at <= now,
                 )
             )
-            .where(tasks_table.c.retry_count <= tasks_table.c.max_retries)  # Allow task to run when retry_count == max_retries
+            .where(
+                tasks_table.c.retry_count <= tasks_table.c.max_retries
+            )  # Allow task to run when retry_count == max_retries
             .order_by(
                 tasks_table.c.retry_count.asc(),
                 tasks_table.c.created_at.asc(),
