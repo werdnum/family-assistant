@@ -186,127 +186,136 @@ class EmailIndexer:
             raise ValueError("Missing 'email_db_id' in index_email task payload.")
 
         if not self.pipeline:  # Should always be set by constructor
-            raise RuntimeError("IndexingPipeline dependency not set for email indexing.")
+            raise RuntimeError(
+                "IndexingPipeline dependency not set for email indexing."
+            )
 
         logger.info(f"Starting indexing for email DB ID: {email_db_id}")
 
         # --- 1. Fetch Email Data ---
-    # No need to update status here, task status handles it
-    select_stmt = select(received_emails_table).where(
-        received_emails_table.c.id == email_db_id
-    )
-    email_row = await db_context.fetch_one(select_stmt)
-
-    if not email_row:
-        # Email might have been deleted between enqueueing and processing
-        logger.warning(f"Email {email_db_id} not found in database. Skipping indexing.")
-        # Don't raise an error, just exit gracefully. Task will be marked 'done'.
-        return
-
-    # --- 2. Create Document Object ---
-    try:
-        email_doc = EmailDocument.from_row(email_row)
-    except ValueError as e:
-        logger.error(f"Failed to create EmailDocument for DB ID {email_db_id}: {e}")
-        raise  # Re-raise to mark task as failed
-
-    # --- 3. (Skipped) Enrich Metadata ---
-    enriched_metadata = None
-    # LLM enrichment logic would go here in the future
-
-    # --- 4. Add/Update Document Record in Vector DB & Get DB Record ---
-    doc_db_id: int = await storage.add_document(
-        db_context=db_context, doc=email_doc, enriched_doc_metadata=enriched_metadata
-    )
-    logger.info(
-        f"Added/Updated document record for email {email_db_id}, vector DB doc ID: {doc_db_id}"
-    )
-
-    try:
-        db_document_record = await get_document_by_id(db_context, doc_db_id)
-        if not db_document_record:
-            # This should ideally not happen if add_document succeeded
-            raise ValueError(
-                f"Failed to retrieve document record for ID {doc_db_id} after adding/updating."
-            )
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error fetching document record {doc_db_id}: {e}", exc_info=True
+        # No need to update status here, task status handles it
+        select_stmt = select(received_emails_table).where(
+            received_emails_table.c.id == email_db_id
         )
-        raise RuntimeError(f"Failed to fetch document record {doc_db_id}") from e
+        email_row = await db_context.fetch_one(select_stmt)
 
-    # --- 5. Prepare Initial Content for Pipeline ---
-    initial_items: list[IndexableContent] = []
-    if email_doc.content_plain:
-        # The pipeline will handle title extraction, chunking, summarizing, etc.
-        # Provide the raw plain text body.
-        plain_text_item = IndexableContent(
-            content=email_doc.content_plain,
-            embedding_type="raw_body_text",  # A generic type for processors to pick up
-            mime_type="text/plain",
-            source_processor="EmailIndexer.handle_index_email",
-            metadata={"original_source": "email_body"},
-        )
-        initial_items.append(plain_text_item)
-
-    # Add attachments to the pipeline
-    if email_doc.attachments:
-        for att_meta in email_doc.attachments:
-            storage_path = att_meta.get("storage_path")
-            mime_type = att_meta.get("content_type")
-            original_filename = att_meta.get("filename")
-
-            if not storage_path or not mime_type:
-                logger.warning(
-                    f"Skipping attachment for email {email_db_id} due to missing path or mime_type: {att_meta}"
-                )
-                continue
-
-            logger.info(
-                f"Preparing attachment for pipeline: {original_filename} ({mime_type}) at {storage_path} for email {email_db_id}"
+        if not email_row:
+            # Email might have been deleted between enqueueing and processing
+            logger.warning(
+                f"Email {email_db_id} not found in database. Skipping indexing."
             )
-            attachment_item = IndexableContent(
-                content=None,  # Content is in the file pointed to by ref
-                embedding_type="email_attachment_file",  # Generic type for file processors
-                mime_type=mime_type,
-                source_processor="EmailIndexer.handle_index_email.attachment",
-                metadata={
-                    "original_filename": original_filename,
-                    "email_db_id": email_db_id,  # Link back to email
-                    "email_source_id": email_doc.source_id,  # Message-ID
-                },
-                ref=storage_path,  # Path to the saved attachment file
-            )
-            initial_items.append(attachment_item)
+            # Don't raise an error, just exit gracefully. Task will be marked 'done'.
+            return
 
-    if not initial_items:
-        logger.warning(
-            f"No text content or attachments found to pass to pipeline for email {email_db_id}. Skipping pipeline run."
+        # --- 2. Create Document Object ---
+        try:
+            email_doc = EmailDocument.from_row(email_row)
+        except ValueError as e:
+            logger.error(f"Failed to create EmailDocument for DB ID {email_db_id}: {e}")
+            raise  # Re-raise to mark task as failed
+
+        # --- 3. (Skipped) Enrich Metadata ---
+        enriched_metadata = None
+        # LLM enrichment logic would go here in the future
+
+        # --- 4. Add/Update Document Record in Vector DB & Get DB Record ---
+        doc_db_id: int = await storage.add_document(
+            db_context=db_context,
+            doc=email_doc,
+            enriched_doc_metadata=enriched_metadata,
         )
-        # Task is considered done as the document record was created/updated.
-        return
-
-    # --- 6. Run Indexing Pipeline ---
-    try:
         logger.info(
-            f"Running indexing pipeline for email {email_db_id} (Doc ID: {doc_db_id}) with {len(initial_items)} initial items."
+            f"Added/Updated document record for email {email_db_id}, vector DB doc ID: {doc_db_id}"
         )
-        await self.pipeline.run(
-            initial_items=initial_items,
-            original_document=db_document_record,  # Pass the DB record
-            context=exec_context,
-        )
-    except Exception as e:
-        logger.error(
-            f"Indexing pipeline run failed for email {email_db_id} (Doc ID: {doc_db_id}): {e}",
-            exc_info=True,
-        )
-        raise RuntimeError(f"Indexing pipeline failed for email {email_db_id}") from e
 
-    logger.info(
-        f"Indexing pipeline successfully initiated for email {email_db_id} (Doc ID: {doc_db_id})."
-    )
-    # Task completion is handled by the worker loop
+        try:
+            db_document_record = await get_document_by_id(db_context, doc_db_id)
+            if not db_document_record:
+                # This should ideally not happen if add_document succeeded
+                raise ValueError(
+                    f"Failed to retrieve document record for ID {doc_db_id} after adding/updating."
+                )
+        except SQLAlchemyError as e:
+            logger.error(
+                f"Database error fetching document record {doc_db_id}: {e}",
+                exc_info=True,
+            )
+            raise RuntimeError(f"Failed to fetch document record {doc_db_id}") from e
+
+        # --- 5. Prepare Initial Content for Pipeline ---
+        initial_items: list[IndexableContent] = []
+        if email_doc.content_plain:
+            # The pipeline will handle title extraction, chunking, summarizing, etc.
+            # Provide the raw plain text body.
+            plain_text_item = IndexableContent(
+                content=email_doc.content_plain,
+                embedding_type="raw_body_text",  # A generic type for processors to pick up
+                mime_type="text/plain",
+                source_processor="EmailIndexer.handle_index_email",
+                metadata={"original_source": "email_body"},
+            )
+            initial_items.append(plain_text_item)
+
+        # Add attachments to the pipeline
+        if email_doc.attachments:
+            for att_meta in email_doc.attachments:
+                storage_path = att_meta.get("storage_path")
+                mime_type = att_meta.get("content_type")
+                original_filename = att_meta.get("filename")
+
+                if not storage_path or not mime_type:
+                    logger.warning(
+                        f"Skipping attachment for email {email_db_id} due to missing path or mime_type: {att_meta}"
+                    )
+                    continue
+
+                logger.info(
+                    f"Preparing attachment for pipeline: {original_filename} ({mime_type}) at {storage_path} for email {email_db_id}"
+                )
+                attachment_item = IndexableContent(
+                    content=None,  # Content is in the file pointed to by ref
+                    embedding_type="email_attachment_file",  # Generic type for file processors
+                    mime_type=mime_type,
+                    source_processor="EmailIndexer.handle_index_email.attachment",
+                    metadata={
+                        "original_filename": original_filename,
+                        "email_db_id": email_db_id,  # Link back to email
+                        "email_source_id": email_doc.source_id,  # Message-ID
+                    },
+                    ref=storage_path,  # Path to the saved attachment file
+                )
+                initial_items.append(attachment_item)
+
+        if not initial_items:
+            logger.warning(
+                f"No text content or attachments found to pass to pipeline for email {email_db_id}. Skipping pipeline run."
+            )
+            # Task is considered done as the document record was created/updated.
+            return
+
+        # --- 6. Run Indexing Pipeline ---
+        try:
+            logger.info(
+                f"Running indexing pipeline for email {email_db_id} (Doc ID: {doc_db_id}) with {len(initial_items)} initial items."
+            )
+            await self.pipeline.run(
+                initial_items=initial_items,
+                original_document=db_document_record,  # Pass the DB record
+                context=exec_context,
+            )
+        except Exception as e:
+            logger.error(
+                f"Indexing pipeline run failed for email {email_db_id} (Doc ID: {doc_db_id}): {e}",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Indexing pipeline failed for email {email_db_id}"
+            ) from e
+
+        logger.info(
+            f"Indexing pipeline successfully initiated for email {email_db_id} (Doc ID: {doc_db_id})."
+        )
+        # Task completion is handled by the worker loop
 
 
 __all__ = ["EmailDocument", "EmailIndexer"]
