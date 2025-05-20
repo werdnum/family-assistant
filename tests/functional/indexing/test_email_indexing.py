@@ -417,7 +417,9 @@ async def test_email_indexing_and_query_e2e(
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
     )
-    worker.register_task_handler("index_email", email_indexer_instance.handle_index_email) # Use instance method
+    worker.register_task_handler(
+        "index_email", email_indexer_instance.handle_index_email
+    )  # Use instance method
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
     logger.info("TaskWorker created and 'index_email' task handler registered.")
 
@@ -593,7 +595,9 @@ async def test_vector_ranking(
     test_pipeline_kw = IndexingPipeline(  # Renamed for clarity
         processors=[title_extractor, text_chunker, embedding_dispatcher_kw], config={}
     )
-    email_indexer_instance_kw = EmailIndexer(pipeline=test_pipeline_kw) # Instantiate EmailIndexer
+    email_indexer_instance_kw = EmailIndexer(
+        pipeline=test_pipeline_kw
+    )  # Instantiate EmailIndexer
 
     # Mock application for TaskWorker
     mock_application_kw = MagicMock()  # Define mock_application_kw
@@ -628,7 +632,9 @@ async def test_vector_ranking(
         calendar_config=dummy_calendar_config_kw,
         timezone_str=dummy_timezone_str_kw,
     )
-    worker.register_task_handler("index_email", email_indexer_instance_kw.handle_index_email) # Use instance method
+    worker.register_task_handler(
+        "index_email", email_indexer_instance_kw.handle_index_email
+    )  # Use instance method
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-rank-{uuid.uuid4()}"
@@ -779,7 +785,9 @@ async def test_metadata_filtering(
         processors=[title_extractor_meta, text_chunker_meta, embedding_dispatcher_meta],
         config={},
     )
-    email_indexer_instance_meta = EmailIndexer(pipeline=test_pipeline_meta) # Instantiate EmailIndexer
+    email_indexer_instance_meta = EmailIndexer(
+        pipeline=test_pipeline_meta
+    )  # Instantiate EmailIndexer
 
     # Mock application for TaskWorker
     mock_application_meta = MagicMock()
@@ -812,7 +820,9 @@ async def test_metadata_filtering(
         calendar_config=dummy_calendar_config_meta,
         timezone_str=dummy_timezone_str_meta,
     )
-    worker.register_task_handler("index_email", email_indexer_instance_meta.handle_index_email) # Use instance method
+    worker.register_task_handler(
+        "index_email", email_indexer_instance_meta.handle_index_email
+    )  # Use instance method
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-meta-{uuid.uuid4()}"
@@ -954,7 +964,9 @@ async def test_keyword_filtering(
     test_pipeline_kw = IndexingPipeline(  # Renamed for clarity
         processors=[title_extractor, text_chunker, embedding_dispatcher_kw], config={}
     )
-    email_indexer_instance_kw = EmailIndexer(pipeline=test_pipeline_kw) # Instantiate EmailIndexer
+    email_indexer_instance_kw = EmailIndexer(
+        pipeline=test_pipeline_kw
+    )  # Instantiate EmailIndexer
 
     # Mock application for TaskWorker
     mock_application_kw = MagicMock()  # Define mock_application_kw
@@ -985,7 +997,9 @@ async def test_keyword_filtering(
         calendar_config=dummy_calendar_config_kw,  # Now defined
         timezone_str=dummy_timezone_str_kw,
     )
-    worker.register_task_handler("index_email", email_indexer_instance_kw.handle_index_email) # Use instance method
+    worker.register_task_handler(
+        "index_email", email_indexer_instance_kw.handle_index_email
+    )  # Use instance method
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-keyword-{uuid.uuid4()}"
@@ -1213,7 +1227,9 @@ async def test_email_with_pdf_attachment_indexing_e2e(
         processors=[title_extractor, pdf_extractor, text_chunker, embedding_dispatcher],
         config={"text_chunker": text_chunker_test_config},
     )
-    email_indexer_instance_pdf = EmailIndexer(pipeline=test_pipeline_with_pdf) # Instantiate EmailIndexer
+    email_indexer_instance_pdf = EmailIndexer(
+        pipeline=test_pipeline_with_pdf
+    )  # Instantiate EmailIndexer
     logger.info(
         "Set IndexingPipeline with PDFTextExtractor for email attachment indexing."
     )
@@ -1232,7 +1248,9 @@ async def test_email_with_pdf_attachment_indexing_e2e(
         calendar_config=dummy_calendar_config_pdf,
         timezone_str=dummy_timezone_str_pdf,
     )
-    worker.register_task_handler("index_email", email_indexer_instance_pdf.handle_index_email) # Use instance method
+    worker.register_task_handler(
+        "index_email", email_indexer_instance_pdf.handle_index_email
+    )  # Use instance method
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-pdf-{uuid.uuid4()}"
@@ -1489,7 +1507,9 @@ async def test_email_indexing_with_llm_summary_e2e(
         ],
         config={},
     )
-    email_indexer_instance_summary = EmailIndexer(pipeline=test_pipeline_email_summary) # Instantiate EmailIndexer
+    email_indexer_instance_summary = EmailIndexer(
+        pipeline=test_pipeline_email_summary
+    )  # Instantiate EmailIndexer
 
     # --- Arrange: Task Worker Setup ---
     # Inject mock LLM client for the summary processor via app state
@@ -1503,7 +1523,9 @@ async def test_email_indexing_with_llm_summary_e2e(
         calendar_config={},
         timezone_str="UTC",
     )
-    worker_email_summary.register_task_handler("index_email", email_indexer_instance_summary.handle_index_email) # Use instance method
+    worker_email_summary.register_task_handler(
+        "index_email", email_indexer_instance_summary.handle_index_email
+    )  # Use instance method
     worker_email_summary.register_task_handler(
         "embed_and_store_batch", handle_embed_and_store_batch
     )
@@ -1754,7 +1776,9 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         ],
         config={},
     )
-    email_indexer_instance_link = EmailIndexer(pipeline=test_pipeline_link_extraction) # Instantiate EmailIndexer
+    email_indexer_instance_link = EmailIndexer(
+        pipeline=test_pipeline_link_extraction
+    )  # Instantiate EmailIndexer
 
     # --- Arrange: Task Worker Setup ---
     original_llm_client = getattr(fastapi_app.state, "llm_client", None)
@@ -1767,7 +1791,9 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         calendar_config={},
         timezone_str="UTC",
     )
-    worker_link_ext.register_task_handler("index_email", email_indexer_instance_link.handle_index_email) # Use instance method
+    worker_link_ext.register_task_handler(
+        "index_email", email_indexer_instance_link.handle_index_email
+    )  # Use instance method
     worker_link_ext.register_task_handler(
         "embed_and_store_batch", handle_embed_and_store_batch
     )
