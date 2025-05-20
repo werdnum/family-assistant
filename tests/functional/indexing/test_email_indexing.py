@@ -1850,8 +1850,14 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
             "LLM should have been called for the email without a primary link matching negative rule."
         ).is_true()
 
-        assert_that(len(mock_llm_client_link_ext.get_calls())).described_as(
-            "LLM should have been called twice (once for each email)"
+        # Filter for generate_response calls before counting
+        generate_response_calls = [
+            call
+            for call in mock_llm_client_link_ext.get_calls()
+            if call["method_name"] == "generate_response"
+        ]
+        assert_that(len(generate_response_calls)).described_as(
+            "LLM's generate_response method should have been called twice (once for each email)"
         ).is_equal_to(2)
 
         logger.info(
