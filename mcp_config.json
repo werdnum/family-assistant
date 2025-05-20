@@ -4,10 +4,6 @@
       "command": "uvx",
       "args": ["mcp-server-time", "--local-timezone=Australia/Sydney"]
     },
-    "fetch": {
-      "command": "uvx",
-      "args": ["mcp-server-fetch"]
-    },
     "brave": {
       "command": "deno",
       "args": [
@@ -35,13 +31,6 @@
       "transport": "sse",
       "url": "https://homeassistant.andrewgarrett.dev/mcp_server/sse",
       "token": "$HOMEASSISTANT_API_KEY"
-    },
-    "scrape": {
-    	"command": "uv",
-      "args": [
-        "run",
-        "contrib/scrape_mcp.py"
-      ]
     }
   }
 }
