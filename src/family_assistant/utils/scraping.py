@@ -542,14 +542,17 @@ class MockScraper:
                      ScrapeResult objects to be returned for those URLs.
         """
         self.url_map = url_map
+        self.scraped_urls: list[str] = []  # To record URLs passed to scrape
         logger.info(f"MockScraper initialized with {len(url_map)} URL mappings.")
 
     async def scrape(self, url: str) -> ScrapeResult:
         """
         Returns a predefined ScrapeResult for the given URL if it's in the map.
         Otherwise, returns an error ScrapeResult.
+        Also records the URL that was attempted to be scraped.
         """
         logger.debug(f"MockScraper attempting to scrape URL: {url}")
+        self.scraped_urls.append(url)  # Record the URL
         if url in self.url_map:
             result = self.url_map[url]
             logger.info(
