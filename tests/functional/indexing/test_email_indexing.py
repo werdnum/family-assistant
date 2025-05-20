@@ -1706,7 +1706,6 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     mock_scraper = MockScraper(
         url_map={}
     )  # No specific content needed, just capture calls
-    # mock_scraper.scrape = AsyncMock(wraps=mock_scraper.scrape) # No longer needed
     fastapi_app.state.scraper = (
         mock_scraper  # Ensure DocumentIndexer can pick this up if it were used
     )
