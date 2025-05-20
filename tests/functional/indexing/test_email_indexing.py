@@ -16,7 +16,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import MagicMock  # Add this import
+from unittest.mock import MagicMock  # unittest.mock.AsyncMock removed
 
 import httpx  # Added for http_client
 import numpy as np
@@ -1706,6 +1706,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     mock_scraper = MockScraper(
         url_map={}
     )  # No specific content needed, just capture calls
+    # mock_scraper.scrape = AsyncMock(wraps=mock_scraper.scrape) # No longer needed
     fastapi_app.state.scraper = (
         mock_scraper  # Ensure DocumentIndexer can pick this up if it were used
     )
@@ -1739,8 +1740,8 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         target_embedding_type=PRIMARY_LINK_TARGET_TYPE,  # Should be "raw_url"
     )
     web_fetcher_processor = WebFetcherProcessor(
-        scraper=mock_scraper,  # Inject mock scraper
-        input_content_types=[PRIMARY_LINK_TARGET_TYPE],  # Ensure it picks up "raw_url"
+        scraper=mock_scraper  # Inject mock scraper
+        # input_content_types removed as it's not an accepted argument
     )
     text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
     embedding_dispatcher = EmbeddingDispatchProcessor(
@@ -1833,7 +1834,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         # Positive case (email with link)
         positive_call_found = any(
             primary_link_matcher_positive(call_args["kwargs"])
-            for call_args in mock_llm_client_link_ext.recorded_calls
+            for call_args in mock_llm_client_link_ext.get_calls()
             if call_args["method_name"] == "generate_response"
         )
         assert_that(positive_call_found).described_as(
@@ -1843,14 +1844,14 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         # Negative case (email without link)
         negative_call_found = any(
             primary_link_matcher_negative(call_args["kwargs"])
-            for call_args in mock_llm_client_link_ext.recorded_calls
+            for call_args in mock_llm_client_link_ext.get_calls()
             if call_args["method_name"] == "generate_response"
         )
         assert_that(negative_call_found).described_as(
             "LLM should have been called for the email without a primary link matching negative rule."
         ).is_true()
 
-        assert_that(len(mock_llm_client_link_ext.recorded_calls)).described_as(
+        assert_that(len(mock_llm_client_link_ext.get_calls())).described_as(
             "LLM should have been called twice (once for each email)"
         ).is_equal_to(2)
 
