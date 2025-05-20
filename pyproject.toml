@@ -92,7 +92,7 @@ include-package-data = true
 [tool.setuptools.package-data]
 # Specify that the 'family_assistant' package should include
 # all files within its 'templates' and 'static' subdirectories.
-family_assistant = ["templates/**/*", "static/**/*"]
+family_assistant = ["templates/**/*", "static/**/*", "py.typed"]
 
 
 # --- Task Runner Configuration (poethepoet) ---
