@@ -73,6 +73,7 @@ dev = [
     "pytest-timeout",
     "ruff",
     "black",
+    "pre-commit>=4.2.0",
 ]
 
 [project.scripts]
