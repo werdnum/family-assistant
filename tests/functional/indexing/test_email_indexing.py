@@ -38,9 +38,13 @@ from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
 from family_assistant.indexing.processors.llm_processors import (  # Added
+    LLMPrimaryLinkExtractorProcessor,
     LLMSummaryGeneratorProcessor,
 )
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
+from family_assistant.indexing.processors.network_processors import (
+    WebFetcherProcessor,
+)  # Added
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
@@ -54,6 +58,7 @@ from family_assistant.storage.vector import (
     query_vectors,
 )  # Added imports
 from family_assistant.task_worker import TaskWorker
+from family_assistant.utils.scraping import MockScraper  # Added
 
 # Import the FastAPI app directly for the test client
 from family_assistant.web.app_creator import app as fastapi_app
@@ -1100,6 +1105,13 @@ TEST_QUERY_TEXT_FOR_PDF = (
 # Define a known substring from TEST_PDF_EXTRACTED_TEXT for more robust assertion
 KNOWN_SUBSTRING_FROM_PDF = "Software updates are a common and crucial aspect"
 
+
+# --- Test Data for Email Primary Link Extraction E2E ---
+TEST_EMAIL_BODY_PRIMARY_LINK = "Hello team, please click this important link to access the new portal: https://example.com/new-portal-access"
+TEST_EMAIL_BODY_NO_PRIMARY_LINK = "Hi team, let's discuss the quarterly results in our meeting next Monday. No links here, just a discussion prompt."
+EXPECTED_EXTRACTED_URL = "https://example.com/new-portal-access"
+PRIMARY_LINK_TARGET_TYPE = "raw_url"  # As configured in LLMPrimaryLinkExtractorProcessor
+
 # --- Test Data for Email LLM Summary E2E ---
 TEST_EMAIL_BODY_FOR_SUMMARY = "This email contains critical information about the upcoming product launch event, including timelines, key stakeholders, and marketing strategies. Please review thoroughly."
 EXPECTED_LLM_SUMMARY_EMAIL = "An email detailing an upcoming product launch event, covering timelines, stakeholders, and marketing plans."
@@ -1612,3 +1624,255 @@ async def test_email_indexing_with_llm_summary_e2e(
                     )
             except Exception as e:
                 logger.warning(f"Cleanup error for email {email_db_id}: {e}")
+
+
+@pytest.mark.asyncio
+async def test_email_indexing_with_primary_link_extraction_e2e(
+    http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
+    """
+    End-to-end test for email ingestion with LLM-based primary link extraction.
+    Verifies that the LLMPrimaryLinkExtractorProcessor correctly identifies and
+    outputs a raw_url item, which is then picked up by a WebFetcherProcessor (mocked).
+    """
+    logger.info("\n--- Running Email Indexing with Primary Link Extraction E2E Test ---")
+
+    # --- Arrange: Mock LLM Client for Link Extraction ---
+    def primary_link_matcher_positive(actual_kwargs: dict[str, Any]) -> bool:
+        if not (
+            actual_kwargs.get("tools")
+            and actual_kwargs["tools"][0].get("function", {}).get("name")
+            == "extract_primary_link"
+        ):
+            return False
+        user_message_content = get_last_message_text(actual_kwargs["messages"])
+        return TEST_EMAIL_BODY_PRIMARY_LINK in user_message_content
+
+    def primary_link_matcher_negative(actual_kwargs: dict[str, Any]) -> bool:
+        if not (
+            actual_kwargs.get("tools")
+            and actual_kwargs["tools"][0].get("function", {}).get("name")
+            == "extract_primary_link"
+        ):
+            return False
+        user_message_content = get_last_message_text(actual_kwargs["messages"])
+        return TEST_EMAIL_BODY_NO_PRIMARY_LINK in user_message_content
+
+    mock_llm_output_link_positive = LLMOutput(
+        content=None,
+        tool_calls=[
+            {
+                "id": "call_primary_link_extract_pos",
+                "type": "function",
+                "function": {
+                    "name": "extract_primary_link",
+                    "arguments": json.dumps(
+                        {
+                            "primary_url": EXPECTED_EXTRACTED_URL,
+                            "is_primary_link_email": True,
+                        }
+                    ),
+                },
+            }
+        ],
+    )
+    mock_llm_output_link_negative = LLMOutput(
+        content=None,
+        tool_calls=[
+            {
+                "id": "call_primary_link_extract_neg",
+                "type": "function",
+                "function": {
+                    "name": "extract_primary_link",
+                    "arguments": json.dumps({"is_primary_link_email": False}),
+                },
+            }
+        ],
+    )
+
+    mock_llm_client_link_ext = RuleBasedMockLLMClient(
+        rules=[
+            (primary_link_matcher_positive, mock_llm_output_link_positive),
+            (primary_link_matcher_negative, mock_llm_output_link_negative),
+        ]
+    )
+
+    # --- Arrange: Mock Scraper for WebFetcherProcessor ---
+    mock_scraper = MockScraper(url_map={}) # No specific content needed, just capture calls
+    fastapi_app.state.scraper = mock_scraper # Ensure DocumentIndexer can pick this up if it were used
+
+    # --- Arrange: Mock Embeddings (for other parts of the email) ---
+    current_embedder: MockEmbeddingGenerator = fastapi_app.state.embedding_generator
+    assert isinstance(current_embedder, MockEmbeddingGenerator)
+    current_embedder.embedding_map.clear() # Clear from previous tests
+    current_embedder.embedding_map.update(
+        {
+            TEST_EMAIL_BODY_PRIMARY_LINK: (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.1).tolist(),
+            "Email with Primary Link": (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.2).tolist(), # Title
+            TEST_EMAIL_BODY_NO_PRIMARY_LINK: (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.3).tolist(),
+            "Email with No Primary Link": (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.4).tolist(), # Title
+        }
+    )
+
+    # --- Arrange: Indexing Pipeline ---
+    title_extractor = TitleExtractor()
+    link_extractor_processor = LLMPrimaryLinkExtractorProcessor(
+        llm_client=mock_llm_client_link_ext,
+        input_content_types=["raw_body_text"],
+        target_embedding_type=PRIMARY_LINK_TARGET_TYPE, # Should be "raw_url"
+    )
+    web_fetcher_processor = WebFetcherProcessor(
+        scraper=mock_scraper, # Inject mock scraper
+        input_content_types=[PRIMARY_LINK_TARGET_TYPE], # Ensure it picks up "raw_url"
+    )
+    text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
+    embedding_dispatcher = EmbeddingDispatchProcessor(
+        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"]
+    )
+
+    test_pipeline_link_extraction = IndexingPipeline(
+        processors=[
+            title_extractor,
+            link_extractor_processor,
+            web_fetcher_processor, # WebFetcher after link extractor
+            text_chunker,
+            embedding_dispatcher,
+        ],
+        config={},
+    )
+    set_indexing_dependencies(pipeline=test_pipeline_link_extraction)
+
+    # --- Arrange: Task Worker Setup ---
+    original_llm_client = getattr(fastapi_app.state, "llm_client", None)
+    fastapi_app.state.llm_client = mock_llm_client_link_ext # For link_extractor_processor if it were built by DocumentIndexer
+
+    worker_link_ext = TaskWorker(
+        processing_service=None,
+        application=fastapi_app,
+        embedding_generator=current_embedder,
+        calendar_config={},
+        timezone_str="UTC",
+    )
+    worker_link_ext.register_task_handler("index_email", handle_index_email)
+    worker_link_ext.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
+
+    worker_id = f"test-link-ext-worker-{uuid.uuid4()}"
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker_link_ext.run(test_new_task_event))
+    await asyncio.sleep(0.1)
+
+    email_db_id_link = None
+    email_db_id_no_link = None
+    test_failed = False
+
+    try:
+        # --- Act: Ingest Email with Primary Link ---
+        email_msg_id_link = f"<email_link_test_pos_{uuid.uuid4()}@example.com>"
+        form_data_link = TEST_EMAIL_FORM_DATA.copy()
+        form_data_link.update(
+            {
+                "subject": "Email with Primary Link",
+                "stripped-text": TEST_EMAIL_BODY_PRIMARY_LINK,
+                "Message-Id": email_msg_id_link,
+            }
+        )
+        email_db_id_link = await _ingest_and_index_email(
+            http_client=http_client,
+            engine=pg_vector_db_engine,
+            form_data_dict=form_data_link,
+            notify_event=test_new_task_event,
+        )
+
+        # --- Act: Ingest Email with No Primary Link ---
+        email_msg_id_no_link = f"<email_link_test_neg_{uuid.uuid4()}@example.com>"
+        form_data_no_link = TEST_EMAIL_FORM_DATA.copy()
+        form_data_no_link.update(
+            {
+                "subject": "Email with No Primary Link",
+                "stripped-text": TEST_EMAIL_BODY_NO_PRIMARY_LINK,
+                "Message-Id": email_msg_id_no_link,
+            }
+        )
+        email_db_id_no_link = await _ingest_and_index_email(
+            http_client=http_client,
+            engine=pg_vector_db_engine,
+            form_data_dict=form_data_no_link,
+            notify_event=test_new_task_event,
+        )
+
+        # --- Assert: Check MockScraper calls ---
+        # The WebFetcherProcessor should have called the scraper with the extracted URL
+        assert_that(mock_scraper.scraped_urls).described_as(
+            "MockScraper should have been called for the primary link email"
+        ).contains(EXPECTED_EXTRACTED_URL)
+        assert_that(len(mock_scraper.scraped_urls)).described_as(
+            "MockScraper should only be called once for the primary link"
+        ).is_equal_to(1)
+
+
+        # --- Assert: Check LLM calls ---
+        # Positive case (email with link)
+        positive_call_found = any(
+            primary_link_matcher_positive(call_args["kwargs"])
+            for call_args in mock_llm_client_link_ext.recorded_calls
+            if call_args["method_name"] == "generate_response"
+        )
+        assert_that(positive_call_found).described_as(
+            "LLM should have been called for the email with a primary link matching positive rule."
+        ).is_true()
+
+        # Negative case (email without link)
+        negative_call_found = any(
+            primary_link_matcher_negative(call_args["kwargs"])
+            for call_args in mock_llm_client_link_ext.recorded_calls
+            if call_args["method_name"] == "generate_response"
+        )
+        assert_that(negative_call_found).described_as(
+            "LLM should have been called for the email without a primary link matching negative rule."
+        ).is_true()
+        
+        assert_that(len(mock_llm_client_link_ext.recorded_calls)).described_as(
+            "LLM should have been called twice (once for each email)"
+        ).is_equal_to(2)
+
+
+        logger.info("--- Email Indexing with Primary Link Extraction E2E Test Passed ---")
+
+    except Exception as e:
+        test_failed = True
+        logger.error(f"Test failed: {e}", exc_info=True)
+        raise
+    finally:
+        if test_failed:
+            logger.info("Dumping tables due to test failure...")
+            await dump_tables_on_failure(pg_vector_db_engine)
+        
+        if hasattr(fastapi_app.state, "llm_client"):
+            if original_llm_client:
+                fastapi_app.state.llm_client = original_llm_client
+            else:
+                delattr(fastapi_app.state, "llm_client")
+        
+        if hasattr(fastapi_app.state, "scraper"): # Restore scraper
+            delattr(fastapi_app.state, "scraper")
+
+
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+        
+        # Basic cleanup attempt for created email records
+        # A more robust cleanup would delete associated document and embedding records too.
+        for db_id_to_clean in [email_db_id_link, email_db_id_no_link]:
+            if db_id_to_clean:
+                try:
+                    async with DatabaseContext(engine=pg_vector_db_engine) as _db_cleanup:
+                        # Simplified cleanup, real cleanup would be more involved
+                        logger.warning(f"Partial cleanup for email_db_id {db_id_to_clean}. Manual check advised.")
+                except Exception as e:
+                    logger.warning(f"Cleanup error for email {db_id_to_clean}: {e}")
