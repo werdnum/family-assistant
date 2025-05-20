@@ -28,7 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, selectinload
 from sqlalchemy.sql import functions  # Import functions explicitly
 
 # Use absolute package path
@@ -358,7 +358,11 @@ async def get_document_by_id(
 ) -> DocumentRecord | None:
     """Retrieves a document ORM object by its internal primary key ID."""
     try:
-        stmt = select(DocumentRecord).where(DocumentRecord.id == document_id)
+        stmt = (
+            select(DocumentRecord)
+            .where(DocumentRecord.id == document_id)
+            .options(selectinload(DocumentRecord.embeddings))
+        )
 
         if db_context.conn is None:
             logger.error(

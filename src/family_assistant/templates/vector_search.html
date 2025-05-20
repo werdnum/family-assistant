@@ -139,7 +139,8 @@
                     {% endif %}
                 </h4>
                 <div class="source-info">
-                    Source: {{ item.source_type }} | Created: {{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else 'N/A' }}
+                    Source: {{ item.source_type }} | Created: {{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else 'N/A' }} <br>
+                    <a href="{{ request.app.url_path_for('ui_document_detail', document_id=item.document_id) }}">View Full Document Details (ID: {{ item.document_id }})</a>
                 </div>
 
                 {% if item.embedding_source_content %}

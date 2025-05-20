@@ -14,6 +14,7 @@ from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
 )
+from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.dependencies import (
     get_db,
@@ -96,6 +97,42 @@ async def vector_search_form(
             "user": request.session.get("user"),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
             "now_utc": datetime.now(timezone.utc),  # Pass to base template
+        },
+    )
+
+
+@vector_search_router.get(
+    "/vector-search/document/{document_id}",
+    response_class=HTMLResponse,
+    name="ui_document_detail",
+)
+async def document_detail_view(
+    request: Request,
+    document_id: int,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> HTMLResponse:
+    """Serves the detailed view for a single document."""
+    templates = request.app.state.templates
+    document: DocumentRecord | None = None
+    error: str | None = None
+
+    try:
+        document = await get_document_by_id(db_context, document_id)
+        if not document:
+            error = f"Document with ID {document_id} not found."
+    except Exception as e:
+        logger.error(f"Error fetching document {document_id}: {e}", exc_info=True)
+        error = f"An error occurred while fetching document details: {e}"
+
+    return templates.TemplateResponse(
+        "document_detail.html",
+        {
+            "request": request,
+            "document": document,
+            "error": error,
+            "user": request.session.get("user"),
+            "AUTH_ENABLED": AUTH_ENABLED,
+            "now_utc": datetime.now(timezone.utc),
         },
     )
 

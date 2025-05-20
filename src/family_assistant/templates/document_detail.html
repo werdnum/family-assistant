@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block title_header %}Document Details{% endblock %}
+
+{% block head_extra %}
+    <style>
+        .detail-grid { display: grid; grid-template-columns: 150px 1fr; gap: 0.5rem 1rem; margin-bottom: 1.5rem; }
+        .detail-grid dt { font-weight: bold; }
+        .detail-grid dd { margin-left: 0; }
+        .chunk-card { border: 1px solid #ccc; border-radius: 5px; margin-bottom: 1rem; padding: 1rem; background-color: var(--bg-secondary); }
+        .chunk-card h4 { margin-top: 0; margin-bottom: 0.5rem; }
+        .chunk-card pre { white-space: pre-wrap; word-break: break-all; margin: 0; font-size: 0.9em; background-color: var(--bg); padding: 0.5rem; border-radius: 3px; }
+        .metadata-display { background-color: var(--bg); padding: 0.8rem; border-radius: 3px; margin: 0.8rem 0; font-size: 0.85em; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; }
+        .error-message { color: red; font-weight: bold; margin-bottom: 1rem; border: 1px solid red; padding: 0.5rem; }
+    </style>
+{% endblock %}
+
+{% block main_content %}
+    {% if error %}
+        <p class="error-message">{{ error }}</p>
+        <p><a href="{{ request.app.url_path_for('ui_vector_search') }}">Back to Search</a></p>
+    {% elif document %}
+        <h2>Document: {{ document.title or 'Untitled Document' }} (ID: {{ document.id }})</h2>
+        
+        <section>
+            <h3>Document Metadata</h3>
+            <dl class="detail-grid">
+                <dt>Source Type:</dt><dd>{{ document.source_type }}</dd>
+                <dt>Source ID:</dt><dd>{{ document.source_id }}</dd>
+                <dt>Source URI:</dt><dd>{% if document.source_uri %}<a href="{{ document.source_uri }}" target="_blank">{{ document.source_uri }}</a>{% else %}N/A{% endif %}</dd>
+                <dt>Title:</dt><dd>{{ document.title or 'N/A' }}</dd>
+                <dt>Created At:</dt><dd>{{ document.created_at.strftime('%Y-%m-%d %H:%M:%S %Z') if document.created_at else 'N/A' }}</dd>
+                <dt>Added At:</dt><dd>{{ document.added_at.strftime('%Y-%m-%d %H:%M:%S %Z') if document.added_at else 'N/A' }}</dd>
+            </dl>
+            {% if document.doc_metadata %}
+            <h4>Raw Document Metadata:</h4>
+            <div id="doc-metadata-{{ document.id }}" class="json-editor-container metadata-display"></div>
+            {% else %}
+            <p>No raw document metadata available.</p>
+            {% endif %}
+        </section>
+
+        <hr>
+
+        <section>
+            <h3>Content Chunks & Embeddings</h3>
+            {% if document.embeddings %}
+                {% for chunk in document.embeddings %}
+                <article class="chunk-card">
+                    <h4>Chunk {{ chunk.chunk_index }} (Type: {{ chunk.embedding_type }})</h4>
+                    <dl class="detail-grid">
+                        <dt>Embedding ID:</dt><dd>{{ chunk.id }}</dd>
+                        <dt>Embedding Model:</dt><dd>{{ chunk.embedding_model }}</dd>
+                        <dt>Content Hash:</dt><dd>{{ chunk.content_hash or 'N/A' }}</dd>
+                        <dt>Added At:</dt><dd>{{ chunk.added_at.strftime('%Y-%m-%d %H:%M:%S %Z') if chunk.added_at else 'N/A' }}</dd>
+                    </dl>
+                    
+                    {% if chunk.content %}
+                    <h5>Chunk Content:</h5>
+                    <pre>{{ chunk.content }}</pre>
+                    {% else %}
+                    <p>No textual content for this chunk.</p>
+                    {% endif %}
+
+                    {% if chunk.embedding_metadata %}
+                    <h5>Chunk Metadata:</h5>
+                    <div id="chunk-metadata-{{ chunk.id }}" class="json-editor-container metadata-display"></div>
+                    {% else %}
+                    <p>No specific metadata for this chunk.</p>
+                    {% endif %}
+                </article>
+                {% endfor %}
+            {% else %}
+                <p>No content chunks or embeddings found for this document.</p>
+            {% endif %}
+        </section>
+        <p><a href="{{ request.app.url_path_for('ui_vector_search') }}">Back to Search</a></p>
+    {% else %}
+        <p>Document not found or an error occurred.</p>
+        <p><a href="{{ request.app.url_path_for('ui_vector_search') }}">Back to Search</a></p>
+    {% endif %}
+{% endblock %}
+
+{% block scripts_extra %}
+<script type="module">
+    import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+
+    function initializeJsonEditor(targetId, jsonData) {
+        const target = document.getElementById(targetId);
+        if (!target || !jsonData) {
+            if (!target && jsonData) console.error(`Element with ID ${targetId} not found.`);
+            // If jsonData is null/undefined, we don't initialize, which is fine.
+            return;
+        }
+
+        let content = { json: jsonData };
+
+        try {
+            new createJSONEditor({
+                target: target,
+                props: {
+                    content,
+                    readOnly: true,
+                    mainMenuBar: false,
+                    navigationBar: false,
+                    statusBar: false,
+                    mode: 'tree' // Or 'code' or 'text'
+                }
+            });
+        } catch (error) {
+             console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
+             target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`; // Fallback
+        }
+    }
+
+    {% if document and document.doc_metadata %}
+    initializeJsonEditor('doc-metadata-{{ document.id }}', {{ document.doc_metadata | tojson | safe }});
+    {% endif %}
+
+    {% if document and document.embeddings %}
+        {% for chunk in document.embeddings %}
+            {% if chunk.embedding_metadata %}
+            initializeJsonEditor('chunk-metadata-{{ chunk.id }}', {{ chunk.embedding_metadata | tojson | safe }});
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+</script>
+{% endblock %}
