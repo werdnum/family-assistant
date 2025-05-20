@@ -22,6 +22,7 @@ from family_assistant.indexing.processors.file_processors import (
     PDFTextExtractor,  # Added
 )
 from family_assistant.indexing.processors.llm_processors import (  # Added
+    LLMPrimaryLinkExtractorProcessor,
     LLMSummaryGeneratorProcessor,
 )
 from family_assistant.indexing.processors.metadata_processors import (
