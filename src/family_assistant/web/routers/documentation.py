@@ -64,7 +64,7 @@ async def serve_documentation(request: Request, filename: str) -> HTMLResponse:
         available_docs = _scan_user_docs()
 
         return templates.TemplateResponse(
-            "doc_page.html",
+            "doc_page.html.j2",
             {
                 "request": request,
                 "content": content_html,

@@ -46,7 +46,7 @@ async def view_tools(request: Request) -> HTMLResponse:
 
             rendered_tools.append(tool_copy)
         return templates.TemplateResponse(
-            "tools.html",
+            "tools.html.j2",
             {
                 "request": request,
                 "tools": rendered_tools,

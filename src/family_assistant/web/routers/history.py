@@ -193,7 +193,7 @@ async def view_message_history(
         }
 
         return templates.TemplateResponse(
-            "message_history.html",
+            "message_history.html.j2",
             {
                 "request": request,
                 "paged_conversations": paged_items,  # Renamed for clarity in template

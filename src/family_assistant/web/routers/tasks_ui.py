@@ -24,7 +24,7 @@ async def view_tasks(
     try:
         tasks = await get_all_tasks(db_context, limit=200)
         return templates.TemplateResponse(
-            "tasks.html",
+            "tasks.html.j2",
             {
                 "request": request,
                 "tasks": tasks,

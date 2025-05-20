@@ -30,7 +30,7 @@ async def get_document_upload_form(
     templates: Jinja2Templates = request.app.state.templates
     now_utc = datetime.now(timezone.utc)
     return templates.TemplateResponse(
-        "document_upload.html",
+        "document_upload.html.j2",
         {
             "request": request,
             "current_user": current_user,
@@ -124,7 +124,7 @@ async def handle_document_upload(  # noqa: PLR0913
 
     now_utc = datetime.now(timezone.utc)
     return templates.TemplateResponse(
-        "document_upload.html",
+        "document_upload.html.j2",
         {
             "request": request,
             "message": message,

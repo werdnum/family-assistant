@@ -83,7 +83,7 @@ async def vector_search_form(
         # Continue without pre-populated dropdowns
 
     return templates.TemplateResponse(
-        "vector_search.html",
+        "vector_search.html.j2",
         {
             "request": request,
             "results": None,
@@ -126,7 +126,7 @@ async def document_detail_view(
         error = f"An error occurred while fetching document details: {e}"
 
     return templates.TemplateResponse(
-        "document_detail.html",
+        "document_detail.html.j2",
         {
             "request": request,
             "document": document,
@@ -412,7 +412,7 @@ async def handle_vector_search(
             error = "Could not load filter options from database."
 
     return templates.TemplateResponse(
-        "vector_search.html",
+        "vector_search.html.j2",
         {
             "request": request,
             "results": results,

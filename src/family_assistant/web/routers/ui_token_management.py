@@ -63,7 +63,7 @@ async def manage_api_tokens_ui(
         "AUTH_ENABLED": AUTH_ENABLED,  # Add AUTH_ENABLED to the context
     }
     return request.app.state.templates.TemplateResponse(
-        "settings/api_tokens.html", context
+        "settings/api_tokens.html.j2", context
     )
 
 
