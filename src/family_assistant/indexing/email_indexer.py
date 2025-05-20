@@ -150,36 +150,47 @@ class EmailDocument(Document):
         }
 
 
-# --- Dependencies (Set via set_indexing_dependencies) ---
-indexing_pipeline_instance: IndexingPipeline | None = None
-
-
-# --- Task Handler Implementation ---
-async def handle_index_email(
-    exec_context: ToolExecutionContext, payload: dict[str, Any]
-) -> None:
+# --- EmailIndexer Class ---
+class EmailIndexer:
     """
-    Task handler to index a specific email from the received_emails table.
-    Receives ToolExecutionContext from the TaskWorker.
+    Handles the indexing process for emails stored in the database.
     """
-    # Extract db_context from the execution context
-    db_context = exec_context.db_context
-    if not db_context:
-        logger.error(
-            "DatabaseContext not found in ToolExecutionContext for handle_index_email."
-        )
-        raise ValueError("Missing DatabaseContext dependency in context.")
 
-    email_db_id = payload.get("email_db_id")
-    if not email_db_id:
-        raise ValueError("Missing 'email_db_id' in index_email task payload.")
+    def __init__(self, pipeline: IndexingPipeline) -> None:
+        """
+        Initializes the EmailIndexer.
 
-    if not indexing_pipeline_instance:
-        raise RuntimeError("IndexingPipeline dependency not set for email indexing.")
+        Args:
+            pipeline: The IndexingPipeline instance to use for processing emails.
+        """
+        self.pipeline = pipeline
+        logger.info("EmailIndexer initialized with an IndexingPipeline instance.")
 
-    logger.info(f"Starting indexing for email DB ID: {email_db_id}")
+    async def handle_index_email(
+        self, exec_context: ToolExecutionContext, payload: dict[str, Any]
+    ) -> None:
+        """
+        Task handler to index a specific email from the received_emails table.
+        Receives ToolExecutionContext from the TaskWorker.
+        """
+        # Extract db_context from the execution context
+        db_context = exec_context.db_context
+        if not db_context:
+            logger.error(
+                "DatabaseContext not found in ToolExecutionContext for handle_index_email."
+            )
+            raise ValueError("Missing DatabaseContext dependency in context.")
 
-    # --- 1. Fetch Email Data ---
+        email_db_id = payload.get("email_db_id")
+        if not email_db_id:
+            raise ValueError("Missing 'email_db_id' in index_email task payload.")
+
+        if not self.pipeline:  # Should always be set by constructor
+            raise RuntimeError("IndexingPipeline dependency not set for email indexing.")
+
+        logger.info(f"Starting indexing for email DB ID: {email_db_id}")
+
+        # --- 1. Fetch Email Data ---
     # No need to update status here, task status handles it
     select_stmt = select(received_emails_table).where(
         received_emails_table.c.id == email_db_id
@@ -280,7 +291,7 @@ async def handle_index_email(
         logger.info(
             f"Running indexing pipeline for email {email_db_id} (Doc ID: {doc_db_id}) with {len(initial_items)} initial items."
         )
-        await indexing_pipeline_instance.run(
+        await self.pipeline.run(
             initial_items=initial_items,
             original_document=db_document_record,  # Pass the DB record
             context=exec_context,
@@ -298,14 +309,4 @@ async def handle_index_email(
     # Task completion is handled by the worker loop
 
 
-# --- Dependency Injection ---
-def set_indexing_dependencies(
-    pipeline: IndexingPipeline,
-) -> None:
-    """Sets the necessary dependencies for the email indexer."""
-    global indexing_pipeline_instance
-    indexing_pipeline_instance = pipeline
-    logger.info("Indexing dependencies set (IndexingPipeline).")
-
-
-__all__ = ["EmailDocument", "handle_index_email", "set_indexing_dependencies"]
+__all__ = ["EmailDocument", "EmailIndexer"]

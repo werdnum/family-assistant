@@ -36,8 +36,7 @@ from family_assistant.indexing.document_indexer import (
 
 # Import indexing components
 from family_assistant.indexing.email_indexer import (
-    handle_index_email,
-    set_indexing_dependencies,  # Added this import
+    EmailIndexer,  # Changed this import
 )
 
 # Import the specific task handler for embedding
@@ -778,10 +777,9 @@ async def main_async(
         "DocumentIndexer initialized using 'indexing_pipeline_config' from application configuration."
     )
 
-    # --- Set dependencies for the email_indexer module ---
-    # Use the pipeline instance created by the DocumentIndexer
-    set_indexing_dependencies(pipeline=document_indexer.pipeline)
-    logger.info("Set IndexingPipeline dependency for email_indexer module.")
+    # --- Instantiate Email Indexer ---
+    email_indexer = EmailIndexer(pipeline=document_indexer.pipeline)
+    logger.info("EmailIndexer initialized with the main indexing pipeline.")
 
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
@@ -833,9 +831,10 @@ async def main_async(
     task_worker_instance.register_task_handler(
         "process_uploaded_document", document_indexer.process_document
     )
-    # Register email indexing handler (still using module-level function for now)
-    # TODO: Refactor email_indexer and register its method here
-    task_worker_instance.register_task_handler("index_email", handle_index_email)
+    # Register email indexing handler from the EmailIndexer instance
+    task_worker_instance.register_task_handler(
+        "index_email", email_indexer.handle_index_email
+    )
     # Register LLM callback handler directly (dependencies passed via context by worker)
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
 
