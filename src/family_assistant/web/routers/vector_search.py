@@ -9,12 +9,12 @@ from sqlalchemy import text
 
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.storage.vector_search import (
     MetadataFilter,
     VectorSearchQuery,
     query_vector_store,
 )
-from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.dependencies import (
     get_db,
