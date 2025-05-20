@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
@@ -351,8 +351,6 @@ async def handle_vector_search(
                 results_list.sort(key=lambda x: x["min_distance"])
             elif query_obj.search_type == "keyword":
                 results_list.sort(key=lambda x: x["best_fts_score"], reverse=True)
-            # Fallback sort if no specific scores (e.g. if all scores are default)
-            # results_list.sort(key=lambda x: x.get("title", "").lower() if x.get("title") else "")
 
             results = results_list
         else:
