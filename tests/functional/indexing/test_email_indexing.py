@@ -1478,6 +1478,7 @@ async def test_email_indexing_with_llm_summary_e2e(
             "title_chunk",  # Or just "title" if not chunked
             "raw_body_text_chunk",
             EMAIL_LLM_SUMMARY_TARGET_TYPE,  # Dispatch the summary
+            "raw_body_text", # Ensure raw body text is also dispatched if not chunked for some reason
         ],
     )
     test_pipeline_email_summary = IndexingPipeline(
