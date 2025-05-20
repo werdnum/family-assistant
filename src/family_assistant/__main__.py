@@ -778,6 +778,11 @@ async def main_async(
         "DocumentIndexer initialized using 'indexing_pipeline_config' from application configuration."
     )
 
+    # --- Set dependencies for the email_indexer module ---
+    # Use the pipeline instance created by the DocumentIndexer
+    set_indexing_dependencies(pipeline=document_indexer.pipeline)
+    logger.info("Set IndexingPipeline dependency for email_indexer module.")
+
     # --- Instantiate Telegram Service ---
     telegram_service = TelegramService(
         telegram_token=config["telegram_token"],
