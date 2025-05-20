@@ -163,6 +163,14 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             "processors": [
                 {"type": "TitleExtractor"},
                 {"type": "PDFTextExtractor"},
+                # LLMPrimaryLinkExtractor for emails, before WebFetcher
+                {
+                    "type": "LLMPrimaryLinkExtractor", # New processor type
+                    "config": {
+                        "input_content_types": ["raw_body_text"], # Process email body text
+                        "target_embedding_type": "raw_url" # Output for WebFetcher
+                    }
+                },
                 {"type": "WebFetcher"},
                 {
                     "type": "LLMSummaryGenerator",
