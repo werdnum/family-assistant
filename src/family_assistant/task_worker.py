@@ -20,7 +20,8 @@ from telegramify_markdown import markdownify
 
 from family_assistant import storage
 from family_assistant.embeddings import EmbeddingGenerator
-from family_assistant.indexing.email_indexer import handle_index_email
+
+# handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import ToolExecutionContext
@@ -657,5 +658,4 @@ __all__ = [
     "TaskWorker",
     "handle_log_message",
     "handle_llm_callback",
-    "handle_index_email",
-]  # Export class and handlers
+]  # Export class and relevant handlers
