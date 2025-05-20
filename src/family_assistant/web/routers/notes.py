@@ -29,7 +29,7 @@ async def read_root(
 
     notes = await get_all_notes(db_context)
     return templates.TemplateResponse(
-        "index.html",
+        "index.html.j2",
         {
             "request": request,
             "notes": notes,
@@ -46,7 +46,7 @@ async def add_note_form(request: Request) -> HTMLResponse:
     """Serves the form to add a new note."""
     templates = request.app.state.templates
     return templates.TemplateResponse(
-        "edit_note.html",
+        "edit_note.html.j2",
         {
             "request": request,
             "note": None,
@@ -72,7 +72,7 @@ async def edit_note_form(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
-        "edit_note.html",
+        "edit_note.html.j2",
         {
             "request": request,
             "note": note,
