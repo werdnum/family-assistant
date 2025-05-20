@@ -20,7 +20,6 @@ from family_assistant.web.dependencies import (
     get_db,
     get_embedding_generator_dependency,
 )
-from family_assistant.web.models import SearchResultItem
 
 logger = logging.getLogger(__name__)
 vector_search_router = APIRouter()
@@ -291,8 +290,74 @@ async def handle_vector_search(
             query=query_obj,
             query_embedding=query_embedding,
         )
-        # Convert raw results (dicts) to Pydantic models for consistency (optional)
-        results = [SearchResultItem.parse_obj(row) for row in raw_results]
+        # --- Group results by document_id and prepare for template ---
+        grouped_documents: dict[int, dict[str, Any]] = {}
+        if raw_results:
+            for row_mapping in raw_results:
+                # Convert RowMapping to a plain dict for easier manipulation
+                row = dict(row_mapping)
+                doc_id = row["document_id"]
+
+                if doc_id not in grouped_documents:
+                    grouped_documents[doc_id] = {
+                        "document_id": doc_id,
+                        "title": row.get("title"),
+                        "source_type": row.get("source_type"),
+                        "source_id": row.get("source_id"),
+                        "source_uri": row.get("source_uri"),
+                        "created_at": row.get("created_at"),
+                        "doc_metadata": row.get("doc_metadata"),
+                        "snippets": [],
+                        # Initialize scores for sorting documents
+                        "best_rrf_score": -float("inf"),
+                        "best_fts_score": -float("inf"),
+                        "min_distance": float("inf"),
+                    }
+
+                current_doc = grouped_documents[doc_id]
+                snippet_data = {
+                    "embedding_id": row["embedding_id"],
+                    "embedding_source_content": row.get("embedding_source_content"),
+                    "embedding_metadata": row.get("embedding_metadata"),
+                    "embedding_type": row.get("embedding_type"),
+                    "chunk_index": row.get("chunk_index"),
+                    "distance": row.get("distance"),
+                    "fts_score": row.get("fts_score"),
+                    "rrf_score": row.get("rrf_score"),
+                }
+                current_doc["snippets"].append(snippet_data)
+
+                # Update best scores for the document
+                if snippet_data.get("rrf_score") is not None:
+                    current_doc["best_rrf_score"] = max(
+                        current_doc["best_rrf_score"], snippet_data["rrf_score"]
+                    )
+                if snippet_data.get("fts_score") is not None:
+                    current_doc["best_fts_score"] = max(
+                        current_doc["best_fts_score"], snippet_data["fts_score"]
+                    )
+                if snippet_data.get("distance") is not None:
+                    current_doc["min_distance"] = min(
+                        current_doc["min_distance"], snippet_data["distance"]
+                    )
+
+            # Convert to list and sort
+            results_list = list(grouped_documents.values())
+
+            # Sort documents based on the search type and their best snippet scores
+            if query_obj.search_type == "hybrid":
+                results_list.sort(key=lambda x: x["best_rrf_score"], reverse=True)
+            elif query_obj.search_type == "semantic":
+                results_list.sort(key=lambda x: x["min_distance"])
+            elif query_obj.search_type == "keyword":
+                results_list.sort(key=lambda x: x["best_fts_score"], reverse=True)
+            # Fallback sort if no specific scores (e.g. if all scores are default)
+            # results_list.sort(key=lambda x: x.get("title", "").lower() if x.get("title") else "")
+
+            results = results_list
+        else:
+            results = []
+
 
     except ValueError as ve:
         logger.warning(f"Validation error during vector search: {ve}")

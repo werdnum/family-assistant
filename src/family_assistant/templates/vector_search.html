@@ -127,49 +127,70 @@
     <h2>Results</h2>
     {% if results is not none %}
         {% if results %}
-        <p>Found {{ results|length }} result(s).</p>
+        <p>Found {{ results|length }} document(s).</p>
         <div class="results-list">
-            {% for item in results %}
+            {% for doc_result in results %}
             <article class="result-card">
                 <h4>
-                    {% if item.source_uri %}
-                    <a href="{{ item.source_uri }}" target="_blank" rel="noopener noreferrer">{{ item.title or 'Untitled Document' }}</a>
+                    {% if doc_result.source_uri %}
+                    <a href="{{ doc_result.source_uri }}" target="_blank" rel="noopener noreferrer">{{ doc_result.title or 'Untitled Document' }}</a>
                     {% else %}
-                    {{ item.title or 'Untitled Document' }}
+                    {{ doc_result.title or 'Untitled Document' }}
                     {% endif %}
                 </h4>
                 <div class="source-info">
-                    Source: {{ item.source_type }} | Created: {{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else 'N/A' }} <br>
-                    <a href="{{ request.app.url_path_for('ui_document_detail', document_id=item.document_id) }}">View Full Document Details (ID: {{ item.document_id }})</a>
+                    Source: {{ doc_result.source_type }} | Created: {{ doc_result.created_at.strftime('%Y-%m-%d %H:%M') if doc_result.created_at else 'N/A' }} <br>
+                    <a href="{{ request.app.url_path_for('ui_document_detail', document_id=doc_result.document_id) }}">View Full Document Details (ID: {{ doc_result.document_id }})</a>
                 </div>
 
-                {% if item.embedding_source_content %}
-                <details open>
-                    <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Content Snippet</summary>
-                    <pre class="content-snippet">{{ item.embedding_source_content }}</pre>
-                </details>
-                {% endif %}
-
-                {% if item.doc_metadata %}
+                {% if doc_result.doc_metadata %}
                  <details>
-                    <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Metadata</summary>
-                    <div id="metadata-{{ item.embedding_id }}" class="json-editor-container metadata-display"></div>
+                    <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Document Metadata</summary>
+                    <div id="doc-metadata-{{ doc_result.document_id }}" class="json-editor-container metadata-display"></div>
                  </details>
                 {% endif %}
 
                 <details class="debug-details">
-                    <summary>Show Details & Scores</summary>
+                    <summary>Document Scores (Best of Snippets)</summary>
                     <div>
-                        <span>Doc ID:</span> {{ item.document_id }}<br>
-                        <span>Embedding ID:</span> {{ item.embedding_id }}<br>
-                        <span>Source ID:</span> {{ item.source_id or 'N/A' }}<br>
-                        <span>Embedding Type:</span> {{ item.embedding_type }}<br>
-                        <span>Chunk Index:</span> {{ item.chunk_index }}<br>
-                        <span>Distance:</span> {{ "%.4f"|format(item.distance) if item.distance is not none else 'N/A' }}<br>
-                        <span>FTS Score:</span> {{ "%.4f"|format(item.fts_score) if item.fts_score is not none else 'N/A' }}<br>
-                        <span>RRF Score:</span> {{ "%.4f"|format(item.rrf_score) if item.rrf_score is not none else 'N/A' }}
+                        <span>Best RRF Score:</span> {{ "%.4f"|format(doc_result.best_rrf_score) if doc_result.best_rrf_score != -1/0 else 'N/A' }}<br>
+                        <span>Best FTS Score:</span> {{ "%.4f"|format(doc_result.best_fts_score) if doc_result.best_fts_score != -1/0 else 'N/A' }}<br>
+                        <span>Min Distance:</span> {{ "%.4f"|format(doc_result.min_distance) if doc_result.min_distance != 1/0 else 'N/A' }}
                     </div>
                 </details>
+
+                {% if doc_result.snippets %}
+                <h5 style="margin-top: 1rem; margin-bottom: 0.5rem;">Matching Snippets ({{ doc_result.snippets|length }}):</h5>
+                {% for snippet in doc_result.snippets %}
+                <div class="snippet-card" style="border: 1px dashed #ddd; padding: 0.8rem; margin-bottom: 0.8rem; background-color: var(--bg);">
+                    {% if snippet.embedding_source_content %}
+                    <details open>
+                        <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Snippet Content (Chunk {{ snippet.chunk_index }})</summary>
+                        <pre class="content-snippet">{{ snippet.embedding_source_content }}</pre>
+                    </details>
+                    {% endif %}
+
+                    {% if snippet.embedding_metadata %}
+                    <details>
+                        <summary style="font-weight: bold; cursor: pointer; margin-bottom: 0.3rem;">Snippet Metadata</summary>
+                        <div id="snippet-metadata-{{ snippet.embedding_id }}" class="json-editor-container metadata-display" style="font-size: 0.9em;"></div>
+                    </details>
+                    {% endif %}
+
+                    <details class="debug-details">
+                        <summary>Snippet Details & Scores</summary>
+                        <div>
+                            <span>Embedding ID:</span> {{ snippet.embedding_id }}<br>
+                            <span>Embedding Type:</span> {{ snippet.embedding_type }}<br>
+                            <span>Chunk Index:</span> {{ snippet.chunk_index }}<br>
+                            <span>Distance:</span> {{ "%.4f"|format(snippet.distance) if snippet.distance is not none else 'N/A' }}<br>
+                            <span>FTS Score:</span> {{ "%.4f"|format(snippet.fts_score) if snippet.fts_score is not none else 'N/A' }}<br>
+                            <span>RRF Score:</span> {{ "%.4f"|format(snippet.rrf_score) if snippet.rrf_score is not none else 'N/A' }}
+                        </div>
+                    </details>
+                </div>
+                {% endfor %}
+                {% endif %}
             </article>
             {% endfor %}
         </div>
@@ -264,9 +285,16 @@
     }
 
     {% if results %}
-    {% for item in results %}
-        {% if item.doc_metadata %}
-        initializeJsonEditorForResult('metadata-{{ item.embedding_id }}', {{ item.doc_metadata | tojson | safe }});
+    {% for doc_result in results %}
+        {% if doc_result.doc_metadata %}
+        initializeJsonEditorForResult('doc-metadata-{{ doc_result.document_id }}', {{ doc_result.doc_metadata | tojson | safe }});
+        {% endif %}
+        {% if doc_result.snippets %}
+            {% for snippet in doc_result.snippets %}
+                {% if snippet.embedding_metadata %}
+                initializeJsonEditorForResult('snippet-metadata-{{ snippet.embedding_id }}', {{ snippet.embedding_metadata | tojson | safe }});
+                {% endif %}
+            {% endfor %}
         {% endif %}
     {% endfor %}
     {% endif %}
