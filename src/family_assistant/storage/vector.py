@@ -569,7 +569,7 @@ async def query_vectors(
     # --- Query construction remains largely the same ---
     # --- 1. Build Document Filter ---
     doc_filter_conditions = []
-    if filters:
+    if filters is not None:  # Check if filters is not None before iterating
         for key, value in filters.items():
             if hasattr(DocumentRecord, key):
                 column = getattr(DocumentRecord, key)
