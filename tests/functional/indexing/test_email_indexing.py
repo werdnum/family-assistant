@@ -1757,7 +1757,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     worker_link_ext.register_task_handler("index_email", handle_index_email)
     worker_link_ext.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
-    worker_id = f"test-link-ext-worker-{uuid.uuid4()}"
+    # worker_id was unused
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker_link_ext.run(test_new_task_event))
