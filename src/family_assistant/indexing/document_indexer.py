@@ -122,6 +122,12 @@ class DocumentIndexer:
                             llm_client=self.llm_client, **proc_specific_config
                         )
                     )
+                elif proc_type == "LLMPrimaryLinkExtractor": # New processor type
+                    processors.append(
+                        LLMPrimaryLinkExtractorProcessor(
+                            llm_client=self.llm_client, **proc_specific_config
+                        )
+                    )
                 elif proc_type == "TextChunker":
                     processors.append(TextChunker(**proc_specific_config))
                 elif proc_type == "EmbeddingDispatch":
