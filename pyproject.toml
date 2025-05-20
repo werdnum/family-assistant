@@ -133,6 +133,9 @@ from_attributes = true
 # Set type validation strictness
 strict = false
 
+[tool.ruff]
+extend-exclude = ["alembic/**", "docs/**"]
+
 [tool.ruff.lint]
 select = [
     # pycodestyle
