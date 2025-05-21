@@ -24,11 +24,14 @@ Family members who need a centralized way to manage shared information and recei
 *   **Web (Secondary):** A web interface (implemented using FastAPI and Jinja2) provides:
     *   A UI to view, add, edit, and delete notes (`/`, `/notes/add`, `/notes/edit/{title}`).
     *   A view of recent message history (`/history`).
-    *   A view of recent background tasks (`/tasks`).
+    *   A view of recent background tasks (`/tasks`), with the ability to manually retry failed tasks.
+    *   A vector search interface (`/vector-search`) to query indexed documents, view results grouped by document, and access a detailed document view (`/vector-search/document/{document_id}`).
+    *   A UI for document upload (`/documents/upload`).
+    *   A UI for API Token Management (`/settings/tokens`).
     *   (Future) A dashboard view of upcoming events, reminders, etc.
     *   (Future) An alternative way to interact with the assistant (chat interface).
     *   (Future) Configuration options.
-*   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail` and stores the parsed email data in the `received_emails` table. Further processing (e.g., LLM ingestion) is future work.
+*   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail`. Parsed email data and attachments are stored, and an `index_email` task is enqueued for further processing by the indexing pipeline, which includes LLM-based primary link extraction.
 
 ## 3. Architecture Overview
 
@@ -177,7 +180,18 @@ graph TD
     *   Supports **CalDAV** calendars via direct URLs. Configuration via `.env`: Requires `CALDAV_USERNAME`, `CALDAV_PASSWORD`, and `CALDAV_CALENDAR_URLS` (comma-separated list of direct URLs). `CALDAV_URL` is optional.
     *   Supports **iCalendar** URLs (`.ics`). Configuration via `.env`: Requires `ICAL_URLS` (comma-separated list of URLs).
     *   Provides a combined, sorted list of events as context within the system prompt to the LLM.
-*   **Task Queue:** Uses the database (`tasks` table) for background processing. Supports scheduled tasks, immediate notification via `asyncio.Event`, and task retries with exponential backoff. Handles `log_message` and `llm_callback` task types. (See Section 10 for details).
+*   **Task Queue:** Uses the database (`tasks` table) for background processing. Supports scheduled tasks, immediate notification via `asyncio.Event`, and task retries with exponential backoff. Handles `log_message`, `llm_callback`, `index_email`, and `embed_and_store_batch` task types. Users can manually retry failed tasks via the Web UI. (See Section 10 for details).
+*   **Document Ingestion and Vector Search:**
+    *   Upload documents (including PDFs and web URLs) via API or Web UI.
+    *   Indexing pipeline extracts text (e.g., from PDFs, fetched web pages), chunks content, generates embeddings, and stores them.
+    *   Automatic title extraction for documents ingested from URLs if no title is provided.
+    *   Vector search UI (`/vector-search`) allows querying the indexed documents, with results grouped by document and linking to a detailed document view.
+*   **Email Ingestion and Processing:**
+    *   Emails received via webhook are parsed, attachments stored, and an `index_email` task is enqueued.
+    *   The indexing pipeline for emails includes an `LLMPrimaryLinkExtractorProcessor` to identify and extract primary URLs from email content, which can then be fetched and processed.
+*   **API Token Management:**
+    *   Users can create, view, and revoke API tokens through the Web UI (`/settings/tokens`).
+    *   The system supports API authentication using these tokens.
 *   **(Future) Calendar Integration (Write):**
     *   Introduce tools allowing the LLM to add or update events on specific calendars.
     *   This will require a more robust configuration system for calendars, allowing administrators to define multiple calendars with distinct purposes (e.g., "Main Family Calendar", "Work Calendar", "Kids Activities", "Reminders").
@@ -224,11 +238,22 @@ graph TD
         *   `received_at`: Timestamp when the webhook was received (indexed).
         *   `email_date`: Timestamp from the email's `Date` header (parsed, timezone-aware, nullable, indexed).
         *   `headers_json`: Raw headers stored as JSONB (nullable).
-        *   `attachment_info`: Placeholder for JSONB array containing metadata about attachments (filename, content_type, size, storage_path) (nullable).
+        *   `attachment_info`: JSONB array containing metadata about attachments (filename, content_type, size, storage_path where the attachment is persistently stored). (nullable).
+*   **Other Implemented Tables (continued):**
+    *   `api_tokens`: Stores API tokens for authentication.
+        *   `id`: Integer, primary key, auto-incrementing.
+        *   `user_identifier`: String, non-nullable, indexed. Identifies the user (e.g., email or an ID from an auth system).
+        *   `name`: String, non-nullable. User-friendly name for the token.
+        *   `hashed_token`: String, non-nullable, unique, indexed. The securely hashed token.
+        *   `prefix`: String(8), non-nullable, unique, indexed. A short, unique prefix of the token for quick lookups.
+        *   `created_at`: DateTime(timezone=True), non-nullable. Timestamp of token creation.
+        *   `expires_at`: DateTime(timezone=True), nullable. Timestamp of token expiration.
+        *   `last_used_at`: DateTime(timezone=True), nullable. Timestamp of last token usage.
+        *   `is_revoked`: Boolean, non-nullable, default False. Indicates if the token has been revoked.
 *   **(Future) Potential Tables:**
     *   `events`: Could potentially cache calendar items or store locally managed events/deadlines.
     *   `users`: Family member details, preferences.
-    *   `tasks`: Status of scheduled/background tasks.
+    *   `tasks`: Status of scheduled/background tasks. (Note: `tasks` table is already implemented for the task queue).
 *   Entries store metadata like timestamps and roles (`message_history`). Source information is implicitly Telegram or Web UI for notes currently.
 
 ## 7. Data Sources & Actions
@@ -256,7 +281,7 @@ graph TD
 *   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used.
 *   **Utilities:** `uuid` for generating unique IDs (e.g., task IDs).
 
-## 9. Current Implementation Status (as of 2025-04-21)
+## 9. Current Implementation Status (as of 2025-05-21)
 
 The following features from the specification are currently implemented:
 
@@ -276,9 +301,10 @@ The following features from the specification are currently implemented:
 *   **Data Storage (SQLAlchemy with SQLite/PostgreSQL):** Database operations include retry logic.
     *   `notes` table for storing notes (id, title, content, timestamps).
     *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info JSON).
-    *   `tasks` table for the background task queue (see Section 10).    *   `tasks` table for the background task queue (see Section 10).
-    *   `received_emails` table for storing incoming email details (schema defined, basic webhook processing in place, no DB insertion yet).
-*   **LLM Context:** (Note: History context needs update based on proposed schema changes)
+    *   `tasks` table for the background task queue (see Section 10), supporting `log_message`, `llm_callback`, `index_email`, and `embed_and_store_batch` task types.
+    *   `received_emails` table for storing incoming email details. Emails received via webhook are parsed, attachments stored, and an `index_email` task is enqueued.
+    *   `api_tokens` table for storing hashed API tokens, enabling API-based authentication.
+*   **LLM Context:**
     *   System prompt includes:
         *   Current time (timezone-aware via `TIMEZONE` env var).
         *   Upcoming calendar events fetched from configured CalDAV and iCal sources (today, tomorrow, next 14 days).
@@ -287,11 +313,15 @@ The following features from the specification are currently implemented:
     *   Replied-to messages (fetched from `message_history`) are included if the current message is a reply.
 *   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
     *   An interface to view message history grouped by conversation (`/history`).
-    *   An interface to view recent tasks from the database task queue (`/tasks`).
+    *   An interface to view recent tasks from the database task queue (`/tasks`), including a button to manually retry failed tasks.
+    *   A vector search interface (`/vector-search`) that groups results by document and links to a document detail view (`/vector-search/document/{document_id}`).
+    *   An interface for API Token Management (`/settings/tokens`) allowing users to create, view, and revoke API tokens.
+    *   A document upload UI (`/documents/upload`) for ingesting files.
 *   **Tools:**
     *   Local Tools:
         *   `add_or_update_note`: Saves/updates notes in the database. Accepts `title` and `content`.
-        *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone) and `context` (string). The `chat_id` is automatically inferred from the conversation context. Task is created in the `tasks` table.
+        *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone) and `context` (string). The `chat_id` (or equivalent interface/conversation ID) is automatically inferred from the conversation context. Task is created in the `tasks` table.
+        *   `ingest_document_from_url`: Submits a URL for ingestion and indexing. Accepts `url`, an optional `title` (if not provided, title will be extracted automatically), `source_type`, `source_id`, and optional `metadata`.
     *   **MCP Integration:**
         *   Loads server configurations from `mcp_config.json` (resolves environment variables like `$API_KEY`).
         *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search) using the `mcp` library (connections established in parallel on startup).
@@ -302,14 +332,16 @@ The following features from the specification are currently implemented:
 *   **Markdown Formatting:** Uses `telegramify-markdown` to convert LLM responses to Telegram's MarkdownV2 format, with fallback to escaped text.
 *   **Message Batching:** Buffers incoming messages received close together and processes them as a single batch to avoid overwhelming the LLM and ensure context.
 *   **Containerization:** **Dockerfile** provided for building an image with all dependencies (Python via `uv`, Deno/npm for MCP tools, Playwright browser). Uses cache mounts for faster builds.
-*   **Task Queue:** Implemented using the `tasks` database table, `asyncio.Event` for immediate notification, and a worker loop in `main.py`. Includes retry logic with exponential backoff. (See Section 10).
+*   **Task Queue:** Implemented using the `tasks` database table, `asyncio.Event` for immediate notification, and a worker loop. Includes retry logic with exponential backoff and supports manual retry via the UI. (See Section 10).
+*   **Email Ingestion & Processing:** Emails received via webhook are parsed, attachments stored, and an `index_email` task is enqueued. The indexing pipeline for emails includes an `LLMPrimaryLinkExtractorProcessor` to identify and extract primary URLs from email content for further processing (e.g., web fetching).
+*   **Document Indexing & Vector Search:** Supports document uploads via API and UI. The indexing pipeline processes content (including PDF text extraction and URL fetching with automatic title extraction), chunks it, generates embeddings, and stores them. The vector search UI allows querying and displays results grouped by document, with links to a detailed document view.
+*   **API Token Management:** Users can create, view, and revoke API tokens via the Web UI. The system supports API authentication using these tokens.
 
 **Features Not Yet Implemented:**
 
 *   Calendar Integration (writing events via CalDAV): Requires implementing write tools and enhanced configuration to specify target calendars.
 *   Reminders (setting/notifying): Dependent on calendar write access and configuration for a dedicated reminders calendar.
-*   Email Ingestion (LLM processing beyond storage): Extracting structured information from stored emails using the LLM.
-*   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks): `APScheduler` is present but not integrated into the main loop.
+*   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks): `APScheduler` is present but not integrated into the main loop for these types of user-facing scheduled tasks (recurring tasks for system operations like re-indexing are supported by the current task queue).
 *   Advanced Web UI features (dashboard, chat).
 *   User profiles/preferences table.
 
@@ -343,10 +375,9 @@ The queue is managed via the `tasks` table with the following columns:
 ### 10.3 Operations
 Core operations are provided in `storage.py`:
 
-*   `enqueue_task(task_id, task_type, payload=None, scheduled_at=None, notify_event=None)`: Adds a new task with status `pending`. Requires a unique `task_id`. Can optionally trigger an `asyncio.Event` for immediate tasks.
-*   `enqueue_task(task_id, task_type, payload=None, scheduled_at=None, max_retries=None, notify_event=None)`: Adds a new task with status `pending`. Requires a unique `task_id`. Can optionally override `max_retries` and trigger an `asyncio.Event` for immediate tasks. Includes retry logic for the database operation itself.
+*   `enqueue_task(task_id, task_type, payload=None, scheduled_at=None, max_retries_override=None, recurrence_rule=None, original_task_id=None, notify_event=None)`: Adds a new task with status `pending`. Requires a unique `task_id`. Can optionally override `max_retries`, set a `recurrence_rule` (RRULE string), link to an `original_task_id` for recurring tasks, and trigger an `asyncio.Event` for immediate tasks. Includes retry logic for the database operation itself.
 
-*   `dequeue_task(worker_id, task_types)`: Attempts to atomically retrieve and lock the oldest, ready (`status='pending'`, `scheduled_at` is past or NULL, `retry_count < max_retries`) task matching one of the provided `task_types`, prioritizing tasks with fewer retries.
+*   `dequeue_task(worker_id, task_types)`: Attempts to atomically retrieve and lock the oldest, ready (`status='pending'`, `scheduled_at` is past or NULL, `retry_count <= max_retries`) task matching one of the provided `task_types`, prioritizing tasks with fewer retries.
     *   It uses `SELECT ... FOR UPDATE SKIP LOCKED` logic (via SQLAlchemy's `with_for_update(skip_locked=True)`). This provides good concurrency on **PostgreSQL**.
     *   **Note:** On **SQLite**, `SKIP LOCKED` is not natively supported. SQLAlchemy's implementation might result in table-level locking during the transaction, potentially limiting concurrency if multiple workers access the same SQLite database file (which is generally discouraged).
     *   If successful, it updates the task's status to `processing`, sets `locked_by` and `locked_at`, and returns the task details. Returns `None` if no suitable task is available or lock acquisition fails. Includes retry logic for the database operation itself.
@@ -360,10 +391,9 @@ The task system supports recurring tasks using RRULE strings and a duplication a
     *   `recurrence_rule`: (String, nullable) Stores the RRULE string (e.g., `FREQ=DAILY;INTERVAL=1;BYHOUR=8`).
     *   `original_task_id`: (String, nullable, indexed) Links subsequent recurring instances back to the ID of the *first* instance that defined the recurrence. For the first instance, this field is populated with its own `task_id`.
 *   **Scheduling:**
-    *   A new recurring task is initiated using the `schedule_recurring_task` tool (callable by the LLM) or potentially a future UI/API endpoint.
-    *   This tool calls `storage.enqueue_task`, providing the initial unique `task_id`, `task_type`, `payload`, `initial_schedule_time`, and the `recurrence_rule`.
+    *   A new recurring task is initiated by calling `storage.enqueue_task` with the initial unique `task_id`, `task_type`, `payload`, `initial_schedule_time`, and the `recurrence_rule`.
 *   **Processing Logic (Duplication):**
-    *   When the `task_worker_loop` successfully processes a task (marks it `done`):
+    *   When the `TaskWorker` successfully processes a task (marks it `done`):
         *   It checks if the task has a non-null `recurrence_rule`.
         *   If a rule exists, it uses `dateutil.rrule` to calculate the next occurrence time based on the rule and the *scheduled_at* time of the task that just completed.
         *   It generates a *new unique task_id* for the next instance (e.g., `{original_task_id}_recur_{next_iso_timestamp}`).
@@ -382,9 +412,11 @@ The task system supports recurring tasks using RRULE strings and a duplication a
 *   **Execution:** When a task is dequeued, the worker looks up the handler based on `task_type` and executes it with the task's `payload`.
 *   **Implemented Handlers:**
     *   `handle_log_message`: Logs the task payload (example).
-    *   `handle_llm_callback`: Extracts `chat_id` and `callback_context` from payload, constructs a trigger message ("System Callback Trigger:..."), sends it to the LLM via `_generate_llm_response_for_chat`, sends the LLM's response back to the specified chat *as the bot*, and stores both the trigger and response in message history.
+    *   `handle_llm_callback`: Extracts `interface_type`, `conversation_id`, and `callback_context` from payload, constructs a trigger message ("System Callback Trigger:..."), sends it to the LLM via `generate_llm_response_for_chat`, sends the LLM's response back to the specified chat *as the bot*, and stores both the trigger and response in message history.
+    *   `handle_index_email`: Processes a stored email for indexing using the `IndexingPipeline`.
+    *   `handle_embed_and_store_batch`: Generates and stores embeddings for a batch of text content.
 *   **Completion/Failure/Retry:** Based on the handler's outcome:
-    *   Success: Worker calls `update_task_status` to mark task as `done`.
+    *   Success: Worker calls `update_task_status` to mark task as `done`. If the task has a `recurrence_rule`, a new task instance is enqueued for the next occurrence.
     *   Failure: Worker checks `retry_count` against `max_retries`.
         *   If retries remain, worker calls `reschedule_task_for_retry` with exponential backoff and jitter.
         *   If max retries are reached, worker calls `update_task_status` to mark task as `failed`. Error details are captured.
@@ -423,13 +455,13 @@ The project employs a multi-layered testing strategy focusing on realistic funct
 ### 12.1 Layers
 *   **Integration Tests:** Verify interactions between components (e.g., Processing Layer <> Data Store, Task Worker <> Data Store).
 *   **Functional / End-to-End (E2E) Tests:** Simulate user flows (e.g., sending a message, checking DB state and response; using Web UI endpoints).
-*   **Unit Tests:** Used sparingly for specific, isolated, complex logic.
+*   **Unit Tests:** Used for specific, isolated, complex logic (e.g., HashingWordEmbeddingGenerator, text chunking).
 
 ### 12.2 Tools
 *   **Runner:** `pytest` with `pytest-asyncio`.
-*   **Database:** `testcontainers-python` manages a real PostgreSQL instance in Docker for high-fidelity testing.
-*   **LLM:** Initially uses the real configured LLM for smoke tests. Future plans include integrating `mockllm` for deterministic testing.
-*   **Telegram:** Core logic is refactored for direct testing. `python-telegram-bot` handlers are thin wrappers and not tested directly via frameworks like `ptbtestsuite` initially.
+*   **Database:** `testcontainers-python` manages a real PostgreSQL instance in Docker for high-fidelity testing. SQLite is used for faster tests where PostgreSQL-specific features are not required.
+*   **LLM:** Uses `RuleBasedMockLLMClient` for deterministic testing of LLM interactions, allowing tests to define specific input-output rules.
+*   **Telegram:** Core logic is refactored for direct testing. `python-telegram-bot` handlers are thin wrappers.
 *   **Web Server:** `httpx` is used to test FastAPI endpoints.
 *   **MCP:** Interactions are tested by mocking the MCP session state within the application logic. Direct testing of MCP server processes is deferred.
 *   **Mocking:** Standard `unittest.mock` for targeted mocking.
