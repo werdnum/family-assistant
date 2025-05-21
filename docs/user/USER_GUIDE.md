@@ -17,7 +17,12 @@ Welcome to your personal family assistant! This guide explains how to interact w
     *   Start a chat and simply send messages with your questions or requests.
 
 *   **Web Interface (Secondary):**
-    *   There's also a web page you can use for certain tasks, especially managing notes.
+    *   There's also a web page you can use for certain tasks:
+        *   Managing notes.
+        *   Viewing message history and background tasks.
+        *   Uploading documents for the assistant to learn from.
+        *   Managing API tokens for programmatic access.
+        *   Searching indexed documents.
     *   Access it here: `{{ SERVER_URL }}` (This link will be replaced with the actual URL).
 
 *   **Email (Future):**
@@ -37,8 +42,8 @@ You can ask the assistant a wide variety of things:
         *   **Delete:** "Delete the 'Dentist Appointment' on June 5th." (Requires finding the event first. You will be asked to confirm the deletion.)
     *   **About the current time/date:** "What time is it?", "What day is it today?" (Uses its built-in time service.)
     *   **About web content:** "Can you summarize this article: [Full URL]?", "What's the main point of this webpage: [Full URL]?" (Provide the complete web address starting with `http://` or `https://`. Uses its web fetching service.)
-    *   **Search Your Documents:** "Search my notes for 'plumber number'.", "Find emails about the flight booking.", "Look for documents related to 'insurance policy'." (The assistant can search through notes and other documents it has access to. If it finds relevant documents, it will list them.)
-    *   **Retrieve Full Documents:** After a search, if the assistant finds a document (e.g., "Document ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document 123."
+    *   **Search Your Documents:** "Search my notes for 'plumber number'.", "Find emails about the flight booking.", "Look for PDF documents related to 'insurance policy'." (The assistant can search through notes, indexed emails, PDFs, and other documents it has access to. Search results will be grouped by document, showing relevant snippets.)
+    *   **Retrieve Full Documents:** After a search, if the assistant finds a document (e.g., "Document ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document 123." You can also click on search results in the Web UI to see a detailed view of the document and its content.
     *   **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won the game last night?", "Find me a recipe for banana bread." (Uses the Brave Search service to find information online.)
 
 *   **Remember Things (Notes):**
@@ -48,11 +53,17 @@ You can ask the assistant a wide variety of things:
         *   "Update the note 'Meeting Notes' with 'Discuss budget'."
     *   These notes act as the assistant's long-term memory for specific facts you provide. You can view and manage them easily through the Web Interface.
 
-*   **Schedule Follow-ups:**
+*   **Ingest Documents (Files and URLs):**
+    *   **From URLs:** Ask the assistant to "Save this page for later: [Full URL]" or "Index this article: [Full URL] with title 'My Article Title'". If you don't provide a title, the assistant will try to extract one automatically.
+    *   **From Files:** You can upload files (like PDFs, text files, etc.) directly through the Web Interface on the "Upload Document" page. The assistant will then process and index these files so you can search their content later.
+
+*   **Schedule Follow-ups & Recurring Actions:**
     *   If you're discussing something and want the assistant to bring it up again later, you can ask: "Remind me about this tomorrow morning.", "Check back with me on this topic in 3 hours." The assistant will send a message back to the chat at the specified time to continue the conversation.
-*   **Schedule Recurring Actions:** Beyond simple follow-ups, the assistant can schedule tasks to happen regularly. For example, you could ask it to "Send a reminder every Sunday evening to take out the bins." (This capability is also used for planned features like the Daily Brief).
+    *   Beyond simple follow-ups, the assistant can schedule tasks to happen regularly. For example, you could ask it to "Send a reminder every Sunday evening to take out the bins."
+    *   If a scheduled task fails, you can often retry it manually from the "Tasks" page in the Web Interface.
+
 *   **Understand Photos:**
-    *   Send a photo directly in the chat along with your question (in the same message): "What kind of flower is this?", "Can you describe what's in this picture?"
+    *   Send a photo directly in the chat along with your question (in the same message): "What kind of flower is this?", "Can you describe what's in this picture?" (Support for other file types may be available).
 
 *   **Interact with Your Smart Home (Home Assistant):**
     *   If your family uses Home Assistant and it's connected to the assistant, you can control devices with your voice:
@@ -90,7 +101,10 @@ While most interaction happens via Telegram, the web interface is useful for spe
 *   **What it's for:**
     *   **Viewing/Managing Notes:** This is the best place to see a list of all the notes the assistant has saved. You can easily read, edit the content, or delete notes that are no longer needed.
     *   **Viewing History:** Look back through past conversations the assistant has had (across different chats, if configured).
-    *   **Viewing Background Tasks:** See a log of tasks the assistant has performed automatically in the background (like fetching calendar updates or future scheduled actions).
+    *   **Viewing Background Tasks:** See a log of tasks the assistant has performed automatically in the background (like fetching calendar updates or future scheduled actions). You can also manually retry failed tasks from this page.
+    *   **Searching Documents:** Use the "Vector Search" page to search through all indexed documents (notes, emails, uploaded files, web pages). Results are grouped by document, and you can click to see a "Document Detail View" with more information.
+    *   **Uploading Documents:** Use the "Upload Document" page to add new files (PDFs, text files, etc.) for the assistant to index and learn from.
+    *   **Managing API Tokens:** If you need programmatic access to the assistant, you can manage your API tokens on the "API Tokens" page under "Settings".
 
 ## 7. Tips for Best Results
 
