@@ -6,7 +6,7 @@
 {% block header_content %}
     <span>Docs:</span>
     {% for doc_file in available_docs %}
-    <a href="{{ request.app.url_path_for('ui_view_doc', doc_name=doc_file) }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a>
+    <a href="{{ request.app.url_path_for('ui_view_doc', filename=doc_file) }}">{{ doc_file.replace('.md', '').replace('_', ' ') | title }}</a>
     {% endfor %}
 {% endblock %}
 
