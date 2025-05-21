@@ -825,20 +825,16 @@ async def search_calendar_events_tool(
                                 logger.info(
                                     f"  -> Matched: Query '{query_lower}' found in summary '{summary}'. UID={parsed_uid}"
                                 )  # Use parsed_uid
-                                found_details.append(
-                                    {
-                                        "uid": str(
-                                            parsed_uid
-                                        ),  # Use UID from parsed data
-                                        "summary": summary,
-                                        "start": parsed.get("start"),
-                                        "end": parsed.get("end"),
-                                        "all_day": parsed.get("all_day"),
-                                        "calendar_url": (
-                                            cal_url
-                                        ),  # Include the source calendar URL
-                                    }
-                                )
+                                found_details.append({
+                                    "uid": str(parsed_uid),  # Use UID from parsed data
+                                    "summary": summary,
+                                    "start": parsed.get("start"),
+                                    "end": parsed.get("end"),
+                                    "all_day": parsed.get("all_day"),
+                                    "calendar_url": (
+                                        cal_url
+                                    ),  # Include the source calendar URL
+                                })
                                 if len(found_details) >= limit:
                                     logger.info(
                                         f"Reached search limit ({limit}). Stopping search in calendar {cal_url}."

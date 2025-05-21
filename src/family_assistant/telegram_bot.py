@@ -117,9 +117,9 @@ class DefaultMessageBatcher(MessageBatcher):
             defaultdict(list)
         )
         self.processing_tasks: dict[int, asyncio.Task] = {}
-        self.batch_timers: dict[int, asyncio.TimerHandle] = (
-            {}
-        )  # Store timers for delayed processing
+        self.batch_timers: dict[
+            int, asyncio.TimerHandle
+        ] = {}  # Store timers for delayed processing
 
     async def add_to_batch(
         self,
@@ -418,12 +418,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             try:
                 base64_image = base64.b64encode(first_photo_bytes).decode("utf-8")
                 mime_type = "image/jpeg"
-                trigger_content_parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
-                    }
-                )
+                trigger_content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                })
                 logger.info("Added first photo from batch to trigger content.")
             except Exception as img_err:
                 logger.error(
@@ -927,18 +925,16 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}"
         )
 
-        keyboard = InlineKeyboardMarkup(
+        keyboard = InlineKeyboardMarkup([
             [
-                [
-                    InlineKeyboardButton(
-                        "✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"
-                    ),
-                    InlineKeyboardButton(
-                        "❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"
-                    ),
-                ]
+                InlineKeyboardButton(
+                    "✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"
+                ),
+                InlineKeyboardButton(
+                    "❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"
+                ),
             ]
-        )
+        ])
 
         try:
             sent_message = await self.application.bot.send_message(

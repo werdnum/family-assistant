@@ -69,13 +69,15 @@ async def create_api_token(
             ) from e
 
     try:
-        full_token, token_id, created_at_utc = (
-            await api_tokens_storage.create_and_store_api_token(
-                db_context=db_context,
-                user_identifier=user_identifier,
-                name=token_data.name,
-                expires_at=expires_at_dt,
-            )
+        (
+            full_token,
+            token_id,
+            created_at_utc,
+        ) = await api_tokens_storage.create_and_store_api_token(
+            db_context=db_context,
+            user_identifier=user_identifier,
+            name=token_data.name,
+            expires_at=expires_at_dt,
         )
         logger.info(
             "API Token ID %s created for user %s (Name: %s)",

@@ -156,7 +156,8 @@ async def store_incoming_email(
         and email_data_for_db["attachment_info"] is not None
     ):
         email_data_for_db["attachment_info"] = [
-            att.model_dump() for att in parsed_email.attachment_info  # type: ignore
+            att.model_dump()
+            for att in parsed_email.attachment_info  # type: ignore
         ]
 
     logger.debug(f"Attempting to store email data: {email_data_for_db}")

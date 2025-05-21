@@ -136,9 +136,7 @@ async def handle_llm_callback(
     )
     current_time_str = datetime.now(
         zoneinfo.ZoneInfo(exec_context.timezone_str)
-    ).strftime(
-        "%Y-%m-%d %H:%M:%S %Z"
-    )  # Use timezone from context
+    ).strftime("%Y-%m-%d %H:%M:%S %Z")  # Use timezone from context
 
     try:
         # Construct the trigger message content for the LLM

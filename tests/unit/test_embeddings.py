@@ -68,9 +68,9 @@ class TestHashingWordEmbeddingGenerator:
         result2 = await default_generator.generate_embeddings([text_input])
 
         dist = cosine_distance(result1.embeddings[0], result2.embeddings[0])
-        assert math.isclose(
-            dist, 0.0, abs_tol=1e-9
-        ), f"Text should be identical to itself, distance was {dist}"
+        assert math.isclose(dist, 0.0, abs_tol=1e-9), (
+            f"Text should be identical to itself, distance was {dist}"
+        )
 
     @pytest.mark.parametrize(
         "text_input",
@@ -88,9 +88,9 @@ class TestHashingWordEmbeddingGenerator:
         result = await default_generator.generate_embeddings([text_input])
         vector = result.embeddings[0]
         magnitude = math.sqrt(sum(x * x for x in vector))
-        assert math.isclose(
-            magnitude, 1.0, abs_tol=1e-9
-        ), f"Vector magnitude should be 1.0, was {magnitude}"
+        assert math.isclose(magnitude, 1.0, abs_tol=1e-9), (
+            f"Vector magnitude should be 1.0, was {magnitude}"
+        )
 
     @pytest.mark.parametrize(
         "text1, text2",
@@ -114,9 +114,9 @@ class TestHashingWordEmbeddingGenerator:
         result2 = await default_generator.generate_embeddings([text2])
 
         dist = cosine_distance(result1.embeddings[0], result2.embeddings[0])
-        assert math.isclose(
-            dist, 0.0, abs_tol=1e-9
-        ), f"Texts '{text1}' and '{text2}' should have zero distance, was {dist}"
+        assert math.isclose(dist, 0.0, abs_tol=1e-9), (
+            f"Texts '{text1}' and '{text2}' should have zero distance, was {dist}"
+        )
 
     @pytest.mark.parametrize(
         "empty_text",
@@ -131,13 +131,13 @@ class TestHashingWordEmbeddingGenerator:
         result = await default_generator.generate_embeddings([empty_text])
         vector = result.embeddings[0]
         expected_zero_vector = [0.0] * dim
-        assert (
-            vector == expected_zero_vector
-        ), f"Vector for empty/whitespace text should be all zeros, was {vector}"
+        assert vector == expected_zero_vector, (
+            f"Vector for empty/whitespace text should be all zeros, was {vector}"
+        )
         magnitude = math.sqrt(sum(x * x for x in vector))
-        assert math.isclose(
-            magnitude, 0.0, abs_tol=1e-9
-        ), f"Magnitude of zero vector should be 0.0, was {magnitude}"
+        assert math.isclose(magnitude, 0.0, abs_tol=1e-9), (
+            f"Magnitude of zero vector should be 0.0, was {magnitude}"
+        )
 
     @pytest.mark.asyncio
     async def test_quote_similarity(
@@ -162,17 +162,17 @@ class TestHashingWordEmbeddingGenerator:
         dist_source_unrelated = cosine_distance(source_embedding, unrelated_embedding)
         dist_quote_unrelated = cosine_distance(quote_embedding, unrelated_embedding)
 
-        assert (
-            dist_source_quote < dist_source_unrelated
-        ), f"Quote should be closer to source ({dist_source_quote}) than to unrelated ({dist_source_unrelated})"
-        assert (
-            dist_source_quote < dist_quote_unrelated
-        ), f"Quote should be closer to source ({dist_source_quote}) than quote to unrelated ({dist_quote_unrelated})"
+        assert dist_source_quote < dist_source_unrelated, (
+            f"Quote should be closer to source ({dist_source_quote}) than to unrelated ({dist_source_unrelated})"
+        )
+        assert dist_source_quote < dist_quote_unrelated, (
+            f"Quote should be closer to source ({dist_source_quote}) than quote to unrelated ({dist_quote_unrelated})"
+        )
         # Also, source and quote should not be identical if quote is shorter
         if len(quote) < len(source_text):
-            assert not math.isclose(
-                dist_source_quote, 0.0, abs_tol=1e-9
-            ), "Source and its shorter quote should not be identical"
+            assert not math.isclose(dist_source_quote, 0.0, abs_tol=1e-9), (
+                "Source and its shorter quote should not be identical"
+            )
 
     @pytest.mark.asyncio
     async def test_different_texts_different_embeddings(

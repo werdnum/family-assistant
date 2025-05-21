@@ -68,9 +68,10 @@ async def test_confirmation_accepted(
                 "function": {
                     "name": TOOL_NAME_SENSITIVE,
                     # Arguments for add_or_update_note
-                    "arguments": json.dumps(
-                        {"title": test_note_title, "content": test_note_content}
-                    ),
+                    "arguments": json.dumps({
+                        "title": test_note_title,
+                        "content": test_note_content,
+                    }),
                 },
             }
         ],
@@ -161,9 +162,10 @@ async def test_confirmation_accepted(
                 assert_that(conf_kwargs.get("tool_name")).is_equal_to(
                     TOOL_NAME_SENSITIVE
                 )
-                assert_that(conf_kwargs.get("tool_args")).is_equal_to(
-                    {"title": test_note_title, "content": test_note_content}
-                )  # noqa: E501
+                assert_that(conf_kwargs.get("tool_args")).is_equal_to({
+                    "title": test_note_title,
+                    "content": test_note_content,
+                })  # noqa: E501
 
                 # 2. Original Tool Provider's execute_tool was called (meaning confirmation passed)
                 mock_execute_original.assert_awaited_once()  # Check it was called
@@ -180,9 +182,10 @@ async def test_confirmation_accepted(
                     else call_kwargs_dict.get("arguments")
                 )  # noqa: E501
                 assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
-                assert_that(called_arguments).is_equal_to(
-                    {"title": test_note_title, "content": test_note_content}
-                )  # noqa: E501
+                assert_that(called_arguments).is_equal_to({
+                    "title": test_note_title,
+                    "content": test_note_content,
+                })  # noqa: E501
 
         # 3. LLM was called twice (request tool, process result)
         assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
@@ -241,9 +244,10 @@ async def test_confirmation_rejected(
                 "function": {
                     "name": TOOL_NAME_SENSITIVE,
                     # Arguments for add_or_update_note
-                    "arguments": json.dumps(
-                        {"title": test_note_title, "content": test_note_content}
-                    ),
+                    "arguments": json.dumps({
+                        "title": test_note_title,
+                        "content": test_note_content,
+                    }),
                 },
             }
         ],
@@ -372,9 +376,10 @@ async def test_confirmation_timed_out(
                 "function": {
                     "name": TOOL_NAME_SENSITIVE,
                     # Arguments for add_or_update_note
-                    "arguments": json.dumps(
-                        {"title": test_note_title, "content": test_note_content}
-                    ),
+                    "arguments": json.dumps({
+                        "title": test_note_title,
+                        "content": test_note_content,
+                    }),
                 },
             }
         ],

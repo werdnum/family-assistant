@@ -394,19 +394,17 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             )
 
     # Log final loaded non-secret config for verification
-    loggable_config = copy.deepcopy(
-        {
-            k: v
-            for k, v in config_data.items()
-            if k
-            not in [
-                "telegram_token",
-                "openrouter_api_key",
-                "gemini_api_key",
-                "database_url",
-            ]  # Exclude secrets
-        }
-    )
+    loggable_config = copy.deepcopy({
+        k: v
+        for k, v in config_data.items()
+        if k
+        not in [
+            "telegram_token",
+            "openrouter_api_key",
+            "gemini_api_key",
+            "database_url",
+        ]  # Exclude secrets
+    })
     if (
         "calendar_config" in loggable_config
         and "caldav" in loggable_config["calendar_config"]
@@ -950,7 +948,9 @@ def main() -> int:  # Return an exit code
             # Pass service and generic tools provider instances (which might be None)
             loop.add_signal_handler(
                 sig_num,
-                lambda name=sig_name, service=telegram_service_instance, tools=tools_provider_instance: asyncio.create_task(
+                lambda name=sig_name,
+                service=telegram_service_instance,
+                tools=tools_provider_instance: asyncio.create_task(
                     shutdown_handler(
                         name, service, tools
                     )  # Pass potentially None instances

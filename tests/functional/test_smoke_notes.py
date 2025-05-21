@@ -99,12 +99,10 @@ async def test_add_and_retrieve_note_rule_mock(
                 "type": "function",
                 "function": {
                     "name": "add_or_update_note",
-                    "arguments": json.dumps(
-                        {  # Arguments must be JSON string
-                            "title": test_note_title,
-                            "content": TEST_NOTE_CONTENT,
-                        }
-                    ),
+                    "arguments": json.dumps({  # Arguments must be JSON string
+                        "title": test_note_title,
+                        "content": TEST_NOTE_CONTENT,
+                    }),
                 },
             }
         ],
@@ -159,9 +157,9 @@ async def test_add_and_retrieve_note_rule_mock(
 
     # --- Instantiate Context Providers ---
     # Function to get DB context for the specific test engine
-    async def get_test_db_context_func() -> (
-        contextlib.AbstractAsyncContextManager[DatabaseContext]
-    ):
+    async def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
+        DatabaseContext
+    ]:
         return await get_db_context(engine=test_db_engine)
 
     notes_provider = NotesContextProvider(
@@ -217,9 +215,9 @@ async def test_add_and_retrieve_note_rule_mock(
             # model_name argument removed
         )
     # Assertions remain outside the context manager
-    assert (
-        add_error is None
-    ), f"Error during add note: {add_error}"  # Use correct error variable
+    assert add_error is None, (
+        f"Error during add note: {add_error}"
+    )  # Use correct error variable
     assert add_turn_messages, "No messages generated during add note turn"
 
     # Assertion 1: Check the database directly to confirm the note was added
@@ -252,9 +250,9 @@ async def test_add_and_retrieve_note_rule_mock(
         )
         note_in_db = result.fetchone()
 
-    assert (
-        note_in_db is not None
-    ), f"Note '{test_note_title}' not found in the database after rule-based mock add attempt."
+    assert note_in_db is not None, (
+        f"Note '{test_note_title}' not found in the database after rule-based mock add attempt."
+    )
     assert note_in_db.content == TEST_NOTE_CONTENT, "Note content in DB does not match."
     logger.info("Tool info check passed.")
 
@@ -302,20 +300,20 @@ async def test_add_and_retrieve_note_rule_mock(
         None,
     )
     assert final_assistant_message is not None, "No final assistant message found"
-    assert (
-        final_assistant_message.get("tool_calls") is None
-    ), "LLM made an unexpected tool call for retrieval"
+    assert final_assistant_message.get("tool_calls") is None, (
+        "LLM made an unexpected tool call for retrieval"
+    )
     assert final_assistant_message.get("content") is not None
 
     # Assertion 3: Check the final response content from the mock rule
     # Use lower() for case-insensitive comparison # Marked line 244
-    assert (
-        TEST_NOTE_CONTENT.lower() in final_assistant_message["content"].lower()
-    ), f"Mock LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {final_assistant_message['content']}"
+    assert TEST_NOTE_CONTENT.lower() in final_assistant_message["content"].lower(), (
+        f"Mock LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {final_assistant_message['content']}"
+    )
     # Use lower() for case-insensitive comparison
-    assert (
-        test_note_title.lower() in final_assistant_message["content"].lower()
-    ), f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {final_assistant_message['content']}"
+    assert test_note_title.lower() in final_assistant_message["content"].lower(), (
+        f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {final_assistant_message['content']}"
+    )
     assert (
         "Rule-based mock says:" in final_assistant_message["content"]
     )  # Check it used our specific response

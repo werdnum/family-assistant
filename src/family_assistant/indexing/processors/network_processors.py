@@ -253,9 +253,7 @@ class WebFetcherProcessor:
                         processed_successfully = True
 
                     # Case 4: Unhandled or unexpected result (if not error and not processed by cases above)
-                    if (
-                        not processed_successfully
-                    ):  # This implies it wasn't an error type and didn't match content types
+                    if not processed_successfully:  # This implies it wasn't an error type and didn't match content types
                         logger.warning(
                             f"{self.name}: Unhandled scrape result for URL '{url_to_fetch}'. "
                             f"Type: '{scrape_result.type}', Mime: '{scrape_result.mime_type}', "

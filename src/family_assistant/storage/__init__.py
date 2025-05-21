@@ -6,6 +6,7 @@ import traceback
 from collections.abc import Callable  # Added Any and Callable
 from typing import Any
 
+from alembic.config import Config as AlembicConfig
 from sqlalchemy import (
     inspect,
     text,
@@ -19,7 +20,6 @@ from sqlalchemy.exc import (
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from alembic import command as alembic_command
-from alembic.config import Config as AlembicConfig  # Renamed import to avoid conflict
 
 # Import base components using absolute package paths
 from family_assistant.storage.base import engine, get_engine, metadata
@@ -462,17 +462,15 @@ __all__ = [
 if (
     VECTOR_STORAGE_ENABLED and "init_vector_db" in locals()
 ):  # 'init_vector_db' is a proxy for successful import
-    __all__.extend(
-        [
-            "add_document",
-            "VectorBase",
-            "init_vector_db",
-            "get_document_by_source_id",
-            "get_document_by_id",  # Added for completeness
-            "add_embedding",
-            "delete_document",
-            "query_vectors",
-            "Document",  # Changed from VectorDocumentProtocol to match actual name
-        ]
-    )
+    __all__.extend([
+        "add_document",
+        "VectorBase",
+        "init_vector_db",
+        "get_document_by_source_id",
+        "get_document_by_id",  # Added for completeness
+        "add_embedding",
+        "delete_document",
+        "query_vectors",
+        "Document",  # Changed from VectorDocumentProtocol to match actual name
+    ])
 # --- Email Storage (Moved to storage/email.py, re-exported here for compatibility) ---

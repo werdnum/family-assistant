@@ -351,9 +351,10 @@ async def test_tool_result_in_subsequent_history(
                 "type": "function",
                 "function": {
                     "name": "add_or_update_note",
-                    "arguments": json.dumps(
-                        {"title": test_note_title, "content": test_note_content}
-                    ),
+                    "arguments": json.dumps({
+                        "title": test_note_title,
+                        "content": test_note_content,
+                    }),
                 },
             }
         ],
@@ -449,14 +450,10 @@ async def test_tool_result_in_subsequent_history(
     with soft_assertions():
         assert_that(fix.mock_llm._calls).described_as(
             "LLM Calls after Turn 2"
-        ).is_length(
-            3
-        )  # One more call
+        ).is_length(3)  # One more call
         assert_that(fix.mock_bot.send_message.await_count).described_as(
             "Bot Sends after Turn 2"
-        ).is_equal_to(
-            2
-        )  # One more send
+        ).is_equal_to(2)  # One more send
 
         # Check the *second* call to send_message
         call_2_args, call_2_kwargs = fix.mock_bot.send_message.call_args_list[1]
