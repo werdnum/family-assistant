@@ -186,27 +186,23 @@ class RuleBasedMockLLMClient(LLMInterface):
 
         if file_path and mime_type:
             if mime_type.startswith("image/"):
-                content_parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": (
-                                f"data:{mime_type};base64,mock_image_data_for_{os.path.basename(file_path)}"
-                            )
-                        },
-                    }
-                )
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": (
+                            f"data:{mime_type};base64,mock_image_data_for_{os.path.basename(file_path)}"
+                        )
+                    },
+                })
             else:  # Generic file
-                content_parts.append(
-                    {
-                        "type": "file_placeholder",  # Custom type for mock
-                        "file_reference": {
-                            "file_path": file_path,
-                            "mime_type": mime_type,
-                            "description": "This is a mock file reference.",
-                        },
-                    }
-                )
+                content_parts.append({
+                    "type": "file_placeholder",  # Custom type for mock
+                    "file_reference": {
+                        "file_path": file_path,
+                        "mime_type": mime_type,
+                        "description": "This is a mock file reference.",
+                    },
+                })
 
         user_message_content: str | list[dict[str, Any]]
         if len(content_parts) == 1 and content_parts[0]["type"] == "text":

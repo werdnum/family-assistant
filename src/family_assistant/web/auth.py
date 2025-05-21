@@ -78,7 +78,8 @@ async def get_current_user_optional(request: Request) -> User | None:
 
 
 async def get_user_from_api_token(
-    auth_header: str, request: Request  # pylint: disable=unused-argument
+    auth_header: str,
+    request: Request,  # pylint: disable=unused-argument
 ) -> dict | None:
     """
     Verifies an API token and returns user information if valid.

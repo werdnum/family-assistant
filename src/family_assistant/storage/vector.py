@@ -698,9 +698,10 @@ async def query_vectors(
         )
     )
     if fts_results_cte is not None:
-        final_select_cols.extend(
-            [fts_results_cte.c.score.label("fts_score"), fts_results_cte.c.fts_rank]
-        )
+        final_select_cols.extend([
+            fts_results_cte.c.score.label("fts_score"),
+            fts_results_cte.c.fts_rank,
+        ])
         final_query = final_query.join(
             fts_results_cte,
             DocumentEmbeddingRecord.id == fts_results_cte.c.embedding_id,

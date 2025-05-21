@@ -179,9 +179,9 @@ async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEng
 
 
 @pytest_asyncio.fixture(scope="function")
-async def task_worker_manager() -> (
-    AsyncGenerator[tuple[TaskWorker, asyncio.Event, asyncio.Event], None]
-):
+async def task_worker_manager() -> AsyncGenerator[
+    tuple[TaskWorker, asyncio.Event, asyncio.Event], None
+]:
     """
     Manages the lifecycle of a TaskWorker instance.
 

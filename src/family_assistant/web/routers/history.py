@@ -137,9 +137,7 @@ async def view_message_history(
                 ]
                 if contentful_assistant_msgs:
                     final_assistant_msg_for_turn = contentful_assistant_msgs[-1]
-                elif (
-                    assistant_candidates
-                ):  # Fallback to the very last assistant message in the group (might have only tool_calls)
+                elif assistant_candidates:  # Fallback to the very last assistant message in the group (might have only tool_calls)
                     final_assistant_msg_for_turn = assistant_candidates[-1]
                 else:
                     final_assistant_msg_for_turn = None
@@ -154,14 +152,12 @@ async def view_message_history(
                 ):  # If it's a user message, it can't be the "final assistant response"
                     final_assistant_msg_for_turn = None
 
-                conversation_turns.append(
-                    {
-                        "turn_id": turn_id,  # Store the turn_id itself
-                        "initiating_user_message": initiating_user_msg_for_turn,
-                        "final_assistant_response": final_assistant_msg_for_turn,
-                        "all_messages_in_group": turn_messages_for_current_id,
-                    }
-                )
+                conversation_turns.append({
+                    "turn_id": turn_id,  # Store the turn_id itself
+                    "initiating_user_message": initiating_user_msg_for_turn,
+                    "final_assistant_response": final_assistant_msg_for_turn,
+                    "all_messages_in_group": turn_messages_for_current_id,
+                })
             turns_by_chat[conversation_key] = conversation_turns
 
         # --- Pagination Logic ---

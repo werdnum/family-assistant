@@ -183,7 +183,8 @@ async def handle_mail_webhook(
         # We need to be careful if any other fields could be multi-valued.
         # For simplicity, assuming other relevant fields are single string values.
         form_data_dict: dict[str, Any] = {
-            key: form_data.get(key) for key in form_data  # type: ignore
+            key: form_data.get(key)
+            for key in form_data  # type: ignore
         }
 
         parsed_email_payload = ParsedEmailData(

@@ -133,9 +133,9 @@ async def telegram_handler_fixture(
     )
 
     # Function to get DB context for the specific test engine
-    async def get_test_db_context_func() -> (
-        contextlib.AbstractAsyncContextManager[DatabaseContext]
-    ):
+    async def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
+        DatabaseContext
+    ]:
         # get_db_context uses the globally patched engine by default
         return await get_db_context()
 

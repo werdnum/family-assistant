@@ -260,14 +260,12 @@ class ProcessingService:
                         safe_function_name = function_name or "unknown_function"
 
                         # Create the error message dictionary for the turn history
-                        tool_response_message_for_turn = (
-                            {  # Define the variable before use
-                                "role": "tool",
-                                "tool_call_id": safe_call_id,
-                                "content": error_content,
-                                "error_traceback": error_traceback,
-                            }
-                        )
+                        tool_response_message_for_turn = {  # Define the variable before use
+                            "role": "tool",
+                            "tool_call_id": safe_call_id,
+                            "content": error_content,
+                            "error_traceback": error_traceback,
+                        }
                         turn_messages.append(tool_response_message_for_turn)
                         # Create the error message for the *next* LLM call context
                         llm_context_error_message = {
@@ -468,17 +466,15 @@ class ProcessingService:
                 if (
                     tool_call_id
                 ):  # Only include if tool_call_id is present (retrieved from DB)
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": (
-                                tool_call_id
-                            ),  # The ID linking to the assistant request
-                            "content": (
-                                content or ""
-                            ),  # Ensure content is a string, default empty
-                        }
-                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": (
+                            tool_call_id
+                        ),  # The ID linking to the assistant request
+                        "content": (
+                            content or ""
+                        ),  # Ensure content is a string, default empty
+                    })
                 else:
                     # Log a warning if a tool message is found without an ID (indicates logging issue)
                     logger.warning(
@@ -489,9 +485,10 @@ class ProcessingService:
                 role != "error"
             ):  # Don't include previous error messages in history sent to LLM
                 # Append other non-error messages directly
-                messages.append(
-                    {"role": role, "content": content or ""}
-                )  # Ensure content is string
+                messages.append({
+                    "role": role,
+                    "content": content or "",
+                })  # Ensure content is string
 
         logger.debug(
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."

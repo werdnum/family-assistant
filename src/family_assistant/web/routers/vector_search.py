@@ -278,9 +278,9 @@ async def handle_vector_search(
         # --- Generate Embedding ---
         if query_obj.search_type in ["semantic", "hybrid"]:
             # Basic check, might need more robust model matching/selection
-            embedding_result = await embedding_generator.generate_embeddings(
-                [query_obj.semantic_query]
-            )  # Pass as list
+            embedding_result = await embedding_generator.generate_embeddings([
+                query_obj.semantic_query
+            ])  # Pass as list
             if not embedding_result.embeddings or len(embedding_result.embeddings) == 0:
                 raise ValueError("Failed to generate embedding for the semantic query.")
             query_embedding = embedding_result.embeddings[0]

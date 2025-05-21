@@ -324,9 +324,9 @@ async def test_indexing_pipeline_e2e(
             # Verify search
             query_text_for_chunk = "yellow and orange"  # Should match the second chunk
             query_vector_result = (
-                await mock_pipeline_embedding_generator.generate_embeddings(
-                    [query_text_for_chunk]
-                )
+                await mock_pipeline_embedding_generator.generate_embeddings([
+                    query_text_for_chunk
+                ])
             )
             query_embedding = query_vector_result.embeddings[0]
 

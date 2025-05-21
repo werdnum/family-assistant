@@ -1264,14 +1264,12 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     try:
         # --- Arrange: Prepare Form Data and File for Upload ---
         email_form_data_with_pdf = TEST_EMAIL_FORM_DATA.copy()
-        email_form_data_with_pdf.update(
-            {
-                "subject": TEST_EMAIL_SUBJECT_WITH_PDF,
-                "stripped-text": TEST_EMAIL_BODY_WITH_PDF,
-                "Message-Id": TEST_EMAIL_MESSAGE_ID_WITH_PDF,
-                "attachment-count": "1",  # Indicate one attachment
-            }
-        )
+        email_form_data_with_pdf.update({
+            "subject": TEST_EMAIL_SUBJECT_WITH_PDF,
+            "stripped-text": TEST_EMAIL_BODY_WITH_PDF,
+            "Message-Id": TEST_EMAIL_MESSAGE_ID_WITH_PDF,
+            "attachment-count": "1",  # Indicate one attachment
+        })
         # Mailgun sends attachments as form fields like 'attachment-1', 'attachment-2', etc.
         # httpx `files` param maps to this.
         files_to_upload = {
@@ -1450,9 +1448,9 @@ async def test_email_indexing_with_llm_summary_e2e(
 
     # The http_client fixture now ensures fastapi_app.state.embedding_generator is a MockEmbeddingGenerator.
     current_embedder: MockEmbeddingGenerator = fastapi_app.state.embedding_generator
-    assert isinstance(
-        current_embedder, MockEmbeddingGenerator
-    ), "Embedding generator on app state is not a MockEmbeddingGenerator instance."
+    assert isinstance(current_embedder, MockEmbeddingGenerator), (
+        "Embedding generator on app state is not a MockEmbeddingGenerator instance."
+    )
     # Clear any existing map from previous tests using the same fixture instance if scope is wider than function.
     # For function scope, this is just for safety.
     current_embedder.embedding_map.clear()
@@ -1466,16 +1464,14 @@ async def test_email_indexing_with_llm_summary_e2e(
         np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.7
     ).tolist()
 
-    current_embedder.embedding_map.update(
-        {
-            json.dumps(
-                {"summary": EXPECTED_LLM_SUMMARY_EMAIL}, indent=2
-            ): email_summary_embedding,
-            TEST_QUERY_FOR_EMAIL_SUMMARY: query_email_summary_embedding,
-            TEST_EMAIL_BODY_FOR_SUMMARY: email_body_for_summary_embedding,
-            "Email for LLM Summary Test": email_title_for_summary_embedding,
-        }
-    )
+    current_embedder.embedding_map.update({
+        json.dumps(
+            {"summary": EXPECTED_LLM_SUMMARY_EMAIL}, indent=2
+        ): email_summary_embedding,
+        TEST_QUERY_FOR_EMAIL_SUMMARY: query_email_summary_embedding,
+        TEST_EMAIL_BODY_FOR_SUMMARY: email_body_for_summary_embedding,
+        "Email for LLM Summary Test": email_title_for_summary_embedding,
+    })
     # Store for assertion
     current_embedder._test_query_email_summary_embedding = query_email_summary_embedding
 
@@ -1543,13 +1539,11 @@ async def test_email_indexing_with_llm_summary_e2e(
         # --- Act: Ingest Email via API ---
         email_msg_id_summary = f"<email_summary_test_{uuid.uuid4()}@example.com>"
         form_data_email_summary = TEST_EMAIL_FORM_DATA.copy()
-        form_data_email_summary.update(
-            {
-                "subject": "Email for LLM Summary Test",
-                "stripped-text": TEST_EMAIL_BODY_FOR_SUMMARY,
-                "Message-Id": email_msg_id_summary,
-            }
-        )
+        form_data_email_summary.update({
+            "subject": "Email for LLM Summary Test",
+            "stripped-text": TEST_EMAIL_BODY_FOR_SUMMARY,
+            "Message-Id": email_msg_id_summary,
+        })
 
         email_db_id = await _ingest_and_index_email(
             http_client=http_client,
@@ -1573,12 +1567,12 @@ async def test_email_indexing_with_llm_summary_e2e(
                 embedding_type_filter=[EMAIL_LLM_SUMMARY_TARGET_TYPE],
             )
 
-        assert (
-            email_summary_query_results is not None
-        ), "Email LLM summary query_vectors returned None"
-        assert (
-            len(email_summary_query_results) > 0
-        ), "No results from email LLM summary vector query"
+        assert email_summary_query_results is not None, (
+            "Email LLM summary query_vectors returned None"
+        )
+        assert len(email_summary_query_results) > 0, (
+            "No results from email LLM summary vector query"
+        )
 
         found_email_summary_result = email_summary_query_results[0]
         logger.info(f"Found email LLM summary result: {found_email_summary_result}")
@@ -1595,9 +1589,9 @@ async def test_email_indexing_with_llm_summary_e2e(
             found_email_summary_result.get("embedding_source_content")
             == expected_stored_email_summary_content
         )
-        assert (
-            found_email_summary_result.get("distance") < 0.1
-        ), "Distance for email LLM summary should be small"
+        assert found_email_summary_result.get("distance") < 0.1, (
+            "Distance for email LLM summary should be small"
+        )
 
         # LLM call verification removed as per user request.
         # The successful creation of the summary embedding, verified above,
@@ -1690,12 +1684,10 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
                 "type": "function",
                 "function": {
                     "name": "extract_primary_link",
-                    "arguments": json.dumps(
-                        {
-                            "primary_url": EXPECTED_EXTRACTED_URL,
-                            "is_primary_link_email": True,
-                        }
-                    ),
+                    "arguments": json.dumps({
+                        "primary_url": EXPECTED_EXTRACTED_URL,
+                        "is_primary_link_email": True,
+                    }),
                 },
             }
         ],
@@ -1733,22 +1725,20 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     current_embedder: MockEmbeddingGenerator = fastapi_app.state.embedding_generator
     assert isinstance(current_embedder, MockEmbeddingGenerator)
     current_embedder.embedding_map.clear()  # Clear from previous tests
-    current_embedder.embedding_map.update(
-        {
-            TEST_EMAIL_BODY_PRIMARY_LINK: (
-                (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.1).tolist()
-            ),
-            "Email with Primary Link": (
-                (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.2).tolist()
-            ),  # Title
-            TEST_EMAIL_BODY_NO_PRIMARY_LINK: (
-                (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.3).tolist()
-            ),
-            "Email with No Primary Link": (
-                (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.4).tolist()
-            ),  # Title
-        }
-    )
+    current_embedder.embedding_map.update({
+        TEST_EMAIL_BODY_PRIMARY_LINK: (
+            (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.1).tolist()
+        ),
+        "Email with Primary Link": (
+            (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.2).tolist()
+        ),  # Title
+        TEST_EMAIL_BODY_NO_PRIMARY_LINK: (
+            (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.3).tolist()
+        ),
+        "Email with No Primary Link": (
+            (np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.4).tolist()
+        ),  # Title
+    })
 
     # --- Arrange: Indexing Pipeline ---
     title_extractor = TitleExtractor()
@@ -1812,13 +1802,11 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         # --- Act: Ingest Email with Primary Link ---
         email_msg_id_link = f"<email_link_test_pos_{uuid.uuid4()}@example.com>"
         form_data_link = TEST_EMAIL_FORM_DATA.copy()
-        form_data_link.update(
-            {
-                "subject": "Email with Primary Link",
-                "stripped-text": TEST_EMAIL_BODY_PRIMARY_LINK,
-                "Message-Id": email_msg_id_link,
-            }
-        )
+        form_data_link.update({
+            "subject": "Email with Primary Link",
+            "stripped-text": TEST_EMAIL_BODY_PRIMARY_LINK,
+            "Message-Id": email_msg_id_link,
+        })
         email_db_id_link = await _ingest_and_index_email(
             http_client=http_client,
             engine=pg_vector_db_engine,
@@ -1829,13 +1817,11 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         # --- Act: Ingest Email with No Primary Link ---
         email_msg_id_no_link = f"<email_link_test_neg_{uuid.uuid4()}@example.com>"
         form_data_no_link = TEST_EMAIL_FORM_DATA.copy()
-        form_data_no_link.update(
-            {
-                "subject": "Email with No Primary Link",
-                "stripped-text": TEST_EMAIL_BODY_NO_PRIMARY_LINK,
-                "Message-Id": email_msg_id_no_link,
-            }
-        )
+        form_data_no_link.update({
+            "subject": "Email with No Primary Link",
+            "stripped-text": TEST_EMAIL_BODY_NO_PRIMARY_LINK,
+            "Message-Id": email_msg_id_no_link,
+        })
         email_db_id_no_link = await _ingest_and_index_email(
             http_client=http_client,
             engine=pg_vector_db_engine,

@@ -379,9 +379,9 @@ async def test_document_indexing_and_query_e2e(
         response = await http_client.post("/api/documents/upload", data=api_form_data)
 
         # Assert API call success
-        assert (
-            response.status_code == 202
-        ), f"API call failed: {response.status_code} - {response.text}"
+        assert response.status_code == 202, (
+            f"API call failed: {response.status_code} - {response.text}"
+        )
         response_data = response.json()
         assert "document_id" in response_data
         assert response_data.get("task_enqueued") is True
@@ -409,9 +409,9 @@ async def test_document_indexing_and_query_e2e(
             )  # Get the latest matching task
 
             task_info = await db.fetch_one(select_task_stmt)
-            assert (
-                task_info is not None
-            ), f"Could not find enqueued task for document ID {document_db_id}"
+            assert task_info is not None, (
+                f"Could not find enqueued task for document ID {document_db_id}"
+            )
             indexing_task_id = task_info["task_id"]
             logger.info(
                 f"Found indexing task ID: {indexing_task_id} for document DB ID: {document_db_id}"
@@ -445,12 +445,12 @@ async def test_document_indexing_and_query_e2e(
                 filters={"source_type": TEST_DOC_SOURCE_TYPE},  # Filter by source type
             )
 
-        assert (
-            semantic_query_results is not None
-        ), "Semantic query_vectors returned None"
-        assert (
-            len(semantic_query_results) > 0
-        ), "No results returned from semantic vector query"
+        assert semantic_query_results is not None, (
+            "Semantic query_vectors returned None"
+        )
+        assert len(semantic_query_results) > 0, (
+            "No results returned from semantic vector query"
+        )
         logger.info(f"Semantic query returned {len(semantic_query_results)} result(s).")
 
         # Find the result corresponding to our document
@@ -460,9 +460,9 @@ async def test_document_indexing_and_query_e2e(
                 found_semantic_result = result
                 break
 
-        assert (
-            found_semantic_result is not None
-        ), f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in semantic query results: {semantic_query_results}"
+        assert found_semantic_result is not None, (
+            f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in semantic query results: {semantic_query_results}"
+        )
         found_semantic_result = next(
             (
                 r
@@ -471,16 +471,16 @@ async def test_document_indexing_and_query_e2e(
             ),
             None,
         )
-        assert (
-            found_semantic_result is not None
-        ), f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in semantic query results: {semantic_query_results}"
+        assert found_semantic_result is not None, (
+            f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in semantic query results: {semantic_query_results}"
+        )
         logger.info(f"Found matching semantic result: {found_semantic_result}")
-        assert (
-            "distance" in found_semantic_result
-        ), "Semantic result missing 'distance' field"
-        assert (
-            found_semantic_result["distance"] < 0.1
-        ), f"Semantic distance should be small, but was {found_semantic_result['distance']}"
+        assert "distance" in found_semantic_result, (
+            "Semantic result missing 'distance' field"
+        )
+        assert found_semantic_result["distance"] < 0.1, (
+            f"Semantic distance should be small, but was {found_semantic_result['distance']}"
+        )
         assert found_semantic_result.get("embedding_type") == "content_chunk"
         assert found_semantic_result.get("embedding_source_content") == TEST_DOC_CHUNK_1
         assert found_semantic_result.get("title") == TEST_DOC_TITLE
@@ -504,9 +504,9 @@ async def test_document_indexing_and_query_e2e(
             )
 
         assert keyword_query_results is not None, "Keyword query_vectors returned None"
-        assert (
-            len(keyword_query_results) > 0
-        ), "No results returned from keyword vector query"
+        assert len(keyword_query_results) > 0, (
+            "No results returned from keyword vector query"
+        )
         logger.info(f"Keyword query returned {len(keyword_query_results)} result(s).")
 
         # Find the result corresponding to our document (should be ranked high due to keywords)
@@ -518,9 +518,9 @@ async def test_document_indexing_and_query_e2e(
                 if keyword_query_results[0].get("source_id") == TEST_DOC_SOURCE_ID:
                     break  # Found as top result
 
-        assert (
-            found_keyword_result is not None
-        ), f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in keyword query results: {keyword_query_results}"
+        assert found_keyword_result is not None, (
+            f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in keyword query results: {keyword_query_results}"
+        )
         found_keyword_result = next(
             (
                 r
@@ -529,19 +529,19 @@ async def test_document_indexing_and_query_e2e(
             ),
             None,
         )
-        assert (
-            found_keyword_result is not None
-        ), f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in keyword query results: {keyword_query_results}"
+        assert found_keyword_result is not None, (
+            f"Ingested document (Source ID: {TEST_DOC_SOURCE_ID}) not found in keyword query results: {keyword_query_results}"
+        )
         logger.info(f"Found matching keyword result: {found_keyword_result}")
-        assert (
-            "rrf_score" in found_keyword_result
-        ), "Keyword result missing 'rrf_score' field"
-        assert (
-            "fts_score" in found_keyword_result
-        ), "Keyword result missing 'fts_score' field"
-        assert (
-            found_keyword_result["fts_score"] > 0
-        ), f"Keyword FTS score should be positive, but was {found_keyword_result['fts_score']}"
+        assert "rrf_score" in found_keyword_result, (
+            "Keyword result missing 'rrf_score' field"
+        )
+        assert "fts_score" in found_keyword_result, (
+            "Keyword result missing 'fts_score' field"
+        )
+        assert found_keyword_result["fts_score"] > 0, (
+            f"Keyword FTS score should be positive, but was {found_keyword_result['fts_score']}"
+        )
         assert found_keyword_result.get("embedding_type") in ["title", "content_chunk"]
         if found_keyword_result.get("embedding_type") == "title":
             assert (
@@ -808,9 +808,9 @@ async def test_document_indexing_with_llm_summary_e2e(
             "/api/documents/upload", data=api_form_data_summary, files=api_files_data
         )
 
-        assert (
-            response.status_code == 202
-        ), f"API call failed: {response.status_code} - {response.text}"
+        assert response.status_code == 202, (
+            f"API call failed: {response.status_code} - {response.text}"
+        )
         response_data = response.json()
         document_db_id = response_data["document_id"]
 
@@ -828,9 +828,9 @@ async def test_document_indexing_with_llm_summary_e2e(
                 .limit(1)
             )
             task_info = await db.fetch_one(select_task_stmt)
-            assert (
-                task_info is not None
-            ), f"Could not find task for doc ID {document_db_id}"
+            assert task_info is not None, (
+                f"Could not find task for doc ID {document_db_id}"
+            )
             indexing_task_id = task_info["task_id"]
 
         # Wait for indexing
@@ -854,12 +854,12 @@ async def test_document_indexing_with_llm_summary_e2e(
                 embedding_type_filter=[LLM_SUMMARY_TARGET_TYPE],
             )
 
-        assert (
-            summary_query_results is not None
-        ), "LLM summary query_vectors returned None"
-        assert (
-            len(summary_query_results) > 0
-        ), "No results returned from LLM summary vector query"
+        assert summary_query_results is not None, (
+            "LLM summary query_vectors returned None"
+        )
+        assert len(summary_query_results) > 0, (
+            "No results returned from LLM summary vector query"
+        )
 
         found_summary_result = summary_query_results[0]
         logger.info(f"Found LLM summary result: {found_summary_result}")
@@ -874,9 +874,9 @@ async def test_document_indexing_with_llm_summary_e2e(
             found_summary_result.get("embedding_source_content")
             == expected_stored_summary_content
         )
-        assert (
-            found_summary_result.get("distance") < 0.1
-        ), "Distance for LLM summary should be small"
+        assert found_summary_result.get("distance") < 0.1, (
+            "Distance for LLM summary should be small"
+        )
 
         # LLM call verification removed as per user request.
         # The successful creation of the summary embedding, verified above,
@@ -1063,9 +1063,9 @@ async def test_url_indexing_e2e(
             "/api/documents/upload", data=api_form_data_url
         )
 
-        assert (
-            response.status_code == 202
-        ), f"API call for URL failed: {response.status_code} - {response.text}"
+        assert response.status_code == 202, (
+            f"API call for URL failed: {response.status_code} - {response.text}"
+        )
         response_data = response.json()
         document_db_id = response_data["document_id"]
         logger.info(f"API call for URL successful. Document DB ID: {document_db_id}")
@@ -1084,9 +1084,9 @@ async def test_url_indexing_e2e(
                 .limit(1)
             )
             task_info = await db.fetch_one(select_task_stmt)
-            assert (
-                task_info is not None
-            ), f"Could not find enqueued task for URL document ID {document_db_id}"
+            assert task_info is not None, (
+                f"Could not find enqueued task for URL document ID {document_db_id}"
+            )
             indexing_task_id = task_info["task_id"]
             logger.info(
                 f"Found indexing task ID: {indexing_task_id} for URL document DB ID: {document_db_id}"
@@ -1125,12 +1125,12 @@ async def test_url_indexing_e2e(
                 ],  # Expecting chunks from TextChunker
             )
 
-        assert (
-            url_content_query_results is not None
-        ), "URL content query_vectors returned None"
-        assert (
-            len(url_content_query_results) > 0
-        ), "No results returned from URL content vector query"
+        assert url_content_query_results is not None, (
+            "URL content query_vectors returned None"
+        )
+        assert len(url_content_query_results) > 0, (
+            "No results returned from URL content vector query"
+        )
         logger.info(
             f"URL content query returned {len(url_content_query_results)} result(s)."
         )
@@ -1170,12 +1170,12 @@ async def test_url_indexing_e2e(
                     f"Query: '{TEST_QUERY_FOR_URL_CONTENT}', Chunk content: '{EXPECTED_URL_CHUNK_1_CONTENT}'"
                 )
 
-        assert (
-            found_chunk_0
-        ), f"Expected URL chunk 0 not found in query results. Content: {EXPECTED_URL_CHUNK_0_CONTENT}"
-        assert (
-            found_chunk_1
-        ), f"Expected URL chunk 1 not found in query results. Content: {EXPECTED_URL_CHUNK_1_CONTENT}"
+        assert found_chunk_0, (
+            f"Expected URL chunk 0 not found in query results. Content: {EXPECTED_URL_CHUNK_0_CONTENT}"
+        )
+        assert found_chunk_1, (
+            f"Expected URL chunk 1 not found in query results. Content: {EXPECTED_URL_CHUNK_1_CONTENT}"
+        )
 
         logger.info("--- URL Indexing E2E Test via API Passed ---")
 
@@ -1339,9 +1339,9 @@ async def test_url_indexing_e2e(
                 "/api/documents/upload", data=api_form_data_url_no_title
             )
 
-            assert (
-                response.status_code == 202
-            ), f"API call for URL (no title) failed: {response.status_code} - {response.text}"
+            assert response.status_code == 202, (
+                f"API call for URL (no title) failed: {response.status_code} - {response.text}"
+            )
             response_data = response.json()
             document_db_id = response_data["document_id"]
             logger.info(
@@ -1362,9 +1362,9 @@ async def test_url_indexing_e2e(
                     .limit(1)
                 )
                 task_info = await db.fetch_one(select_task_stmt)
-                assert (
-                    task_info is not None
-                ), f"Could not find task for auto-title doc ID {document_db_id}"
+                assert task_info is not None, (
+                    f"Could not find task for auto-title doc ID {document_db_id}"
+                )
                 indexing_task_id = task_info["task_id"]
 
             # Wait for indexing
@@ -1378,12 +1378,12 @@ async def test_url_indexing_e2e(
             # --- Assert: Verify Document Title in DB ---
             async with DatabaseContext(engine=pg_vector_db_engine) as db:
                 doc_record = await storage.get_document_by_id(db, document_db_id)  # type: ignore
-                assert (
-                    doc_record is not None
-                ), f"Document record {document_db_id} not found in DB."
-                assert (
-                    doc_record.title == MOCK_URL_TITLE
-                ), f"Document title was not updated. Expected '{MOCK_URL_TITLE}', got '{doc_record.title}'"
+                assert doc_record is not None, (
+                    f"Document record {document_db_id} not found in DB."
+                )
+                assert doc_record.title == MOCK_URL_TITLE, (
+                    f"Document title was not updated. Expected '{MOCK_URL_TITLE}', got '{doc_record.title}'"
+                )
                 logger.info(f"Verified document title in DB: '{doc_record.title}'")
 
             # --- Assert: Query for the fetched URL content ---
@@ -1406,9 +1406,9 @@ async def test_url_indexing_e2e(
                 if result.get("source_id") != url_doc_source_id:
                     continue
                 # Crucially, check that the title in the query result is the auto-updated one
-                assert (
-                    result.get("title") == MOCK_URL_TITLE
-                ), f"Query result title mismatch. Expected '{MOCK_URL_TITLE}', got '{result.get('title')}'"
+                assert result.get("title") == MOCK_URL_TITLE, (
+                    f"Query result title mismatch. Expected '{MOCK_URL_TITLE}', got '{result.get('title')}'"
+                )
 
                 if (
                     result.get("embedding_source_content")
@@ -1420,9 +1420,9 @@ async def test_url_indexing_e2e(
                         f"Found targeted URL chunk 1 with auto-updated title: {result}"
                     )
 
-            assert (
-                found_chunk_1
-            ), "Expected URL chunk 1 not found in query results for auto-title test."
+            assert found_chunk_1, (
+                "Expected URL chunk 1 not found in query results for auto-title test."
+            )
 
             logger.info("--- URL Indexing E2E Test (Auto Title) via API Passed ---")
 

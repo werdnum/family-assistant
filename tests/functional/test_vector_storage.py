@@ -179,9 +179,9 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
         )
 
         assert query_results is not None, "query_vector_store returned None"
-        assert (
-            len(query_results) > 0
-        ), "No results returned from vector store query"  # Updated assertion message
+        assert len(query_results) > 0, (
+            "No results returned from vector store query"
+        )  # Updated assertion message
         logger.info(f"Query returned {len(query_results)} result(s).")
 
         # Find the result corresponding to our document
@@ -192,9 +192,9 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
                 found_result = result_dict  # Assign the dict directly
                 break
 
-        assert (
-            found_result is not None
-        ), f"Added document (ID: {doc_id}) not found in query results"
+        assert found_result is not None, (
+            f"Added document (ID: {doc_id}) not found in query results"
+        )
         logger.info(f"Found matching result: {found_result}")
 
         # Check distance (should be very close to 0 for exact match)
@@ -202,9 +202,9 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
         # Handle potential None distance if query somehow failed internally but returned row
         distance = found_result.get("distance")
         assert distance is not None, "Distance is None in the result"
-        assert distance == pytest.approx(
-            0.0, abs=1e-6
-        ), f"Distance should be near zero for exact match, but was {distance}"
+        assert distance == pytest.approx(0.0, abs=1e-6), (
+            f"Distance should be near zero for exact match, but was {distance}"
+        )
 
         # Check other fields in the result (which is now a dict)
         assert found_result.get("embedding_type") == test_embedding_type
@@ -222,9 +222,9 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
             db, test_source_id
         )
 
-        assert (
-            retrieved_doc is not None
-        ), f"Document not retrieved by source ID '{test_source_id}'"
+        assert retrieved_doc is not None, (
+            f"Document not retrieved by source ID '{test_source_id}'"
+        )
         logger.info(f"Retrieved document: {retrieved_doc}")
 
         # Verify retrieved document matches original data
@@ -241,27 +241,27 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         logger.info(f"Deleting document with ID: {doc_id}...")
         deleted = await delete_document(db, doc_id)
-        assert (
-            deleted is True
-        ), f"delete_document did not return True for existing ID {doc_id}"
+        assert deleted is True, (
+            f"delete_document did not return True for existing ID {doc_id}"
+        )
         logger.info("Document deleted.")
 
     # --- Assert: Verify Deletion ---
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         logger.info(f"Verifying document deletion by source ID: {test_source_id}...")
         retrieved_doc_after_delete = await get_document_by_source_id(db, test_source_id)
-        assert (
-            retrieved_doc_after_delete is None
-        ), "Document was found after it should have been deleted"
+        assert retrieved_doc_after_delete is None, (
+            "Document was found after it should have been deleted"
+        )
 
         # Optional: Verify embeddings are also gone (due to CASCADE)
         # This requires querying the document_embeddings table directly
         stmt = "SELECT COUNT(*) FROM document_embeddings WHERE document_id = :doc_id"
         result = await db.execute_with_retry(text(stmt), {"doc_id": doc_id})
         count = result.scalar_one()
-        assert (
-            count == 0
-        ), f"Embeddings for document ID {doc_id} were found after deletion"
+        assert count == 0, (
+            f"Embeddings for document ID {doc_id} were found after deletion"
+        )
         logger.info("Verified document and embeddings are deleted.")
 
     logger.info("--- Vector Storage Basic Flow Test Passed ---")
@@ -370,20 +370,20 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
         # --- Assert ---
         assert tool_result is not None, "Tool execution returned None"
         assert isinstance(tool_result, str), "Tool result should be a string"
-        assert (
-            "Error:" not in tool_result
-        ), f"Tool execution reported an error: {tool_result}"
-        assert (
-            "Found relevant documents:" in tool_result
-        ), "Tool result preamble missing"
+        assert "Error:" not in tool_result, (
+            f"Tool execution reported an error: {tool_result}"
+        )
+        assert "Found relevant documents:" in tool_result, (
+            "Tool result preamble missing"
+        )
         assert test_title in tool_result, "Document title not found in tool result"
-        assert (
-            test_source_type in tool_result
-        ), "Document source type not found in tool result"
+        assert test_source_type in tool_result, (
+            "Document source type not found in tool result"
+        )
         # Check for part of the snippet (tool truncates)
-        assert (
-            test_content[:50] in tool_result
-        ), "Document snippet not found in tool result"
+        assert test_content[:50] in tool_result, (
+            "Document snippet not found in tool result"
+        )
 
     # --- Cleanup: Verify document deletion (optional, relies on fixture) ---
     # Add verification if fixture doesn't guarantee cleanup or if explicit check is desired

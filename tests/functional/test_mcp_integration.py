@@ -174,15 +174,13 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
                 "type": "function",
                 "function": {
                     "name": MCP_TIME_TOOL_NAME,
-                    "arguments": json.dumps(
-                        {
-                            "time": (
-                                SOURCE_TIME
-                            ),  # Argument name from mcp-server-time docs
-                            "source_timezone": SOURCE_TZ,
-                            "target_timezone": TARGET_TZ,
-                        }
-                    ),
+                    "arguments": json.dumps({
+                        "time": (
+                            SOURCE_TIME
+                        ),  # Argument name from mcp-server-time docs
+                        "source_timezone": SOURCE_TZ,
+                        "target_timezone": TARGET_TZ,
+                    }),
                 },
             }
         ],
@@ -292,9 +290,9 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
     logger.info(f"Final response content received (stdio): {generated_turn_messages}")
 
     # Verify success and extract final message content
-    assert (
-        processing_error_traceback is None
-    ), f"Processing error: {processing_error_traceback}"
+    assert processing_error_traceback is None, (
+        f"Processing error: {processing_error_traceback}"
+    )
     assert generated_turn_messages is not None
     assert len(generated_turn_messages) > 0, "No messages generated during the turn"
 
@@ -307,19 +305,19 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
         ),
         None,
     )
-    assert (
-        final_assistant_message is not None
-    ), "No final assistant message with content found"
+    assert final_assistant_message is not None, (
+        "No final assistant message with content found"
+    )
     sent_text = final_assistant_message["content"]
 
     # Assertions on the final message content
-    assert (
-        EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-    ), f"Final response (stdio) did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, (
+        f"Final response (stdio) did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    )
 
-    assert (
-        final_response_text in sent_text
-    ), f"Final response did not match the mock LLM's final rule output. Sent: '{sent_text}' Expected: '{final_response_text}'"
+    assert final_response_text in sent_text, (
+        f"Final response did not match the mock LLM's final rule output. Sent: '{sent_text}' Expected: '{final_response_text}'"
+    )
 
     logger.info(
         f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called and result contained expected fragment."
@@ -495,9 +493,9 @@ async def test_mcp_time_conversion_sse(
     logger.info(f"Final response content received (SSE): {generated_turn_messages}")
 
     # Verify success and extract final message content
-    assert (
-        processing_error_traceback is None
-    ), f"Processing error: {processing_error_traceback}"
+    assert processing_error_traceback is None, (
+        f"Processing error: {processing_error_traceback}"
+    )
     assert generated_turn_messages is not None
     assert len(generated_turn_messages) > 0, "No messages generated during the turn"
 
@@ -510,22 +508,22 @@ async def test_mcp_time_conversion_sse(
         ),
         None,
     )
-    assert (
-        final_assistant_message is not None
-    ), "No final assistant message with content found"
+    assert final_assistant_message is not None, (
+        "No final assistant message with content found"
+    )
     sent_text = final_assistant_message["content"]
 
-    assert (
-        EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-    ), f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, (
+        f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    )
     # Assertions on the final message content
-    assert (
-        EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text
-    ), f"Final response (SSE) did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, (
+        f"Final response (SSE) did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    )
 
-    assert (
-        final_response_text in sent_text
-    ), f"Final response did not match the mock LLM's final rule output (SSE). Sent: '{sent_text}' Expected: '{final_response_text}'"
+    assert final_response_text in sent_text, (
+        f"Final response did not match the mock LLM's final rule output (SSE). Sent: '{sent_text}' Expected: '{final_response_text}'"
+    )
     logger.info(
         f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and final response contained expected fragment."
     )

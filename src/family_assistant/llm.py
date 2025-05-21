@@ -365,21 +365,20 @@ class LiteLLMClient:
                         os.getenv("GEMINI_API_KEY"),
                     )
                     logger.info(f"File uploaded to Gemini, ID: {gemini_file_obj.id}")
-                    user_content_parts.append(
-                        {"type": "text", "text": actual_prompt_text}
-                    )
-                    user_content_parts.append(
-                        {
-                            "type": "file",
-                            "file": {
-                                "file_id": gemini_file_obj.id,
-                                "filename": os.path.basename(
-                                    file_path
-                                ),  # Consistent filename
-                                "format": mime_type,  # Use provided mime_type
-                            },
-                        }
-                    )
+                    user_content_parts.append({
+                        "type": "text",
+                        "text": actual_prompt_text,
+                    })
+                    user_content_parts.append({
+                        "type": "file",
+                        "file": {
+                            "file_id": gemini_file_obj.id,
+                            "filename": os.path.basename(
+                                file_path
+                            ),  # Consistent filename
+                            "format": mime_type,  # Use provided mime_type
+                        },
+                    })
                 except Exception as e:
                     logger.error(
                         f"Failed to upload file to Gemini or construct message: {e}. Falling back to base64/text.",
@@ -397,25 +396,28 @@ class LiteLLMClient:
                             image_bytes = await f.read()
                         encoded_image = base64.b64encode(image_bytes).decode("utf-8")
                         image_url = f"data:{mime_type};base64,{encoded_image}"
-                        user_content_parts.append(
-                            {"type": "text", "text": actual_prompt_text}
-                        )
-                        user_content_parts.append(
-                            {"type": "image_url", "image_url": {"url": image_url}}
-                        )
+                        user_content_parts.append({
+                            "type": "text",
+                            "text": actual_prompt_text,
+                        })
+                        user_content_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": image_url},
+                        })
                     except Exception as e:
                         logger.error(
                             f"Failed to read/encode image {file_path}: {e}",
                             exc_info=True,
                         )
-                        user_content_parts.append(
-                            {"type": "text", "text": actual_prompt_text}
-                        )  # Fallback to text
+                        user_content_parts.append({
+                            "type": "text",
+                            "text": actual_prompt_text,
+                        })  # Fallback to text
                 elif mime_type.startswith("text/"):
                     try:
-                        async with aiofiles.open(
-                            file_path, encoding="utf-8"
-                        ) as f:  # Changed from "r" to "rb" for consistency, but text files should be "r"
+                        async with (
+                            aiofiles.open(file_path, encoding="utf-8") as f
+                        ):  # Changed from "r" to "rb" for consistency, but text files should be "r"
                             file_text_content = await f.read()
                         combined_text = f"{actual_prompt_text}\n\n--- File Content ---\n{file_text_content}"
                         if max_text_length and len(combined_text) > max_text_length:
@@ -423,16 +425,18 @@ class LiteLLMClient:
                                 f"Truncating combined text from {len(combined_text)} to {max_text_length} chars."
                             )
                             combined_text = combined_text[:max_text_length]
-                        user_content_parts.append(
-                            {"type": "text", "text": combined_text}
-                        )
+                        user_content_parts.append({
+                            "type": "text",
+                            "text": combined_text,
+                        })
                     except Exception as e:
                         logger.error(
                             f"Failed to read text file {file_path}: {e}", exc_info=True
                         )
-                        user_content_parts.append(
-                            {"type": "text", "text": actual_prompt_text}
-                        )  # Fallback to text
+                        user_content_parts.append({
+                            "type": "text",
+                            "text": actual_prompt_text,
+                        })  # Fallback to text
                 else:  # Other file types
                     logger.warning(
                         f"File type {mime_type} for {file_path} not specifically handled for image/text. "
@@ -443,12 +447,14 @@ class LiteLLMClient:
                             file_bytes = await f_bytes_io.read()
                         encoded_file_data = base64.b64encode(file_bytes).decode("utf-8")
                         file_data_uri = f"data:{mime_type};base64,{encoded_file_data}"
-                        user_content_parts.append(
-                            {"type": "text", "text": actual_prompt_text}
-                        )
-                        user_content_parts.append(
-                            {"type": "file", "file": {"file_data": file_data_uri}}
-                        )
+                        user_content_parts.append({
+                            "type": "text",
+                            "text": actual_prompt_text,
+                        })
+                        user_content_parts.append({
+                            "type": "file",
+                            "file": {"file_data": file_data_uri},
+                        })
                         logger.info(
                             f"Prepared generic file {file_path} as base64 data URI for LLM."
                         )
@@ -457,9 +463,10 @@ class LiteLLMClient:
                             f"Failed to read/encode generic file {file_path} as base64: {e}",
                             exc_info=True,
                         )
-                        user_content_parts.append(
-                            {"type": "text", "text": actual_prompt_text}
-                        )  # Fallback to text
+                        user_content_parts.append({
+                            "type": "text",
+                            "text": actual_prompt_text,
+                        })  # Fallback to text
 
         elif prompt_text:  # Only text prompt provided
             text_to_send = prompt_text

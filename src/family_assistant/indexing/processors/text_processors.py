@@ -136,14 +136,12 @@ class TextChunker(ContentProcessor):
                     chunks = self._chunk_text_natively(item.content)
                     for i, chunk_text in enumerate(chunks):
                         chunk_metadata = item.metadata.copy()
-                        chunk_metadata.update(
-                            {
-                                "chunk_index": i,
-                                "original_embedding_type": item.embedding_type,
-                                "original_content_length": len(item.content),
-                                "chunk_content_length": len(chunk_text),
-                            }
-                        )
+                        chunk_metadata.update({
+                            "chunk_index": i,
+                            "original_embedding_type": item.embedding_type,
+                            "original_content_length": len(item.content),
+                            "chunk_content_length": len(chunk_text),
+                        })
                         # Determine output embedding type using the map
                         output_embedding_type = self.embedding_type_prefix_map.get(
                             item.embedding_type, f"{item.embedding_type}_chunk"

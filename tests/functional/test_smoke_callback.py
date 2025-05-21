@@ -94,12 +94,10 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
                 "type": "function",
                 "function": {
                     "name": "schedule_future_callback",
-                    "arguments": json.dumps(
-                        {
-                            "callback_time": callback_time_iso,
-                            "context": CALLBACK_CONTEXT,
-                        }
-                    ),
+                    "arguments": json.dumps({
+                        "callback_time": callback_time_iso,
+                        "context": CALLBACK_CONTEXT,
+                    }),
                 },
             }
         ],
@@ -260,9 +258,9 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     assert sent_text is not None
     # Check if the *mock's* expected response content is in the sent text
     # Note: handle_llm_callback formats the response, so we check the raw content from the mock rule
-    assert (
-        CALLBACK_CONTEXT in sent_text
-    ), f"Final message sent by bot did not contain expected mock response. Sent: '{sent_text}' Expected fragment: '{CALLBACK_CONTEXT}'"
+    assert CALLBACK_CONTEXT in sent_text, (
+        f"Final message sent by bot did not contain expected mock response. Sent: '{sent_text}' Expected fragment: '{CALLBACK_CONTEXT}'"
+    )
     logger.info(
         "Verified mock_bot.send_message was called with the expected final response."
     )
