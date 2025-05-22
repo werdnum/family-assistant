@@ -133,28 +133,164 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     """
     # 1. Code Defaults
     config_data: dict[str, Any] = {
+        # --- Top-level application-wide settings & secrets placeholders ---
         "telegram_token": None,
         "openrouter_api_key": None,
-        "gemini_api_key": None,  # For direct Gemini usage
+        "gemini_api_key": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "openrouter/google/gemini-2.5-pro-preview-03-25",  # Default model
-        "embedding_model": (
-            "gemini/gemini-embedding-exp-03-07"
-        ),  # Default embedding model
-        "embedding_dimensions": 1536,  # Default dimension
-        "timezone": "UTC",
-        "database_url": "sqlite+aiosqlite:///family_assistant.db",  # Default DB
-        "max_history_messages": 5,
-        "history_max_age_hours": 24,
+        "model": "openrouter/google/gemini-2.5-pro-preview-03-25",
+        "embedding_model": "gemini/gemini-embedding-exp-03-07",
+        "embedding_dimensions": 1536,
+        "database_url": "sqlite+aiosqlite:///family_assistant.db",
         "litellm_debug": False,
-        "calendar_config": {},
-        "llm_parameters": {},
-        "prompts": {},
-        "tools_requiring_confirmation": [],  # Default empty list
-        "mcp_config": {"mcpServers": {}},  # Default empty MCP config
-        "server_url": "http://localhost:8000",  # Default server URL
-        "document_storage_path": "/mnt/data/files",  # Default document storage path
+        "server_url": "http://localhost:8000",
+        "document_storage_path": "/mnt/data/files",
+        "attachment_storage_path": "/mnt/data/mailbox/attachments",
+        "llm_parameters": {},  # Global LLM parameters
+        "mcp_config": {"mcpServers": {}},  # Global MCP server definitions
+        "indexing_pipeline_config": {  # Global indexing pipeline config
+            "processors": [
+                {"type": "TitleExtractor"},
+                {"type": "PDFTextExtractor"},
+                {
+                    "type": "LLMPrimaryLinkExtractor",
+                    "config": {
+                        "input_content_types": ["raw_body_text"],
+                        "target_embedding_type": "raw_url",
+                    },
+                },
+                {"type": "WebFetcher"},
+                {
+                    "type": "LLMSummaryGenerator",
+                    "config": {
+                        "input_content_types": [
+                            "original_document_file",
+                            "raw_body_text",
+                            "extracted_markdown_content",
+                            "fetched_content_markdown",
+                        ],
+                        "target_embedding_type": "llm_generated_summary",
+                    },
+                },
+                {
+                    "type": "TextChunker",
+                    "config": {
+                        "chunk_size": 1000,
+                        "chunk_overlap": 100,
+                        "embedding_type_prefix_map": {
+                            "raw_body_text": "content_chunk",
+                            "raw_file_text": "content_chunk",
+                            "extracted_markdown_content": "content_chunk",
+                            "fetched_content_markdown": "content_chunk",
+                        },
+                    },
+                },
+                {
+                    "type": "EmbeddingDispatch",
+                    "config": {
+                        "embedding_types_to_dispatch": [
+                            "title",
+                            "content_chunk",
+                            "llm_generated_summary",
+                        ]
+                    },
+                },
+            ]
+        },
+        # --- Default Service Profile Settings ---
+        "default_profile_settings": {
+            "processing_config": {
+                "prompts": {},  # Populated from prompts.yaml
+                "calendar_config": {},  # Populated from CALDAV_*/ICAL_URLS env vars
+                "timezone": "UTC",
+                "max_history_messages": 5,
+                "history_max_age_hours": 24,
+            },
+            "tools_config": {
+                # enable_local_tools and enable_mcp_server_ids are implicitly "all available"
+                # for the default profile in the current setup.
+                # Explicit lists can be added to config.yaml later if needed.
+                "confirm_tools": [],  # Default empty; overridden by config.yaml or env var
+            },
+        },
+    }
+    logger.info("Initialized config with code defaults.")
+
+    # 2. Load config.yaml
+    try:
+        with open(config_file_path, encoding="utf-8") as f:
+            yaml_config = yaml.safe_load(f)
+            if isinstance(yaml_config, dict):
+                # Merge YAML config. For nested dicts like default_profile_settings,
+                # this needs to be a deep merge if we want to overlay.
+                # For now, a simple update might mostly work if YAML defines full structures.
+                # A more robust merge function would be better for partial overrides in YAML.
+                # config_data.update(yaml_config) # Simple top-level merge
+
+                # Manual deep merge for relevant sections for now
+                for key, value in yaml_config.items():
+                    if key == "default_profile_settings" and isinstance(value, dict) and isinstance(config_data.get(key), dict):
+                        # Deep merge for processing_config
+                        if "processing_config" in value and isinstance(value["processing_config"], dict):
+                            config_data[key].setdefault("processing_config", {}).update(value["processing_config"])
+                        # Deep merge for tools_config
+                        if "tools_config" in value and isinstance(value["tools_config"], dict):
+                            config_data[key].setdefault("tools_config", {}).update(value["tools_config"])
+                        # For other keys within default_profile_settings, direct update
+                        for sub_key, sub_value in value.items():
+                            if sub_key not in ["processing_config", "tools_config"]:
+                                config_data[key][sub_key] = sub_value
+                    elif key in config_data and isinstance(value, dict) and isinstance(config_data[key], dict):
+                        config_data[key].update(value) # Merge other top-level dicts
+                    else:
+                        config_data[key] = value # Replace other top-level keys
+
+                logger.info(f"Loaded and merged configuration from {config_file_path}")
+            else:
+                logger.warning(
+                    f"Config file {config_file_path} is not a valid dictionary. Ignoring."
+                )
+    except FileNotFoundError:
+        logger.warning(f"{config_file_path} not found. Using default configurations.")
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing {config_file_path}: {e}. Using previous defaults.")
+
+    # 3. Load Environment Variables (overriding config file)
+    load_dotenv()  # Load .env file if present
+
+    # Secrets (should ONLY come from env)
+    config_data["telegram_token"] = os.getenv(
+        "TELEGRAM_BOT_TOKEN", config_data["telegram_token"]
+    )
+    # Allow API keys to be None if not set in env, they are validated later
+    config_data["openrouter_api_key"] = os.getenv(
+        "OPENROUTER_API_KEY", config_data.get("openrouter_api_key")
+    )
+    config_data["gemini_api_key"] = os.getenv(
+        "GEMINI_API_KEY", config_data.get("gemini_api_key")
+    )
+    config_data["database_url"] = os.getenv("DATABASE_URL", config_data["database_url"])
+
+    # Other Env Vars
+    config_data["model"] = os.getenv("LLM_MODEL", config_data["model"])
+    config_data["embedding_model"] = os.getenv(
+        "EMBEDDING_MODEL", config_data["embedding_model"]
+    )
+    config_data["embedding_dimensions"] = int(
+        os.getenv("EMBEDDING_DIMENSIONS", str(config_data["embedding_dimensions"]))
+    )
+    # --- Target nested config for profile-specific settings ---
+    profile_proc_config = config_data["default_profile_settings"]["processing_config"]
+    profile_tools_config = config_data["default_profile_settings"]["tools_config"]
+
+    profile_proc_config["timezone"] = os.getenv(
+        "TIMEZONE", profile_proc_config["timezone"]
+    )
+    config_data["server_url"] = os.getenv(
+        "SERVER_URL", config_data["server_url"]
+    )  # Load SERVER_URL
+    config_data["document_storage_path"] = os.getenv(
         "attachment_storage_path": (
             "/mnt/data/mailbox/attachments"
         ),  # Default attachment storage path
@@ -291,12 +427,13 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     tools_confirm_str_env = os.getenv("TOOLS_REQUIRING_CONFIRMATION")
     if tools_confirm_str_env is not None:  # Only override if env var is explicitly set
         # Override the list loaded from config.yaml
-        config_data["tools_requiring_confirmation"] = [
+        profile_tools_config["confirm_tools"] = [
             tool.strip() for tool in tools_confirm_str_env.split(",") if tool.strip()
         ]
-        logger.info("Loaded tools requiring confirmation from environment variable.")
+        logger.info("Loaded tools requiring confirmation from environment variable into profile.")
 
     # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
+    # This will populate default_profile_settings.processing_config.calendar_config
     caldav_user_env = os.getenv("CALDAV_USERNAME")
     caldav_pass_env = os.getenv("CALDAV_PASSWORD")
     caldav_urls_str_env = os.getenv("CALDAV_CALENDAR_URLS")
@@ -323,41 +460,41 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             temp_calendar_config["ical"] = {"urls": ical_urls_env}
             logger.info("Loaded iCal config from environment variables.")
 
-    # Only update calendar_config if env vars provided valid config
+    # Only update profile's calendar_config if env vars provided valid config
     if temp_calendar_config:
-        config_data["calendar_config"] = temp_calendar_config
-    elif not config_data.get("calendar_config"):  # If no config from yaml either
+        profile_proc_config["calendar_config"] = temp_calendar_config
+    elif not profile_proc_config.get("calendar_config"):  # If no config from yaml either
         logger.warning(
-            "No calendar sources configured in config file or environment variables."
+            "No calendar sources configured for default profile in config file or environment variables."
         )
 
-    # Validate Timezone
+    # Validate Timezone in the profile
     try:
-        zoneinfo.ZoneInfo(config_data["timezone"])
+        zoneinfo.ZoneInfo(profile_proc_config["timezone"])
     except zoneinfo.ZoneInfoNotFoundError:
         logger.error(
-            f"Invalid timezone '{config_data['timezone']}'. Defaulting to UTC."
+            f"Invalid timezone '{profile_proc_config['timezone']}' in profile. Defaulting to UTC."
         )
-        config_data["timezone"] = "UTC"
+        profile_proc_config["timezone"] = "UTC"
 
     # 4. Load other config files (Prompts, MCP)
-    # Load prompts from YAML file
+    # Load prompts from YAML file into the profile's prompts
     try:
         with open("prompts.yaml", encoding="utf-8") as f:
             loaded_prompts = yaml.safe_load(f)
             if isinstance(loaded_prompts, dict):
-                config_data["prompts"] = loaded_prompts  # Store in config dict
-                logger.info("Successfully loaded prompts from prompts.yaml")
+                profile_proc_config["prompts"] = loaded_prompts
+                logger.info("Successfully loaded prompts from prompts.yaml into profile.")
             else:
                 logger.error(
                     "Failed to load prompts: prompts.yaml is not a valid dictionary."
                 )
     except FileNotFoundError:
-        logger.error("prompts.yaml not found. Using default prompt structures.")
+        logger.error("prompts.yaml not found. Profile using default prompt structures.")
     except yaml.YAMLError as e:
-        logger.error(f"Error parsing prompts.yaml: {e}")
+        logger.error(f"Error parsing prompts.yaml for profile: {e}")
 
-    # Load MCP config from JSON file
+    # Load MCP config from JSON file (remains top-level in config_data)
     mcp_config_path = "mcp_config.json"
     try:
         with open(mcp_config_path, encoding="utf-8") as f:
@@ -403,15 +540,18 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             "openrouter_api_key",
             "gemini_api_key",
             "database_url",
-        ]  # Exclude secrets
+        ]  # Exclude top-level secrets
     })
-    if (
-        "calendar_config" in loggable_config
-        and "caldav" in loggable_config["calendar_config"]
-    ):
-        loggable_config["calendar_config"]["caldav"].pop(
-            "password", None
-        )  # Remove password before logging
+    # Also exclude password from calendar_config within default_profile_settings
+    if "default_profile_settings" in loggable_config:
+        profile_log_config = loggable_config["default_profile_settings"]
+        if (
+            "processing_config" in profile_log_config and
+            "calendar_config" in profile_log_config["processing_config"] and
+            "caldav" in profile_log_config["processing_config"]["calendar_config"]
+        ):
+            profile_log_config["processing_config"]["calendar_config"]["caldav"].pop("password", None)
+
     logger.info(
         f"Final configuration loaded (excluding secrets): {json.dumps(loggable_config, indent=2, default=str)}"
     )
@@ -639,34 +779,32 @@ async def main_async(
         await storage.init_vector_db(db_ctx)  # Initialize vector specific parts
 
     # --- Instantiate Tool Providers ---
+    # For the default profile, we assume all local tools and all MCP servers from mcp_config are enabled.
+    # This logic will be refined when multiple profiles are fully implemented.
+
     # Scan for documentation files and update the relevant tool definition
     available_doc_files = _scan_user_docs()
     formatted_doc_list = ", ".join(available_doc_files) or "None"
-    updated_local_tools_definition = copy.deepcopy(
-        local_tools_definition
-    )  # Avoid modifying original
+    updated_local_tools_definition = copy.deepcopy(local_tools_definition)
     for tool_def in updated_local_tools_definition:
         if tool_def.get("function", {}).get("name") == "get_user_documentation_content":
             try:
-                tool_def["function"]["description"] = tool_def["function"][
-                    "description"
-                ].format(available_doc_files=formatted_doc_list)
-                logger.info(
-                    f"Updated 'get_user_documentation_content' description with files: {formatted_doc_list}"
-                )
+                tool_def["function"]["description"] = tool_def["function"]["description"].format(available_doc_files=formatted_doc_list)
+                logger.info(f"Updated 'get_user_documentation_content' description with files: {formatted_doc_list}")
             except KeyError as e:
-                logger.error(
-                    f"Failed to format documentation tool description: {e}",
-                    exc_info=True,
-                )
+                logger.error(f"Failed to format documentation tool description: {e}", exc_info=True)
+
+    # Get calendar_config for the default profile
+    default_profile_calendar_config = config["default_profile_settings"]["processing_config"]["calendar_config"]
+
     local_provider = LocalToolsProvider(
-        definitions=updated_local_tools_definition,  # Use the updated list
+        definitions=updated_local_tools_definition,
         implementations=local_tool_implementations,
         embedding_generator=embedding_generator,
-        calendar_config=config["calendar_config"],  # Get from config dict
+        calendar_config=default_profile_calendar_config, # Use profile's calendar_config
     )
-    # Instantiate MCP provider, passing the server configs from the main config
-    # It will connect on first use (e.g., when get_tool_definitions is called)
+
+    # MCP provider uses the global mcp_config
     mcp_provider = MCPToolsProvider(
         mcp_server_configs=config.get("mcp_config", {}).get("mcpServers", {}),
     )
@@ -687,20 +825,16 @@ async def main_async(
         ) from provider_err
 
     # --- Wrap with Confirming Provider ---
-    # Retrieve the list of tools requiring confirmation from the loaded config
-    confirm_tool_names = set(config.get("tools_requiring_confirmation", []))
-    logger.info(f"Tools configured to require confirmation: {confirm_tool_names}")
+    # Retrieve the list of tools requiring confirmation from the default profile's config
+    default_profile_confirm_tools = set(config["default_profile_settings"]["tools_config"].get("confirm_tools", []))
+    logger.info(f"Tools configured to require confirmation for default profile: {default_profile_confirm_tools}")
 
-    confirming_provider = (
-        ConfirmingToolsProvider(  # Use the imported class name directly
-            wrapped_provider=composite_provider,
-            tools_requiring_confirmation=confirm_tool_names,  # Pass the set from config
-            calendar_config=config[
-                "calendar_config"
-            ],  # Pass calendar config for detail fetching
-        )
+    confirming_provider = ConfirmingToolsProvider(
+        wrapped_provider=composite_provider,
+        tools_requiring_confirmation=default_profile_confirm_tools, # Use profile's list
+        calendar_config=default_profile_calendar_config, # Pass profile's calendar config
     )
-    # Ensure the confirming provider loads its definitions (identifies tools needing confirmation)
+    # Ensure the confirming provider loads its definitions
     tool_definitions = await confirming_provider.get_tool_definitions()
     logger.info("ConfirmingToolsProvider initialized and definitions loaded.")
 
@@ -716,40 +850,43 @@ async def main_async(
     logger.info("Stored ToolsProvider instance in FastAPI app state.")
 
     # --- Instantiate Context Providers ---
+    # These will use settings from the default profile's processing_config
+    default_profile_proc_config = config["default_profile_settings"]["processing_config"]
+
     notes_provider = NotesContextProvider(
-        get_db_context_func=get_db_context,  # Pass the factory function
-        prompts=config["prompts"],
+        get_db_context_func=get_db_context,
+        prompts=default_profile_proc_config["prompts"],
     )
     calendar_provider = CalendarContextProvider(
-        calendar_config=config["calendar_config"],
-        timezone_str=config["timezone"],
-        prompts=config["prompts"],
+        calendar_config=default_profile_proc_config["calendar_config"],
+        timezone_str=default_profile_proc_config["timezone"],
+        prompts=default_profile_proc_config["prompts"],
     )
-    # List of all active context providers
+    # List of all active context providers for the default profile
     all_context_providers = [notes_provider, calendar_provider]
     logger.info(
         f"Initialized {len(all_context_providers)} context providers: {[p.name for p in all_context_providers]}"
     )
 
-    # --- Instantiate Processing Service ---
-    # Create the specific configuration bundle for this service instance
-    service_profile_config = ProcessingServiceConfig(
-        prompts=config["prompts"],
-        calendar_config=config["calendar_config"],
-        timezone_str=config["timezone"],
-        max_history_messages=config["max_history_messages"],
-        history_max_age_hours=config["history_max_age_hours"],
+    # --- Instantiate Processing Service for the Default Profile ---
+    # Create the ProcessingServiceConfig using values from default_profile_settings
+    default_service_config = ProcessingServiceConfig(
+        prompts=default_profile_proc_config["prompts"],
+        calendar_config=default_profile_proc_config["calendar_config"],
+        timezone_str=default_profile_proc_config["timezone"],
+        max_history_messages=default_profile_proc_config["max_history_messages"],
+        history_max_age_hours=default_profile_proc_config["history_max_age_hours"],
     )
 
     processing_service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=confirming_provider,  # Use the confirming provider wrapper
-        service_config=service_profile_config,  # Pass the bundled config
-        context_providers=all_context_providers,  # Pass the list of providers
-        server_url=config["server_url"],
-        app_config=config,  # Pass the main/global config dictionary
+        tools_provider=confirming_provider, # Tools stack for the default profile
+        service_config=default_service_config, # Config for the default profile
+        context_providers=all_context_providers, # Context providers for the default profile
+        server_url=config["server_url"], # Global server URL
+        app_config=config,  # Pass the main/global config dictionary (for now)
     )
-    logger.info("ProcessingService initialized with configuration.")
+    logger.info("Default ProcessingService initialized with its profile configuration.")
 
     # --- Instantiate Scraper ---
     # For now, PlaywrightScraper is instantiated directly.
@@ -819,11 +956,11 @@ async def main_async(
         )
 
     task_worker_instance = TaskWorker(
-        processing_service=processing_service,
+        processing_service=processing_service, # Default profile's processing service
         application=telegram_service.application,
-        calendar_config=config["calendar_config"],
-        timezone_str=config["timezone"],
-        embedding_generator=embedding_generator,  # Pass the generator
+        calendar_config=default_profile_proc_config["calendar_config"], # Use profile's config
+        timezone_str=default_profile_proc_config["timezone"], # Use profile's config
+        embedding_generator=embedding_generator,
     )
 
     # --- Register Task Handlers with the Worker Instance ---
