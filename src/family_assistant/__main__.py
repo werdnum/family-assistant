@@ -47,7 +47,7 @@ from family_assistant.llm import (
 )
 
 # Import the ProcessingService and LLM interface/clients
-from family_assistant.processing import ProcessingService
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import storage functions
 # Import facade for primary access
@@ -732,19 +732,22 @@ async def main_async(
     )
 
     # --- Instantiate Processing Service ---
-    processing_service = ProcessingService(
-        llm_client=llm_client,
-        tools_provider=confirming_provider,  # Use the confirming provider wrapper
+    # Create the specific configuration bundle for this service instance
+    service_profile_config = ProcessingServiceConfig(
         prompts=config["prompts"],
-        context_providers=all_context_providers,  # Pass the list of providers
-        calendar_config=config[
-            "calendar_config"
-        ],  # Still pass calendar_config for ToolExecutionContext
+        calendar_config=config["calendar_config"],
         timezone_str=config["timezone"],
         max_history_messages=config["max_history_messages"],
         history_max_age_hours=config["history_max_age_hours"],
+    )
+
+    processing_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=confirming_provider,  # Use the confirming provider wrapper
+        service_config=service_profile_config,  # Pass the bundled config
+        context_providers=all_context_providers,  # Pass the list of providers
         server_url=config["server_url"],
-        app_config=config,  # Pass the main config dictionary
+        app_config=config,  # Pass the main/global config dictionary
     )
     logger.info("ProcessingService initialized with configuration.")
 
