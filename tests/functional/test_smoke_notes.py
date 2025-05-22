@@ -167,20 +167,25 @@ async def test_add_and_retrieve_note_rule_mock(
         prompts=dummy_prompts,
     )
 
+    # --- Create ServiceConfig ---
+    service_config = {
+        "prompts": dummy_prompts,
+        "calendar_config": dummy_calendar_config,
+        "timezone_str": dummy_timezone_str,
+        "max_history_messages": dummy_max_history,
+        "history_max_age_hours": dummy_history_age,
+        "server_url": None,
+        "app_config": dummy_app_config,
+    }
+
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
-        prompts=dummy_prompts,
-        calendar_config=dummy_calendar_config,
-        timezone_str=dummy_timezone_str,
-        max_history_messages=dummy_max_history,
         context_providers=[notes_provider],  # Pass the notes provider
-        history_max_age_hours=dummy_history_age,
-        server_url=None,  # Added missing argument
-        app_config=dummy_app_config,  # Pass dummy app_config
+        service_config=service_config,  # Pass the config object
     )
     logger.info(
-        f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__} and dummy config"
+        f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__} and service_config"
     )
 
     # Mock Application instance needed for ToolExecutionContext
