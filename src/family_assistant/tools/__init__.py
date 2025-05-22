@@ -1328,6 +1328,7 @@ class LocalToolsProvider:
             needs_exec_context = False
             needs_db_context = False
             needs_embedding_generator = False
+            needs_calendar_config = False  # Added flag
 
             for param_name, param in sig.parameters.items():
                 # Check if the function expects the full context object
@@ -1340,6 +1341,8 @@ class LocalToolsProvider:
                     and param_name == "embedding_generator"
                 ):
                     needs_embedding_generator = True
+                elif param_name == "calendar_config" and param.annotation == dict[str, Any]:  # Check for calendar_config
+                    needs_calendar_config = True
 
             # Inject dependencies based on flags
             # Always check for exec_context first
@@ -1357,6 +1360,14 @@ class LocalToolsProvider:
                         f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider."
                     )
                     return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
+            if needs_calendar_config:  # Added injection logic
+                if self._calendar_config:
+                    call_args["calendar_config"] = self._calendar_config
+                else:
+                    logger.error(
+                        f"Tool '{name}' requires a calendar_config, but none was provided to LocalToolsProvider."
+                    )
+                    return f"Error: Tool '{name}' cannot be executed because the calendar_config is missing."
 
             # Clean up arguments not expected by the function signature
             # (Ensures we don't pass exec_context if only db_context was needed, etc.)
