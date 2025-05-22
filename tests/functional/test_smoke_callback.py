@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm import LLMInterface, LLMOutput
-from family_assistant.processing import ProcessingService
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import necessary components from the application
 from family_assistant.storage.context import DatabaseContext
@@ -154,19 +154,18 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     dummy_history_age = 24
     dummy_app_config = {}  # Add dummy app_config
 
-    service_config = {
-        "prompts": dummy_prompts,
-        "calendar_config": dummy_calendar_config,
-        "timezone_str": dummy_timezone_str,
-        "max_history_messages": dummy_max_history,
-        "history_max_age_hours": dummy_history_age,
-        "app_config": dummy_app_config,  # Included here for completeness
-    }
+    test_service_config_obj_callback = ProcessingServiceConfig(
+        prompts=dummy_prompts,
+        calendar_config=dummy_calendar_config,
+        timezone_str=dummy_timezone_str,
+        max_history_messages=dummy_max_history,
+        history_max_age_hours=dummy_history_age,
+    )
 
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
-        service_config=service_config,
+        service_config=test_service_config_obj_callback,
         app_config=dummy_app_config,  # Pass dummy app_config directly
         context_providers=[],
         server_url=None,
