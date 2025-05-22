@@ -321,7 +321,6 @@ class ProcessingService:
                         interface_type=interface_type,
                         conversation_id=conversation_id,
                         db_context=db_context,
-                        # calendar_config=self.calendar_config, # Removed
                         application=application,
                         timezone_str=self.timezone_str,
                         request_confirmation_callback=request_confirmation_callback,
