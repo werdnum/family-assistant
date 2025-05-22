@@ -168,7 +168,7 @@ async def test_add_and_retrieve_note_rule_mock(
     )
 
     # --- Create ServiceConfig ---
-    test_service_config_obj = ProcessingServiceConfig(
+    test_service_config_obj_notes = ProcessingServiceConfig(
         prompts=dummy_prompts,
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
@@ -180,7 +180,7 @@ async def test_add_and_retrieve_note_rule_mock(
         llm_client=llm_client,
         tools_provider=composite_provider,
         context_providers=[notes_provider],  # Pass the notes provider
-        service_config=test_service_config_obj,  # Pass the config object
+        service_config=test_service_config_obj_notes,  # Use renamed variable
         server_url=None,  # Added server_url
         app_config=dummy_app_config,  # Added app_config
     )
