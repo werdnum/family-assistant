@@ -353,7 +353,6 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
             interface_type="test",  # Dummy interface
             conversation_id="vector_test_123",  # Dummy conversation ID
             db_context=exec_db_context,
-            calendar_config={},
             application=None,  # Not needed for search_documents tool
         )
 
