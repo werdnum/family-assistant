@@ -229,18 +229,34 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
 
                 # Manual deep merge for relevant sections for now
                 for key, value in yaml_config.items():
-                    if key == "default_profile_settings" and isinstance(value, dict) and isinstance(config_data.get(key), dict):
+                    if (
+                        key == "default_profile_settings"
+                        and isinstance(value, dict)
+                        and isinstance(config_data.get(key), dict)
+                    ):
                         # Deep merge for processing_config
-                        if "processing_config" in value and isinstance(value["processing_config"], dict):
-                            config_data[key].setdefault("processing_config", {}).update(value["processing_config"])
+                        if "processing_config" in value and isinstance(
+                            value["processing_config"], dict
+                        ):
+                            config_data[key].setdefault("processing_config", {}).update(
+                                value["processing_config"]
+                            )
                         # Deep merge for tools_config
-                        if "tools_config" in value and isinstance(value["tools_config"], dict):
-                            config_data[key].setdefault("tools_config", {}).update(value["tools_config"])
+                        if "tools_config" in value and isinstance(
+                            value["tools_config"], dict
+                        ):
+                            config_data[key].setdefault("tools_config", {}).update(
+                                value["tools_config"]
+                            )
                         # For other keys within default_profile_settings, direct update
                         for sub_key, sub_value in value.items():
                             if sub_key not in ["processing_config", "tools_config"]:
                                 config_data[key][sub_key] = sub_value
-                    elif key in config_data and isinstance(value, dict) and isinstance(config_data[key], dict):
+                    elif (
+                        key in config_data
+                        and isinstance(value, dict)
+                        and isinstance(config_data[key], dict)
+                    ):
                         config_data[key].update(value)  # Merge other top-level dicts
                     else:
                         config_data[key] = value  # Replace other top-level keys
@@ -325,7 +341,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         profile_tools_config["confirm_tools"] = [
             tool.strip() for tool in tools_confirm_str_env.split(",") if tool.strip()
         ]
-        logger.info("Loaded tools requiring confirmation from environment variable into profile.")
+        logger.info(
+            "Loaded tools requiring confirmation from environment variable into profile."
+        )
 
     # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
     # This will populate default_profile_settings.processing_config.calendar_config
@@ -358,7 +376,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     # Only update profile's calendar_config if env vars provided valid config
     if temp_calendar_config:
         profile_proc_config["calendar_config"] = temp_calendar_config
-    elif not profile_proc_config.get("calendar_config"):  # If no config from yaml either
+    elif not profile_proc_config.get(
+        "calendar_config"
+    ):  # If no config from yaml either
         logger.warning(
             "No calendar sources configured for default profile in config file or environment variables."
         )
@@ -379,7 +399,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             loaded_prompts = yaml.safe_load(f)
             if isinstance(loaded_prompts, dict):
                 profile_proc_config["prompts"] = loaded_prompts
-                logger.info("Successfully loaded prompts from prompts.yaml into profile.")
+                logger.info(
+                    "Successfully loaded prompts from prompts.yaml into profile."
+                )
             else:
                 logger.error(
                     "Failed to load prompts: prompts.yaml is not a valid dictionary."
@@ -441,11 +463,13 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     if "default_profile_settings" in loggable_config:
         profile_log_config = loggable_config["default_profile_settings"]
         if (
-            "processing_config" in profile_log_config and
-            "calendar_config" in profile_log_config["processing_config"] and
-            "caldav" in profile_log_config["processing_config"]["calendar_config"]
+            "processing_config" in profile_log_config
+            and "calendar_config" in profile_log_config["processing_config"]
+            and "caldav" in profile_log_config["processing_config"]["calendar_config"]
         ):
-            profile_log_config["processing_config"]["calendar_config"]["caldav"].pop("password", None)
+            profile_log_config["processing_config"]["calendar_config"]["caldav"].pop(
+                "password", None
+            )
 
     logger.info(
         f"Final configuration loaded (excluding secrets): {json.dumps(loggable_config, indent=2, default=str)}"
@@ -467,201 +491,6 @@ parser.add_argument(
     default=None,  # Default is None, will be loaded from env/config
     help="Telegram Bot Token (overrides environment variable)",
 )
-    # Secrets (should ONLY come from env)
-    config_data["telegram_token"] = os.getenv(
-        "TELEGRAM_BOT_TOKEN", config_data["telegram_token"]
-    )
-    # Allow API keys to be None if not set in env, they are validated later
-    config_data["openrouter_api_key"] = os.getenv(
-        "OPENROUTER_API_KEY", config_data.get("openrouter_api_key")
-    )
-    config_data["gemini_api_key"] = os.getenv(
-        "GEMINI_API_KEY", config_data.get("gemini_api_key")
-    )
-    config_data["database_url"] = os.getenv("DATABASE_URL", config_data["database_url"])
-
-    # Other Env Vars
-    config_data["model"] = os.getenv("LLM_MODEL", config_data["model"])
-    config_data["embedding_model"] = os.getenv(
-        "EMBEDDING_MODEL", config_data["embedding_model"]
-    )
-    config_data["embedding_dimensions"] = int(
-        os.getenv("EMBEDDING_DIMENSIONS", str(config_data["embedding_dimensions"]))
-    )
-    config_data["timezone"] = os.getenv("TIMEZONE", config_data["timezone"])
-    config_data["server_url"] = os.getenv(
-        "SERVER_URL", config_data["server_url"]
-    )  # Load SERVER_URL
-    config_data["document_storage_path"] = os.getenv(
-        "DOCUMENT_STORAGE_PATH", config_data["document_storage_path"]
-    )
-    config_data["attachment_storage_path"] = os.getenv(  # Load ATTACHMENT_STORAGE_PATH
-        "ATTACHMENT_STORAGE_PATH", config_data["attachment_storage_path"]
-    )
-    config_data["litellm_debug"] = os.getenv(
-        "LITELLM_DEBUG", str(config_data["litellm_debug"])
-    ).lower() in ("true", "1", "yes")
-
-    # Parse comma-separated lists from Env Vars
-    allowed_ids_str = os.getenv("ALLOWED_USER_IDS", os.getenv("ALLOWED_CHAT_IDS"))
-    if allowed_ids_str is not None:  # Only override if env var is explicitly set
-        try:
-            config_data["allowed_user_ids"] = [
-                int(cid.strip()) for cid in allowed_ids_str.split(",") if cid.strip()
-            ]
-        except ValueError:
-            logger.error(
-                "Invalid format for ALLOWED_USER_IDS env var. Using previous value."
-            )
-
-    dev_id_str = os.getenv("DEVELOPER_CHAT_ID")
-    if dev_id_str is not None:  # Only override if env var is explicitly set
-        try:
-            config_data["developer_chat_id"] = int(dev_id_str)
-        except ValueError:
-            logger.error("Invalid DEVELOPER_CHAT_ID env var. Using previous value.")
-
-    # Tools requiring confirmation from Env Var (comma-separated list)
-    tools_confirm_str_env = os.getenv("TOOLS_REQUIRING_CONFIRMATION")
-    if tools_confirm_str_env is not None:  # Only override if env var is explicitly set
-        # Override the list loaded from config.yaml
-        profile_tools_config["confirm_tools"] = [
-            tool.strip() for tool in tools_confirm_str_env.split(",") if tool.strip()
-        ]
-        logger.info("Loaded tools requiring confirmation from environment variable into profile.")
-
-    # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
-    # This will populate default_profile_settings.processing_config.calendar_config
-    caldav_user_env = os.getenv("CALDAV_USERNAME")
-    caldav_pass_env = os.getenv("CALDAV_PASSWORD")
-    caldav_urls_str_env = os.getenv("CALDAV_CALENDAR_URLS")
-
-    temp_calendar_config = {}
-    if caldav_user_env and caldav_pass_env and caldav_urls_str_env:
-        caldav_urls_env = [
-            url.strip() for url in caldav_urls_str_env.split(",") if url.strip()
-        ]
-        if caldav_urls_env:
-            temp_calendar_config["caldav"] = {
-                "username": caldav_user_env,
-                "password": caldav_pass_env,
-                "calendar_urls": caldav_urls_env,
-            }
-            logger.info("Loaded CalDAV config from environment variables.")
-
-    ical_urls_str_env = os.getenv("ICAL_URLS")
-    if ical_urls_str_env:
-        ical_urls_env = [
-            url.strip() for url in ical_urls_str_env.split(",") if url.strip()
-        ]
-        if ical_urls_env:
-            temp_calendar_config["ical"] = {"urls": ical_urls_env}
-            logger.info("Loaded iCal config from environment variables.")
-
-    # Only update profile's calendar_config if env vars provided valid config
-    if temp_calendar_config:
-        profile_proc_config["calendar_config"] = temp_calendar_config
-    elif not profile_proc_config.get("calendar_config"):  # If no config from yaml either
-        logger.warning(
-            "No calendar sources configured for default profile in config file or environment variables."
-        )
-
-    # Validate Timezone in the profile
-    try:
-        zoneinfo.ZoneInfo(profile_proc_config["timezone"])
-    except zoneinfo.ZoneInfoNotFoundError:
-        logger.error(
-            f"Invalid timezone '{profile_proc_config['timezone']}' in profile. Defaulting to UTC."
-        )
-        profile_proc_config["timezone"] = "UTC"
-
-    # 4. Load other config files (Prompts, MCP)
-    # Load prompts from YAML file into the profile's prompts
-    try:
-        with open("prompts.yaml", encoding="utf-8") as f:
-            loaded_prompts = yaml.safe_load(f)
-            if isinstance(loaded_prompts, dict):
-                profile_proc_config["prompts"] = loaded_prompts
-                logger.info("Successfully loaded prompts from prompts.yaml into profile.")
-            else:
-                logger.error(
-                    "Failed to load prompts: prompts.yaml is not a valid dictionary."
-                )
-    except FileNotFoundError:
-        logger.error("prompts.yaml not found. Profile using default prompt structures.")
-    except yaml.YAMLError as e:
-        logger.error(f"Error parsing prompts.yaml for profile: {e}")
-
-    # Load MCP config from JSON file (remains top-level in config_data)
-    mcp_config_path = "mcp_config.json"
-    try:
-        with open(mcp_config_path, encoding="utf-8") as f:
-            loaded_mcp_config = json.load(f)
-            if isinstance(loaded_mcp_config, dict):
-                config_data["mcp_config"] = loaded_mcp_config  # Store in config dict
-                logger.info(f"Successfully loaded MCP config from {mcp_config_path}")
-            else:
-                logger.error(
-                    f"Failed to load MCP config: {mcp_config_path} is not a valid dictionary."
-                )
-    except FileNotFoundError:
-        logger.info(f"{mcp_config_path} not found. MCP features may be disabled.")
-    except json.JSONDecodeError as e:
-        logger.error(f"Error decoding {mcp_config_path}: {e}")
-
-    # Indexing pipeline config from environment (overrides YAML)
-    indexing_pipeline_config_env = os.getenv("INDEXING_PIPELINE_CONFIG_JSON")
-    if indexing_pipeline_config_env:
-        try:
-            loaded_env_pipeline_config = json.loads(indexing_pipeline_config_env)
-            if isinstance(loaded_env_pipeline_config, dict):
-                config_data["indexing_pipeline_config"] = loaded_env_pipeline_config
-                logger.info(
-                    "Loaded indexing_pipeline_config from environment variable."
-                )
-            else:
-                logger.warning(
-                    "INDEXING_PIPELINE_CONFIG_JSON from env is not a valid dictionary. Using previous value."
-                )
-        except json.JSONDecodeError as e:
-            logger.error(
-                f"Error parsing INDEXING_PIPELINE_CONFIG_JSON from env: {e}. Using previous value."
-            )
-
-    # Log final loaded non-secret config for verification
-    loggable_config = copy.deepcopy({
-        k: v
-        for k, v in config_data.items()
-        if k
-        not in [
-            "telegram_token",
-            "openrouter_api_key",
-            "gemini_api_key",
-            "database_url",
-        ]  # Exclude top-level secrets
-    })
-    # Also exclude password from calendar_config within default_profile_settings
-    if "default_profile_settings" in loggable_config:
-        profile_log_config = loggable_config["default_profile_settings"]
-        if (
-            "processing_config" in profile_log_config and
-            "calendar_config" in profile_log_config["processing_config"] and
-            "caldav" in profile_log_config["processing_config"]["calendar_config"]
-        ):
-            profile_log_config["processing_config"]["calendar_config"]["caldav"].pop("password", None)
-
-    logger.info(
-        f"Final configuration loaded (excluding secrets): {json.dumps(loggable_config, indent=2, default=str)}"
-    )
-
-    return config_data
-
-
-# --- MCP Configuration Loading & Connection --- (REMOVED - Handled by MCPToolsProvider)
-# async def load_mcp_config_and_connect(mcp_config: Dict[str, Any]):
-#    ... (Removed function body) ...
-
-
 # --- Argument Parsing ---
 # Define parser here, but parse arguments later in main() after loading config
 parser = argparse.ArgumentParser(description="Family Assistant Bot")
@@ -887,13 +716,22 @@ async def main_async(
     for tool_def in updated_local_tools_definition:
         if tool_def.get("function", {}).get("name") == "get_user_documentation_content":
             try:
-                tool_def["function"]["description"] = tool_def["function"]["description"].format(available_doc_files=formatted_doc_list)
-                logger.info(f"Updated 'get_user_documentation_content' description with files: {formatted_doc_list}")
+                tool_def["function"]["description"] = tool_def["function"][
+                    "description"
+                ].format(available_doc_files=formatted_doc_list)
+                logger.info(
+                    f"Updated 'get_user_documentation_content' description with files: {formatted_doc_list}"
+                )
             except KeyError as e:
-                logger.error(f"Failed to format documentation tool description: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to format documentation tool description: {e}",
+                    exc_info=True,
+                )
 
     # Get calendar_config for the default profile
-    default_profile_calendar_config = config["default_profile_settings"]["processing_config"]["calendar_config"]
+    default_profile_calendar_config = config["default_profile_settings"][
+        "processing_config"
+    ]["calendar_config"]
 
     local_provider = LocalToolsProvider(
         definitions=updated_local_tools_definition,
@@ -924,8 +762,12 @@ async def main_async(
 
     # --- Wrap with Confirming Provider ---
     # Retrieve the list of tools requiring confirmation from the default profile's config
-    default_profile_confirm_tools = set(config["default_profile_settings"]["tools_config"].get("confirm_tools", []))
-    logger.info(f"Tools configured to require confirmation for default profile: {default_profile_confirm_tools}")
+    default_profile_confirm_tools = set(
+        config["default_profile_settings"]["tools_config"].get("confirm_tools", [])
+    )
+    logger.info(
+        f"Tools configured to require confirmation for default profile: {default_profile_confirm_tools}"
+    )
 
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
@@ -949,7 +791,9 @@ async def main_async(
 
     # --- Instantiate Context Providers ---
     # These will use settings from the default profile's processing_config
-    default_profile_proc_config = config["default_profile_settings"]["processing_config"]
+    default_profile_proc_config = config["default_profile_settings"][
+        "processing_config"
+    ]
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_db_context,
@@ -1056,7 +900,9 @@ async def main_async(
     task_worker_instance = TaskWorker(
         processing_service=processing_service,  # Default profile's processing service
         application=telegram_service.application,
-        calendar_config=default_profile_proc_config["calendar_config"],  # Use profile's config
+        calendar_config=default_profile_proc_config[
+            "calendar_config"
+        ],  # Use profile's config
         timezone_str=default_profile_proc_config["timezone"],  # Use profile's config
         embedding_generator=embedding_generator,
     )
