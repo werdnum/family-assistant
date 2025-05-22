@@ -183,9 +183,11 @@ async def test_add_and_retrieve_note_rule_mock(
         tools_provider=composite_provider,
         context_providers=[notes_provider],  # Pass the notes provider
         service_config=service_config,  # Pass the config object
+        server_url=service_config["server_url"],  # Added server_url
+        app_config=service_config["app_config"],  # Added app_config
     )
     logger.info(
-        f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__} and service_config"
+        f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__}, service_config, server_url, and app_config"
     )
 
     # Mock Application instance needed for ToolExecutionContext
