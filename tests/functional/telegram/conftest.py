@@ -118,18 +118,23 @@ async def telegram_handler_fixture(
     )
     composite_provider = CompositeToolsProvider([local_tools_provider])
 
+    service_config = {
+        "prompts": {},  # Add mock/real prompts if needed
+        "calendar_config": {},
+        "timezone_str": "UTC",
+        "max_history_messages": 10,
+        "history_max_age_hours": 24,
+        "app_config": {},  # Add dummy app_config
+        # Add any other keys expected by ServiceConfig if necessary
+    }
+
     processing_service = ProcessingService(
         llm_client=mock_llm,
         # Initialize with the non-confirming provider by default
         tools_provider=composite_provider,
-        prompts={},  # Add mock/real prompts if needed
-        calendar_config={},
-        timezone_str="UTC",
-        max_history_messages=10,
+        service_config=service_config,
         context_providers=[],  # Added missing argument
         server_url="http://test-server:8000",  # Placeholder URL for tests
-        history_max_age_hours=24,
-        app_config={},  # Add dummy app_config
     )
 
     # Function to get DB context for the specific test engine
