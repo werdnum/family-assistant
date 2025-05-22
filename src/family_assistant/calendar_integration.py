@@ -573,6 +573,7 @@ def format_events_for_prompt(
 
 async def add_calendar_event_tool(
     exec_context: "ToolExecutionContext",
+    calendar_config: dict[str, Any],
     summary: str,
     start_time: str,
     end_time: str,
@@ -587,7 +588,7 @@ async def add_calendar_event_tool(
     logger.info(
         f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}"
     )
-    calendar_config = exec_context.calendar_config
+    # calendar_config is now a direct parameter
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -710,6 +711,7 @@ async def add_calendar_event_tool(
 
 async def search_calendar_events_tool(
     exec_context: "ToolExecutionContext",
+    calendar_config: dict[str, Any],
     query_text: str,
     start_date_str: str | None = None,
     end_date_str: str | None = None,
@@ -719,7 +721,7 @@ async def search_calendar_events_tool(
     logger.info(
         f"Executing search_calendar_events_tool: query='{query_text}', start='{start_date_str}', end='{end_date_str}'"
     )
-    calendar_config = exec_context.calendar_config
+    # calendar_config is now a direct parameter
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -896,6 +898,7 @@ async def search_calendar_events_tool(
 
 async def modify_calendar_event_tool(
     exec_context: "ToolExecutionContext",
+    calendar_config: dict[str, Any],
     uid: str,
     calendar_url: str,  # Added calendar_url
     new_summary: str | None = None,
@@ -908,7 +911,7 @@ async def modify_calendar_event_tool(
     logger.info(
         f"Executing modify_calendar_event_tool for UID: {uid} in calendar: {calendar_url}"
     )
-    calendar_config = exec_context.calendar_config
+    # calendar_config is now a direct parameter
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -1070,6 +1073,7 @@ async def modify_calendar_event_tool(
 
 async def delete_calendar_event_tool(
     exec_context: "ToolExecutionContext",
+    calendar_config: dict[str, Any],
     uid: str,
     calendar_url: str,  # Added calendar_url
 ) -> str:
@@ -1077,7 +1081,7 @@ async def delete_calendar_event_tool(
     logger.info(
         f"Executing delete_calendar_event_tool for UID: {uid} in calendar: {calendar_url}"
     )
-    calendar_config = exec_context.calendar_config
+    # calendar_config is now a direct parameter
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
