@@ -3,6 +3,7 @@ import logging
 import traceback  # Added for error traceback
 import uuid  # Added for unique task IDs
 from collections.abc import Awaitable, Callable  # Added Union, Awaitable
+from dataclasses import dataclass  # Added
 from datetime import (  # Added timezone
     datetime,
     timedelta,  # Added
@@ -37,6 +38,18 @@ from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
 logger = logging.getLogger(__name__)
 
 
+# --- Configuration for ProcessingService ---
+@dataclass
+class ProcessingServiceConfig:
+    """Configuration specific to a ProcessingService instance."""
+
+    prompts: dict[str, str]
+    calendar_config: dict[str, Any]
+    timezone_str: str
+    max_history_messages: int
+    history_max_age_hours: int
+
+
 # --- Processing Service Class ---
 # Tool definitions and implementations are now moved to tools.py
 
@@ -51,16 +64,10 @@ class ProcessingService:
         self,
         llm_client: LLMInterface,
         tools_provider: ToolsProvider,
-        prompts: dict[str, str],
-        calendar_config: dict[str, Any],
-        context_providers: list[
-            ContextProvider
-        ],  # NEW: List of context providers (corrected to be single)
-        timezone_str: str,
-        max_history_messages: int,
-        server_url: str | None,  # Added server_url
-        history_max_age_hours: int,  # Recommended value is now 1
-        app_config: dict[str, Any],  # NEW: Add app_config
+        service_config: ProcessingServiceConfig,  # Updated to use service_config
+        context_providers: list[ContextProvider],  # NEW: List of context providers
+        server_url: str | None,
+        app_config: dict[str, Any],  # Keep app_config for now
     ) -> None:
         """
         Initializes the ProcessingService.
@@ -68,28 +75,42 @@ class ProcessingService:
         Args:
             llm_client: An object implementing the LLMInterface protocol.
             tools_provider: An object implementing the ToolsProvider protocol.
-            prompts: Dictionary containing loaded prompts.
-            calendar_config: Dictionary containing calendar configuration.
-            context_providers: A list of initialized context provider objects. # Corrected docstring
-            timezone_str: The configured timezone string (e.g., "Europe/London").
-            max_history_messages: Max number of history messages to fetch.
+            service_config: Configuration specific to this service instance.
+            context_providers: A list of initialized context provider objects.
             server_url: The base URL of the web server.
-            history_max_age_hours: Max age of history messages to fetch (in hours). Recommended: 1.
-            app_config: The main application configuration dictionary.
+            app_config: The main application configuration dictionary (global settings).
         """
         self.llm_client = llm_client
         self.tools_provider = tools_provider
-        self.prompts = prompts
-        self.calendar_config = calendar_config  # Still needed for ToolExecutionContext
+        self.service_config = service_config  # Store the config object
         self.context_providers = context_providers
-        self.timezone_str = timezone_str
-        self.max_history_messages = max_history_messages
         self.server_url = (
             server_url or "http://localhost:8000"
         )  # Default if not provided
-        self.history_max_age_hours = history_max_age_hours
         self.app_config = app_config  # Store app_config
         # Store the confirmation callback function if provided at init? No, get from context.
+
+    # --- Expose relevant parts of service_config as properties for convenience ---
+    # This maintains current internal access patterns while centralizing config.
+    @property
+    def prompts(self) -> dict[str, str]:
+        return self.service_config.prompts
+
+    @property
+    def calendar_config(self) -> dict[str, Any]:
+        return self.service_config.calendar_config
+
+    @property
+    def timezone_str(self) -> str:
+        return self.service_config.timezone_str
+
+    @property
+    def max_history_messages(self) -> int:
+        return self.service_config.max_history_messages
+
+    @property
+    def history_max_age_hours(self) -> int:
+        return self.service_config.history_max_age_hours
 
     async def _aggregate_context_from_providers(self) -> str:
         """Gathers context fragments from all registered providers."""
