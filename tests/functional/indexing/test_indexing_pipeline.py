@@ -206,7 +206,6 @@ async def test_indexing_pipeline_e2e(
                 interface_type="test",
                 conversation_id="test-indexing-conv",
                 db_context=db_context_for_pipeline,
-                calendar_config={},
                 application=MagicMock(),  # Provide a mock application object
             )
 
@@ -406,7 +405,6 @@ async def test_indexing_pipeline_pdf_processing(
                 interface_type="test",
                 conversation_id="test-pdf-pipeline-conv",
                 db_context=db_context_for_pipeline,
-                calendar_config={},
                 application=MagicMock(),
             )
 
