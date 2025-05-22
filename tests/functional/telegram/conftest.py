@@ -133,7 +133,8 @@ async def telegram_handler_fixture(
         # Initialize with the non-confirming provider by default
         tools_provider=composite_provider,
         service_config=service_config,
-        context_providers=[],  # Added missing argument
+        app_config=service_config["app_config"],  # Pass app_config directly
+        context_providers=[],
         server_url="http://test-server:8000",  # Placeholder URL for tests
     )
 
