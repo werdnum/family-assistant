@@ -1341,7 +1341,10 @@ class LocalToolsProvider:
                     and param_name == "embedding_generator"
                 ):
                     needs_embedding_generator = True
-                elif param_name == "calendar_config" and param.annotation == dict[str, Any]:  # Check for calendar_config
+                elif (
+                    param_name == "calendar_config"
+                    and param.annotation == dict[str, Any]
+                ):  # Check for calendar_config
                     needs_calendar_config = True
 
             # Inject dependencies based on flags
