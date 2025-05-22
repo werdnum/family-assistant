@@ -154,17 +154,22 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     dummy_history_age = 24
     dummy_app_config = {}  # Add dummy app_config
 
+    service_config = {
+        "prompts": dummy_prompts,
+        "calendar_config": dummy_calendar_config,
+        "timezone_str": dummy_timezone_str,
+        "max_history_messages": dummy_max_history,
+        "history_max_age_hours": dummy_history_age,
+        "app_config": dummy_app_config,  # Included here for completeness
+    }
+
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
-        prompts=dummy_prompts,
-        calendar_config=dummy_calendar_config,
-        timezone_str=dummy_timezone_str,
-        max_history_messages=dummy_max_history,
-        context_providers=[],  # Added missing argument
-        history_max_age_hours=dummy_history_age,
-        server_url=None,  # Added missing argument
-        app_config=dummy_app_config,  # Pass dummy app_config
+        service_config=service_config,
+        app_config=dummy_app_config,  # Pass dummy app_config directly
+        context_providers=[],
+        server_url=None,
     )
 
     # Mock Telegram Application and Bot
