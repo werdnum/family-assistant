@@ -18,7 +18,7 @@ from family_assistant.context_providers import (
 from family_assistant.llm import LLMInterface, LLMOutput  # Keep Interface and Output
 
 # Import necessary classes for instantiation
-from family_assistant.processing import ProcessingService
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # _generate_llm_response_for_chat was moved to ProcessingService
 # Import DatabaseContext and getter
@@ -168,23 +168,21 @@ async def test_add_and_retrieve_note_rule_mock(
     )
 
     # --- Create ServiceConfig ---
-    service_config = {
-        "prompts": dummy_prompts,
-        "calendar_config": dummy_calendar_config,
-        "timezone_str": dummy_timezone_str,
-        "max_history_messages": dummy_max_history,
-        "history_max_age_hours": dummy_history_age,
-        "server_url": None,
-        "app_config": dummy_app_config,
-    }
+    test_service_config_obj = ProcessingServiceConfig(
+        prompts=dummy_prompts,
+        calendar_config=dummy_calendar_config,
+        timezone_str=dummy_timezone_str,
+        max_history_messages=dummy_max_history,
+        history_max_age_hours=dummy_history_age,
+    )
 
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
         context_providers=[notes_provider],  # Pass the notes provider
-        service_config=service_config,  # Pass the config object
-        server_url=service_config["server_url"],  # Added server_url
-        app_config=service_config["app_config"],  # Added app_config
+        service_config=test_service_config_obj,  # Pass the config object
+        server_url=None,  # Added server_url
+        app_config=dummy_app_config,  # Added app_config
     )
     logger.info(
         f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__}, service_config, server_url, and app_config"
