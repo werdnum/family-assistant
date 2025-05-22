@@ -22,7 +22,6 @@ class ToolExecutionContext:
     interface_type: str  # e.g., 'telegram', 'web', 'email'
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     db_context: "DatabaseContext"
-    # calendar_config: dict[str, Any] | None = None  # Removed
     application: Optional["Application"] = None
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC"  # Default, should be overridden
