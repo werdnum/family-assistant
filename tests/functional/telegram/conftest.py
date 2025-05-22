@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from telegram.ext import Application
 
 from family_assistant.llm import LLMInterface, LLMOutput  # Import LLMOutput
-from family_assistant.processing import ProcessingService
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.telegram_bot import (
     ConfirmationUIManager,
@@ -118,22 +118,24 @@ async def telegram_handler_fixture(
     )
     composite_provider = CompositeToolsProvider([local_tools_provider])
 
-    service_config = {
-        "prompts": {},  # Add mock/real prompts if needed
-        "calendar_config": {},
-        "timezone_str": "UTC",
-        "max_history_messages": 10,
-        "history_max_age_hours": 24,
-        "app_config": {},  # Add dummy app_config
-        # Add any other keys expected by ServiceConfig if necessary
-    }
+    # Create a ProcessingServiceConfig instance for the test
+    test_service_config_obj = ProcessingServiceConfig(
+        prompts={},  # Add mock/real prompts if needed
+        calendar_config={},
+        timezone_str="UTC",
+        max_history_messages=10,
+        history_max_age_hours=24,
+    )
+
+    # Define a separate app_config for the test
+    test_app_config = {}
 
     processing_service = ProcessingService(
         llm_client=mock_llm,
         # Initialize with the non-confirming provider by default
         tools_provider=composite_provider,
-        service_config=service_config,
-        app_config=service_config["app_config"],  # Pass app_config directly
+        service_config=test_service_config_obj,  # Pass the ProcessingServiceConfig instance
+        app_config=test_app_config,  # Pass the separate app_config
         context_providers=[],
         server_url="http://test-server:8000",  # Placeholder URL for tests
     )

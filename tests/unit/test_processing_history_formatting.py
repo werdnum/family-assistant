@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from family_assistant.processing import ProcessingService
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 
 # Mock interfaces required by ProcessingService constructor
@@ -31,16 +31,19 @@ class MockToolsProvider:
 @pytest.fixture
 def processing_service() -> ProcessingService:
     """Provides a ProcessingService instance with mock dependencies."""
+    mock_service_config = ProcessingServiceConfig(
+        prompts={},  # Not used by _format_history_for_llm
+        calendar_config={},  # Not used
+        timezone_str="UTC",  # Not used
+        max_history_messages=10,  # Not used
+        history_max_age_hours=1,  # Not used
+    )
     return ProcessingService(
         llm_client=MockLLMClient(),
         tools_provider=MockToolsProvider(),
-        prompts={},  # Not used by _format_history_for_llm
-        calendar_config={},  # Not used
-        context_providers=[],  # Added missing argument
-        timezone_str="UTC",  # Not used
-        max_history_messages=10,  # Not used
+        service_config=mock_service_config,  # Use the config object
+        context_providers=[],
         server_url="http://test.com",  # Not used
-        history_max_age_hours=1,  # Not used
         app_config={},  # Add dummy app_config
     )
 
