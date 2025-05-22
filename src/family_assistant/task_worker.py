@@ -396,7 +396,6 @@ class TaskWorker:
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 db_context=db_context,
-                # calendar_config=self.calendar_config, # Removed
                 application=self.application,
                 timezone_str=self.timezone_str,  # Remove processing_service
                 processing_service=self.processing_service,  # Add processing service
