@@ -23,6 +23,7 @@ from family_assistant import storage
 # --- NEW: Import ContextProvider and its implementations ---
 from family_assistant.context_providers import (
     CalendarContextProvider,
+    KnownUsersContextProvider,  # Added
     NotesContextProvider,
 )
 from family_assistant.embeddings import (
@@ -207,6 +208,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "max_history_messages": 5,
                 "history_max_age_hours": 24,
             },
+            "chat_id_to_name_map": {},  # Added for known user mapping
             "tools_config": {
                 # enable_local_tools and enable_mcp_server_ids are implicitly "all available"
                 # for the default profile in the current setup.
@@ -248,9 +250,20 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                             config_data[key].setdefault("tools_config", {}).update(
                                 value["tools_config"]
                             )
+                        # Deep merge for chat_id_to_name_map
+                        if "chat_id_to_name_map" in value and isinstance(
+                            value["chat_id_to_name_map"], dict
+                        ):
+                            config_data[key].setdefault(
+                                "chat_id_to_name_map", {}
+                            ).update(value["chat_id_to_name_map"])
                         # For other keys within default_profile_settings, direct update
                         for sub_key, sub_value in value.items():
-                            if sub_key not in ["processing_config", "tools_config"]:
+                            if sub_key not in [
+                                "processing_config",
+                                "tools_config",
+                                "chat_id_to_name_map",
+                            ]:
                                 config_data[key][sub_key] = sub_value
                     elif (
                         key in config_data
@@ -296,8 +309,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         os.getenv("EMBEDDING_DIMENSIONS", str(config_data["embedding_dimensions"]))
     )
     # --- Target nested config for profile-specific settings ---
-    profile_proc_config = config_data["default_profile_settings"]["processing_config"]
-    profile_tools_config = config_data["default_profile_settings"]["tools_config"]
+    profile_settings = config_data["default_profile_settings"]  # Get the whole profile
+    profile_proc_config = profile_settings["processing_config"]
+    profile_tools_config = profile_settings["tools_config"]
 
     profile_proc_config["timezone"] = os.getenv(
         "TIMEZONE", profile_proc_config["timezone"]
@@ -344,6 +358,25 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         logger.info(
             "Loaded tools requiring confirmation from environment variable into profile."
         )
+
+    # Chat ID to Name Map from Env Var (comma-separated key:value pairs)
+    chat_id_map_str_env = os.getenv("CHAT_ID_TO_NAME_MAP")
+    if chat_id_map_str_env is not None:
+        try:
+            parsed_map = {}
+            pairs = chat_id_map_str_env.split(",")
+            for pair in pairs:
+                if ":" in pair:
+                    chat_id_str, name = pair.split(":", 1)
+                    parsed_map[int(chat_id_str.strip())] = name.strip()
+            profile_settings["chat_id_to_name_map"] = parsed_map
+            logger.info(
+                f"Loaded chat_id_to_name_map from environment variable into profile: {parsed_map}"
+            )
+        except ValueError as e:
+            logger.error(
+                f"Invalid format for CHAT_ID_TO_NAME_MAP env var: {e}. Using previous value. Expected format: '123:Alice,456:Bob'"
+            )
 
     # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
     # This will populate default_profile_settings.processing_config.calendar_config
@@ -791,9 +824,9 @@ async def main_async(
 
     # --- Instantiate Context Providers ---
     # These will use settings from the default profile's processing_config
-    default_profile_proc_config = config["default_profile_settings"][
-        "processing_config"
-    ]
+    # and other parts of default_profile_settings
+    default_profile_settings = config["default_profile_settings"]
+    default_profile_proc_config = default_profile_settings["processing_config"]
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_db_context,
@@ -804,8 +837,18 @@ async def main_async(
         timezone_str=default_profile_proc_config["timezone"],
         prompts=default_profile_proc_config["prompts"],
     )
+    known_users_provider = KnownUsersContextProvider(  # Added
+        chat_id_to_name_map=default_profile_settings.get(
+            "chat_id_to_name_map", {}
+        ),  # Added
+        prompts=default_profile_proc_config["prompts"],  # Added
+    )
     # List of all active context providers for the default profile
-    all_context_providers = [notes_provider, calendar_provider]
+    all_context_providers = [
+        notes_provider,
+        calendar_provider,
+        known_users_provider,
+    ]  # Added known_users_provider
     logger.info(
         f"Initialized {len(all_context_providers)} context providers: {[p.name for p in all_context_providers]}"
     )
