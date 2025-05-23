@@ -15,6 +15,8 @@ The primary motivation is to isolate sensitive or complex tools (e.g., web brows
 
 *   **Profile-Specific `ToolsProvider`**: Each `ProcessingService` instance will have its own `ToolsProvider` stack (e.g., `LocalToolsProvider`, `MCPToolsProvider`, `CompositeToolsProvider`, `ConfirmingToolsProvider`) configured according to its profile's specifications.
 
+*   **Profile-Specific LLM Configuration**: Each `ProcessingService` instance can be configured with a specific LLM model. This allows, for example, using a powerful reasoning model for complex tasks and a more cost-effective model for simpler tasks or large-volume text processing.
+
 *   **Service Registry**: Instantiated `ProcessingService` objects will be stored in a central registry (e.g., a dictionary in the application state), keyed by their unique profile ID, allowing them to be looked up and invoked.
 
 
@@ -40,6 +42,7 @@ default_profile_settings:
     timezone: "UTC"
     max_history_messages: 5
     history_max_age_hours: 24
+    llm_model: "claude-3-haiku-20240307" # Default LLM model
   tools_config:
     enable_local_tools: # Default set of local tools
       - "add_or_update_note"
@@ -77,6 +80,7 @@ service_profiles:
       prompts: # MERGES with default_profile_settings.processing_config.prompts
         system_prompt: "You are a focused assistant. Current time is {current_time}."
       max_history_messages: 3 # REPLACES default
+      llm_model: "gpt-4-turbo" # REPLACES default, uses a more powerful model
     tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
       enable_local_tools:
         - "add_or_update_note"
@@ -109,12 +113,13 @@ The main application startup logic (`src/family_assistant/__main__.py`) will be 
 2.  For each profile definition in `service_profiles`:
     *   Construct its final configuration by merging its settings with `default_profile_settings` according to the strategy above.
     *   Create a `ProcessingServiceConfig` object from the resolved processing settings.
+    *   Create an `LLMInterface` instance (e.g., `LiteLLMClient`) configured with the profile's specified `llm_model` (and any other relevant LLM parameters from the configuration).
     *   Build a `ToolsProvider` stack:
         *   `LocalToolsProvider` configured with only the `enable_local_tools` specified for the profile.
         *   `MCPToolsProvider` configured with only the `enable_mcp_server_ids` specified for the profile.
         *   `CompositeToolsProvider` to combine these.
         *   `ConfirmingToolsProvider` wrapping the composite, using the profile's `confirm_tools` list.
-    *   Instantiate a `ProcessingService` with the profile-specific `ProcessingServiceConfig` and `ToolsProvider` stack.
+    *   Instantiate a `ProcessingService` with the profile-specific `ProcessingServiceConfig`, the profile-specific `LLMInterface`, and the `ToolsProvider` stack.
     *   Store the `ProcessingService` instance in a central registry (e.g., a dictionary in FastAPI app state or a dedicated manager class), keyed by its profile `id`.
 
 
@@ -157,6 +162,8 @@ The main application startup logic (`src/family_assistant/__main__.py`) will be 
 *   **Reduced Accidental Triggers**: The main LLM is less likely to accidentally call complex or sensitive tools.
 
 *   **Reduced LLM Cognitive Load**: The main LLM deals with a smaller, focused toolset for general tasks. Specialized profiles can have tailored system prompts.
+
+*   **Optimized Model Usage**: Allows selection of the most appropriate LLM model (e.g., balancing capability, cost, speed) for each profile's specific tasks. For instance, a high-reasoning model for complex decision-making profiles, and a cheaper, faster model for profiles focused on text summarization or data extraction.
 
 *   **Modularity and Maintainability**: Toolsets and service behaviors for different domains can be managed independently.
 
