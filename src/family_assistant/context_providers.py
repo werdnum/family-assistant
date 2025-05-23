@@ -184,3 +184,66 @@ class CalendarContextProvider(ContextProvider):
 
 
 # Future providers like WeatherContextProvider, EmailSummaryProvider etc. would go here.
+
+
+class KnownUsersContextProvider(ContextProvider):
+    """Provides context about known users and their chat IDs."""
+
+    def __init__(
+        self,
+        chat_id_to_name_map: dict[int, str],
+        prompts: PromptsType,
+    ) -> None:
+        """
+        Initializes the KnownUsersContextProvider.
+
+        Args:
+            chat_id_to_name_map: A dictionary mapping chat IDs to user names.
+            prompts: A dictionary containing prompt templates for formatting.
+        """
+        self._chat_id_to_name_map = chat_id_to_name_map
+        self._prompts = prompts
+
+    @property
+    def name(self) -> str:
+        return "known_users"
+
+    async def get_context_fragments(self) -> list[str]:
+        fragments: list[str] = []
+        if not self._chat_id_to_name_map:
+            no_users_message = self._prompts.get("no_known_users")
+            if no_users_message:
+                fragments.append(no_users_message)
+            logger.debug(f"[{self.name}] No known users configured.")
+            return fragments
+
+        try:
+            user_list_str = ""
+            user_item_format = self._prompts.get(
+                "known_user_item_format", "- {name} (Chat ID: {chat_id})"
+            )
+            for chat_id, name in self._chat_id_to_name_map.items():
+                user_list_str += (
+                    user_item_format.format(name=name, chat_id=chat_id) + "\n"
+                )
+
+            if user_list_str:
+                users_header_template = self._prompts.get(
+                    "known_users_header",
+                    "Known users you can interact with:\n{user_list}",
+                )
+                formatted_users_context = users_header_template.format(
+                    user_list=user_list_str.strip()
+                ).strip()
+                if formatted_users_context:
+                    fragments.append(formatted_users_context)
+
+            logger.debug(
+                f"[{self.name}] Formatted {len(self._chat_id_to_name_map)} known users into {len(fragments)} fragment(s)."
+            )
+        except Exception as e:
+            logger.error(
+                f"[{self.name}] Failed to get known users context: {e}", exc_info=True
+            )
+            return []
+        return fragments
