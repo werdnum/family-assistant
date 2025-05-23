@@ -21,6 +21,7 @@ class ToolExecutionContext:
 
     interface_type: str  # e.g., 'telegram', 'web', 'email'
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
+    turn_id: str | None  # The ID of the current processing turn
     db_context: "DatabaseContext"
     application: Optional["Application"] = None
     # Add other context elements as needed, e.g., timezone_str
