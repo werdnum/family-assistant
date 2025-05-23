@@ -663,6 +663,86 @@ def _scan_user_docs() -> list[str]:
 # --- User Documentation Tool Implementation ---
 
 
+async def send_message_to_user_tool(
+    exec_context: ToolExecutionContext, target_chat_id: int, message_content: str
+) -> str:
+    """
+    Sends a message to another known user via Telegram.
+
+    Args:
+        exec_context: The execution context.
+        target_chat_id: The Telegram Chat ID of the recipient.
+        message_content: The text of the message to send.
+
+    Returns:
+        A string indicating success or failure.
+    """
+    logger.info(
+        f"Executing send_message_to_user_tool to chat_id {target_chat_id} with content: '{message_content[:50]}...'"
+    )
+    application = exec_context.application
+    db_context = exec_context.db_context
+    # The turn_id from the exec_context is the ID of the turn that *requested* this tool call.
+    # This is useful for linking the sent message back to the originating interaction.
+    requesting_turn_id = exec_context.turn_id
+
+    if not application:
+        logger.error(
+            "Application context not available in ToolExecutionContext for send_message_to_user_tool."
+        )
+        return "Error: Application context not available."
+
+    try:
+        sent_message = await application.bot.send_message(
+            chat_id=target_chat_id, text=message_content
+        )
+        logger.info(
+            f"Message sent to chat_id {target_chat_id}. Message ID: {sent_message.message_id}"
+        )
+
+        # Record the sent message in history for the target user's chat
+        try:
+            await storage.add_message_to_history(
+                db_context=db_context,
+                interface_type="telegram",  # Assuming Telegram interface
+                conversation_id=str(
+                    target_chat_id
+                ),  # History is for the target user's conversation
+                interface_message_id=str(sent_message.message_id),
+                turn_id=requesting_turn_id,  # Link to the turn that initiated this action
+                thread_root_id=None,  # This message likely starts a new interaction or is standalone in the target chat
+                timestamp=datetime.now(timezone.utc),
+                role="assistant",  # The bot is the one sending this message to the target user
+                content=message_content,
+                tool_calls=None,
+                tool_call_id=None,
+                reasoning_info={
+                    "source_turn_id": requesting_turn_id,
+                    "tool_name": "send_message_to_user",
+                },  # Optional: add reasoning
+                error_traceback=None,
+            )
+            logger.info(
+                f"Message sent to chat_id {target_chat_id} was recorded in history."
+            )
+            return f"Message sent successfully to user with Chat ID {target_chat_id}."
+        except Exception as db_err:
+            logger.error(
+                f"Message sent to chat_id {target_chat_id}, but failed to record in history: {db_err}",
+                exc_info=True,
+            )
+            # Still return success for sending, but note the history failure.
+            return f"Message sent to user with Chat ID {target_chat_id}, but failed to record in history."
+
+    except Exception as e:
+        logger.error(
+            f"Failed to send message to chat_id {target_chat_id}: {e}", exc_info=True
+        )
+        return (
+            f"Error: Could not send message to Chat ID {target_chat_id}. Details: {e}"
+        )
+
+
 async def get_user_documentation_content_tool(
     exec_context: ToolExecutionContext,
     filename: str,
@@ -730,6 +810,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "get_message_history": get_message_history_tool,
     "get_user_documentation_content": get_user_documentation_content_tool,
     "ingest_document_from_url": ingest_document_from_url_tool,
+    "send_message_to_user": send_message_to_user_tool,  # Added
     # Calendar tools now imported from calendar_integration module
     "add_calendar_event": calendar_integration.add_calendar_event_tool,
     "search_calendar_events": calendar_integration.search_calendar_events_tool,
@@ -1152,6 +1233,27 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["url_to_ingest", "source_type", "source_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_message_to_user",
+            "description": "Sends a textual message to another known user on Telegram. You MUST use their Chat ID as the target, which is provided in the 'Known users' section of the system prompt.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_chat_id": {
+                        "type": "integer",
+                        "description": "The unique Telegram Chat ID of the user to send the message to. This ID must be one of the known users provided in the system context.",
+                    },
+                    "message_content": {
+                        "type": "string",
+                        "description": "The content of the message to send to the user.",
+                    },
+                },
+                "required": ["target_chat_id", "message_content"],
             },
         },
     },
