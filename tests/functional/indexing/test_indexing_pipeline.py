@@ -205,8 +205,10 @@ async def test_indexing_pipeline_e2e(
             tool_exec_context = ToolExecutionContext(
                 interface_type="test",
                 conversation_id="test-indexing-conv",
+                turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
                 application=MagicMock(),  # Provide a mock application object
+                embedding_generator=mock_pipeline_embedding_generator,
             )
 
             # Create and store the document
@@ -404,8 +406,10 @@ async def test_indexing_pipeline_pdf_processing(
             tool_exec_context = ToolExecutionContext(
                 interface_type="test",
                 conversation_id="test-pdf-pipeline-conv",
+                turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
                 application=MagicMock(),
+                embedding_generator=mock_pipeline_embedding_generator,
             )
 
             test_document_protocol = MockDocumentImpl(

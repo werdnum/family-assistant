@@ -395,6 +395,9 @@ class TaskWorker:
                 # Pass new identifiers
                 interface_type=interface_type,
                 conversation_id=conversation_id,
+                turn_id=str(
+                    uuid.uuid4()
+                ),  # Generate a new turn_id for this task execution
                 db_context=db_context,
                 application=self.application,
                 timezone_str=self.timezone_str,  # Remove processing_service
