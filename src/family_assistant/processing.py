@@ -137,6 +137,7 @@ class ProcessingService:
         # --- Updated Signature ---
         interface_type: str,
         conversation_id: str,
+        turn_id: str,  # Added turn_id
         application: Application,
         # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
         request_confirmation_callback: (
@@ -341,6 +342,7 @@ class ProcessingService:
                     tool_execution_context = ToolExecutionContext(
                         interface_type=interface_type,
                         conversation_id=conversation_id,
+                        turn_id=turn_id,  # Pass turn_id
                         db_context=db_context,
                         application=application,
                         timezone_str=self.timezone_str,
@@ -748,6 +750,7 @@ class ProcessingService:
                 messages=messages,
                 interface_type=interface_type,  # Pass interface_type
                 conversation_id=conversation_id,  # Pass conversation_id
+                turn_id=turn_id,  # Pass the turn_id
                 application=application,
                 request_confirmation_callback=request_confirmation_callback,
             )
