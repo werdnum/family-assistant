@@ -1777,8 +1777,10 @@ class ConfirmingToolsProvider(ToolsProvider):
                     [int, str, str | None, str, str, dict[str, Any], float],
                     Awaitable[bool],
                 ]
-                
-                typed_callback = cast("CorrectedCallbackSignature", context.request_confirmation_callback)
+
+                typed_callback = cast(
+                    "CorrectedCallbackSignature", context.request_confirmation_callback
+                )
 
                 # Determine chat_id_for_callback. This must be an int.
                 # If context.conversation_id is not a valid int string, int() will raise ValueError,
@@ -1787,9 +1789,9 @@ class ConfirmingToolsProvider(ToolsProvider):
 
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
                 user_confirmed = await typed_callback(
-                    chat_id_for_callback,    # Arg 1 (chat_id: int)
+                    chat_id_for_callback,  # Arg 1 (chat_id: int)
                     context.interface_type,  # Arg 2 (interface_type: str)
-                    context.turn_id,         # Arg 3 (turn_id: Optional[str])
+                    context.turn_id,  # Arg 3 (turn_id: Optional[str])
                     prompt_text=confirmation_prompt,
                     tool_name=name,
                     tool_args=arguments,
