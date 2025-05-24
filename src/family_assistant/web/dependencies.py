@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncGenerator
 
 from fastapi import HTTPException, Request
 
@@ -28,10 +29,10 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
     return generator
 
 
-async def get_db() -> DatabaseContext:
+async def get_db() -> AsyncGenerator[DatabaseContext, None]:
     """FastAPI dependency to get a DatabaseContext."""
     # Uses the engine configured in storage/base.py by default.
-    async with await get_db_context() as db_context:
+    async with get_db_context() as db_context:
         yield db_context
 
 
