@@ -103,7 +103,9 @@ async def test_confirmation_accepted(
             for msg in messages
         )
 
-    final_success_output = MockLLMOutput(content=llm_final_success_text)  # Use MockLLMOutput
+    final_success_output = MockLLMOutput(
+        content=llm_final_success_text
+    )  # Use MockLLMOutput
     rule_final_success: Rule = (success_result_matcher, final_success_output)
 
     mock_llm_client.rules = [rule_request_tool, rule_final_success]  # Use casted client
@@ -188,7 +190,8 @@ async def test_confirmation_accepted(
                 )
                 called_arguments = (
                     call_args_tuple[1]
-                    if call_args_tuple and len(call_args_tuple) > 1  # Check call_args_tuple is not None
+                    if call_args_tuple
+                    and len(call_args_tuple) > 1  # Check call_args_tuple is not None
                     else call_kwargs_dict.get("arguments")
                 )  # noqa: E501
                 assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
@@ -198,7 +201,9 @@ async def test_confirmation_accepted(
                 })  # noqa: E501
 
         # 3. LLM was called twice (request tool, process result)
-        assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)  # Use casted client
+        assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(
+            2
+        )  # Use casted client
 
         # 4. Final success message sent to user
         fix.mock_bot.send_message.assert_awaited_once()
@@ -276,7 +281,9 @@ async def test_confirmation_rejected(
             for msg in messages
         )
 
-    final_cancel_output = MockLLMOutput(content=llm_final_cancel_text)  # Use MockLLMOutput
+    final_cancel_output = MockLLMOutput(
+        content=llm_final_cancel_text
+    )  # Use MockLLMOutput
     rule_final_cancel: Rule = (cancel_result_matcher, final_cancel_output)
 
     mock_llm_client.rules = [rule_request_tool, rule_final_cancel]  # Use casted client
@@ -336,7 +343,9 @@ async def test_confirmation_rejected(
                 mock_execute_original.assert_not_awaited()
 
             # 3. LLM was called twice (request tool, process cancellation result)
-            assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)  # Use casted client
+            assert_that(mock_llm_client._calls).described_as(
+                "LLM Call Count"
+            ).is_length(2)  # Use casted client
 
             # 4. Final cancellation message sent to user (matching rule_final_cancel)
             fix.mock_bot.send_message.assert_awaited_once()
@@ -410,7 +419,9 @@ async def test_confirmation_timed_out(
             for msg in messages
         )
 
-    final_timeout_output = MockLLMOutput(content=llm_final_timeout_text)  # Use MockLLMOutput
+    final_timeout_output = MockLLMOutput(
+        content=llm_final_timeout_text
+    )  # Use MockLLMOutput
     rule_final_timeout: Rule = (timeout_result_matcher, final_timeout_output)
 
     mock_llm_client.rules = [rule_request_tool, rule_final_timeout]  # Use casted client
@@ -471,7 +482,9 @@ async def test_confirmation_timed_out(
                 mock_execute_original.assert_not_awaited()
 
             # 3. LLM was called twice (request tool, process timeout/cancellation result)
-            assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)  # Use casted client
+            assert_that(mock_llm_client._calls).described_as(
+                "LLM Call Count"
+            ).is_length(2)  # Use casted client
             # 4. Final timeout message sent to user (matching rule_final_timeout)
             fix.mock_bot.send_message.assert_awaited_once()
             args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
