@@ -735,7 +735,7 @@ async def main_async(
     await init_db()
     # Initialize vector DB components (extension, indexes)
     # get_db_context uses the engine configured in storage/base.py by default.
-    async with await get_db_context() as db_ctx:
+    async with get_db_context() as db_ctx:
         await storage.init_vector_db(db_ctx)  # Initialize vector specific parts
 
     # --- Instantiate Tool Providers ---
