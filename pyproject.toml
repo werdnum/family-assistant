@@ -83,6 +83,7 @@ dev = [
     "ruff",
     "black",
     "pre-commit>=4.2.0",
+    "pyright",
 ]
 
 [project.scripts]
