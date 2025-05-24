@@ -126,6 +126,8 @@ async def dequeue_task(
     """Atomically dequeues the next available task."""
     now = datetime.now(timezone.utc)
 
+    assert db_context.conn is not None  # Ensure conn is available in this context
+
     # This operation needs to be atomic (SELECT FOR UPDATE + UPDATE)
     # The transaction is now managed by the DatabaseContext context manager itself.
     try:
@@ -170,7 +172,7 @@ async def dequeue_task(
             if update_result.rowcount == 1:
                 # No need to call db_context.commit() here, context manager handles it
                 logger.info(f"Worker {worker_id} dequeued task {task_row.task_id}")
-                return task_row._mapping  # Return the original row data
+                return dict(task_row)  # Return the original row data as a dict
             else:
                 # This means the row was locked or status changed between select and update
                 logger.warning(
@@ -211,7 +213,7 @@ async def update_task_status(
         )
         # Use execute_with_retry as commit is handled by context manager
         result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0:
+        if result.rowcount > 0:  # type: ignore[attr-defined]
             logger.info(f"Updated task {task_id} status to {status}.")
             return True
         else:
@@ -253,7 +255,7 @@ async def reschedule_task_for_retry(
         )
         # Use execute_with_retry as commit is handled by context manager
         result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0:
+        if result.rowcount > 0:  # type: ignore[attr-defined]
             logger.info(
                 f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
             )
@@ -293,22 +295,22 @@ async def manually_retry_task(
             return False
 
         # Check if task is eligible for manual retry
-        is_failed_status = task_row.status == "failed"
+        is_failed_status = task_row["status"] == "failed"
         is_pending_exhausted = (
-            task_row.status == "pending"
-            and task_row.retry_count >= task_row.max_retries
+            task_row["status"] == "pending"
+            and task_row["retry_count"] >= task_row["max_retries"]
         )
 
         if not (is_failed_status or is_pending_exhausted):
             logger.warning(
-                f"Task with internal ID {internal_task_id} (status: {task_row.status}, retries: {task_row.retry_count}/{task_row.max_retries}) "
+                f"Task with internal ID {internal_task_id} (status: {task_row['status']}, retries: {task_row['retry_count']}/{task_row['max_retries']}) "
                 "is not eligible for manual retry."
             )
             return False
 
         update_values = {
             "status": "pending",
-            "max_retries": task_row.max_retries + 1,
+            "max_retries": task_row["max_retries"] + 1,
             "scheduled_at": now,
             "error": None,  # Clear previous error
             "locked_by": None,
@@ -324,9 +326,9 @@ async def manually_retry_task(
 
         result = await db_context.execute_with_retry(update_stmt)
 
-        if result.rowcount > 0:
+        if result.rowcount > 0:  # type: ignore[attr-defined]
             logger.info(
-                f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row.max_retries + 1}."
+                f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row['max_retries'] + 1}."
             )
             if notify_event:
 
