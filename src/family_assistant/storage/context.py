@@ -10,11 +10,11 @@ import logging
 import random
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, TypeVar
+from typing import Any, AsyncContextManager, TypeVar
 
 from sqlalchemy import Result, TextClause, event
 from sqlalchemy.exc import DBAPIError, ProgrammingError
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncTransaction
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Delete, Insert, Select, Update
 
 # Use absolute package path
@@ -53,7 +53,7 @@ class DatabaseContext:
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.conn: AsyncConnection | None = None
-        self._transaction_cm: AsyncTransaction | None = None
+        self._transaction_cm: AsyncContextManager[AsyncConnection] | None = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -165,8 +165,8 @@ class DatabaseContext:
             A list of dictionaries representing the rows.
         """
         result = await self.execute_with_retry(query, params)
-        rows = result.fetchall()
-        return [row._mapping for row in rows]
+        # Convert RowMapping objects to dicts
+        return [dict(row_mapping) for row_mapping in result.mappings().all()]
 
     async def fetch_one(
         self, query: Select | TextClause, params: dict[str, Any] | None = None
@@ -182,8 +182,8 @@ class DatabaseContext:
             A dictionary representing the row, or None if no results.
         """
         result = await self.execute_with_retry(query, params)
-        row = result.fetchone()
-        return row._mapping if row else None
+        row_mapping = result.mappings().one_or_none()
+        return dict(row_mapping) if row_mapping else None
 
     def on_commit(self, callback: Callable[[], Any]) -> Callable[[], Any]:
         """
@@ -195,8 +195,10 @@ class DatabaseContext:
         Returns:
             The original callback for chaining.
         """
-        if self._transaction_cm is None:
-            raise RuntimeError("No active transaction context manager")
+        if self._transaction_cm is None or self.conn is None:
+            raise RuntimeError(
+                "on_commit called outside of an active transaction context or without a connection"
+            )
 
         # Wrapper to call the original callback without arguments
         def event_listener_wrapper(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
