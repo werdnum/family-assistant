@@ -1783,7 +1783,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                 # ConfirmationCallbackSignature is now defined at module level.
 
                 typed_callback = cast(
-                    "ConfirmationCallbackSignature",  # Keep as string for ruff TC006
+                    "ConfirmationCallbackSignature",
                     context.request_confirmation_callback,
                 )
 
