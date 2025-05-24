@@ -17,7 +17,7 @@ from typing import (
     runtime_checkable,
 )
 
-import telegramify_markdown
+import telegramify_markdown  # type: ignore[import-untyped]
 from sqlalchemy import update  # For error handling db update
 from telegram import (
     ForceReply,  # Add ForceReply import

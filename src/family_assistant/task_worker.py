@@ -16,7 +16,7 @@ from dateutil import rrule
 from telegram.constants import ParseMode
 from telegram.ext import Application
 from telegram.helpers import escape_markdown
-from telegramify_markdown import markdownify
+from telegramify_markdown import markdownify  # type: ignore[import-untyped]
 
 from family_assistant import storage
 from family_assistant.embeddings import EmbeddingGenerator
