@@ -51,6 +51,7 @@ dependencies = [
     "numpy>=1.26.0", # Dependency for sentence-transformers and pgvector
     "alembic>=1.15.2",
     "filetype>=1.2.0", # For detecting file types
+    "playwright>=1.40.0", # For web scraping and JS rendering
 ]
 
 [project.optional-dependencies]
