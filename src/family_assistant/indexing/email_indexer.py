@@ -2,10 +2,11 @@
 Handles the indexing process for emails stored in the database.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any  # Added List
+from typing import Any, cast
 
 from sqlalchemy import select  # Import select and update
 
@@ -219,6 +220,15 @@ class EmailIndexer:
         # LLM enrichment logic would go here in the future
 
         # --- 4. Add/Update Document Record in Vector DB & Get DB Record ---
+        # Ensure storage.add_document is awaitable (it might be a stub if vector_storage failed to import)
+        if not asyncio.iscoroutinefunction(storage.add_document):
+            logger.error(
+                "Vector storage backend (storage.add_document) is not available or not async."
+            )
+            raise RuntimeError(
+                "Vector storage backend is not available for add_document."
+            )
+
         doc_db_id: int = await storage.add_document(
             db_context=db_context,
             doc=email_doc,
@@ -300,7 +310,7 @@ class EmailIndexer:
             )
             await self.pipeline.run(
                 initial_items=initial_items,
-                original_document=db_document_record,  # Pass the DB record
+                original_document=cast("Document", db_document_record),  # Pass the DB record, cast for protocol
                 context=exec_context,
             )
         except Exception as e:
