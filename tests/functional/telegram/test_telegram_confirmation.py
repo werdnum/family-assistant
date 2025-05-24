@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -9,7 +10,6 @@ import telegramify_markdown  # type: ignore[import-untyped]
 from assertpy import assert_that, soft_assertions
 from telegram import Message
 
-from family_assistant.llm import LLMOutput
 from family_assistant.tools import ConfirmingToolsProvider  # Import confirming provider
 from tests.functional.telegram.test_telegram_handler import (
     create_mock_context,
@@ -17,7 +17,15 @@ from tests.functional.telegram.test_telegram_handler import (
 )
 
 # Import mock LLM helpers
-from tests.mocks.mock_llm import MatcherArgs, Rule, get_last_message_text
+from tests.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,  # Use alias for clarity
+)
+from tests.mocks.mock_llm import (
+    MatcherArgs,
+    Rule,
+    RuleBasedMockLLMClient,  # Import the concrete class for casting
+    get_last_message_text,
+)
 
 # Import the test fixture and helper functions
 from .conftest import TelegramHandlerTestFixture
@@ -41,6 +49,8 @@ async def test_confirmation_accepted(
     """
     # Arrange
     fix = telegram_handler_fixture
+    # Cast mock_llm to the concrete type to access specific attributes like .rules and ._calls
+    mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 401
     assistant_final_message_id = 402
     # Test data for adding a note (confirmed scenario)
@@ -59,7 +69,7 @@ async def test_confirmation_accepted(
         messages = kwargs.get("messages", [])
         return user_text in get_last_message_text(messages)
 
-    request_tool_output = LLMOutput(
+    request_tool_output = MockLLMOutput(  # Use MockLLMOutput for rule definition
         content=llm_request_tool_text,
         tool_calls=[
             {
@@ -93,10 +103,10 @@ async def test_confirmation_accepted(
             for msg in messages
         )
 
-    final_success_output = LLMOutput(content=llm_final_success_text)
+    final_success_output = MockLLMOutput(content=llm_final_success_text)  # Use MockLLMOutput
     rule_final_success: Rule = (success_result_matcher, final_success_output)
 
-    fix.mock_llm.rules = [rule_request_tool, rule_final_success]
+    mock_llm_client.rules = [rule_request_tool, rule_final_success]  # Use casted client
 
     # --- Configure Confirmation (New Approach) ---
     # 1. Create the confirming provider wrapper for this test
@@ -178,7 +188,7 @@ async def test_confirmation_accepted(
                 )
                 called_arguments = (
                     call_args_tuple[1]
-                    if len(call_args_tuple) > 1
+                    if call_args_tuple and len(call_args_tuple) > 1  # Check call_args_tuple is not None
                     else call_kwargs_dict.get("arguments")
                 )  # noqa: E501
                 assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
@@ -188,7 +198,7 @@ async def test_confirmation_accepted(
                 })  # noqa: E501
 
         # 3. LLM was called twice (request tool, process result)
-        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
+        assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)  # Use casted client
 
         # 4. Final success message sent to user
         fix.mock_bot.send_message.assert_awaited_once()
@@ -214,6 +224,8 @@ async def test_confirmation_rejected(
     """
     # Arrange
     fix = telegram_handler_fixture
+    # Cast mock_llm to the concrete type
+    mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 501
     assistant_cancel_message_id = 502  # ID for the cancellation message
     # Test data for adding a note (rejected scenario)
@@ -235,7 +247,7 @@ async def test_confirmation_rejected(
         messages = kwargs.get("messages", [])
         return user_text in get_last_message_text(messages)
 
-    request_tool_output = LLMOutput(
+    request_tool_output = MockLLMOutput(  # Use MockLLMOutput for rule definition
         content=llm_request_tool_text,
         tool_calls=[
             {
@@ -264,10 +276,10 @@ async def test_confirmation_rejected(
             for msg in messages
         )
 
-    final_cancel_output = LLMOutput(content=llm_final_cancel_text)
+    final_cancel_output = MockLLMOutput(content=llm_final_cancel_text)  # Use MockLLMOutput
     rule_final_cancel: Rule = (cancel_result_matcher, final_cancel_output)
 
-    fix.mock_llm.rules = [rule_request_tool, rule_final_cancel]
+    mock_llm_client.rules = [rule_request_tool, rule_final_cancel]  # Use casted client
     # --- Configure Confirmation (New Approach) ---
     confirming_wrapper = ConfirmingToolsProvider(
         wrapped_provider=fix.tools_provider,  # Wrap the provider from the fixture
@@ -324,7 +336,7 @@ async def test_confirmation_rejected(
                 mock_execute_original.assert_not_awaited()
 
             # 3. LLM was called twice (request tool, process cancellation result)
-            assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
+            assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)  # Use casted client
 
             # 4. Final cancellation message sent to user (matching rule_final_cancel)
             fix.mock_bot.send_message.assert_awaited_once()
@@ -350,6 +362,8 @@ async def test_confirmation_timed_out(
     """
     # Arrange
     fix = telegram_handler_fixture
+    # Cast mock_llm to the concrete type
+    mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 601
     assistant_timeout_message_id = 602  # ID for the timeout message
     # Test data for adding a note (timeout scenario)
@@ -367,7 +381,7 @@ async def test_confirmation_timed_out(
         messages = kwargs.get("messages", [])
         return user_text in get_last_message_text(messages)
 
-    request_tool_output = LLMOutput(
+    request_tool_output = MockLLMOutput(  # Use MockLLMOutput for rule definition
         content=llm_request_tool_text,
         tool_calls=[
             {
@@ -396,10 +410,10 @@ async def test_confirmation_timed_out(
             for msg in messages
         )
 
-    final_timeout_output = LLMOutput(content=llm_final_timeout_text)
+    final_timeout_output = MockLLMOutput(content=llm_final_timeout_text)  # Use MockLLMOutput
     rule_final_timeout: Rule = (timeout_result_matcher, final_timeout_output)
 
-    fix.mock_llm.rules = [rule_request_tool, rule_final_timeout]
+    mock_llm_client.rules = [rule_request_tool, rule_final_timeout]  # Use casted client
     # --- Configure Confirmation (New Approach) ---
     confirming_wrapper = ConfirmingToolsProvider(
         wrapped_provider=fix.tools_provider,  # Wrap the provider from the fixture
@@ -457,7 +471,7 @@ async def test_confirmation_timed_out(
                 mock_execute_original.assert_not_awaited()
 
             # 3. LLM was called twice (request tool, process timeout/cancellation result)
-            assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
+            assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)  # Use casted client
             # 4. Final timeout message sent to user (matching rule_final_timeout)
             fix.mock_bot.send_message.assert_awaited_once()
             args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
