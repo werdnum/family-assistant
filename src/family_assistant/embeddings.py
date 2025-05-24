@@ -254,138 +254,128 @@ class HashingWordEmbeddingGenerator:
         return EmbeddingResult(embeddings=embeddings_list, model_name=self.model_name)
 
 
-# --- Sentence Transformer Implementation (Conditional) ---
+# --- Sentence Transformer Implementation (Unified) ---
 
-if SENTENCE_TRANSFORMERS_AVAILABLE:
+class SentenceTransformerEmbeddingGenerator:
+    """
+    Embedding generator implementation using the sentence-transformers library
+    for local embedding generation.
+    If sentence-transformers is not available, instantiation or usage will raise an ImportError.
+    """
 
-    class SentenceTransformerEmbeddingGenerator:
+    _model_name: str  # Instance variable for the model name/path
+    model: Any  # Instance variable for the loaded SentenceTransformer model
+    model_kwargs: dict[str, Any]  # Instance variable for model kwargs
+
+    def __init__(
+        self, model_name_or_path: str, device: str | None = None, **kwargs: object
+    ) -> None:
         """
-        Embedding generator implementation using the sentence-transformers library
-        for local embedding generation.
+        Initializes the SentenceTransformer embedding generator.
+
+        Args:
+            model_name_or_path: The name of a model from HuggingFace Hub (e.g., 'all-MiniLM-L6-v2')
+                                or a path to a local model directory.
+            device: The device to run the model on (e.g., 'cpu', 'cuda', 'mps'). If None,
+                    sentence-transformers will attempt auto-detection.
+            **kwargs: Additional keyword arguments passed to the SentenceTransformer constructor.
+
+        Raises:
+            ImportError: If the sentence-transformers library is not installed.
+            ValueError: If model_name_or_path is empty or model loading fails.
         """
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            raise ImportError(
+                "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
+            )
 
-        def __init__(
-            self, model_name_or_path: str, device: str | None = None, **kwargs: object
-        ) -> None:
-            """
-            Initializes the SentenceTransformer embedding generator.
+        if not model_name_or_path:
+            raise ValueError("SentenceTransformer model name or path cannot be empty.")
 
-            Args:
-                model_name_or_path: The name of a model from HuggingFace Hub (e.g., 'all-MiniLM-L6-v2')
-                                    or a path to a local model directory.
-                device: The device to run the model on (e.g., 'cpu', 'cuda', 'mps'). If None,
-                        sentence-transformers will attempt auto-detection.
-                **kwargs: Additional keyword arguments passed to the SentenceTransformer constructor.
-            """
-            if not model_name_or_path:
-                raise ValueError(
-                    "SentenceTransformer model name or path cannot be empty."
+        self._model_name = model_name_or_path
+        self.model_kwargs = kwargs  # type: ignore[assignment]
+        try:
+            logger.info(
+                f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}"
+            )
+            if _SentenceTransformer_cls is None:  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE is True
+                raise RuntimeError(
+                    "SentenceTransformer class is None, though library was reported as available."
                 )
+            self.model = _SentenceTransformer_cls(
+                model_name_or_path, device=device, **self.model_kwargs
+            )
+            logger.info(
+                f"SentenceTransformer model {model_name_or_path} loaded successfully."
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to load SentenceTransformer model '{model_name_or_path}': {e}",
+                exc_info=True,
+            )
+            raise ValueError(
+                f"Could not load SentenceTransformer model '{model_name_or_path}'"
+            ) from e
 
-            self._model_name = model_name_or_path  # Store the identifier used
-            self.model_kwargs = kwargs
-            try:
-                logger.info(
-                    f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}"
-                )
-                # Ensure _SentenceTransformer_cls is not None before calling
-                if (
-                    _SentenceTransformer_cls is None
-                ):  # Check the correctly typed variable
-                    raise RuntimeError(
-                        "SentenceTransformer class is None, library likely not installed."
-                    )
-                self.model = (
-                    _SentenceTransformer_cls(  # Use the correctly typed variable
-                        model_name_or_path, device=device, **self.model_kwargs
-                    )
-                )
-                logger.info(
-                    f"SentenceTransformer model {model_name_or_path} loaded successfully."
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to load SentenceTransformer model '{model_name_or_path}': {e}",
-                    exc_info=True,
-                )
-                raise ValueError(
-                    f"Could not load SentenceTransformer model '{model_name_or_path}'"
-                ) from e
+    @property
+    def model_name(self) -> str:
+        """The identifier of the embedding model being used."""
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            # This case should ideally be caught by __init__, but as a fallback:
+            return "unavailable-sentence-transformer"
+        return self._model_name
 
-        @property
-        def model_name(self) -> str:
-            # Return the identifier used, which might be a path or a hub name
-            return self._model_name
+    async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
+        """
+        Generates embeddings using the loaded SentenceTransformer model.
 
-        async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
-            """Generates embeddings using the loaded SentenceTransformer model."""
-            if not texts:
-                logger.warning("generate_embeddings called with empty list of texts.")
-                return EmbeddingResult(embeddings=[], model_name=self.model_name)
+        Raises:
+            ImportError: If the sentence-transformers library is not installed (should be caught by __init__).
+            RuntimeError: If embedding generation fails.
+        """
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            # This check is somewhat redundant if __init__ raises, but good for safety.
+            raise ImportError(
+                "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
+            )
+
+        if not texts:
+            logger.warning("generate_embeddings called with empty list of texts.")
+            return EmbeddingResult(embeddings=[], model_name=self.model_name)
+
+        logger.debug(
+            f"Generating embeddings with SentenceTransformer model {self.model_name} for {len(texts)} texts."
+        )
+        try:
+            loop = asyncio.get_running_loop()
+            embeddings_np = await loop.run_in_executor(
+                None, self.model.encode, texts
+            )
+
+            if _np_module is None:  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE
+                 raise RuntimeError("Numpy module is None, though library was reported as available.")
+            embeddings_list = [_np_module.array(arr).tolist() for arr in embeddings_np]
 
             logger.debug(
-                f"Generating embeddings with SentenceTransformer model {self.model_name} for {len(texts)} texts."
+                f"SentenceTransformer generated {len(embeddings_list)} embeddings."
             )
-            try:
-                # sentence-transformers encode is synchronous, run it in an executor
-                # to avoid blocking the asyncio event loop.
-                loop = asyncio.get_running_loop()
-                # The encode method might return numpy arrays or torch tensors depending on config
-                embeddings_np = await loop.run_in_executor(
-                    None,  # Use default executor
-                    self.model.encode,
-                    texts,
-                )
+            return EmbeddingResult(
+                embeddings=embeddings_list, model_name=self.model_name
+            )
+        except Exception as e:
+            logger.error(
+                f"Error during SentenceTransformer embedding generation for model {self.model_name}: {e}",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Failed to generate embeddings with SentenceTransformer: {e}"
+            ) from e
 
-                # Convert numpy arrays to lists of floats
-                # embeddings_np is expected to be a list of numpy arrays here.
-                # The availability of numpy (_np_module) is implied by SENTENCE_TRANSFORMERS_AVAILABLE being true,
-                # so an explicit check for _np_module is not strictly needed here for functionality,
-                # but was the source of the original mypy error on np = None.
-                embeddings_list = [arr.tolist() for arr in embeddings_np]
 
-                logger.debug(
-                    f"SentenceTransformer generated {len(embeddings_list)} embeddings."
-                )
-                return EmbeddingResult(
-                    embeddings=embeddings_list, model_name=self.model_name
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error during SentenceTransformer embedding generation for model {self.model_name}: {e}",
-                    exc_info=True,
-                )
-                # Wrap errors appropriately
-                raise RuntimeError(
-                    f"Failed to generate embeddings with SentenceTransformer: {e}"
-                ) from e
-
-else:
+if not SENTENCE_TRANSFORMERS_AVAILABLE:
     logger.warning(
-        "sentence-transformers library not found. SentenceTransformerEmbeddingGenerator will not be available."
+        "sentence-transformers library not found. SentenceTransformerEmbeddingGenerator will not be fully available."
     )
-
-    # Define a placeholder if the library is missing, so imports don't break elsewhere
-    # if code explicitly tries to import SentenceTransformerEmbeddingGenerator
-    class SentenceTransformerEmbeddingGenerator:  # pyright: ignore[reportRedeclaration] # type: ignore[no-redef] # noqa: F811
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            raise ImportError(
-                "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
-            )
-
-        async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
-            """Placeholder for generate_embeddings to satisfy the protocol."""
-            # This method should not be called if the library is not available.
-            # Raising an error is consistent with the __init__ behavior.
-            raise ImportError(
-                "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
-            )
-
-        @property
-        def model_name(self) -> str:
-            """Placeholder for model_name to satisfy the protocol."""
-            # Provide a distinct model name for the placeholder.
-            return "unavailable-sentence-transformer"
 
 
 class MockEmbeddingGenerator:
