@@ -256,6 +256,7 @@ class HashingWordEmbeddingGenerator:
 
 # --- Sentence Transformer Implementation (Unified) ---
 
+
 class SentenceTransformerEmbeddingGenerator:
     """
     Embedding generator implementation using the sentence-transformers library
@@ -298,7 +299,9 @@ class SentenceTransformerEmbeddingGenerator:
             logger.info(
                 f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}"
             )
-            if _SentenceTransformer_cls is None:  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE is True
+            if (
+                _SentenceTransformer_cls is None
+            ):  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE is True
                 raise RuntimeError(
                     "SentenceTransformer class is None, though library was reported as available."
                 )
@@ -348,12 +351,14 @@ class SentenceTransformerEmbeddingGenerator:
         )
         try:
             loop = asyncio.get_running_loop()
-            embeddings_np = await loop.run_in_executor(
-                None, self.model.encode, texts
-            )
+            embeddings_np = await loop.run_in_executor(None, self.model.encode, texts)
 
-            if _np_module is None:  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE
-                raise RuntimeError("Numpy module is None, though library was reported as available.")
+            if (
+                _np_module is None
+            ):  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE
+                raise RuntimeError(
+                    "Numpy module is None, though library was reported as available."
+                )
             embeddings_list = [_np_module.array(arr).tolist() for arr in embeddings_np]
 
             logger.debug(

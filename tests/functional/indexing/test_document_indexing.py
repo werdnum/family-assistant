@@ -306,8 +306,12 @@ async def test_document_indexing_and_query_e2e(
 
     # --- Arrange: Mock Embeddings (Done via fixture) ---
     # Retrieve query embeddings stored in the fixture instance's embedding_map
-    query_semantic_embedding = mock_embedding_generator.embedding_map["__test_query_semantic_embedding__"]
-    query_keyword_embedding = mock_embedding_generator.embedding_map["__test_query_keyword_embedding__"]
+    query_semantic_embedding = mock_embedding_generator.embedding_map[
+        "__test_query_semantic_embedding__"
+    ]
+    query_keyword_embedding = mock_embedding_generator.embedding_map[
+        "__test_query_keyword_embedding__"
+    ]
 
     # --- Arrange: Instantiate Pipeline and Indexer ---
     # Define Pipeline Config for this test
@@ -1265,7 +1269,9 @@ async def test_url_indexing_e2e(
         )
         # query_url_content_embedding is a local variable.
         # No need to store it on mock_embedding_generator instance.
-        logger.info("Updated mock_embedding_generator.embedding_map for URL auto-title test.")
+        logger.info(
+            "Updated mock_embedding_generator.embedding_map for URL auto-title test."
+        )
 
         # --- Arrange: Instantiate Pipeline and Indexer for URL auto-title processing ---
         test_pipeline_config_auto_title = {
