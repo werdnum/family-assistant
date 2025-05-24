@@ -133,7 +133,7 @@ class EmbeddingDispatchProcessor(ContentProcessor):
                 task_type="embed_and_store_batch",
                 payload=task_payload,
                 notify_event=(
-                    context.application.new_task_event
+                    context.application.new_task_event  # type: ignore[attr-defined]
                     if context.application
                     and hasattr(context.application, "new_task_event")
                     else None
