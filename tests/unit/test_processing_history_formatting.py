@@ -31,7 +31,9 @@ class MockLLMClient:
 
 
 class MockToolsProvider:
-    async def get_tool_definitions(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    async def get_tool_definitions(
+        self, *args: Any, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return []  # Not used
 
     async def execute_tool(
