@@ -392,12 +392,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         # Check if the last message is a reply
         replied_to_interface_id: str | None = None
-        is_reply = False
         if last_update.message and last_update.message.reply_to_message:
             replied_to_interface_id = str(
                 last_update.message.reply_to_message.message_id
             )
-            # is_reply = True # This variable was assigned but not used.
 
         all_texts = []
         first_photo_bytes = None
