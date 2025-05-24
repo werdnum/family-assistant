@@ -2,6 +2,8 @@ import json
 import logging
 import pathlib
 import tempfile
+from collections.abc import Generator
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,16 +12,17 @@ from family_assistant.indexing.pipeline import IndexableContent
 from family_assistant.indexing.processors.llm_processors import (
     LLMIntelligenceProcessor,
 )
-from family_assistant.llm import LLMOutput
+from family_assistant.llm import LLMInterface as RealLLMInterface
 
 # Assuming RuleBasedMockLLMClient is correctly exposed or imported
-from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
+# Import LLMOutput from the same module as RuleBasedMockLLMClient to ensure type consistency for rules
+from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def temp_text_file() -> pathlib.Path:
+def temp_text_file() -> Generator[pathlib.Path, None, None]:
     """Creates a temporary text file with some content."""
     content = "This is a test document for summarization by the LLM."
     with tempfile.NamedTemporaryFile(
@@ -127,7 +130,7 @@ async def test_llm_processor_with_file_input_summarization(
         "description": "Schema for extracted summary.",
     }
     llm_processor = LLMIntelligenceProcessor(
-        llm_client=mock_llm_client,
+        llm_client=cast("RealLLMInterface", mock_llm_client),
         system_prompt_template="Extract a concise summary from the provided document.",
         output_schema=processor_output_schema,
         target_embedding_type="document_summary_from_file",
