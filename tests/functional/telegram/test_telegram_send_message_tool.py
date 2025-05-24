@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone  # Keep this, create_mock_update uses it
-from typing import Any  # Keep this, create_mock_context uses it
+from typing import Any, cast  # Keep this, create_mock_context uses it
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,8 +12,13 @@ from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 from family_assistant.context_providers import KnownUsersContextProvider
-from family_assistant.llm import LLMOutput
-from tests.mocks.mock_llm import MatcherArgs, Rule, get_last_message_text
+from tests.mocks.mock_llm import (
+    LLMOutput,
+    MatcherArgs,
+    Rule,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 
 # Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
@@ -159,7 +164,8 @@ async def test_send_message_to_user_tool(
     )
     rule_final_confirmation: Rule = (tool_result_matcher, final_confirmation_output)
 
-    fix.mock_llm.rules = [rule_send_message_request, rule_final_confirmation]
+    mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
+    mock_llm_client.rules = [rule_send_message_request, rule_final_confirmation]
 
     # --- Mock Bot Responses ---
     mock_message_sent_to_bob = AsyncMock(spec=Message, message_id=message_to_bob_id)
@@ -188,9 +194,12 @@ async def test_send_message_to_user_tool(
         await fix.handler.message_handler(update_alice, context_alice)
 
         # Assert
-        with soft_assertions():
+        with soft_assertions():  # type: ignore[attr-defined]
             # 1. LLM Calls
-            assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
+            mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
+            assert_that(mock_llm_client._calls).described_as(
+                "LLM Call Count"
+            ).is_length(2)
 
             # 2. Bot API Calls (send_message)
             assert_that(fix.mock_bot.send_message.await_count).described_as(
