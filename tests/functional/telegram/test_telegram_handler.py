@@ -6,6 +6,7 @@
 # Database state changes (message history, notes, tasks) are NOT directly asserted here.
 import json  # Add import
 import logging
+import typing  # ADDED for cast
 import uuid  # Add import
 from datetime import datetime, timezone
 from typing import Any  # Add missing typing imports
@@ -20,10 +21,16 @@ from assertpy import (
 from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
-from family_assistant.llm import LLMOutput
-
+# CHANGED: LLMOutput from family_assistant.llm aliased
 # Import mock LLM helpers
-from tests.mocks.mock_llm import MatcherArgs, Rule, get_last_message_text
+# CHANGED: LLMOutput and RuleBasedMockLLMClient added here
+from tests.mocks.mock_llm import (
+    LLMOutput,  # This is the one for Rules
+    MatcherArgs,
+    Rule,
+    RuleBasedMockLLMClient,  # For casting
+    get_last_message_text,
+)
 
 # Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
@@ -42,9 +49,8 @@ def create_mock_context(
     context = ContextTypes.DEFAULT_TYPE(
         application=mock_application, chat_id=123, user_id=12345
     )
-    context._bot = (
-        mock_application.bot
-    )  # Explicitly assign the bot from the mock application
+    # Explicitly assign the bot from the mock application using setattr
+    context._bot = mock_application.bot
     # Do not reassign bot_data, update it instead
     if bot_data:
         context.bot_data.update(bot_data)
@@ -105,7 +111,7 @@ async def test_simple_text_message(
         matcher_hello,
         LLMOutput(content=llm_response_text, tool_calls=None),
     )
-    fix.mock_llm.rules = [rule_hello_response]  # Set rules for this test instance
+    typing.cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [rule_hello_response]  # Set rules for this test instance
 
     # Configure mock Bot response (simulate sending message)
     mock_sent_message = AsyncMock(
@@ -127,9 +133,9 @@ async def test_simple_text_message(
     await fix.handler.message_handler(update, context)
 
     # Assert
-    with soft_assertions():
+    with soft_assertions():  # type: ignore[attr-defined]
         # 1. LLM Call Verification
-        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(1)
+        assert_that(typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls).described_as("LLM Call Count").is_length(1)
 
         # 2. Bot API Call Verification (Output to user)
         fix.mock_bot.send_message.assert_awaited_once()
@@ -245,7 +251,7 @@ async def test_add_note_tool_usage(
     )
     rule_final_confirmation: Rule = (tool_result_matcher, final_confirmation_response)
 
-    fix.mock_llm.rules = [
+    typing.cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
         rule_add_note_request,
         rule_final_confirmation,
     ]  # Order matters if matchers overlap
@@ -270,13 +276,13 @@ async def test_add_note_tool_usage(
     await fix.handler.message_handler(update, context)
 
     # Assert
-    with soft_assertions():
+    with soft_assertions():  # type: ignore[attr-defined]
         # 1. Confirmation Manager Call (Should NOT be called for add_note)
         fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
 
         # 2. LLM Calls
         # Expect two calls: first triggers tool, second processes result
-        assert_that(fix.mock_llm._calls).described_as("LLM Call Count").is_length(2)
+        assert_that(typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls).described_as("LLM Call Count").is_length(2)
 
         # Implicitly verified LLM inputs:
         # - The first call must have matched add_note_matcher to produce the tool call.
@@ -397,7 +403,7 @@ async def test_tool_result_in_subsequent_history(
     rule_ask_result_t2: Rule = (ask_result_matcher_t2, ask_result_response_t2)
 
     # Set rules (order matters for non-overlapping matchers, but explicit here)
-    fix.mock_llm.rules = [
+    typing.cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
         rule_add_note_request_t1,
         rule_ask_result_t2,
         rule_final_confirmation_t1,  # More general rule checked last
@@ -427,7 +433,7 @@ async def test_tool_result_in_subsequent_history(
     await fix.handler.message_handler(update_1, context)
 
     # --- Assert (Turn 1 - Minimal, just ensure it likely completed) ---
-    assert_that(fix.mock_llm._calls).described_as("LLM Calls after Turn 1").is_length(2)
+    assert_that(typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls).described_as("LLM Calls after Turn 1").is_length(2)
     assert_that(fix.mock_bot.send_message.await_count).described_as(
         "Bot Sends after Turn 1"
     ).is_equal_to(1)
@@ -447,8 +453,8 @@ async def test_tool_result_in_subsequent_history(
     await fix.handler.message_handler(update_2, context)
 
     # --- Assert (Turn 2) ---
-    with soft_assertions():
-        assert_that(fix.mock_llm._calls).described_as(
+    with soft_assertions():  # type: ignore[attr-defined]
+        assert_that(typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls).described_as(
             "LLM Calls after Turn 2"
         ).is_length(3)  # One more call
         assert_that(fix.mock_bot.send_message.await_count).described_as(
