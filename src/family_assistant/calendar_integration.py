@@ -359,7 +359,8 @@ async def fetch_upcoming_events(
     """Fetches events from configured CalDAV and iCal sources and merges them."""
     logger.debug("Entering fetch_upcoming_events orchestrator.")
     all_events: list[dict[str, Any]] = []
-    tasks: list[asyncio.Task[Any]] = []  # Task can return list[dict] or raise Exception
+    # Allow tasks list to hold both Futures (from run_in_executor) and Tasks
+    tasks: list[asyncio.Future[Any] | asyncio.Task[Any]] = []
 
     # --- Schedule CalDAV Fetch (if configured) ---
     caldav_config = calendar_config.get("caldav")
@@ -407,7 +408,10 @@ async def fetch_upcoming_events(
         return []
 
     logger.info(f"Fetching events from {len(tasks)} source(s) concurrently...")
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Explicitly type results, as gather with return_exceptions=True can return exceptions
+    results: list[Any | BaseException] = await asyncio.gather(
+        *tasks, return_exceptions=True
+    )
 
     # --- Process Results ---
     for result in results:
