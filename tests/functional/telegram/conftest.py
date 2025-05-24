@@ -1,13 +1,13 @@
 import contextlib
 from collections.abc import AsyncGenerator, Callable
-from typing import NamedTuple
+from typing import NamedTuple, cast
 from unittest.mock import AsyncMock
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 from telegram.ext import Application
 
-from family_assistant.llm import LLMInterface, LLMOutput  # Import LLMOutput
+from family_assistant.llm import LLMInterface  # Import LLMOutput
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.telegram_bot import (
@@ -29,10 +29,11 @@ from family_assistant.tools import (
     LocalToolsProvider,
     calendar_integration,
 )
+from tests.mocks.mock_llm import LLMOutput as MockLLMOutput  # Import mock's LLMOutput
 
 # Mock the LLMInterface before it's imported by other modules if necessary
 # or ensure mocks are injected properly.
-from tests.mocks.mock_llm import RuleBasedMockLLMClient  # Or use AsyncMock
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 # Define a named tuple to hold the fixture results for easier access
@@ -70,7 +71,7 @@ async def telegram_handler_fixture(
     # Use RuleBasedMockLLMClient - rules will be set per-test
     mock_llm = RuleBasedMockLLMClient(
         rules=[],  # Start with empty rules
-        default_response=LLMOutput(content="Default mock response (no rule matched)"),
+        default_response=MockLLMOutput(content="Default mock response (no rule matched)"),  # Use MockLLMOutput here
     )
 
     mock_bot = AsyncMock(name="MockBot")
@@ -131,7 +132,7 @@ async def telegram_handler_fixture(
     test_app_config = {}
 
     processing_service = ProcessingService(
-        llm_client=mock_llm,
+        llm_client=cast("LLMInterface", mock_llm),
         # Initialize with the non-confirming provider by default
         tools_provider=composite_provider,
         service_config=test_service_config_obj,  # Pass the ProcessingServiceConfig instance
@@ -141,11 +142,11 @@ async def telegram_handler_fixture(
     )
 
     # Function to get DB context for the specific test engine
-    async def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
+    def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
         DatabaseContext
     ]:
         # get_db_context uses the globally patched engine by default
-        return await get_db_context()
+        return get_db_context()
 
     # Instantiate Handler (Batcher needs processor, Handler needs batcher)
     # Handler will be assigned as the processor to the batcher after instantiation
@@ -166,7 +167,7 @@ async def telegram_handler_fixture(
         handler=handler,
         mock_bot=mock_bot,
         mock_telegram_service=mock_telegram_service,  # Yield the mock service
-        mock_llm=mock_llm,
+        mock_llm=cast("LLMInterface", mock_llm),
         mock_confirmation_manager=mock_confirmation_manager,
         processing_service=processing_service,
         tools_provider=composite_provider,  # Yield the composite provider
