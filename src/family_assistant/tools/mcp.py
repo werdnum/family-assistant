@@ -6,7 +6,8 @@ from typing import (
     Any,
 )  # Added Tuple
 
-from mcp import ClientSession, StdioServerParameters, sse_client, stdio_client
+from mcp import ClientSession, StdioServerParameters, stdio_client
+from mcp.http import sse_client  # Assuming sse_client is in mcp.http
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
 # Import storage functions needed by local tools
