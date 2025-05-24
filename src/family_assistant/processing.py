@@ -141,7 +141,10 @@ class ProcessingService:
         application: Application,
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
-            Callable[[int, str, str | None, str, str, dict[str, Any], float], Awaitable[bool]] | None
+            Callable[
+                [int, str, str | None, str, str, dict[str, Any], float], Awaitable[bool]
+            ]
+            | None
         ) = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         """
@@ -534,7 +537,10 @@ class ProcessingService:
         replied_to_interface_id: str | None = None,  # Added for reply context
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
-            Callable[[int, str, str | None, str, str, dict[str, Any], float], Awaitable[bool]] | None
+            Callable[
+                [int, str, str | None, str, str, dict[str, Any], float], Awaitable[bool]
+            ]
+            | None
         ) = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str | None]:
         """Prepares context, message history, calls the LLM processing logic,
