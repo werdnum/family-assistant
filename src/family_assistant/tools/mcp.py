@@ -6,9 +6,10 @@ from typing import (
     Any,
 )  # Added Tuple
 
-from mcp import ClientSession, StdioServerParameters, TextContent
+from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client  # Import the correct context manager
 from mcp.client.stdio import stdio_client
+from mcp.content import TextContent
 
 # Import storage functions needed by local tools
 # Import the context from the new types file
@@ -353,9 +354,8 @@ class MCPToolsProvider:
             response_parts = []
             if mcp_result.content:
                 for content_item in mcp_result.content:
-                    if isinstance(content_item, TextContent):
-                        if content_item.text:  # Ensure text is not empty
-                            response_parts.append(content_item.text)
+                    if isinstance(content_item, TextContent) and content_item.text:
+                        response_parts.append(content_item.text)
                     # Handle other content types if needed (e.g., image, resource)
 
             result_str = (
