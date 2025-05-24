@@ -342,7 +342,7 @@ async def manually_retry_task(
             return True
         else:
             logger.error(
-                f"Failed to update task with internal ID {internal_task_id} for manual retry, though it was found and eligible. Rowcount: {result.rowcount}."
+                f"Failed to update task with internal ID {internal_task_id} for manual retry, though it was found and eligible. Rowcount: {result.rowcount}."  # type: ignore
             )
             return False
 
