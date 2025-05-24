@@ -41,6 +41,12 @@ from .types import ToolExecutionContext, ToolNotFoundError
 
 logger = logging.getLogger(__name__)
 
+# Define TypeAlias for the confirmation callback signature at module level
+ConfirmationCallbackSignature: TypeAlias = Callable[
+    [int, str, str | None, str, str, dict[str, Any], float],
+    Awaitable[bool],
+]
+
 MCPToolsProvider = MCPToolsProvider
 
 # --- Custom Exceptions ---
@@ -1774,13 +1780,10 @@ class ConfirmingToolsProvider(ToolsProvider):
                 # Cast to the confirmation callback signature, which matches the updated type hint in ToolExecutionContext.
                 # Signature: (chat_id: int, interface_type: str, turn_id: Optional[str],
                 #             prompt_text: str, tool_name: str, tool_args: dict, timeout: float)
-                ConfirmationCallbackSignature: TypeAlias = Callable[
-                    [int, str, str | None, str, str, dict[str, Any], float],
-                    Awaitable[bool],
-                ]
+                # ConfirmationCallbackSignature is now defined at module level.
 
                 typed_callback = cast(
-                    "ConfirmationCallbackSignature",
+                    "ConfirmationCallbackSignature",  # Keep as string for ruff TC006
                     context.request_confirmation_callback,
                 )
 
@@ -1790,14 +1793,15 @@ class ConfirmingToolsProvider(ToolsProvider):
                 chat_id_for_callback: int = int(context.conversation_id)
 
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
+                # Pass all arguments positionally to match the Callable signature
                 user_confirmed = await typed_callback(
                     chat_id_for_callback,  # Arg 1 (chat_id: int)
                     context.interface_type,  # Arg 2 (interface_type: str)
                     context.turn_id,  # Arg 3 (turn_id: Optional[str])
-                    prompt_text=confirmation_prompt,
-                    tool_name=name,
-                    tool_args=arguments,
-                    timeout=self.confirmation_timeout,
+                    confirmation_prompt,  # Arg 4 (prompt_text: str)
+                    name,  # Arg 5 (tool_name: str)
+                    arguments,  # Arg 6 (tool_args: dict[str, Any])
+                    self.confirmation_timeout,  # Arg 7 (timeout: float)
                 )
 
                 if user_confirmed:
