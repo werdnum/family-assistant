@@ -9,7 +9,7 @@ import logging
 import os
 import pathlib
 import uuid
-from collections.abc import Awaitable, Callable  # Added Awaitable, Set
+from collections.abc import Callable  # Added Awaitable, Set
 from datetime import datetime, timedelta, timezone  # Added date, time
 from typing import (
     Any,
@@ -53,8 +53,7 @@ class ConfirmationCallbackProtocol(Protocol):
         tool_name: str,
         tool_args: dict[str, Any],
         timeout: float,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
 
 # Define TypeAlias for the confirmation callback signature at module level
