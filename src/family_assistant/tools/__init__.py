@@ -13,7 +13,9 @@ from collections.abc import Callable  # Added Awaitable, Set
 from datetime import datetime, timedelta, timezone  # Added date, time
 from typing import (
     Any,
+    Optional,
     Protocol,
+    cast,
 )
 from zoneinfo import ZoneInfo
 
@@ -1768,12 +1770,31 @@ class ConfirmingToolsProvider(ToolsProvider):
             # 3. Request confirmation via callback (which handles Future creation/waiting)
             try:
                 logger.debug(f"Requesting confirmation for tool '{name}' via callback.")
+
+                # Cast to the corrected signature, which matches the updated type hint in ToolExecutionContext.
+                # Signature: (chat_id: int, interface_type: str, turn_id: Optional[str],
+                #             prompt_text: str, tool_name: str, tool_args: dict, timeout: float)
+                CorrectedCallbackSignature = Callable[
+                    [int, str, str | None, str, str, dict[str, Any], float],
+                    Awaitable[bool],
+                ]
+                
+                typed_callback = cast("CorrectedCallbackSignature", context.request_confirmation_callback)
+
+                # Determine chat_id_for_callback. This must be an int.
+                # If context.conversation_id is not a valid int string, int() will raise ValueError,
+                # which will be caught by the outer `except Exception as conf_err` block.
+                chat_id_for_callback: int = int(context.conversation_id)
+
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
-                user_confirmed = await context.request_confirmation_callback(
+                user_confirmed = await typed_callback(
+                    chat_id_for_callback,    # Arg 1 (chat_id: int)
+                    context.interface_type,  # Arg 2 (interface_type: str)
+                    context.turn_id,         # Arg 3 (turn_id: Optional[str])
                     prompt_text=confirmation_prompt,
-                    tool_name=name,  # Pass tool name for context if needed by callback
-                    tool_args=arguments,  # Pass args for context if needed by callback
-                    timeout=self.confirmation_timeout,  # Pass the timeout value
+                    tool_name=name,
+                    tool_args=arguments,
+                    timeout=self.confirmation_timeout,
                 )
 
                 if user_confirmed:
