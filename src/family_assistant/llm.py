@@ -43,7 +43,7 @@ LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in (
     "yes",
 )
 if LITELLM_DEBUG_ENABLED:
-    litellm.set_verbose = True
+    litellm.set_verbose = True  # type: ignore[reportPrivateImportUsage]
     logger.info(
         "Enabled LiteLLM verbose logging (set_verbose = True) because LITELLM_DEBUG is set."
     )
@@ -366,7 +366,7 @@ class LiteLLMClient:
 
                     gemini_file_obj: FileResponse = await loop.run_in_executor(
                         None,  # Default ThreadPoolExecutor
-                        litellm.file_upload,  # Corrected path to file_upload
+                        litellm.file_upload,  # type: ignore[attr-defined, no-member] # Corrected path to file_upload
                         io.BytesIO(file_bytes_content),  # file (BinaryIO)
                         os.path.basename(file_path),  # file_name
                         "gemini",  # custom_llm_provider
