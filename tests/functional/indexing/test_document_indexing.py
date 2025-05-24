@@ -9,8 +9,9 @@ import json
 import logging
 import tempfile  # Add tempfile import
 import uuid
+from collections.abc import AsyncGenerator  # Add missing typing imports
 from datetime import datetime, timezone
-from typing import Any  # Add missing typing imports
+from typing import Any, cast
 
 import httpx  # Import httpx
 import numpy as np
@@ -28,6 +29,7 @@ from family_assistant.embeddings import (
 from family_assistant.indexing.document_indexer import (
     DocumentIndexer,
 )
+from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import (
@@ -48,7 +50,9 @@ from family_assistant.web.app_creator import (
 # Import test helpers
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (  # Added
-    LLMOutput,
+    LLMOutput as MockLLMOutputForClient,  # Aliased for clarity
+)
+from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
@@ -168,7 +172,7 @@ async def mock_embedding_generator() -> MockEmbeddingGenerator:
 async def http_client(
     pg_vector_db_engine: AsyncEngine,  # Ensure DB is setup before app starts
     mock_embedding_generator: MockEmbeddingGenerator,  # Inject the mock generator
-) -> httpx.AsyncClient:
+) -> AsyncGenerator[httpx.AsyncClient, None]:
     """
     Provides a test client for the FastAPI application, configured with
     the test database and mock embedding generator.
@@ -239,7 +243,9 @@ async def _helper_handle_embed_and_store_batch(
     )
     db_context = exec_context.db_context
     # Get embedding generator from app state, where it was mocked
-    embedding_generator = exec_context.application.state.embedding_generator
+    embedding_generator = cast(
+        "Any", exec_context.application
+    ).state.embedding_generator
 
     document_id = payload["document_id"]
     texts_to_embed: list[str] = payload["texts_to_embed"]
@@ -331,8 +337,10 @@ async def test_document_indexing_and_query_e2e(
     dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     worker = TaskWorker(
-        processing_service=None,  # No processing service needed for this handler
-        application=fastapi_app,  # Use the real app for state access
+        processing_service=cast(
+            "ProcessingService", None
+        ),  # No processing service needed for this handler
+        application=cast("Any", fastapi_app),  # Use the real app for state access
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         embedding_generator=mock_embedding_generator,  # Pass the mock generator
@@ -478,7 +486,7 @@ async def test_document_indexing_and_query_e2e(
         assert "distance" in found_semantic_result, (
             "Semantic result missing 'distance' field"
         )
-        assert found_semantic_result["distance"] < 0.1, (
+        assert float(found_semantic_result["distance"]) < 0.1, (
             f"Semantic distance should be small, but was {found_semantic_result['distance']}"
         )
         assert found_semantic_result.get("embedding_type") == "content_chunk"
@@ -664,7 +672,7 @@ async def test_document_indexing_with_llm_summary_e2e(
             and not has_text_plain_file_placeholder
         )
 
-    mock_llm_output = LLMOutput(
+    mock_llm_output = MockLLMOutputForClient(
         content=None,
         tool_calls=[
             {
@@ -714,10 +722,8 @@ async def test_document_indexing_with_llm_summary_e2e(
         }
     )
     # Store for assertion
-    mock_embedding_generator._test_query_summary_embedding = query_summary_embedding  # type: ignore
-    mock_embedding_generator._test_query_url_content_embedding = (  # type: ignore
-        query_for_url_content_embedding_val
-    )
+    mock_embedding_generator._test_query_summary_embedding = query_summary_embedding
+    mock_embedding_generator._test_query_url_content_embedding = query_for_url_content_embedding_val
 
     # --- Arrange: Define Pipeline Config for LLM Summary Test ---
     test_pipeline_config_summary = {
@@ -758,8 +764,8 @@ async def test_document_indexing_with_llm_summary_e2e(
     fastapi_app.state.llm_client = mock_llm_client  # Inject mock LLM for the test
 
     worker = TaskWorker(
-        processing_service=None,
-        application=fastapi_app,
+        processing_service=cast("ProcessingService", None),
+        application=cast("Any", fastapi_app),
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
@@ -874,7 +880,7 @@ async def test_document_indexing_with_llm_summary_e2e(
             found_summary_result.get("embedding_source_content")
             == expected_stored_summary_content
         )
-        assert found_summary_result.get("distance") < 0.1, (
+        assert float(found_summary_result.get("distance", 1.0)) < 0.1, (
             "Distance for LLM summary should be small"
         )
 
@@ -976,9 +982,7 @@ async def test_url_indexing_e2e(
     )
 
     # Store for assertion, this was causing the AttributeError
-    mock_embedding_generator._test_query_url_content_embedding = (
-        query_url_content_embedding
-    )
+    mock_embedding_generator._test_query_url_content_embedding = query_url_content_embedding
     logger.info(
         "Updated mock_embedding_generator with URL-specific embeddings for test_url_indexing_e2e."
     )
@@ -1020,8 +1024,8 @@ async def test_url_indexing_e2e(
     # --- Arrange: Task Worker Setup ---
     # fastapi_app.state.embedding_generator is set by http_client fixture
     worker = TaskWorker(
-        processing_service=None,
-        application=fastapi_app,  # For app.state access
+        processing_service=cast("ProcessingService", None),
+        application=cast("Any", fastapi_app),  # For app.state access
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
@@ -1165,7 +1169,7 @@ async def test_url_indexing_e2e(
                 found_chunk_1 = True
                 logger.info(f"Found expected URL chunk 1: {result}")
                 # Apply strict distance check only for the chunk targeted by the query
-                assert result["distance"] < 0.1, (
+                assert float(result["distance"]) < 0.1, (
                     f"Distance for targeted chunk 1 ({result['distance']}) was not < 0.1. "
                     f"Query: '{TEST_QUERY_FOR_URL_CONTENT}', Chunk content: '{EXPECTED_URL_CHUNK_1_CONTENT}'"
                 )
@@ -1258,9 +1262,7 @@ async def test_url_indexing_e2e(
         mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT] = (
             query_url_content_embedding
         )
-        mock_embedding_generator._test_query_url_content_embedding = (  # type: ignore
-            query_url_content_embedding
-        )
+        mock_embedding_generator._test_query_url_content_embedding = query_url_content_embedding
         logger.info("Updated mock_embedding_generator for URL auto-title test.")
 
         # --- Arrange: Instantiate Pipeline and Indexer for URL auto-title processing ---
@@ -1295,8 +1297,8 @@ async def test_url_indexing_e2e(
 
         # --- Arrange: Task Worker Setup ---
         worker = TaskWorker(
-            processing_service=None,
-            application=fastapi_app,
+            processing_service=cast("ProcessingService", None),
+            application=cast("Any", fastapi_app),
             calendar_config={},
             timezone_str="UTC",
             embedding_generator=mock_embedding_generator,
@@ -1391,7 +1393,7 @@ async def test_url_indexing_e2e(
             async with DatabaseContext(engine=pg_vector_db_engine) as db:
                 url_content_query_results = await query_vectors(
                     db,
-                    query_embedding=mock_embedding_generator._test_query_url_content_embedding,  # type: ignore
+                    query_embedding=mock_embedding_generator._test_query_url_content_embedding,
                     embedding_model=TEST_EMBEDDING_MODEL,
                     limit=5,
                     filters={"source_id": url_doc_source_id},
@@ -1415,7 +1417,7 @@ async def test_url_indexing_e2e(
                     == EXPECTED_URL_CHUNK_1_CONTENT
                 ):
                     found_chunk_1 = True
-                    assert result["distance"] < 0.1
+                    assert float(result["distance"]) < 0.1
                     logger.info(
                         f"Found targeted URL chunk 1 with auto-updated title: {result}"
                     )
