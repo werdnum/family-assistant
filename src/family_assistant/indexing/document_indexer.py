@@ -3,7 +3,7 @@ Handles the indexing process for documents uploaded via the API.
 """
 
 import logging
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -33,10 +33,12 @@ from family_assistant.indexing.processors.network_processors import (
     WebFetcherProcessor,  # Added
 )
 from family_assistant.indexing.processors.text_processors import TextChunker  # Added
-from family_assistant.indexing.types import Document  # Added
 from family_assistant.llm import LLMInterface  # Added
 from family_assistant.storage.vector import get_document_by_id
 from family_assistant.tools import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.indexing.types import Document  # Added
 from family_assistant.utils.scraping import Scraper  # Added
 
 logger = logging.getLogger(__name__)
