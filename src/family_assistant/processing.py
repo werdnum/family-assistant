@@ -166,6 +166,9 @@ class ProcessingService:
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
         """
         final_content: str | None = None  # Store final text response from LLM
+        final_reasoning_info: dict[str, Any] | None = (
+            None  # Initialize to ensure it's always bound
+        )
         max_iterations = 5  # Safety limit for tool call loops
         current_iteration = 1
 
