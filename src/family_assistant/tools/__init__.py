@@ -1770,16 +1770,17 @@ class ConfirmingToolsProvider(ToolsProvider):
             try:
                 logger.debug(f"Requesting confirmation for tool '{name}' via callback.")
 
-                # Cast to the corrected signature, which matches the updated type hint in ToolExecutionContext.
+                # Cast to the confirmation callback signature, which matches the updated type hint in ToolExecutionContext.
                 # Signature: (chat_id: int, interface_type: str, turn_id: Optional[str],
                 #             prompt_text: str, tool_name: str, tool_args: dict, timeout: float)
-                CorrectedCallbackSignature = Callable[
+                ConfirmationCallbackSignature = Callable[
                     [int, str, str | None, str, str, dict[str, Any], float],
                     Awaitable[bool],
                 ]
 
                 typed_callback = cast(
-                    "CorrectedCallbackSignature", context.request_confirmation_callback
+                    "ConfirmationCallbackSignature",
+                    context.request_confirmation_callback,
                 )
 
                 # Determine chat_id_for_callback. This must be an int.
