@@ -1715,7 +1715,7 @@ class ConfirmingToolsProvider(ToolsProvider):
             # Pass the timezone string from the context to the sync helper (now in calendar_integration)
             details = await loop.run_in_executor(
                 None,
-                calendar_integration._fetch_event_details_sync,  # Call the moved function
+                calendar_integration._fetch_event_details_sync,  # Call the moved function # type: ignore
                 username,
                 password,
                 calendar_url,
