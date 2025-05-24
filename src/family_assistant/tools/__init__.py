@@ -9,11 +9,10 @@ import logging
 import os
 import pathlib
 import uuid
-from collections.abc import Callable  # Added Awaitable, Set
+from collections.abc import Awaitable, Callable  # Added Awaitable, Set
 from datetime import datetime, timedelta, timezone  # Added date, time
 from typing import (
     Any,
-    Optional,
     Protocol,
     cast,
 )
