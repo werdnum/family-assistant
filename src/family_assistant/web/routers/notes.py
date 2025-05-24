@@ -90,7 +90,7 @@ async def save_note(
     title: Annotated[str, Form()],
     content: Annotated[str, Form()],
     original_title: Annotated[str | None, Form()] = None,
-    db_context: Annotated[DatabaseContext, Depends(get_db)] = None,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> RedirectResponse:
     """Handles saving a new or updated note."""
     try:
