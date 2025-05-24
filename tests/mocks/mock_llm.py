@@ -6,35 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-# Assuming LLMInterface and LLMOutput are accessible, adjust import if needed
-# e.g., from family_assistant.llm import LLMInterface, LLMOutput
-# For now, let's define placeholders if the real ones aren't easily importable here
-try:
-    from family_assistant.llm import LLMInterface, LLMOutput
-except ImportError:
-    from typing import Protocol
-
-    class LLMOutput:
-        """Mock version of LLMOutput for when the real one can't be imported"""
-
-        def __init__(
-            self,
-            content: str | None = None,
-            tool_calls: list[dict[str, Any]] | None = None,
-        ) -> None:
-            self.content = content
-            self.tool_calls = tool_calls or []
-
-    class LLMInterface(Protocol):
-        """Mock version of LLMInterface for when the real one can't be imported"""
-
-        async def generate_response(
-            self,
-            messages: list[dict[str, Any]],
-            tools: list[dict[str, Any]] | None = None,
-            tool_choice: str | None = "auto",
-        ) -> LLMOutput: ...
-
+from family_assistant.llm import LLMInterface, LLMOutput
 
 logger = logging.getLogger(__name__)
 
