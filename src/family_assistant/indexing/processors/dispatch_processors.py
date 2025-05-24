@@ -36,7 +36,7 @@ class EmbeddingDispatchProcessor(ContentProcessor):
         self,
         current_items: list[IndexableContent],
         original_document: Document,  # Document protocol
-        initial_content_ref: IndexableContent,
+        initial_content_ref: IndexableContent | None,
         context: ToolExecutionContext,
     ) -> list[IndexableContent]:
         """
@@ -134,7 +134,7 @@ class EmbeddingDispatchProcessor(ContentProcessor):
                 payload=task_payload,
                 notify_event=(
                     context.application.new_task_event
-                    if hasattr(context.application, "new_task_event")
+                    if context.application and hasattr(context.application, "new_task_event")
                     else None
                 ),
             )
