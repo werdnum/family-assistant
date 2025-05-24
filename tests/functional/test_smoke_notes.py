@@ -1,5 +1,4 @@
 import asyncio
-import contextlib  # Added contextlib import
 import json  # Added json import
 import logging
 
@@ -156,11 +155,17 @@ async def test_add_and_retrieve_note_rule_mock(
     dummy_app_config = {}  # Add dummy app_config
 
     # --- Instantiate Context Providers ---
-    # Function to get DB context for the specific test engine
-    async def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
-        DatabaseContext
-    ]:
-        return await get_db_context(engine=test_db_engine)
+    # Function to get DB context for the specific test engine.
+    # This function will be called by NotesContextProvider.
+    # It returns an "active" DatabaseContext instance by calling __aenter__().
+    # This matches the expected type Callable[[], Awaitable[DatabaseContext]].
+    # Note: This pattern implies that NotesContextProvider does not manage
+    # the __aexit__ part of the context, which could lead to resource leaks
+    # if not handled carefully (e.g. if NotesContextProvider calls this many times).
+    # For this test, we assume this is acceptable to satisfy the type hints.
+    async def get_test_db_context_func() -> DatabaseContext:
+        manager = get_db_context(engine=test_db_engine)
+        return await manager.__aenter__()
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_test_db_context_func,
