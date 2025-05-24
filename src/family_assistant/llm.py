@@ -20,12 +20,14 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
-from litellm.types import FileResponse  # Added for typing gemini_file_obj
 
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
 
 if TYPE_CHECKING:
     from litellm.types.completion import ChatCompletionMessageParam
+    from litellm.types.files import (
+        FileResponse,  # Corrected import path and moved to TYPE_CHECKING
+    )
 
 logger = logging.getLogger(__name__)
 
