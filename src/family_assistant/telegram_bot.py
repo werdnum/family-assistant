@@ -115,8 +115,8 @@ class DefaultMessageBatcher(MessageBatcher):
         self.batch_processor = batch_processor
         self.batch_delay_seconds = batch_delay_seconds
         self.chat_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.message_buffers: dict[int, list[tuple[Update, bytes | None]]] = defaultdict(
-            list
+        self.message_buffers: dict[int, list[tuple[Update, bytes | None]]] = (
+            defaultdict(list)
         )
         self.processing_tasks: dict[int, asyncio.Task] = {}
         self.batch_timers: dict[
@@ -241,7 +241,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager["DatabaseContext"]
         ],
-        message_batcher: MessageBatcher | None,  # Inject the batcher, can be None initially
+        message_batcher: MessageBatcher
+        | None,  # Inject the batcher, can be None initially
         confirmation_manager: "TelegramConfirmationUIManager",  # Inject confirmation manager
     ) -> None:
         # Check for debug mode environment variable
@@ -269,7 +270,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self.processing_service = processing_service  # Store the service instance
         self.get_db_context = get_db_context_func
         self.message_batcher = message_batcher  # Store the injected batcher
-        self.confirmation_manager: TelegramConfirmationUIManager = confirmation_manager  # Store the injected manager
+        self.confirmation_manager: TelegramConfirmationUIManager = (
+            confirmation_manager  # Store the injected manager
+        )
 
         # Store storage functions needed directly by the handler (e.g., history)
         # These might be better accessed via the db_context passed around,
@@ -560,7 +563,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         # (as per the type error message)
                         callback_chat_id: int,
                         callback_prompt_text: str,
-                        _unused_param_str_opt: str | None,  # e.g., from ToolExecutionContext if it were passed
+                        _unused_param_str_opt: str
+                        | None,  # e.g., from ToolExecutionContext if it were passed
                         callback_tool_name: str,
                         _unused_param_str: str,  # e.g., from ToolExecutionContext
                         callback_tool_args: dict[str, Any],
@@ -1100,7 +1104,9 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 )
                 return
 
-            original_text = query.message.text_markdown_v2_urled or query.message.text or ""  # Fallback
+            original_text = (
+                query.message.text_markdown_v2_urled or query.message.text or ""
+            )  # Fallback
             status_text = ""
             if action == "yes":
                 logger.debug(f"Setting confirmation result for {confirm_uuid} to True")
