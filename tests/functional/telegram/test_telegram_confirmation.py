@@ -127,9 +127,10 @@ async def test_confirmation_accepted(
     # Patch the *original* provider's execute_tool (the one from the fixture)
     # This is what the confirming wrapper will call internally.
     # Note: The comments about indentation were misleading; the primary issue was patch usage.
-    with patch.object(
+    patcher = patch.object(
         fix.tools_provider, "execute_tool", new_callable=AsyncMock
-    ) as mock_execute_original:
+    )
+    with patcher as mock_execute_original:
         # expected *string* result from add_or_update_note tool.
         mock_execute_original.return_value = expected_tool_success_result
 
@@ -307,9 +308,10 @@ async def test_confirmation_rejected(
     # Patch the *original* provider's execute_tool
     # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
-    with patch.object(
+    patcher = patch.object(
         fix.tools_provider, "execute_tool", new_callable=AsyncMock
-    ) as mock_execute_original:
+    )
+    with patcher as mock_execute_original:
         # --- Create Mock Update/Context ---
         update = create_mock_update(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
@@ -445,9 +447,10 @@ async def test_confirmation_timed_out(
     # Patch the *original* provider's execute_tool
     # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
-    with patch.object(
+    patcher = patch.object(
         fix.tools_provider, "execute_tool", new_callable=AsyncMock
-    ) as mock_execute_original:
+    )
+    with patcher as mock_execute_original:
         # --- Create Mock Update/Context ---
         update = create_mock_update(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
