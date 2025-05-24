@@ -205,16 +205,16 @@ async def test_confirmation_accepted(
 
     # 4. Final success message sent to user
     fix.mock_bot.send_message.assert_awaited_once()
-        args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
-        expected_final_escaped_text = telegramify_markdown.markdownify(
-            llm_final_success_text
-        )
-        assert_that(kwargs_bot["text"]).described_as(
-            "Final bot message text"
-        ).is_equal_to(expected_final_escaped_text)
-        assert_that(kwargs_bot["reply_to_message_id"]).described_as(
-            "Final bot message reply ID"
-        ).is_equal_to(user_message_id)
+    args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
+    expected_final_escaped_text = telegramify_markdown.markdownify(
+        llm_final_success_text
+    )
+    assert_that(kwargs_bot["text"]).described_as(
+        "Final bot message text"
+    ).is_equal_to(expected_final_escaped_text)
+    assert_that(kwargs_bot["reply_to_message_id"]).described_as(
+        "Final bot message reply ID"
+    ).is_equal_to(user_message_id)
 
 
 @pytest.mark.asyncio
