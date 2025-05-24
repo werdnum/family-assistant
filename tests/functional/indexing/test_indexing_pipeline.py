@@ -97,7 +97,9 @@ class MockDocumentImpl(DocumentProtocol):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def mock_pipeline_embedding_generator() -> HashingWordEmbeddingGenerator:  # Changed return type
+async def mock_pipeline_embedding_generator() -> (
+    HashingWordEmbeddingGenerator
+):  # Changed return type
     """
     Provides a HashingWordEmbeddingGenerator instance for the pipeline test.
     """
@@ -201,7 +203,9 @@ async def test_indexing_pipeline_e2e(
     indexing_task_ids: set[str] = set()
 
     try:
-        async with db_context_for_pipeline_cm as db_context_for_pipeline:  # This acquires the connection
+        async with (
+            db_context_for_pipeline_cm as db_context_for_pipeline
+        ):  # This acquires the connection
             tool_exec_context = ToolExecutionContext(
                 interface_type="test",
                 conversation_id="test-indexing-conv",
@@ -253,7 +257,9 @@ async def test_indexing_pipeline_e2e(
                 f"Running indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
             )
             await pipeline.run(
-                [initial_content], test_document_protocol, tool_exec_context  # Pass protocol object
+                [initial_content],
+                test_document_protocol,
+                tool_exec_context,  # Pass protocol object
             )
 
         # Signal worker and wait for task completion
@@ -460,7 +466,9 @@ async def test_indexing_pipeline_pdf_processing(
                 f"Running PDF indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
             )
             await pipeline.run(
-                [initial_pdf_content], test_document_protocol, tool_exec_context  # Pass protocol object
+                [initial_pdf_content],
+                test_document_protocol,
+                tool_exec_context,  # Pass protocol object
             )
 
         test_new_task_event.set()
