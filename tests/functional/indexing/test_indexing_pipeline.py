@@ -97,7 +97,7 @@ class MockDocumentImpl(DocumentProtocol):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def mock_pipeline_embedding_generator() -> MockEmbeddingGenerator:
+async def mock_pipeline_embedding_generator() -> HashingWordEmbeddingGenerator:  # Changed return type
     """
     Provides a HashingWordEmbeddingGenerator instance for the pipeline test.
     """
@@ -123,7 +123,7 @@ async def indexing_task_worker(
     mock_application.state.embedding_generator = mock_pipeline_embedding_generator
 
     worker = TaskWorker(
-        processing_service=None,
+        processing_service=MagicMock(),  # Use MagicMock for ProcessingService
         application=mock_application,
         embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
@@ -195,13 +195,13 @@ async def test_indexing_pipeline_e2e(
     # ToolExecutionContext for the pipeline run (uses real enqueue_task)
     # This db_context is for the pipeline's direct DB operations (like add_document)
     # and for the enqueue_task call within EmbeddingDispatchProcessor.
-    db_context_for_pipeline = await get_db_context(engine=pg_vector_db_engine)
+    db_context_for_pipeline_cm = get_db_context(engine=pg_vector_db_engine)
 
     # Initialize indexing_task_ids as an empty set
     indexing_task_ids: set[str] = set()
 
     try:
-        async with db_context_for_pipeline:  # This acquires the connection
+        async with db_context_for_pipeline_cm as db_context_for_pipeline:  # This acquires the connection
             tool_exec_context = ToolExecutionContext(
                 interface_type="test",
                 conversation_id="test-indexing-conv",
@@ -222,6 +222,7 @@ async def test_indexing_pipeline_e2e(
                 db_context_for_pipeline, doc_source_id
             )
             assert_that(original_doc_record).is_not_none()
+            assert original_doc_record is not None  # For type checker
             assert_that(original_doc_record.id).is_equal_to(doc_db_id)
 
             # Initial IndexableContent
@@ -252,7 +253,7 @@ async def test_indexing_pipeline_e2e(
                 f"Running indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
             )
             await pipeline.run(
-                [initial_content], original_doc_record, tool_exec_context
+                [initial_content], test_document_protocol, tool_exec_context  # Pass protocol object
             )
 
         # Signal worker and wait for task completion
@@ -270,7 +271,7 @@ async def test_indexing_pipeline_e2e(
         # --- Assert ---
         # Verify embeddings in DB
         # Use a new context for assertions as the previous one is closed
-        async with await get_db_context(
+        async with get_db_context(  # Removed await
             engine=pg_vector_db_engine
         ) as db_context_for_asserts:
             stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(
@@ -399,10 +400,10 @@ async def test_indexing_pipeline_pdf_processing(
 
     _worker, test_new_task_event, _test_shutdown_event = indexing_task_worker
 
-    db_context_for_pipeline = await get_db_context(engine=pg_vector_db_engine)
+    db_context_for_pipeline_cm = get_db_context(engine=pg_vector_db_engine)
 
     try:
-        async with db_context_for_pipeline:
+        async with db_context_for_pipeline_cm as db_context_for_pipeline:
             tool_exec_context = ToolExecutionContext(
                 interface_type="test",
                 conversation_id="test-pdf-pipeline-conv",
@@ -422,6 +423,7 @@ async def test_indexing_pipeline_pdf_processing(
                 db_context_for_pipeline, doc_source_id
             )
             assert_that(original_doc_record).is_not_none()
+            assert original_doc_record is not None  # For type checker
 
             # Initial IndexableContent for the PDF file
             initial_pdf_content = IndexableContent(
@@ -458,7 +460,7 @@ async def test_indexing_pipeline_pdf_processing(
                 f"Running PDF indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
             )
             await pipeline.run(
-                [initial_pdf_content], original_doc_record, tool_exec_context
+                [initial_pdf_content], test_document_protocol, tool_exec_context  # Pass protocol object
             )
 
         test_new_task_event.set()
@@ -474,7 +476,7 @@ async def test_indexing_pipeline_pdf_processing(
         )
 
         # --- Assert ---
-        async with await get_db_context(
+        async with get_db_context(  # Removed await
             engine=pg_vector_db_engine
         ) as db_context_for_asserts:
             stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(
