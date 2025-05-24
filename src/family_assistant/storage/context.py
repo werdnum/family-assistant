@@ -9,11 +9,13 @@ import asyncio
 import logging
 import random
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from types import TracebackType
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from sqlalchemy import Result, TextClause, event
+
+if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
 from sqlalchemy.exc import DBAPIError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Delete, Insert, Select, Update
