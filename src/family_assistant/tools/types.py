@@ -36,6 +36,7 @@ class ToolExecutionContext:
         processing_service: Optional service for core processing logic.
         embedding_generator: Optional generator for creating text embeddings.
     """
+
     interface_type: str  # e.g., 'telegram', 'web', 'email'
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     turn_id: str | None  # The ID of the current processing turn
