@@ -17,13 +17,9 @@ import httpx
 # --- Scraping Imports ---
 try:
     # Use Async API imports
-    from playwright.async_api import (
-        Error as PlaywrightError,  # type: ignore[import-not-found]
-    )
-    from playwright.async_api import (
-        TimeoutError as PlaywrightTimeoutError,  # type: ignore[import-not-found]
-    )
-    from playwright.async_api import async_playwright  # type: ignore[import-not-found]
+    from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+    from playwright.async_api import async_playwright
 
     _playwright_installed = True
 except ImportError:
