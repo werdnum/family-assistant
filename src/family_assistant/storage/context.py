@@ -12,13 +12,15 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from sqlalchemy import Result, TextClause, event
-
-if TYPE_CHECKING:
-    from contextlib import AbstractAsyncContextManager
+from sqlalchemy import TextClause, event  # Result removed
+from sqlalchemy.engine import CursorResult  # CursorResult added
 from sqlalchemy.exc import DBAPIError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Delete, Insert, Select, Update
+
+if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
 
 # Use absolute package path
 from family_assistant.storage.base import get_engine
@@ -95,7 +97,7 @@ class DatabaseContext:
         self,
         query: Select | Insert | Update | Delete | TextClause,
         params: dict[str, Any] | None = None,
-    ) -> Result:
+    ) -> CursorResult:
         """
         Execute a query with retry logic for transient database errors.
 
