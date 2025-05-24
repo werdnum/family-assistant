@@ -41,11 +41,25 @@ from .types import ToolExecutionContext, ToolNotFoundError
 
 logger = logging.getLogger(__name__)
 
+
+# Define Protocol for the confirmation callback signature
+class ConfirmationCallbackProtocol(Protocol):
+    async def __call__(
+        self,
+        chat_id: int,
+        interface_type: str,
+        turn_id: str | None,
+        prompt_text: str,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        timeout: float,
+    ) -> bool:
+        ...
+
+
 # Define TypeAlias for the confirmation callback signature at module level
-ConfirmationCallbackSignature: TypeAlias = Callable[
-    [int, str, str | None, str, str, dict[str, Any], float],
-    Awaitable[bool],
-]
+ConfirmationCallbackSignature: TypeAlias = ConfirmationCallbackProtocol
+
 
 MCPToolsProvider = MCPToolsProvider
 
@@ -1783,7 +1797,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                 # ConfirmationCallbackSignature is now defined at module level.
 
                 typed_callback = cast(
-                    "ConfirmationCallbackSignature",
+                    "ConfirmationCallbackSignature",  # Use the TypeAlias directly
                     context.request_confirmation_callback,
                 )
 
