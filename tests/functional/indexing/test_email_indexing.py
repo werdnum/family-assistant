@@ -412,7 +412,9 @@ async def test_email_indexing_and_query_e2e(
     dummy_calendar_config = {}  # Not used by email/embedding tasks
     dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
     worker = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),  # No processing service needed for this handler
+        processing_service=MagicMock(
+            spec=ProcessingService
+        ),  # No processing service needed for this handler
         application=mock_application_e2e,  # Use the mock app with state
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config,
@@ -628,7 +630,9 @@ async def test_vector_ranking(
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
     worker = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),  # No processing service needed for this handler
+        processing_service=MagicMock(
+            spec=ProcessingService
+        ),  # No processing service needed for this handler
         application=mock_application_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,
@@ -816,7 +820,9 @@ async def test_metadata_filtering(
     dummy_calendar_config_meta = {}  # Define dummy_calendar_config_meta
     dummy_timezone_str_meta = "UTC"
     worker = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),  # No processing service needed for this handler
+        processing_service=MagicMock(
+            spec=ProcessingService
+        ),  # No processing service needed for this handler
         application=mock_application_meta,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_meta,
@@ -993,7 +999,9 @@ async def test_keyword_filtering(
     # Provide dummy/mock values for the required arguments
     dummy_timezone_str_kw = "UTC"
     worker = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),  # No processing service needed for this handler
+        processing_service=MagicMock(
+            spec=ProcessingService
+        ),  # No processing service needed for this handler
         application=mock_application_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,  # Now defined
