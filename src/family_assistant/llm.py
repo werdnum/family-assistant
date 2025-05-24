@@ -366,7 +366,7 @@ class LiteLLMClient:
 
                     gemini_file_obj: FileResponse = await loop.run_in_executor(
                         None,  # Default ThreadPoolExecutor
-                        litellm.file_upload,  # type: ignore[attr-defined, no-member] # Corrected path to file_upload
+                        litellm.file_upload,  # type: ignore[attr-defined] # pylint: disable=no-member # Corrected path to file_upload
                         io.BytesIO(file_bytes_content),  # file (BinaryIO)
                         os.path.basename(file_path),  # file_name
                         "gemini",  # custom_llm_provider
