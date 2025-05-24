@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from _pytest.logging import LogCaptureFixture
-from assertpy import assert_that, soft_assertions
+from assertpy import assert_that, soft_assertions  # type: ignore[import-untyped]
 
 from family_assistant.indexing.pipeline import IndexableContent
 from family_assistant.indexing.processors.network_processors import (

@@ -4,11 +4,11 @@ import os
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import MagicMock, patch
 
-import docker  # Import the docker library to catch its exceptions
+import docker  # type: ignore[import-untyped] # Import the docker library to catch its exceptions
 import pytest
 import pytest_asyncio  # Import the correct decorator
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from testcontainers.postgres import PostgresContainer
+from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db

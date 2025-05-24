@@ -7,20 +7,35 @@ import asyncio
 import io
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
 import httpx
 
+if TYPE_CHECKING:
+    from playwright.async_api import (
+        PlaywrightContextManager,
+    )
+
 # --- Scraping Imports ---
+# Define types for Playwright specific objects that might not be imported
+PlaywrightError: type[Exception]
+PlaywrightTimeoutError: type[Exception]
+async_playwright: Callable[[], "PlaywrightContextManager"] | None
+
+
 try:
     # Use Async API imports
-    from playwright.async_api import Error as PlaywrightError
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-    from playwright.async_api import async_playwright
+    from playwright.async_api import Error as PlaywrightErrorImport
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutErrorImport
+    from playwright.async_api import async_playwright as async_playwright_import
 
+    PlaywrightError = PlaywrightErrorImport
+    PlaywrightTimeoutError = PlaywrightTimeoutErrorImport
+    async_playwright = async_playwright_import
     _playwright_installed = True
 except ImportError:
     _playwright_installed = False
@@ -374,7 +389,7 @@ class PlaywrightScraper:
         Internal: Scrapes using Playwright Async API.
         Returns (html_content_str, final_mime_type, page_title_str).
         """
-        if not async_playwright or not self.playwright_available:
+        if async_playwright is None or not self.playwright_available:
             self.playwright_available = False
             logger.warning(
                 "Playwright library or browser not available for _fetch_with_playwright."
@@ -515,7 +530,7 @@ class PlaywrightScraper:
 
 async def check_playwright_is_functional() -> bool:
     """Checks if Playwright async API and browser are functional."""
-    if not _playwright_installed or not async_playwright:
+    if not _playwright_installed or async_playwright is None:
         logger.warning("Playwright library not installed, skipping browser check.")
         return False
 
