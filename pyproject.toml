@@ -187,6 +187,7 @@ exclude = [
     "contrib/**",
 ]
 pythonVersion = "3.10"
+extraPaths = ["src"] # Add src to the import search paths
 
 reportMissingImports = true
 reportUnusedImport = true
