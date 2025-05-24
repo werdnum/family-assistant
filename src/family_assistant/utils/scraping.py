@@ -24,8 +24,20 @@ try:
     _playwright_installed = True
 except ImportError:
     _playwright_installed = False
-    PlaywrightError = Exception  # Define for except blocks
-    PlaywrightTimeoutError = Exception  # Define for except blocks
+
+    # Define fallback exception classes to maintain hierarchy for linters/type checkers
+    class _PlaywrightErrorBaseFallback(
+        Exception
+    ):  # Base for our Playwright error fallbacks
+        pass
+
+    class _PlaywrightTimeoutErrorSpecificFallback(
+        _PlaywrightErrorBaseFallback
+    ):  # Timeout is more specific
+        pass
+
+    PlaywrightError = _PlaywrightErrorBaseFallback
+    PlaywrightTimeoutError = _PlaywrightTimeoutErrorSpecificFallback
     async_playwright = None  # Define for checks
 
 # Conditionally import MarkItDown and define a type for it
