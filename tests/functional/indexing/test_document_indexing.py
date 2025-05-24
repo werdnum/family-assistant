@@ -11,7 +11,7 @@ import tempfile  # Add tempfile import
 import uuid
 from collections.abc import AsyncGenerator  # Add missing typing imports
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx  # Import httpx
 import numpy as np
@@ -29,9 +29,11 @@ from family_assistant.embeddings import (
 from family_assistant.indexing.document_indexer import (
     DocumentIndexer,
 )
-from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
+
+if TYPE_CHECKING:
+    from family_assistant.processing import ProcessingService
 from family_assistant.storage.vector import (
     query_vectors,
 )  # Import Document protocol
@@ -945,61 +947,10 @@ async def test_url_indexing_e2e(
         title=MOCK_URL_TITLE,  # Pass as argument if ScrapeResult supports it
         content=MOCK_URL_CONTENT_MARKDOWN,  # Pass as argument
     )
-    # mock_scrape_result.status_code = 200 # Removed: Attribute "status_code" is unknown
-    # If title and content are not constructor args, they would be set like this:
-    # mock_scrape_result.title = MOCK_URL_TITLE (if not in constructor)
-    # mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN (if not in constructor)
-    # Assuming they are valid attributes that can be set if not constructor args.
-    # The lint error was specific to status_code. If title/content also error, they'd need similar treatment.
-    # For now, assuming title/content can be passed to constructor or set if they are known attributes.
-    # The provided summary for ScrapeResult doesn't list fields, so we rely on lint errors.
-    # The original code had `mock_scrape_result.title = MOCK_URL_TITLE` and `mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN`
-    # without lint errors, implying these attributes are known.
-    # Let's try passing them to constructor first, as is common with dataclasses.
-    # If that's wrong, they would need to be set as attributes if mutable.
-    # The safest change for status_code is removal. For title/content, if they are indeed
-    # valid attributes (as suggested by lack of lint error for them previously),
-    # they should be part of ScrapeResult.
-    # The comment "unexpected keyword args in constructor" suggests they are not.
-    # So, revert to setting them if they are not constructor args.
-    # The key is that `status_code` is "unknown".
-    # The original code was:
-    # mock_scrape_result.title = MOCK_URL_TITLE
-    # mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
-    # This implies they are settable attributes.
-    # The change for status_code is just to remove its assignment.
-    # The ScrapeResult instantiation should be:
-    # mock_scrape_result = ScrapeResult(
-    # type="success",
-    # final_url=TEST_URL_TO_SCRAPE,
-    # mime_type="text/markdown",
-    # )
-    # mock_scrape_result.title = MOCK_URL_TITLE
-    # mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
-    # This matches the original structure for title/content which didn't error.
 
-    # Re-evaluating the ScrapeResult change:
-    # The original code that caused the lint error for status_code was:
-    # mock_scrape_result = ScrapeResult(...)
-    # mock_scrape_result.status_code = 200 # This line
-    # mock_scrape_result.title = MOCK_URL_TITLE
-    # mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
-    # The simplest fix for the status_code error is to remove that one line.
-    # The other assignments (title, content) were not reported as errors.
-    # So, the SEARCH block should only remove the status_code line.
-    # The REPLACE block will have that line removed.
-    # The surrounding lines for title and content should remain as they were.
-
-    mock_scrape_result = ScrapeResult(
-        type="success",  # Required argument
-        final_url=TEST_URL_TO_SCRAPE,  # Required argument
-        mime_type="text/markdown",  # Accepted keyword argument
-    )
-    # Set other attributes directly, as they were unexpected keyword args in constructor
-    # mock_scrape_result.status_code = 200 # Removed: Attribute "status_code" is unknown
-    mock_scrape_result.title = MOCK_URL_TITLE
-    mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN  # Correct attribute
-    # Assuming 'binary_content' is an optional attribute or defaults to None if not set
+    # Instantiate MockScraper with url_map
+    mock_scraper = MockScraper(url_map={TEST_URL_TO_SCRAPE: mock_scrape_result})
+    logger.info(f"MockScraper configured for URL: {TEST_URL_TO_SCRAPE}")
 
     # Instantiate MockScraper with url_map
     mock_scraper = MockScraper(url_map={TEST_URL_TO_SCRAPE: mock_scrape_result})
@@ -1284,10 +1235,9 @@ async def test_url_indexing_e2e(
             type="success",
             final_url=TEST_URL_TO_SCRAPE,
             mime_type="text/markdown",
+            title=MOCK_URL_TITLE,  # This title should be auto-extracted
+            content=MOCK_URL_CONTENT_MARKDOWN,
         )
-        # mock_scrape_result.status_code = 200 # Removed: Attribute "status_code" is unknown
-        mock_scrape_result.title = MOCK_URL_TITLE  # This title should be auto-extracted
-        mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
 
         mock_scraper = MockScraper(url_map={TEST_URL_TO_SCRAPE: mock_scrape_result})
         logger.info(f"MockScraper configured for URL: {TEST_URL_TO_SCRAPE}")

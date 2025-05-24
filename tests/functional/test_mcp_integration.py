@@ -6,14 +6,15 @@ import signal  # Import the signal module
 import socket
 import uuid  # Added for turn_id
 from collections.abc import AsyncGenerator
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock  # Keep mocks for LLM
 
 import pytest
 import pytest_asyncio  # Import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.llm import LLMInterface  # LLMOutput will come from mocks
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMInterface  # LLMOutput will come from mocks
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import necessary components from the application

@@ -3,7 +3,7 @@ import logging
 import pathlib
 import tempfile
 from collections.abc import Generator
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,10 +12,11 @@ from family_assistant.indexing.pipeline import IndexableContent
 from family_assistant.indexing.processors.llm_processors import (
     LLMIntelligenceProcessor,
 )
-from family_assistant.llm import LLMInterface as RealLLMInterface
 
 # Assuming RuleBasedMockLLMClient is correctly exposed or imported
 # Import LLMOutput from the same module as RuleBasedMockLLMClient to ensure type consistency for rules
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMInterface as RealLLMInterface
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)

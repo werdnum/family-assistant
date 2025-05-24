@@ -63,10 +63,10 @@ async def execute_tool_api(
     if not app_config:
         logger.error("Main application configuration not found in app state.")
         # Fallback to empty dicts/defaults, but log error
-        calendar_config = {}
+        # calendar_config = {} # Unused variable
         timezone_str = "UTC"
     else:
-        calendar_config = app_config.get("calendar_config", {})
+        # calendar_config = app_config.get("calendar_config", {}) # Unused variable
         timezone_str = app_config.get("timezone", "UTC")
 
     # --- Create Execution Context ---
