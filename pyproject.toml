@@ -83,7 +83,7 @@ dev = [
     "ruff",
     "black",
     "pre-commit>=4.2.0",
-    "pyright",
+    "basedpyright",
 ]
 
 [project.scripts]
@@ -186,9 +186,9 @@ exclude = [
     "docs/**",
     "contrib/**",
 ]
-pythonVersion = "3.10"
 extraPaths = ["src"] # Add src to the import search paths
 
 reportMissingImports = true
 reportUnusedImport = true
+
 typeCheckingMode = "basic"
