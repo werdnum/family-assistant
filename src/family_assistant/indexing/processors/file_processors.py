@@ -65,7 +65,7 @@ class PDFTextExtractor:
         for item in current_items:
             if item.mime_type == "application/pdf" and item.ref:
                 logger.info(
-                    f"PDFTextExtractor processing PDF: {item.ref} for document_id: {original_document.id if original_document else 'Unknown'}"
+                    f"PDFTextExtractor processing PDF: {item.ref} for document_id: {getattr(original_document, 'id', 'Unknown') if original_document else 'Unknown'}"
                 )
                 try:
                     # Run blocking markitdown conversion in a thread
