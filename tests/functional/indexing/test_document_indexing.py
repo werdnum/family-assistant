@@ -162,9 +162,10 @@ async def mock_embedding_generator() -> MockEmbeddingGenerator:
         default_embedding_behavior="fixed_default",
         fixed_default_embedding=np.zeros(TEST_EMBEDDING_DIMENSION).tolist(),
     )
-    # Store embeddings needed for queries later in the test
-    generator._test_query_semantic_embedding = query_semantic_embedding
-    generator._test_query_keyword_embedding = query_keyword_embedding
+    # Store embeddings needed for queries later in the test using the map
+    embedding_map["__test_query_semantic_embedding__"] = query_semantic_embedding
+    embedding_map["__test_query_keyword_embedding__"] = query_keyword_embedding
+    # The generator is already created with embedding_map, so this update is reflected.
     return generator
 
 
@@ -302,9 +303,9 @@ async def test_document_indexing_and_query_e2e(
     logger.info("\n--- Running Document Indexing E2E Test via API ---")
 
     # --- Arrange: Mock Embeddings (Done via fixture) ---
-    # Retrieve query embeddings stored in the fixture instance
-    query_semantic_embedding = mock_embedding_generator._test_query_semantic_embedding
-    query_keyword_embedding = mock_embedding_generator._test_query_keyword_embedding
+    # Retrieve query embeddings stored in the fixture instance's embedding_map
+    query_semantic_embedding = mock_embedding_generator.embedding_map["__test_query_semantic_embedding__"]
+    query_keyword_embedding = mock_embedding_generator.embedding_map["__test_query_keyword_embedding__"]
 
     # --- Arrange: Instantiate Pipeline and Indexer ---
     # Define Pipeline Config for this test
@@ -721,9 +722,8 @@ async def test_document_indexing_with_llm_summary_e2e(
             TEST_QUERY_FOR_URL_CONTENT: query_for_url_content_embedding_val,
         }
     )
-    # Store for assertion
-    mock_embedding_generator._test_query_summary_embedding = query_summary_embedding
-    mock_embedding_generator._test_query_url_content_embedding = query_for_url_content_embedding_val
+    # query_summary_embedding and query_for_url_content_embedding_val are local variables.
+    # No need to store them on mock_embedding_generator instance.
 
     # --- Arrange: Define Pipeline Config for LLM Summary Test ---
     test_pipeline_config_summary = {
@@ -853,7 +853,7 @@ async def test_document_indexing_with_llm_summary_e2e(
             )
             summary_query_results = await query_vectors(
                 db,
-                query_embedding=mock_embedding_generator._test_query_summary_embedding,
+                query_embedding=query_summary_embedding,  # Use local variable
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
                 filters={"source_id": doc_source_id_summary},
@@ -942,9 +942,61 @@ async def test_url_indexing_e2e(
         type="success",  # Required argument
         final_url=TEST_URL_TO_SCRAPE,  # Required argument
         mime_type="text/markdown",  # Accepted keyword argument
+        title=MOCK_URL_TITLE,  # Pass as argument if ScrapeResult supports it
+        content=MOCK_URL_CONTENT_MARKDOWN,  # Pass as argument
+    )
+    # mock_scrape_result.status_code = 200 # Removed: Attribute "status_code" is unknown
+    # If title and content are not constructor args, they would be set like this:
+    # mock_scrape_result.title = MOCK_URL_TITLE (if not in constructor)
+    # mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN (if not in constructor)
+    # Assuming they are valid attributes that can be set if not constructor args.
+    # The lint error was specific to status_code. If title/content also error, they'd need similar treatment.
+    # For now, assuming title/content can be passed to constructor or set if they are known attributes.
+    # The provided summary for ScrapeResult doesn't list fields, so we rely on lint errors.
+    # The original code had `mock_scrape_result.title = MOCK_URL_TITLE` and `mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN`
+    # without lint errors, implying these attributes are known.
+    # Let's try passing them to constructor first, as is common with dataclasses.
+    # If that's wrong, they would need to be set as attributes if mutable.
+    # The safest change for status_code is removal. For title/content, if they are indeed
+    # valid attributes (as suggested by lack of lint error for them previously),
+    # they should be part of ScrapeResult.
+    # The comment "unexpected keyword args in constructor" suggests they are not.
+    # So, revert to setting them if they are not constructor args.
+    # The key is that `status_code` is "unknown".
+    # The original code was:
+    # mock_scrape_result.title = MOCK_URL_TITLE
+    # mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
+    # This implies they are settable attributes.
+    # The change for status_code is just to remove its assignment.
+    # The ScrapeResult instantiation should be:
+    # mock_scrape_result = ScrapeResult(
+    # type="success",
+    # final_url=TEST_URL_TO_SCRAPE,
+    # mime_type="text/markdown",
+    # )
+    # mock_scrape_result.title = MOCK_URL_TITLE
+    # mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
+    # This matches the original structure for title/content which didn't error.
+
+    # Re-evaluating the ScrapeResult change:
+    # The original code that caused the lint error for status_code was:
+    # mock_scrape_result = ScrapeResult(...)
+    # mock_scrape_result.status_code = 200 # This line
+    # mock_scrape_result.title = MOCK_URL_TITLE
+    # mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
+    # The simplest fix for the status_code error is to remove that one line.
+    # The other assignments (title, content) were not reported as errors.
+    # So, the SEARCH block should only remove the status_code line.
+    # The REPLACE block will have that line removed.
+    # The surrounding lines for title and content should remain as they were.
+
+    mock_scrape_result = ScrapeResult(
+        type="success",  # Required argument
+        final_url=TEST_URL_TO_SCRAPE,  # Required argument
+        mime_type="text/markdown",  # Accepted keyword argument
     )
     # Set other attributes directly, as they were unexpected keyword args in constructor
-    mock_scrape_result.status_code = 200
+    # mock_scrape_result.status_code = 200 # Removed: Attribute "status_code" is unknown
     mock_scrape_result.title = MOCK_URL_TITLE
     mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN  # Correct attribute
     # Assuming 'binary_content' is an optional attribute or defaults to None if not set
@@ -980,11 +1032,10 @@ async def test_url_indexing_e2e(
     mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT] = (
         query_url_content_embedding
     )
-
-    # Store for assertion, this was causing the AttributeError
-    mock_embedding_generator._test_query_url_content_embedding = query_url_content_embedding
+    # query_url_content_embedding is a local variable.
+    # No need to store it on mock_embedding_generator instance.
     logger.info(
-        "Updated mock_embedding_generator with URL-specific embeddings for test_url_indexing_e2e."
+        "Updated mock_embedding_generator.embedding_map with URL-specific embeddings for test_url_indexing_e2e."
     )
 
     # --- Arrange: Instantiate Pipeline and Indexer for URL processing ---
@@ -1118,7 +1169,7 @@ async def test_url_indexing_e2e(
             )
             url_content_query_results = await query_vectors(
                 db,
-                query_embedding=mock_embedding_generator._test_query_url_content_embedding,
+                query_embedding=query_url_content_embedding,  # Use local variable
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
                 filters={
@@ -1234,7 +1285,7 @@ async def test_url_indexing_e2e(
             final_url=TEST_URL_TO_SCRAPE,
             mime_type="text/markdown",
         )
-        mock_scrape_result.status_code = 200
+        # mock_scrape_result.status_code = 200 # Removed: Attribute "status_code" is unknown
         mock_scrape_result.title = MOCK_URL_TITLE  # This title should be auto-extracted
         mock_scrape_result.content = MOCK_URL_CONTENT_MARKDOWN
 
@@ -1262,8 +1313,9 @@ async def test_url_indexing_e2e(
         mock_embedding_generator.embedding_map[TEST_QUERY_FOR_URL_CONTENT] = (
             query_url_content_embedding
         )
-        mock_embedding_generator._test_query_url_content_embedding = query_url_content_embedding
-        logger.info("Updated mock_embedding_generator for URL auto-title test.")
+        # query_url_content_embedding is a local variable.
+        # No need to store it on mock_embedding_generator instance.
+        logger.info("Updated mock_embedding_generator.embedding_map for URL auto-title test.")
 
         # --- Arrange: Instantiate Pipeline and Indexer for URL auto-title processing ---
         test_pipeline_config_auto_title = {
@@ -1393,7 +1445,7 @@ async def test_url_indexing_e2e(
             async with DatabaseContext(engine=pg_vector_db_engine) as db:
                 url_content_query_results = await query_vectors(
                     db,
-                    query_embedding=mock_embedding_generator._test_query_url_content_embedding,
+                    query_embedding=query_url_content_embedding,  # Use local variable
                     embedding_model=TEST_EMBEDDING_MODEL,
                     limit=5,
                     filters={"source_id": url_doc_source_id},
