@@ -216,15 +216,14 @@ class DatabaseContext:
 # This function is now less useful as DatabaseContext manages its own transaction
 # via __aenter__/__aexit__. Callers should instantiate DatabaseContext directly.
 # Keeping it for now but marking as potentially deprecated or for removal.
-async def get_db_context(
+def get_db_context(
     engine: AsyncEngine | None = None, max_retries: int = 3, base_delay: float = 0.5
 ) -> DatabaseContext:
     """
-    Create and enter a database context.
+    Creates an instance of DatabaseContext.
 
-    This function creates a DatabaseContext and enters its async context manager,
-    returning the active context. This is intended to be used with an
-    async with statement.
+    This function instantiates and returns a DatabaseContext object,
+    which is an asynchronous context manager.
 
     Args:
         engine: Optional SQLAlchemy AsyncEngine for dependency injection.
@@ -232,11 +231,12 @@ async def get_db_context(
         base_delay: Base delay in seconds for exponential backoff.
 
     Returns:
-        An active DatabaseContext.
+        A DatabaseContext instance.
 
     Example:
         ```python
-        async with get_db_context() as db:
+        db_context_instance = get_db_context()
+        async with db_context_instance as db:
             result = await db.fetch_all(...)
         ```
     """
