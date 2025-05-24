@@ -110,10 +110,8 @@ class LLMIntelligenceProcessor(ContentProcessor):
                     },
                 }
             ]
-            tool_choice_for_llm = {
-                "type": "function",
-                "function": {"name": self.tool_name},
-            }
+            # tool_choice_for_llm was assigned but not used.
+            # tool_choice="required" is used in generate_response call directly.
 
             try:
                 logger.debug(
@@ -426,10 +424,8 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                     },
                 }
             ]
-            tool_choice_for_llm = {
-                "type": "function",
-                "function": {"name": self.tool_name},
-            }
+            # tool_choice_for_llm was assigned but not used.
+            # tool_choice="required" is used in generate_response call directly.
 
             try:
                 user_message = await self.llm_client.format_user_message_with_file(

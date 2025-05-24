@@ -353,7 +353,7 @@ class SentenceTransformerEmbeddingGenerator:
             )
 
             if _np_module is None:  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE
-                 raise RuntimeError("Numpy module is None, though library was reported as available.")
+                raise RuntimeError("Numpy module is None, though library was reported as available.")
             embeddings_list = [_np_module.array(arr).tolist() for arr in embeddings_np]
 
             logger.debug(
