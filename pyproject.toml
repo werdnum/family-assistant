@@ -63,11 +63,14 @@ dev = [
     "pytest-mock",
     "testcontainers[postgres]>=3.7.1",
     "asyncpg>=0.29.0",
-    "types-PyYAML",
-    "types-python-dateutil",
-    "types-pytz",
-    "types-passlib",
     "types-aiofiles",
+    "types-assertpy", # Added
+    "types-docker", # Added
+    "types-passlib",
+    "types-python-dateutil",
+    "types-PyYAML",
+    "types-pytz",
+    "types-testcontainers", # Added
     "types-vobject",
     "psycopg-binary>=3.1.0",
     "httpx>=0.27.0",
