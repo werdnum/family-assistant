@@ -142,7 +142,9 @@ class LLMIntelligenceProcessor(ContentProcessor):
                 if llm_response.tool_calls:
                     for tool_call in llm_response.tool_calls:
                         if tool_call.get("function", {}).get("name") == self.tool_name:
-                            arguments_str = "{}"  # Initialize for safety in error logging
+                            arguments_str = (
+                                "{}"  # Initialize for safety in error logging
+                            )
                             try:
                                 arguments_str = tool_call.get("function", {}).get(
                                     "arguments", "{}"
@@ -443,7 +445,9 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                 if llm_response.tool_calls:
                     for tool_call in llm_response.tool_calls:
                         if tool_call.get("function", {}).get("name") == self.tool_name:
-                            arguments_str = "{}"  # Initialize for safety in error logging
+                            arguments_str = (
+                                "{}"  # Initialize for safety in error logging
+                            )
                             try:
                                 arguments_str = tool_call.get("function", {}).get(
                                     "arguments", "{}"
