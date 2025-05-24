@@ -44,6 +44,7 @@ from family_assistant.indexing.processors.network_processors import (
 )  # Added
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
+from family_assistant.processing import ProcessingService  # Added for spec
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.tasks import (
@@ -411,7 +412,7 @@ async def test_email_indexing_and_query_e2e(
     dummy_calendar_config = {}  # Not used by email/embedding tasks
     dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
     worker = TaskWorker(
-        processing_service=None,  # No processing service needed for this handler
+        processing_service=MagicMock(spec=ProcessingService),  # No processing service needed for this handler
         application=mock_application_e2e,  # Use the mock app with state
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config,
@@ -479,6 +480,7 @@ async def test_email_indexing_and_query_e2e(
             assert_that(found_result).described_as(
                 f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}"
             ).is_not_none()
+            assert found_result is not None  # For type checker
             logger.info(f"Found matching result: {found_result}")
 
             # Check distance (should be small since query embedding was close to body)
@@ -626,7 +628,7 @@ async def test_vector_ranking(
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
     worker = TaskWorker(
-        processing_service=None,  # No processing service needed for this handler
+        processing_service=MagicMock(spec=ProcessingService),  # No processing service needed for this handler
         application=mock_application_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,
@@ -814,7 +816,7 @@ async def test_metadata_filtering(
     dummy_calendar_config_meta = {}  # Define dummy_calendar_config_meta
     dummy_timezone_str_meta = "UTC"
     worker = TaskWorker(
-        processing_service=None,  # No processing service needed for this handler
+        processing_service=MagicMock(spec=ProcessingService),  # No processing service needed for this handler
         application=mock_application_meta,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_meta,
@@ -991,7 +993,7 @@ async def test_keyword_filtering(
     # Provide dummy/mock values for the required arguments
     dummy_timezone_str_kw = "UTC"
     worker = TaskWorker(
-        processing_service=None,  # No processing service needed for this handler
+        processing_service=MagicMock(spec=ProcessingService),  # No processing service needed for this handler
         application=mock_application_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,  # Now defined
@@ -1349,6 +1351,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
             f"Ingested PDF content (from email Source ID: {TEST_EMAIL_MESSAGE_ID_WITH_PDF}) "
             f"containing substring '{KNOWN_SUBSTRING_FROM_PDF}' not found in query results. Results: {query_results}"
         ).is_not_none()
+        assert found_pdf_result is not None  # For type checker
         logger.info(f"Found matching result for PDF content: {found_pdf_result}")
 
         assert_that(found_pdf_result["distance"]).described_as(
@@ -1427,7 +1430,7 @@ async def test_email_indexing_with_llm_summary_e2e(
         ],
     )
     mock_llm_client_email = RuleBasedMockLLMClient(
-        rules=[(email_summary_matcher, mock_llm_output_email)]
+        rules=[(email_summary_matcher, mock_llm_output_email)]  # type: ignore[arg-type]
     )
 
     # --- Arrange: Mock Embeddings ---
@@ -1473,11 +1476,11 @@ async def test_email_indexing_with_llm_summary_e2e(
         "Email for LLM Summary Test": email_title_for_summary_embedding,
     })
     # Store for assertion
-    current_embedder._test_query_email_summary_embedding = query_email_summary_embedding
+    current_embedder._test_query_email_summary_embedding = query_email_summary_embedding  # type: ignore[attr-defined]
 
     # --- Arrange: Indexing Pipeline with LLM Summary Processor ---
     llm_summary_processor_email = LLMSummaryGeneratorProcessor(
-        llm_client=mock_llm_client_email,
+        llm_client=mock_llm_client_email,  # type: ignore[arg-type]
         input_content_types=["raw_body_text"],  # Process email body
         target_embedding_type=EMAIL_LLM_SUMMARY_TARGET_TYPE,
     )
@@ -1510,11 +1513,19 @@ async def test_email_indexing_with_llm_summary_e2e(
     # --- Arrange: Task Worker Setup ---
     # Inject mock LLM client for the summary processor via app state
     original_llm_client = getattr(fastapi_app.state, "llm_client", None)
-    fastapi_app.state.llm_client = mock_llm_client_email
+    fastapi_app.state.llm_client = mock_llm_client_email  # type: ignore[assignment]
+
+    # Create a mock application object for TaskWorker
+    mock_app_state_summary = MagicMock()
+    mock_app_state_summary.embedding_generator = current_embedder
+    mock_app_state_summary.llm_client = mock_llm_client_email
+
+    mock_application_summary = MagicMock()
+    mock_application_summary.state = mock_app_state_summary
 
     worker_email_summary = TaskWorker(
-        processing_service=None,
-        application=fastapi_app,  # For state access
+        processing_service=MagicMock(spec=ProcessingService),
+        application=mock_application_summary,  # For state access
         embedding_generator=current_embedder,  # Use the updated embedder
         calendar_config={},
         timezone_str="UTC",
@@ -1560,7 +1571,7 @@ async def test_email_indexing_with_llm_summary_e2e(
             )
             email_summary_query_results = await query_vectors(
                 db,
-                query_embedding=current_embedder._test_query_email_summary_embedding,
+                query_embedding=current_embedder._test_query_email_summary_embedding,  # type: ignore[attr-defined]
                 embedding_model=TEST_EMBEDDING_MODEL,
                 limit=5,
                 filters={"source_id": email_msg_id_summary},
@@ -1589,7 +1600,8 @@ async def test_email_indexing_with_llm_summary_e2e(
             found_email_summary_result.get("embedding_source_content")
             == expected_stored_email_summary_content
         )
-        assert found_email_summary_result.get("distance") < 0.1, (
+        assert_that(found_email_summary_result.get("distance")).is_not_none()
+        assert found_email_summary_result.get("distance") < 0.1, (  # type: ignore[operator]
             "Distance for email LLM summary should be small"
         )
 
@@ -1707,7 +1719,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     )
 
     mock_llm_client_link_ext = RuleBasedMockLLMClient(
-        rules=[
+        rules=[  # type: ignore[arg-type]
             (primary_link_matcher_positive, mock_llm_output_link_positive),
             (primary_link_matcher_negative, mock_llm_output_link_negative),
         ]
@@ -1743,7 +1755,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     # --- Arrange: Indexing Pipeline ---
     title_extractor = TitleExtractor()
     link_extractor_processor = LLMPrimaryLinkExtractorProcessor(
-        llm_client=mock_llm_client_link_ext,
+        llm_client=mock_llm_client_link_ext,  # type: ignore[arg-type]
         input_content_types=["raw_body_text"],
         target_embedding_type=PRIMARY_LINK_TARGET_TYPE,  # Should be "raw_url"
     )
@@ -1760,7 +1772,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         processors=[
             title_extractor,
             link_extractor_processor,
-            web_fetcher_processor,  # WebFetcher after link extractor
+            web_fetcher_processor,  # type: ignore[list-item] # WebFetcher after link extractor
             text_chunker,
             embedding_dispatcher,
         ],
@@ -1772,11 +1784,21 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
 
     # --- Arrange: Task Worker Setup ---
     original_llm_client = getattr(fastapi_app.state, "llm_client", None)
-    fastapi_app.state.llm_client = mock_llm_client_link_ext  # For link_extractor_processor if it were built by DocumentIndexer
+    fastapi_app.state.llm_client = mock_llm_client_link_ext  # type: ignore[assignment] # For link_extractor_processor
+
+    # Create a mock application object for TaskWorker
+    mock_app_state_link_ext = MagicMock()
+    mock_app_state_link_ext.embedding_generator = current_embedder
+    mock_app_state_link_ext.llm_client = mock_llm_client_link_ext
+    # Add scraper to mock app state if WebFetcherProcessor run by TaskWorker needs it via app.state.scraper
+    mock_app_state_link_ext.scraper = mock_scraper
+
+    mock_application_link_ext = MagicMock()
+    mock_application_link_ext.state = mock_app_state_link_ext
 
     worker_link_ext = TaskWorker(
-        processing_service=None,
-        application=fastapi_app,
+        processing_service=MagicMock(spec=ProcessingService),
+        application=mock_application_link_ext,
         embedding_generator=current_embedder,
         calendar_config={},
         timezone_str="UTC",
