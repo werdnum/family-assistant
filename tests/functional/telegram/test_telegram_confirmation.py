@@ -128,10 +128,11 @@ async def test_confirmation_accepted(
     # This is what the confirming wrapper will call internally.
     # The 'with' block was missing indentation for its content.
     # Fix: Ensure the block below is indented correctly.
-    with patch.object(
+    patcher_execute_tool = patch.object(
         fix.tools_provider, "execute_tool", new_callable=AsyncMock
-    ) as mock_execute_original:
-        # Start of indented block for the 'with patch.object(...)'
+    )
+    mock_execute_original = patcher_execute_tool.start()
+    try:
         # expected *string* result from add_or_update_note tool.
         mock_execute_original.return_value = expected_tool_success_result
 
@@ -182,7 +183,9 @@ async def test_confirmation_accepted(
                 # 2. Original Tool Provider's execute_tool was called (meaning confirmation passed)
                 mock_execute_original.assert_awaited_once()  # Check it was called
                 # Check arguments passed to the original tool
-                call_args_tuple, call_kwargs_dict = mock_execute_original.await_args
+                awaited_call_args = mock_execute_original.await_args
+                assert_that(awaited_call_args).is_not_none()
+                call_args_tuple, call_kwargs_dict = awaited_call_args
                 called_name = (
                     call_args_tuple[0]
                     if call_args_tuple
@@ -204,6 +207,8 @@ async def test_confirmation_accepted(
         assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(
             2
         )  # Use casted client
+    finally:
+        patcher_execute_tool.stop()
 
         # 4. Final success message sent to user
         fix.mock_bot.send_message.assert_awaited_once()
@@ -308,12 +313,13 @@ async def test_confirmation_rejected(
     # Patch the *original* provider's execute_tool
     # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
-    with patch.object(
+    patcher_execute_tool = patch.object(
         fix.tools_provider,
         "execute_tool",
         new_callable=AsyncMock,  # Indent here
-    ) as mock_execute_original:
-        # Start of indented block
+    )
+    mock_execute_original = patcher_execute_tool.start()
+    try:
         # --- Create Mock Update/Context ---
         update = create_mock_update(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
@@ -359,6 +365,8 @@ async def test_confirmation_rejected(
             assert_that(kwargs_bot["reply_to_message_id"]).described_as(
                 "Final bot message reply ID"
             ).is_equal_to(user_message_id)
+    finally:
+        patcher_execute_tool.stop()
 
 
 @pytest.mark.asyncio
@@ -448,12 +456,13 @@ async def test_confirmation_timed_out(
     # Patch the *original* provider's execute_tool
     # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
-    with patch.object(
+    patcher_execute_tool = patch.object(
         fix.tools_provider,
         "execute_tool",
         new_callable=AsyncMock,  # Indent here
-    ) as mock_execute_original:
-        # Start of indented block
+    )
+    mock_execute_original = patcher_execute_tool.start()
+    try:
         # --- Create Mock Update/Context ---
         update = create_mock_update(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
@@ -498,3 +507,5 @@ async def test_confirmation_timed_out(
             assert_that(kwargs_bot["reply_to_message_id"]).described_as(
                 "Final bot message reply ID"
             ).is_equal_to(user_message_id)
+    finally:
+        patcher_execute_tool.stop()
