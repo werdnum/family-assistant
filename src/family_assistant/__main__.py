@@ -63,6 +63,7 @@ from family_assistant.storage import (
 
 # Import items specifically from storage.context
 from family_assistant.storage.context import (
+    DatabaseContext,  # Added for type hinting and wrapper
     get_db_context,  # Add back get_db_context
 )
 
@@ -70,9 +71,11 @@ from family_assistant.storage.context import (
 from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
-    handle_log_message,
     new_task_event,
     shutdown_event,
+)
+from family_assistant.task_worker import (
+    handle_log_message as original_handle_log_message,  # Aliased
 )
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -90,6 +93,7 @@ from family_assistant.tools import (
     ToolsProvider,  # Import protocol for type hinting
     _scan_user_docs,  # Import the scanner function
 )
+from family_assistant.tools.types import ToolExecutionContext  # Added for wrapper
 from family_assistant.utils.scraping import PlaywrightScraper  # Added
 
 # Import the FastAPI app
@@ -624,6 +628,27 @@ def reload_config_handler(signum: int, frame: types.FrameType | None) -> None:
     # but be careful with state. For now, just log and reload vars.
 
 
+# --- Wrapper Functions for Type Compatibility ---
+async def async_get_db_context_for_provider() -> DatabaseContext:
+    """Wraps get_db_context to be an awaitable returning DatabaseContext for providers."""
+    return get_db_context()
+
+
+async def task_wrapper_handle_log_message(
+    exec_context: ToolExecutionContext, payload: Any
+) -> None:
+    """
+    Wrapper for the original handle_log_message to match TaskWorker's expected handler signature.
+    It extracts db_context from ToolExecutionContext and ensures payload is a dict.
+    """
+    if not isinstance(payload, dict):
+        logger.error(
+            f"Payload for handle_log_message task is not a dict: {type(payload)}. Content: {payload}"
+        )
+        return  # Or raise an error, depending on desired behavior
+    await original_handle_log_message(exec_context.db_context, payload)
+
+
 # --- Main Application Setup & Run ---
 # Return tuple: (TelegramService, ToolsProvider) or (None, None)
 async def main_async(
@@ -829,7 +854,7 @@ async def main_async(
     default_profile_proc_config = default_profile_settings["processing_config"]
 
     notes_provider = NotesContextProvider(
-        get_db_context_func=get_db_context,
+        get_db_context_func=async_get_db_context_for_provider,  # Use wrapper
         prompts=default_profile_proc_config["prompts"],
     )
     calendar_provider = CalendarContextProvider(
@@ -951,7 +976,9 @@ async def main_async(
     )
 
     # --- Register Task Handlers with the Worker Instance ---
-    task_worker_instance.register_task_handler("log_message", handle_log_message)
+    task_worker_instance.register_task_handler(
+        "log_message", task_wrapper_handle_log_message  # Use wrapper
+    )
     # Register document processing handler from the indexer instance
     task_worker_instance.register_task_handler(
         "process_uploaded_document", document_indexer.process_document
