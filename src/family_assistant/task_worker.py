@@ -392,8 +392,16 @@ class TaskWorker:
                 final_conversation_id = raw_conversation_id
             else:
                 # For other task types, provide defaults if None, to satisfy linter if it expects str
-                final_interface_type = raw_interface_type if raw_interface_type is not None else "unknown_interface"
-                final_conversation_id = raw_conversation_id if raw_conversation_id is not None else "unknown_conversation"
+                final_interface_type = (
+                    raw_interface_type
+                    if raw_interface_type is not None
+                    else "unknown_interface"
+                )
+                final_conversation_id = (
+                    raw_conversation_id
+                    if raw_conversation_id is not None
+                    else "unknown_conversation"
+                )
 
             exec_context = ToolExecutionContext(
                 # Pass new identifiers
