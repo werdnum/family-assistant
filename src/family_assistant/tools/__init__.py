@@ -633,35 +633,6 @@ def _scan_user_docs() -> list[str]:
 
 # --- User Documentation Tool Implementation ---
 
-# --- Documentation Tool Helper ---
-
-
-def _scan_user_docs() -> list[str]:
-    """Scans the 'docs/user/' directory for allowed documentation files."""
-    docs_user_dir = pathlib.Path("docs") / "user"
-    allowed_extensions = {".md", ".txt"}
-    available_files = []
-    if docs_user_dir.is_dir():
-        try:
-            for item in os.listdir(docs_user_dir):
-                item_path = docs_user_dir / item
-                if item_path.is_file() and any(
-                    item.endswith(ext) for ext in allowed_extensions
-                ):
-                    available_files.append(item)
-        except OSError as e:
-            logger.error(
-                f"Error scanning documentation directory '{docs_user_dir}': {e}",
-                exc_info=True,
-            )
-    else:
-        logger.warning(f"User documentation directory not found: '{docs_user_dir}'")
-    logger.info(f"Found user documentation files: {available_files}")
-    return available_files
-
-
-# --- User Documentation Tool Implementation ---
-
 
 async def send_message_to_user_tool(
     exec_context: ToolExecutionContext, target_chat_id: int, message_content: str
@@ -828,12 +799,20 @@ def _format_event_details_for_confirmation(
     if not details:
         return "Event details not found."
     summary = details.get("summary", "No Title")
-    # Pass timezone_str to the formatting function
-    start_str = calendar_integration.format_datetime_or_date(
-        details.get("start"), timezone_str, is_end=False
+    start_obj = details.get("start")
+    end_obj = details.get("end")
+
+    start_str = (
+        calendar_integration.format_datetime_or_date(
+            start_obj, timezone_str, is_end=False
+        )
+        if start_obj
+        else "Unknown Start Time"
     )
-    end_str = calendar_integration.format_datetime_or_date(
-        details.get("end"), timezone_str, is_end=True
+    end_str = (
+        calendar_integration.format_datetime_or_date(end_obj, timezone_str, is_end=True)
+        if end_obj
+        else "Unknown End Time"
     )
     all_day = details.get("all_day", False)
     if all_day:
