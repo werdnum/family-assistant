@@ -121,10 +121,7 @@ except ImportError:
     async def query_vectors(*args: Any, **kwargs: Any) -> list[Any]:  # type: ignore
         return []  # Return an empty list for queries
 
-    class Document(_ProtocolType):  # type: ignore
-        """Placeholder for the Document protocol."""
-
-        pass
+    Document = Any  # type: ignore # Placeholder for the Document protocol if import fails
 
 
 # logger definition moved here to be after potential vector_storage import logs
