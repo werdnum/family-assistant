@@ -370,31 +370,35 @@ class TaskWorker:
                 task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
             )
             # Need to define these *before* using them in logging etc.
-            # Define with default or None initially
-            interface_type: str | None = None
-            conversation_id: str | None = None
-            interface_type = payload_dict.get("interface_type")
-            conversation_id = payload_dict.get("conversation_id")
-            # Validate extracted identifiers (ensure they exist for tasks needing them)
-            if (not interface_type or not conversation_id) and task[
-                "task_type"
-            ] == "llm_callback":
-                logger.error(
-                    f"Task {task['task_id']} ({task['task_type']}) missing interface_type or conversation_id in payload. Cannot create context."
-                )
-                # Mark task as failed? Or raise error?
-                await storage.update_task_status(
-                    db_context,
-                    task_id=task["task_id"],
-                    status="failed",
-                    error="Missing interface_type or conversation_id in payload",
-                )
-                return  # Stop processing
+            raw_interface_type: str | None = payload_dict.get("interface_type")
+            raw_conversation_id: str | None = payload_dict.get("conversation_id")
+
+            final_interface_type: str
+            final_conversation_id: str
+
+            if task["task_type"] == "llm_callback":
+                if not raw_interface_type or not raw_conversation_id:
+                    logger.error(
+                        f"Task {task['task_id']} (llm_callback) missing interface_type or conversation_id in payload."
+                    )
+                    await storage.update_task_status(
+                        db_context,
+                        task_id=task["task_id"],
+                        status="failed",
+                        error="Missing interface_type or conversation_id in payload for llm_callback",
+                    )
+                    return  # Stop processing
+                final_interface_type = raw_interface_type
+                final_conversation_id = raw_conversation_id
+            else:
+                # For other task types, provide defaults if None, to satisfy linter if it expects str
+                final_interface_type = raw_interface_type if raw_interface_type is not None else "unknown_interface"
+                final_conversation_id = raw_conversation_id if raw_conversation_id is not None else "unknown_conversation"
 
             exec_context = ToolExecutionContext(
                 # Pass new identifiers
-                interface_type=interface_type,
-                conversation_id=conversation_id,
+                interface_type=final_interface_type,
+                conversation_id=final_conversation_id,
                 turn_id=str(
                     uuid.uuid4()
                 ),  # Generate a new turn_id for this task execution
@@ -603,7 +607,7 @@ class TaskWorker:
             try:
                 task = None  # Initialize task variable for the outer scope
                 # Database context per iteration (starts a transaction)
-                async with await get_db_context() as db_context:
+                async with get_db_context() as db_context:
                     logger.debug(
                         "Polling for tasks on DB context: %s", db_context.engine.url
                     )
