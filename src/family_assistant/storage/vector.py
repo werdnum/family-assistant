@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import (
     Any,
     Protocol,
-    cast,
 )
 
 import sqlalchemy as sa
@@ -28,7 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncResult, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, selectinload
 from sqlalchemy.sql import functions  # Import functions explicitly
 
@@ -794,7 +793,7 @@ async def update_document_title_in_db(
     )
     try:
         result = await db_context.execute_with_retry(stmt)
-        if cast("AsyncResult", result).rowcount > 0:
+        if result.rowcount > 0:
             logger.info(
                 f"Successfully updated title for document ID {document_id} to '{new_title.strip()}'."
             )
