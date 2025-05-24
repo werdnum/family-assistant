@@ -373,6 +373,20 @@ else:
                 "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
             )
 
+        async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
+            """Placeholder for generate_embeddings to satisfy the protocol."""
+            # This method should not be called if the library is not available.
+            # Raising an error is consistent with the __init__ behavior.
+            raise ImportError(
+                "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
+            )
+
+        @property
+        def model_name(self) -> str:
+            """Placeholder for model_name to satisfy the protocol."""
+            # Provide a distinct model name for the placeholder.
+            return "unavailable-sentence-transformer"
+
 
 class MockEmbeddingGenerator:
     """
