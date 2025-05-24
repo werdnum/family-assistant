@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]
-from assertpy import assert_that, soft_assertions
+from assertpy import SoftAssertions, assert_that, soft_assertions
 from telegram import Message
 
 from family_assistant.tools import ConfirmingToolsProvider  # Import confirming provider
@@ -163,7 +163,7 @@ async def test_confirmation_accepted(
 
             # Assert: Perform assertions *after* the handler call but *within* the patch context
             # to ensure mocks are checked correctly.
-            assertions_context = soft_assertions()
+            assertions_context: SoftAssertions = soft_assertions()
             with assertions_context:
                 # 1. Confirmation Manager was called because the tool was configured to require it
                 fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
@@ -335,7 +335,7 @@ async def test_confirmation_rejected(
             await confirming_wrapper.close()
 
             # Assert
-            assertions_context = soft_assertions()
+            assertions_context: SoftAssertions = soft_assertions()
             with assertions_context:
                 # 1. Confirmation Manager was called
                 fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
@@ -476,7 +476,7 @@ async def test_confirmation_timed_out(
             await confirming_wrapper.close()
 
             # Assert
-            assertions_context = soft_assertions()
+            assertions_context: SoftAssertions = soft_assertions()
             with assertions_context:
                 # 1. Confirmation Manager was called (and raised TimeoutError)
                 fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
