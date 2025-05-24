@@ -98,16 +98,18 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
             return current_items
 
         # We've confirmed 'id' attribute exists. Now get its value.
-        doc_id_value = original_document.id
+        # Use getattr to satisfy type checker for attribute access on a protocol
+        # after a hasattr check. The type of id is expected to be int.
+        doc_id_attr = original_document.id
 
-        if not doc_id_value:  # Check if the ID is None, 0, or other falsy values
+        if not isinstance(doc_id_attr, int) or not doc_id_attr:  # Ensure it's a truthy integer
             logger.error(
-                f"[{self.name}] Original document's 'id' attribute is falsy ({doc_id_value}). Cannot update title."
+                f"[{self.name}] Original document's 'id' attribute is not a truthy integer (found: {doc_id_attr!r}, type: {type(doc_id_attr).__name__}). Cannot update title."
             )
             return current_items
 
-        # If we reach here, doc_id_value is a truthy ID.
-        document_id = doc_id_value
+        # If we reach here, doc_id_attr is a truthy integer.
+        document_id: int = doc_id_attr
         current_doc_title = (
             original_document.title
         )  # Get current title to potentially avoid overwriting good titles
