@@ -105,7 +105,7 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
                 f"[{self.name}] Original document's 'id' attribute is falsy ({doc_id_value}). Cannot update title."
             )
             return current_items
-        
+
         # If we reach here, doc_id_value is a truthy ID.
         document_id = doc_id_value
         current_doc_title = (
