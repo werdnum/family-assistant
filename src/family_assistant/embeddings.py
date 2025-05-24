@@ -7,19 +7,25 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable  # Added Type, Any
+
+# Declare module/class variables that will be conditionally populated
+_SentenceTransformer_cls: type[Any] | None = None
+_np_module: Any | None = None
+SENTENCE_TRANSFORMERS_AVAILABLE: bool  # Will be set in the try/except block
 
 # Import sentence-transformers if available, otherwise skip the class definition
 try:
     # sentence-transformers returns numpy arrays or torch tensors, need numpy for conversion
-    import numpy as np
-    from sentence_transformers import SentenceTransformer
+    import numpy
+    from sentence_transformers import SentenceTransformer as ActualSentenceTransformer
 
+    _np_module = numpy
+    _SentenceTransformer_cls = ActualSentenceTransformer
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
-    SentenceTransformer = None  # Define as None to satisfy type checkers if needed
-    np = None  # Define as None
+    # _SentenceTransformer_cls and _np_module remain None as initialized
 
 from litellm import aembedding
 from litellm.exceptions import (
@@ -282,12 +288,12 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
                 logger.info(
                     f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}"
                 )
-                # Ensure SentenceTransformer is not None before calling
-                if SentenceTransformer is None:
+                # Ensure _SentenceTransformer_cls is not None before calling
+                if _SentenceTransformer_cls is None:  # Check the correctly typed variable
                     raise RuntimeError(
                         "SentenceTransformer class is None, library likely not installed."
                     )
-                self.model = SentenceTransformer(
+                self.model = _SentenceTransformer_cls(  # Use the correctly typed variable
                     model_name_or_path, device=device, **self.model_kwargs
                 )
                 logger.info(
@@ -328,9 +334,10 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
                 )
 
                 # Convert numpy arrays to lists of floats
-                # Ensure np is available due to conditional import
-                if np is None:
-                    raise RuntimeError("Numpy is required but not available.")
+                # embeddings_np is expected to be a list of numpy arrays here.
+                # The availability of numpy (_np_module) is implied by SENTENCE_TRANSFORMERS_AVAILABLE being true,
+                # so an explicit check for _np_module is not strictly needed here for functionality,
+                # but was the source of the original mypy error on np = None.
                 embeddings_list = [arr.tolist() for arr in embeddings_np]
 
                 logger.debug(
@@ -356,7 +363,7 @@ else:
 
     # Define a placeholder if the library is missing, so imports don't break elsewhere
     # if code explicitly tries to import SentenceTransformerEmbeddingGenerator
-    class SentenceTransformerEmbeddingGenerator:
+    class SentenceTransformerEmbeddingGenerator:  # type: ignore[no-redef]
         def __init__(self, *args: object, **kwargs: object) -> None:
             raise ImportError(
                 "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
