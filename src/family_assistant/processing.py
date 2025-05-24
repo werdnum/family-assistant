@@ -139,10 +139,10 @@ class ProcessingService:
         conversation_id: str,
         turn_id: str,  # Added turn_id
         application: Application,
-        # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
+        # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
-            Callable[[str, str, dict[str, Any]], Awaitable[bool]] | None
-        ) = None,  # Removed comma
+            Callable[[int, str, str | None, str, str, dict[str, Any], float], Awaitable[bool]] | None
+        ) = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         """
         Sends the conversation history to the LLM via the injected client,
@@ -532,9 +532,9 @@ class ProcessingService:
         user_name: str,
         turn_id: str | None = None,  # Made turn_id optional, moved after non-defaults
         replied_to_interface_id: str | None = None,  # Added for reply context
-        # Update callback signature: It now expects (prompt_text, tool_name, tool_args)
+        # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
-            Callable[[str, str, dict[str, Any]], Awaitable[bool]] | None
+            Callable[[int, str, str | None, str, str, dict[str, Any], float], Awaitable[bool]] | None
         ) = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str | None]:
         """Prepares context, message history, calls the LLM processing logic,
