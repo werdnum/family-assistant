@@ -111,7 +111,9 @@ async def test_simple_text_message(
         matcher_hello,
         LLMOutput(content=llm_response_text, tool_calls=None),
     )
-    typing.cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [rule_hello_response]  # Set rules for this test instance
+    typing.cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
+        rule_hello_response
+    ]  # Set rules for this test instance
 
     # Configure mock Bot response (simulate sending message)
     mock_sent_message = AsyncMock(
@@ -135,7 +137,9 @@ async def test_simple_text_message(
     # Assert
     with soft_assertions():  # type: ignore[attr-defined]
         # 1. LLM Call Verification
-        assert_that(typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls).described_as("LLM Call Count").is_length(1)
+        assert_that(
+            typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
+        ).described_as("LLM Call Count").is_length(1)
 
         # 2. Bot API Call Verification (Output to user)
         fix.mock_bot.send_message.assert_awaited_once()
@@ -282,7 +286,9 @@ async def test_add_note_tool_usage(
 
         # 2. LLM Calls
         # Expect two calls: first triggers tool, second processes result
-        assert_that(typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls).described_as("LLM Call Count").is_length(2)
+        assert_that(
+            typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
+        ).described_as("LLM Call Count").is_length(2)
 
         # Implicitly verified LLM inputs:
         # - The first call must have matched add_note_matcher to produce the tool call.
@@ -433,7 +439,9 @@ async def test_tool_result_in_subsequent_history(
     await fix.handler.message_handler(update_1, context)
 
     # --- Assert (Turn 1 - Minimal, just ensure it likely completed) ---
-    assert_that(typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls).described_as("LLM Calls after Turn 1").is_length(2)
+    assert_that(
+        typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
+    ).described_as("LLM Calls after Turn 1").is_length(2)
     assert_that(fix.mock_bot.send_message.await_count).described_as(
         "Bot Sends after Turn 1"
     ).is_equal_to(1)
@@ -454,9 +462,9 @@ async def test_tool_result_in_subsequent_history(
 
     # --- Assert (Turn 2) ---
     with soft_assertions():  # type: ignore[attr-defined]
-        assert_that(typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls).described_as(
-            "LLM Calls after Turn 2"
-        ).is_length(3)  # One more call
+        assert_that(
+            typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
+        ).described_as("LLM Calls after Turn 2").is_length(3)  # One more call
         assert_that(fix.mock_bot.send_message.await_count).described_as(
             "Bot Sends after Turn 2"
         ).is_equal_to(2)  # One more send
