@@ -26,7 +26,7 @@ from litellm.exceptions import (
 
 if TYPE_CHECKING:
     from litellm import Message  # Add import for litellm.Message
-    from litellm.types import FileResponse
+    from litellm.types.files import FileResponse
     from litellm.types.utils import (
         ModelResponse,  # Import ModelResponse for type hinting
     )
@@ -41,9 +41,9 @@ LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in (
     "yes",
 )
 if LITELLM_DEBUG_ENABLED:
-    litellm.turn_on_debug_logs()
+    litellm.set_verbose = True
     logger.info(
-        "Enabled LiteLLM verbose logging (turn_on_debug_logs()) because LITELLM_DEBUG is set."
+        "Enabled LiteLLM verbose logging (set_verbose=True) because LITELLM_DEBUG is set."
     )
 else:
     logger.info("LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false).")
