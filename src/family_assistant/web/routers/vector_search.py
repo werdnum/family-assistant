@@ -155,10 +155,14 @@ async def handle_vector_search(
     # --- Form Inputs ---
     semantic_query: Annotated[str | None, Form()] = None,
     keywords: Annotated[str | None, Form()] = None,
-    search_type: Annotated[Literal['semantic', 'keyword', 'hybrid'], Form()] = "hybrid",  # 'semantic', 'keyword', 'hybrid'
+    search_type: Annotated[
+        Literal["semantic", "keyword", "hybrid"], Form()
+    ] = "hybrid",  # 'semantic', 'keyword', 'hybrid'
     embedding_model: Annotated[str | None, Form()] = None,  # CRUCIAL for vector search
     embedding_types: Annotated[list[str] | None, Form()] = None,  # Allow multiple types
-    source_types: Annotated[list[str] | None, Form()] = None,  # Allow multiple source types
+    source_types: Annotated[
+        list[str] | None, Form()
+    ] = None,  # Allow multiple source types
     created_after: Annotated[str | None, Form()] = None,  # Expect YYYY-MM-DD
     created_before: Annotated[str | None, Form()] = None,  # Expect YYYY-MM-DD
     title_like: Annotated[str | None, Form()] = None,
@@ -283,8 +287,9 @@ async def handle_vector_search(
         if query_obj.search_type in ["semantic", "hybrid"]:
             # Basic check, might need more robust model matching/selection
             # Assert semantic_query is not None due to VectorSearchQuery.__post_init__ validation
-            assert query_obj.semantic_query is not None, \
+            assert query_obj.semantic_query is not None, (
                 "Semantic query should be validated by VectorSearchQuery for semantic/hybrid search"
+            )
             embedding_result = await embedding_generator.generate_embeddings([
                 query_obj.semantic_query
             ])  # Pass as list
