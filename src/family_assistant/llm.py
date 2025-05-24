@@ -3,11 +3,12 @@ Module defining the interface and implementations for interacting with Large Lan
 """
 
 import copy  # For deep copying tool definitions
+import io
 import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import aiofiles  # For async file operations
 import litellm  # Import litellm
@@ -25,10 +26,10 @@ from litellm.exceptions import (
 
 if TYPE_CHECKING:
     from litellm import Message  # Add import for litellm.Message
-    from litellm.types.files import (
-        FileResponse,  # Corrected import path and moved to TYPE_CHECKING
+    from litellm.types import FileResponse
+    from litellm.types.utils import (
+        ModelResponse,  # Import ModelResponse for type hinting
     )
-    from litellm.utils import ModelResponse  # Import ModelResponse for type hinting
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +41,9 @@ LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in (
     "yes",
 )
 if LITELLM_DEBUG_ENABLED:
-    litellm.set_verbose = True
+    litellm.turn_on_debug_logs()
     logger.info(
-        "Enabled LiteLLM verbose logging (set_verbose=True) because LITELLM_DEBUG is set."
+        "Enabled LiteLLM verbose logging (turn_on_debug_logs()) because LITELLM_DEBUG is set."
     )
 else:
     logger.info("LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false).")
@@ -240,19 +241,19 @@ class LiteLLMClient:
                     stream=False,  # Explicitly set stream to False
                     **completion_params,
                 )
-                response: ModelResponse = response  # Add type hint for response
+                response = cast("ModelResponse", response)  # Cast to ModelResponse
             else:
                 logger.debug(
                     f"Calling LiteLLM model {model_arg} with {len(messages_arg)} messages. "
                     f"No tools provided. Other params: {json.dumps(completion_params, default=str)}"
                 )
-                response = await acompletion(
+                _response_obj = await acompletion(
                     model=model_arg,
                     messages=messages_arg,
                     stream=False,  # Explicitly set stream to False
                     **completion_params,
                 )
-                response: ModelResponse = response  # Add type hint for response
+                response = cast("ModelResponse", _response_obj)  # Cast to ModelResponse
 
             # Extract response message
             # Use litellm.Message as the type for response_message
@@ -364,7 +365,7 @@ class LiteLLMClient:
                     gemini_file_obj: FileResponse = await loop.run_in_executor(
                         None,  # Default ThreadPoolExecutor
                         litellm.file_upload,
-                        file_bytes_content,  # file (bytes)
+                        io.BytesIO(file_bytes_content),  # file (BinaryIO)
                         os.path.basename(file_path),  # file_name
                         "gemini",  # custom_llm_provider
                         gemini_api_key,  # api_key
