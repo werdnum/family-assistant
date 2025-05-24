@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-import aiofiles  # For async file operations
+import aiofiles  # type: ignore[import-untyped] # For async file operations
 import litellm  # Import litellm
 from litellm import acompletion
 from litellm.exceptions import (
@@ -26,7 +26,9 @@ from litellm.exceptions import (
 
 if TYPE_CHECKING:
     from litellm import Message  # Add import for litellm.Message
-    from litellm.types.files import FileResponse  # Changed import path
+    from litellm.types.files import (
+        FileResponse,  # type: ignore[attr-defined] # Changed import path
+    )
     from litellm.types.utils import (
         ModelResponse,  # Import ModelResponse for type hinting
     )
@@ -41,9 +43,9 @@ LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in (
     "yes",
 )
 if LITELLM_DEBUG_ENABLED:
-    litellm.set_verbose(True)
+    litellm.set_verbose = True
     logger.info(
-        "Enabled LiteLLM verbose logging (set_verbose(True)) because LITELLM_DEBUG is set."
+        "Enabled LiteLLM verbose logging (set_verbose = True) because LITELLM_DEBUG is set."
     )
 else:
     logger.info("LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false).")
@@ -364,7 +366,7 @@ class LiteLLMClient:
 
                     gemini_file_obj: FileResponse = await loop.run_in_executor(
                         None,  # Default ThreadPoolExecutor
-                        litellm.files.file_upload,  # Corrected path to file_upload
+                        litellm.file_upload,  # Corrected path to file_upload
                         io.BytesIO(file_bytes_content),  # file (BinaryIO)
                         os.path.basename(file_path),  # file_name
                         "gemini",  # custom_llm_provider
