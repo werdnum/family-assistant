@@ -560,24 +560,24 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # This captures `self` (for `self.confirmation_manager`) and `chat_id` from the outer scope
                     async def confirmation_callback_wrapper(
                         # Update signature to match ConfirmationCallbackSignature Protocol
-                        chat_id_cb: int,  # Renamed to avoid clash if outer scope chat_id was used
-                        interface_type_cb: str,
-                        turn_id_cb: str | None,
-                        prompt_text_cb: str,
-                        tool_name_cb: str,
-                        tool_args_cb: dict[str, Any],
-                        timeout_cb: float,
+                        chat_id: int,  # Match protocol and calling keyword
+                        interface_type: str,  # Match protocol and calling keyword
+                        turn_id: str | None,  # Match protocol and calling keyword
+                        prompt_text: str,  # Match protocol and calling keyword
+                        tool_name: str,  # Match protocol and calling keyword
+                        tool_args: dict[str, Any],  # Match protocol and calling keyword
+                        timeout: float,  # Match protocol and calling keyword
                     ) -> bool:
-                        # The `chat_id` from the outer scope should ideally match `chat_id_cb`.
+                        # The `chat_id` from the outer scope should ideally match the `chat_id` parameter.
                         # We use the parameters passed to the callback by ProcessingService.
                         return await self.confirmation_manager.request_confirmation(
-                            chat_id=chat_id_cb,
-                            interface_type=interface_type_cb,  # Pass new arg
-                            turn_id=turn_id_cb,  # Pass new arg
-                            prompt_text=prompt_text_cb,
-                            tool_name=tool_name_cb,
-                            tool_args=tool_args_cb,
-                            timeout=timeout_cb,  # Use the timeout passed by ProcessingService
+                            chat_id=chat_id,  # Use the passed parameter
+                            interface_type=interface_type,  # Use the passed parameter
+                            turn_id=turn_id,  # Use the passed parameter
+                            prompt_text=prompt_text,  # Use the passed parameter
+                            tool_name=tool_name,  # Use the passed parameter
+                            tool_args=tool_args,  # Use the passed parameter
+                            timeout=timeout,  # Use the passed parameter
                         )
 
                     # Use the wrapper function as the callback
