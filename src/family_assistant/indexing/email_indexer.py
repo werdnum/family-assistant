@@ -4,6 +4,7 @@ Handles the indexing process for emails stored in the database.
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, cast
