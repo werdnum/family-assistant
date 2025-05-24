@@ -60,7 +60,7 @@ async def wait_for_tasks_to_complete(
     while datetime.now(timezone.utc) < end_time:
         try:
             # Use the provided engine to get a context
-            async with await get_db_context(engine=engine) as db:
+            async with get_db_context(engine=engine) as db:
                 # First check for tasks that have failed or have a recorded error
                 failure_condition = sa.or_(
                     tasks_table.c.status == "failed", tasks_table.c.error.is_not(None)
@@ -157,7 +157,7 @@ async def wait_for_tasks_to_complete(
     # --- Fetch details of pending tasks before raising timeout ---
     pending_tasks_details = "Could not fetch pending task details."
     try:
-        async with await get_db_context(engine=engine) as db:
+        async with get_db_context(engine=engine) as db:
             # Define columns explicitly to avoid issues with imported table object state
             cols_to_select = [
                 sa.column("task_id"),

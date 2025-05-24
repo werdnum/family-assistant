@@ -49,7 +49,7 @@ async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
 async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext, None]:
     """Provides an *entered* DatabaseContext instance for interacting with the test database."""
     # Using the factory function aligns better with potential future DI usage
-    context_instance = await get_db_context(engine=db_engine, base_delay=0.01)
+    context_instance = get_db_context(engine=db_engine, base_delay=0.01)
     async with context_instance as entered_context:
         yield entered_context
     # Context is automatically exited here
