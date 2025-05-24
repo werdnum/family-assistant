@@ -175,3 +175,19 @@ ignore = [
 	# Forbids dynamic types in kwargs etc
 	"ANN4"
 ]
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = [
+    "**/__pycache__",
+    ".venv",
+    "venv",
+    "alembic/**",
+    "docs/**",
+    "contrib/**",
+]
+pythonVersion = "3.10"
+
+reportMissingImports = true
+reportUnusedImport = true
+typeCheckingMode = "basic"
