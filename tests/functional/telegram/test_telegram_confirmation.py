@@ -126,13 +126,8 @@ async def test_confirmation_accepted(
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
     # Patch the *original* provider's execute_tool (the one from the fixture)
     # This is what the confirming wrapper will call internally.
-    # The 'with' block was missing indentation for its content.
-    # Fix: Ensure the block below is indented correctly.
-    patcher_execute_tool = patch.object(
-        fix.tools_provider, "execute_tool", new_callable=AsyncMock
-    )
-    mock_execute_original = patcher_execute_tool.start()
-    try:
+    # Note: The comments about indentation were misleading; the primary issue was patch usage.
+    with patch.object(fix.tools_provider, "execute_tool", new_callable=AsyncMock) as mock_execute_original:
         # expected *string* result from add_or_update_note tool.
         mock_execute_original.return_value = expected_tool_success_result
 
@@ -153,8 +148,7 @@ async def test_confirmation_accepted(
         )  # noqa: E501
 
         # Act & Assert within patch contexts
-        # This patch needs to be nested *inside* the mock_execute_original patch
-        # because the handler call will trigger the tool execution.
+        # The confirming_wrapper is patched onto processing_service for the duration of this inner 'with' block.
         with patch.object(fix.processing_service, "tools_provider", confirming_wrapper):
             # Act: Call the handler within the context where the tools_provider is patched
             await fix.handler.message_handler(update, context)
@@ -183,9 +177,10 @@ async def test_confirmation_accepted(
                 # 2. Original Tool Provider's execute_tool was called (meaning confirmation passed)
                 mock_execute_original.assert_awaited_once()  # Check it was called
                 # Check arguments passed to the original tool
-                awaited_call_args = mock_execute_original.await_args
-                assert_that(awaited_call_args).is_not_none()
-                call_args_tuple, call_kwargs_dict = awaited_call_args
+                awaited_call_obj = mock_execute_original.await_args
+                assert_that(awaited_call_obj).is_not_none()
+                assert awaited_call_obj is not None  # For type narrowing / linter
+                call_args_tuple, call_kwargs_dict = awaited_call_obj
                 called_name = (
                     call_args_tuple[0]
                     if call_args_tuple
@@ -194,7 +189,7 @@ async def test_confirmation_accepted(
                 called_arguments = (
                     call_args_tuple[1]
                     if call_args_tuple
-                    and len(call_args_tuple) > 1  # Check call_args_tuple is not None
+                    and len(call_args_tuple) > 1
                     else call_kwargs_dict.get("arguments")
                 )  # noqa: E501
                 assert_that(called_name).is_equal_to(TOOL_NAME_SENSITIVE)
@@ -207,11 +202,9 @@ async def test_confirmation_accepted(
         assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(
             2
         )  # Use casted client
-    finally:
-        patcher_execute_tool.stop()
 
-        # 4. Final success message sent to user
-        fix.mock_bot.send_message.assert_awaited_once()
+    # 4. Final success message sent to user
+    fix.mock_bot.send_message.assert_awaited_once()
         args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
         expected_final_escaped_text = telegramify_markdown.markdownify(
             llm_final_success_text
@@ -313,13 +306,7 @@ async def test_confirmation_rejected(
     # Patch the *original* provider's execute_tool
     # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
-    patcher_execute_tool = patch.object(
-        fix.tools_provider,
-        "execute_tool",
-        new_callable=AsyncMock,  # Indent here
-    )
-    mock_execute_original = patcher_execute_tool.start()
-    try:
+    with patch.object(fix.tools_provider, "execute_tool", new_callable=AsyncMock) as mock_execute_original:
         # --- Create Mock Update/Context ---
         update = create_mock_update(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
@@ -330,8 +317,7 @@ async def test_confirmation_rejected(
         )  # noqa: E501
 
         # Act & Assert within patch contexts
-        # This patch needs to be nested *inside* the mock_execute_original patch
-        # because the handler call will trigger the tool execution.
+        # The confirming_wrapper is patched onto processing_service for the duration of this inner 'with' block.
         with patch.object(fix.processing_service, "tools_provider", confirming_wrapper):
             # Act
             await fix.handler.message_handler(update, context)
@@ -348,25 +334,25 @@ async def test_confirmation_rejected(
                 # 2. Original tool provider was NOT called
                 mock_execute_original.assert_not_awaited()
 
-            # 3. LLM was called twice (request tool, process cancellation result)
-            assert_that(mock_llm_client._calls).described_as(
-                "LLM Call Count"
-            ).is_length(2)  # Use casted client
+        # 3. LLM was called twice (request tool, process cancellation result)
+        # This assertion is now outside the inner patch, but inside the outer patch.
+        assert_that(mock_llm_client._calls).described_as(
+            "LLM Call Count"
+        ).is_length(2)  # Use casted client
 
-            # 4. Final cancellation message sent to user (matching rule_final_cancel)
-            fix.mock_bot.send_message.assert_awaited_once()
-            args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
-            expected_cancel_escaped_text = telegramify_markdown.markdownify(
-                llm_final_cancel_text
-            )
-            assert_that(kwargs_bot["text"]).described_as(
-                "Final bot message text"
-            ).is_equal_to(expected_cancel_escaped_text)
-            assert_that(kwargs_bot["reply_to_message_id"]).described_as(
-                "Final bot message reply ID"
-            ).is_equal_to(user_message_id)
-    finally:
-        patcher_execute_tool.stop()
+    # 4. Final cancellation message sent to user (matching rule_final_cancel)
+    # This assertion is now outside both patches.
+    fix.mock_bot.send_message.assert_awaited_once()
+    args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
+    expected_cancel_escaped_text = telegramify_markdown.markdownify(
+        llm_final_cancel_text
+    )
+    assert_that(kwargs_bot["text"]).described_as(
+        "Final bot message text"
+    ).is_equal_to(expected_cancel_escaped_text)
+    assert_that(kwargs_bot["reply_to_message_id"]).described_as(
+        "Final bot message reply ID"
+    ).is_equal_to(user_message_id)
 
 
 @pytest.mark.asyncio
@@ -456,13 +442,7 @@ async def test_confirmation_timed_out(
     # Patch the *original* provider's execute_tool
     # The 'with' block needs to contain the Act and Assert phases.
     # Patch the *original* provider's execute_tool
-    patcher_execute_tool = patch.object(
-        fix.tools_provider,
-        "execute_tool",
-        new_callable=AsyncMock,  # Indent here
-    )
-    mock_execute_original = patcher_execute_tool.start()
-    try:
+    with patch.object(fix.tools_provider, "execute_tool", new_callable=AsyncMock) as mock_execute_original:
         # --- Create Mock Update/Context ---
         update = create_mock_update(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
@@ -473,8 +453,7 @@ async def test_confirmation_timed_out(
         )  # noqa: E501
 
         # Act & Assert within patch contexts
-        # This patch needs to be nested *inside* the mock_execute_original patch
-        # because the handler call will trigger the tool execution.
+        # The confirming_wrapper is patched onto processing_service for the duration of this inner 'with' block.
         with patch.object(fix.processing_service, "tools_provider", confirming_wrapper):
             # Act
             await fix.handler.message_handler(update, context)
@@ -490,22 +469,23 @@ async def test_confirmation_timed_out(
                 # 2. Original tool provider was NOT called
                 mock_execute_original.assert_not_awaited()
 
-            # 3. LLM was called twice (request tool, process timeout/cancellation result)
-            assert_that(mock_llm_client._calls).described_as(
-                "LLM Call Count"
-            ).is_length(2)  # Use casted client
-            # 4. Final timeout message sent to user (matching rule_final_timeout)
-            fix.mock_bot.send_message.assert_awaited_once()
-            args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
-            # Get the default response text from the mock LLM used in the fixture
-            expected_timeout_escaped_text = telegramify_markdown.markdownify(
-                llm_final_timeout_text
-            )
-            assert_that(kwargs_bot["text"]).described_as(
-                "Final bot message text"
-            ).is_equal_to(expected_timeout_escaped_text)
-            assert_that(kwargs_bot["reply_to_message_id"]).described_as(
-                "Final bot message reply ID"
-            ).is_equal_to(user_message_id)
-    finally:
-        patcher_execute_tool.stop()
+        # 3. LLM was called twice (request tool, process timeout/cancellation result)
+        # This assertion is now outside the inner patch, but inside the outer patch.
+        assert_that(mock_llm_client._calls).described_as(
+            "LLM Call Count"
+        ).is_length(2)  # Use casted client
+
+    # 4. Final timeout message sent to user (matching rule_final_timeout)
+    # This assertion is now outside both patches.
+    fix.mock_bot.send_message.assert_awaited_once()
+    args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
+    # Get the default response text from the mock LLM used in the fixture
+    expected_timeout_escaped_text = telegramify_markdown.markdownify(
+        llm_final_timeout_text
+    )
+    assert_that(kwargs_bot["text"]).described_as(
+        "Final bot message text"
+    ).is_equal_to(expected_timeout_escaped_text)
+    assert_that(kwargs_bot["reply_to_message_id"]).described_as(
+        "Final bot message reply ID"
+    ).is_equal_to(user_message_id)
