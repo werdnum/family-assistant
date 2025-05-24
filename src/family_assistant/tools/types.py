@@ -27,9 +27,15 @@ class ToolExecutionContext:
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC"  # Default, should be overridden
     # Callback to request confirmation from the user interface (e.g., Telegram)
-    # This is the signature called by ConfirmingToolsProvider
+    # This is the signature called by ConfirmingToolsProvider.
+    # It expects: chat_id (int), interface_type (str), turn_id (Optional[str]),
+    # prompt_text (str), tool_name (str), tool_args (dict), timeout (float)
     request_confirmation_callback: (
-        Callable[[str, str, dict[str, Any]], Awaitable[bool]] | None
+        Callable[
+            [int, str, str | None, str, str, dict[str, Any], float],
+            Awaitable[bool],
+        ]
+        | None
     ) = None
     # Add processing_service back, make it optional
     processing_service: Optional["ProcessingService"] = None
