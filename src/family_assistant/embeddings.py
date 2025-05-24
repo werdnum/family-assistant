@@ -9,6 +9,15 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable  # Added Type, Any
 
+from litellm import aembedding
+from litellm.exceptions import (
+    APIConnectionError,
+    APIError,
+    RateLimitError,
+    ServiceUnavailableError,
+    Timeout,
+)
+
 # Declare module/class variables that will be conditionally populated
 _SentenceTransformer_cls: type[Any] | None = None
 _np_module: Any | None = None
@@ -26,15 +35,6 @@ try:
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
     # _SentenceTransformer_cls and _np_module remain None as initialized
-
-from litellm import aembedding
-from litellm.exceptions import (
-    APIConnectionError,
-    APIError,
-    RateLimitError,
-    ServiceUnavailableError,
-    Timeout,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -289,12 +289,16 @@ if SENTENCE_TRANSFORMERS_AVAILABLE:
                     f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}"
                 )
                 # Ensure _SentenceTransformer_cls is not None before calling
-                if _SentenceTransformer_cls is None:  # Check the correctly typed variable
+                if (
+                    _SentenceTransformer_cls is None
+                ):  # Check the correctly typed variable
                     raise RuntimeError(
                         "SentenceTransformer class is None, library likely not installed."
                     )
-                self.model = _SentenceTransformer_cls(  # Use the correctly typed variable
-                    model_name_or_path, device=device, **self.model_kwargs
+                self.model = (
+                    _SentenceTransformer_cls(  # Use the correctly typed variable
+                        model_name_or_path, device=device, **self.model_kwargs
+                    )
                 )
                 logger.info(
                     f"SentenceTransformer model {model_name_or_path} loaded successfully."
