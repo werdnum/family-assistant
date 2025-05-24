@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.tools.types import ToolExecutionContext
 
 
 # Mock interfaces required by ProcessingService constructor
@@ -16,12 +17,31 @@ class MockLLMClient:
     async def generate_response(self, *args: Any, **kwargs: Any) -> Mock:
         return Mock()  # Not used in the tested method
 
+    async def format_user_message_with_file(
+        self,
+        prompt_text: str | None,
+        file_path: str | None,
+        mime_type: str | None,
+        max_text_length: int | None,
+        # Add any other params from the protocol if necessary, though not used here
+        **_kwargs: Any,  # Capture other potential arguments
+    ) -> dict[str, Any]:
+        # Return a simple dict structure, content not important for these tests
+        return {"role": "user", "content": prompt_text or ""}
+
 
 class MockToolsProvider:
-    async def get_tool_definitions(self, *args: Any, **kwargs: Any) -> list[Any]:
+    async def get_tool_definitions(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         return []  # Not used
 
-    async def execute_tool(self, *args: Any, **kwargs: Any) -> None:
+    async def execute_tool(
+        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+    ) -> str:
+        # Actual execution logic not needed for these tests, just conform to signature
+        # The protocol expects a string return.
+        return f"Executed tool {name} with args {arguments} in context {context}"
+
+    async def close(self) -> None:
         pass  # Not used
 
 
