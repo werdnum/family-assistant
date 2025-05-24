@@ -24,11 +24,14 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,  # Move this import here
     Message,
+    MessageOriginChannel,
+    MessageOriginChat,
+    MessageOriginHiddenUser,
+    MessageOriginUser,
     Update,
 )
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import Conflict  # Import telegram errors for specific checking
-from telegram import MessageOriginUser, MessageOriginChat, MessageOriginChannel, MessageOriginHiddenUser, Message
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -789,9 +792,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         # Fetch the user message's internal ID first (can't update by interface ID)
                         user_msg_record = await self.storage.get_message_by_interface_id(
                             db_context=db_ctx_err,
-                            interface_type,
-                            conversation_id,  # Correct variable name was already here
-                            str(user_message_id),
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,  # Correct variable name was already here
+                            interface_message_id=str(user_message_id),
                         )
                         if user_msg_record and user_msg_record.get("internal_id"):
                             stmt = (
@@ -828,7 +831,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         logger.error(f"Exception while handling an update: {error}", exc_info=error)
 
         if self.telegram_service:
-            self.telegram_service._last_error = error # type: ignore[attr-defined] # _last_error is on TelegramService
+            self.telegram_service._last_error = error  # type: ignore[attr-defined] # _last_error is on TelegramService
             if isinstance(error, Conflict):
                 logger.critical(
                     f"Telegram Conflict error detected: {error}. Polling will likely stop."
@@ -1043,7 +1046,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         callback_data = query.data
         if not callback_data:
             logger.error("Confirmation callback: No data in callback_query.")
-            if query.message: # Try to edit message if possible
+            if query.message:  # Try to edit message if possible
                 try:
                     await query.edit_message_text(text="Error: Missing callback data.")
                 except Exception as e:
@@ -1077,7 +1080,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 )
                 return
 
-            original_text = query.message.text_markdown_v2_urled or query.message.text or "" # Fallback
+            original_text = query.message.text_markdown_v2_urled or query.message.text or ""  # Fallback
             status_text = ""
             if action == "yes":
                 logger.debug(f"Setting confirmation result for {confirm_uuid} to True")
