@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
@@ -155,16 +155,16 @@ async def handle_vector_search(
     # --- Form Inputs ---
     semantic_query: Annotated[str | None, Form()] = None,
     keywords: Annotated[str | None, Form()] = None,
-    search_type: Annotated[str, Form()] = "hybrid",  # 'semantic', 'keyword', 'hybrid'
+    search_type: Annotated[Literal['semantic', 'keyword', 'hybrid'], Form()] = "hybrid",  # 'semantic', 'keyword', 'hybrid'
     embedding_model: Annotated[str | None, Form()] = None,  # CRUCIAL for vector search
-    embedding_types: Annotated[list[str], Form()] = None,  # Allow multiple types
-    source_types: Annotated[list[str], Form()] = None,  # Allow multiple source types
+    embedding_types: Annotated[list[str] | None, Form()] = None,  # Allow multiple types
+    source_types: Annotated[list[str] | None, Form()] = None,  # Allow multiple source types
     created_after: Annotated[str | None, Form()] = None,  # Expect YYYY-MM-DD
     created_before: Annotated[str | None, Form()] = None,  # Expect YYYY-MM-DD
     title_like: Annotated[str | None, Form()] = None,
     # --- Metadata Filters (expect lists) ---
-    metadata_keys: Annotated[list[str], Form()] = None,
-    metadata_values: Annotated[list[str], Form()] = None,
+    metadata_keys: Annotated[list[str] | None, Form()] = None,
+    metadata_values: Annotated[list[str] | None, Form()] = None,
     # --- Control Params ---
     limit: Annotated[int, Form()] = 10,
     rrf_k: Annotated[int, Form()] = 60,
@@ -282,6 +282,9 @@ async def handle_vector_search(
         # --- Generate Embedding ---
         if query_obj.search_type in ["semantic", "hybrid"]:
             # Basic check, might need more robust model matching/selection
+            # Assert semantic_query is not None due to VectorSearchQuery.__post_init__ validation
+            assert query_obj.semantic_query is not None, \
+                "Semantic query should be validated by VectorSearchQuery for semantic/hybrid search"
             embedding_result = await embedding_generator.generate_embeddings([
                 query_obj.semantic_query
             ])  # Pass as list
