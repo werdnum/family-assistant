@@ -163,8 +163,7 @@ async def test_confirmation_accepted(
 
             # Assert: Perform assertions *after* the handler call but *within* the patch context
             # to ensure mocks are checked correctly.
-            assertions_context: SoftAssertions = soft_assertions()
-            with assertions_context:
+            with soft_assertions():
                 # 1. Confirmation Manager was called because the tool was configured to require it
                 fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
                 # Check args
