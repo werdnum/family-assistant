@@ -85,25 +85,30 @@ except ImportError:
     VECTOR_STORAGE_ENABLED = False
 
     # Define placeholders for the functions if the import failed
-    def init_vector_db(*args: Any, **kwargs: Any) -> None:  # type: ignore
+    async def init_vector_db(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def add_document(*args: Any, **kwargs: Any) -> None:  # type: ignore
+    async def add_document(*args: Any, **kwargs: Any) -> int:  # type: ignore
+        # Return a dummy int; actual usage would expect an ID.
+        # Or raise NotImplementedError if called when disabled.
+        logger.warning(
+            "add_document called but vector storage is disabled. Returning -1."
+        )
+        return -1
+
+    async def get_document_by_source_id(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def get_document_by_source_id(*args: Any, **kwargs: Any) -> None:  # type: ignore
+    async def get_document_by_id(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def get_document_by_id(*args: Any, **kwargs: Any) -> None:  # type: ignore
+    async def add_embedding(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def add_embedding(*args: Any, **kwargs: Any) -> None:  # type: ignore
+    async def delete_document(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    def delete_document(*args: Any, **kwargs: Any) -> None:  # type: ignore
-        pass
-
-    def query_vectors(*args: Any, **kwargs: Any) -> list[Any]:  # type: ignore
+    async def query_vectors(*args: Any, **kwargs: Any) -> list[Any]:  # type: ignore
         return []  # Return an empty list for queries
 
     class Document:  # type: ignore
