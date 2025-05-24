@@ -5,7 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import telegramify_markdown
+import telegramify_markdown  # type: ignore[import-untyped]
 from assertpy import assert_that, soft_assertions
 from telegram import Message
 

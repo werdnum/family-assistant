@@ -12,7 +12,7 @@ from typing import Any  # Add missing typing imports
 from unittest.mock import AsyncMock  # Import call
 
 import pytest
-import telegramify_markdown  # Import the library
+import telegramify_markdown  # type: ignore[import-untyped] # Import the library
 from assertpy import (
     assert_that,
     soft_assertions,
