@@ -242,7 +242,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             ..., contextlib.AbstractAsyncContextManager["DatabaseContext"]
         ],
         message_batcher: MessageBatcher | None,  # Inject the batcher, can be None initially
-        confirmation_manager: ConfirmationUIManager,  # Inject confirmation manager
+        confirmation_manager: "TelegramConfirmationUIManager",  # Inject confirmation manager
     ) -> None:
         # Check for debug mode environment variable
         self.debug_mode = (
@@ -269,7 +269,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self.processing_service = processing_service  # Store the service instance
         self.get_db_context = get_db_context_func
         self.message_batcher = message_batcher  # Store the injected batcher
-        self.confirmation_manager = confirmation_manager  # Store the injected manager
+        self.confirmation_manager: TelegramConfirmationUIManager = confirmation_manager  # Store the injected manager
 
         # Store storage functions needed directly by the handler (e.g., history)
         # These might be better accessed via the db_context passed around,
@@ -934,6 +934,21 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 return
 
         # Delegate to the injected message batcher
+        if self.message_batcher is None:
+            logger.critical(
+                "CRITICAL: MessageBatcher not set in TelegramUpdateHandler. "
+                "This indicates an initialization error in TelegramService."
+            )
+            if update.message:
+                try:
+                    await update.message.reply_text(
+                        "Sorry, there's an internal issue with message processing. "
+                        "Please try again in a moment. If the problem persists, contact the administrator."
+                    )
+                except Exception as e_reply:
+                    logger.error(f"Failed to send error reply to user: {e_reply}")
+            return
+
         await self.message_batcher.add_to_batch(update, context, photo_bytes)
 
 
