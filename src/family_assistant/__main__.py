@@ -977,7 +977,8 @@ async def main_async(
 
     # --- Register Task Handlers with the Worker Instance ---
     task_worker_instance.register_task_handler(
-        "log_message", task_wrapper_handle_log_message  # Use wrapper
+        "log_message",
+        task_wrapper_handle_log_message,  # Use wrapper
     )
     # Register document processing handler from the indexer instance
     task_worker_instance.register_task_handler(
