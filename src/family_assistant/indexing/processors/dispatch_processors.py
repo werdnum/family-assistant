@@ -134,7 +134,8 @@ class EmbeddingDispatchProcessor(ContentProcessor):
                 payload=task_payload,
                 notify_event=(
                     context.application.new_task_event
-                    if context.application and hasattr(context.application, "new_task_event")
+                    if context.application
+                    and hasattr(context.application, "new_task_event")
                     else None
                 ),
             )
