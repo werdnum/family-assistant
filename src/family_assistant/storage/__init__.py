@@ -315,7 +315,9 @@ async def init_db() -> None:
     max_retries = 5
     base_delay = 1.0
     engine = get_engine()  # Get engine from db_base
-    last_exception: Exception | None = None  # Variable to store the last exception, typed broadly
+    last_exception: Exception | None = (
+        None  # Variable to store the last exception, typed broadly
+    )
     for attempt in range(max_retries):
         last_exception = None  # Reset last exception for this attempt
         try:
