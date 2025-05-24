@@ -6,13 +6,10 @@ from typing import (
     Any,
 )  # Added Tuple
 
-from mcp import (
-    ClientSession,
-    StdioServerParameters,
-    TextContent,
-    sse_client,  # Import the correct context manager
-    stdio_client,
-)
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.sse import sse_client  # Import the correct context manager
+from mcp.client.stdio import stdio_client
+from mcp.content import TextContent
 
 # Import storage functions needed by local tools
 # Import the context from the new types file
