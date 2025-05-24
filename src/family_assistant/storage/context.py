@@ -9,8 +9,9 @@ import asyncio
 import logging
 import random
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from types import TracebackType
-from typing import Any, AsyncContextManager, TypeVar
+from typing import Any, TypeVar
 
 from sqlalchemy import Result, TextClause, event
 from sqlalchemy.exc import DBAPIError, ProgrammingError
@@ -53,7 +54,7 @@ class DatabaseContext:
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.conn: AsyncConnection | None = None
-        self._transaction_cm: AsyncContextManager[AsyncConnection] | None = None
+        self._transaction_cm: AbstractAsyncContextManager[AsyncConnection] | None = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
