@@ -71,6 +71,11 @@ class MockDocumentImpl(Document):
         )
         self._metadata = metadata
         self._source_uri = source_uri
+        self._id: int | None = None  # Add an internal attribute for ID
+
+    @property
+    def id(self) -> int | None:
+        return self._id
 
     @property
     def source_type(self) -> str:
