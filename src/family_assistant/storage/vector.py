@@ -51,6 +51,11 @@ class Document(Protocol):
     )
 
     @property
+    def id(self) -> int | None:  # pylint: disable=invalid-name
+        """The internal database ID of the document, if persisted. None otherwise."""
+        ...
+
+    @property
     def source_type(self) -> str:
         """The type of the source (e.g., 'email', 'pdf', 'note')."""
         ...
