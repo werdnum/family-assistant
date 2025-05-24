@@ -97,7 +97,7 @@ def parse_event(
             )
 
     try:
-        cal = vobject.readComponents(event_data)
+        cal = vobject.readComponents(event_data)  # type: ignore[attr-defined]
         # Assuming the first component is the VEVENT
         vevent = next(cal).vevent
         summary = vevent.summary.value if hasattr(vevent, "summary") else "No Title"
@@ -205,7 +205,7 @@ async def _fetch_ical_events_async(
                     f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
                 )
                 # Use vobject to parse the fetched data
-                cal = vobject.readComponents(ical_data)
+                cal = vobject.readComponents(ical_data)  # type: ignore[attr-defined]
                 count = 0
                 for component in cal:
                     if component.name.upper() == "VEVENT":
@@ -952,7 +952,7 @@ async def modify_calendar_event_tool(
 
                 # Parse existing event data
                 # readComponents yields components; we expect one top-level iCalendar component
-                ical_component_generator = vobject.readComponents(event.data)
+                ical_component_generator = vobject.readComponents(event.data)  # type: ignore[attr-defined]
                 try:
                     ical_component = next(ical_component_generator)
                     # Assuming the main component contains a single VEVENT

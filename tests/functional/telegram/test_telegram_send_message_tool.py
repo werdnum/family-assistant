@@ -6,8 +6,8 @@ from typing import Any  # Keep this, create_mock_context uses it
 from unittest.mock import AsyncMock
 
 import pytest
-import telegramify_markdown
-from assertpy import assert_that, soft_assertions
+import telegramify_markdown  # type: ignore[import-untyped]
+from assertpy import assert_that, soft_assertions  # type: ignore[import-untyped]
 from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
