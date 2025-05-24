@@ -8,7 +8,10 @@ from zoneinfo import ZoneInfo  # Import ZoneInfo
 import caldav
 import httpx  # Import httpx
 import vobject
-from caldav.exceptions import DAVError, NotFoundError  # Corrected import path
+from caldav.lib.error import (  # Reverted to original-like import path
+    DAVError,
+    NotFoundError,
+)
 from dateutil.parser import isoparse  # For parsing ISO strings in tools
 
 if TYPE_CHECKING:
