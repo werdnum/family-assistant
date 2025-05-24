@@ -1779,7 +1779,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                 ]
 
                 typed_callback = cast(
-                    "ConfirmationCallbackSignature",
+                    ConfirmationCallbackSignature,
                     context.request_confirmation_callback,
                 )
 
