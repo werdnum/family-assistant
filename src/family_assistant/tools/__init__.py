@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone  # Added date, time
 from typing import (
     Any,
     Protocol,
+    TypeAlias,
     cast,
 )
 from zoneinfo import ZoneInfo
@@ -1773,13 +1774,13 @@ class ConfirmingToolsProvider(ToolsProvider):
                 # Cast to the confirmation callback signature, which matches the updated type hint in ToolExecutionContext.
                 # Signature: (chat_id: int, interface_type: str, turn_id: Optional[str],
                 #             prompt_text: str, tool_name: str, tool_args: dict, timeout: float)
-                ConfirmationCallbackSignature = Callable[
+                ConfirmationCallbackSignature: TypeAlias = Callable[
                     [int, str, str | None, str, str, dict[str, Any], float],
                     Awaitable[bool],
                 ]
 
                 typed_callback = cast(
-                    ConfirmationCallbackSignature,
+                    "ConfirmationCallbackSignature",
                     context.request_confirmation_callback,
                 )
 
