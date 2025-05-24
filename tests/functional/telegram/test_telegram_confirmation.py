@@ -163,7 +163,7 @@ async def test_confirmation_accepted(
 
             # Assert: Perform assertions *after* the handler call but *within* the patch context
             # to ensure mocks are checked correctly.
-            with soft_assertions():
+            with soft_assertions():  # type: ignore[attr-defined]
                 # 1. Confirmation Manager was called because the tool was configured to require it
                 fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
                 # Check args
@@ -334,7 +334,7 @@ async def test_confirmation_rejected(
             await confirming_wrapper.close()
 
             # Assert
-            with soft_assertions():
+            with soft_assertions():  # type: ignore[attr-defined]
                 # 1. Confirmation Manager was called
                 fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
 
@@ -474,7 +474,7 @@ async def test_confirmation_timed_out(
             await confirming_wrapper.close()
 
             # Assert
-            with soft_assertions():
+            with soft_assertions():  # type: ignore[attr-defined]
                 # 1. Confirmation Manager was called (and raised TimeoutError)
                 fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
                 # 2. Original tool provider was NOT called
