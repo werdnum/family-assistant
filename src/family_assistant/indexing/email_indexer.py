@@ -310,7 +310,9 @@ class EmailIndexer:
             )
             await self.pipeline.run(
                 initial_items=initial_items,
-                original_document=cast("Document", db_document_record),  # Pass the DB record, cast for protocol
+                original_document=cast(
+                    "Document", db_document_record
+                ),  # Pass the DB record, cast for protocol
                 context=exec_context,
             )
         except Exception as e:
