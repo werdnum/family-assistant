@@ -4,11 +4,14 @@ import os
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import MagicMock, patch
 
-import docker  # type: ignore[import-untyped] # Import the docker library to catch its exceptions
 import pytest
 import pytest_asyncio  # Import the correct decorator
+from docker.errors import DockerException  # Import DockerException directly
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
+
+# Import for task_worker_manager fixture
+from family_assistant.processing import ProcessingService  # Import ProcessingService
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
@@ -17,8 +20,6 @@ from family_assistant.storage.context import DatabaseContext
 # Explicitly import the module defining the tasks table to ensure metadata registration
 # Import vector storage init and context
 from family_assistant.storage.vector import init_vector_db  # Corrected import path
-
-# Import for task_worker_manager fixture
 from family_assistant.task_worker import TaskWorker
 
 # Configure logging for tests (optional, but can be helpful)
@@ -98,7 +99,7 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
             )
             yield container
         logger.info("PostgreSQL container stopped.")
-    except docker.errors.DockerException as e:
+    except DockerException as e:  # Use the directly imported DockerException
         # Catch errors during container startup (e.g., connection refused, image not found)
         pytest.fail(
             f"Failed to start PostgreSQL container. Docker error: {e}. "
@@ -116,7 +117,9 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
 @pytest_asyncio.fixture(
     scope="function"
 )  # Use function scope for engine to ensure isolation
-async def pg_vector_db_engine(postgres_container: PostgresContainer) -> AsyncEngine:
+async def pg_vector_db_engine(
+    postgres_container: PostgresContainer,
+) -> AsyncGenerator[AsyncEngine, None]:
     """
     Creates an AsyncEngine connected to the test PostgreSQL container,
     initializes the schema (including vector components), and yields the engine.
@@ -200,7 +203,7 @@ async def task_worker_manager() -> AsyncGenerator[
     )
 
     worker = TaskWorker(
-        processing_service=None,  # Default, can be customized by tests
+        processing_service=MagicMock(spec=ProcessingService),  # Provide a mock ProcessingService
         application=mock_application,
         calendar_config={},  # Default
         timezone_str="UTC",  # Default
