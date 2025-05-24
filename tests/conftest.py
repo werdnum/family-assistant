@@ -203,7 +203,9 @@ async def task_worker_manager() -> AsyncGenerator[
     )
 
     worker = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),  # Provide a mock ProcessingService
+        processing_service=MagicMock(
+            spec=ProcessingService
+        ),  # Provide a mock ProcessingService
         application=mock_application,
         calendar_config={},  # Default
         timezone_str="UTC",  # Default
