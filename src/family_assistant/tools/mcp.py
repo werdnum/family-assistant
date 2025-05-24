@@ -6,10 +6,9 @@ from typing import (
     Any,
 )  # Added Tuple
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters, TextContent
 from mcp.client.sse import sse_client  # Import the correct context manager
 from mcp.client.stdio import stdio_client
-from mcp.content import TextContent
 
 # Import storage functions needed by local tools
 # Import the context from the new types file
@@ -55,7 +54,7 @@ class MCPToolsProvider:
 
         async def _connect_and_discover_mcp(
             server_id: str, server_conf: dict[str, Any]
-        ) -> tuple["ClientSession" | None, list[dict[str, Any]], dict[str, str]]:
+        ) -> tuple["ClientSession | None", list[dict[str, Any]], dict[str, str]]:
             """Connects to a single MCP server, discovers tools, and returns results."""
             discovered_tools = []
             tool_map = {}
@@ -354,8 +353,9 @@ class MCPToolsProvider:
             response_parts = []
             if mcp_result.content:
                 for content_item in mcp_result.content:
-                    if isinstance(content_item, TextContent) and content_item.text:
-                        response_parts.append(content_item.text)
+                    if isinstance(content_item, TextContent):
+                        if content_item.text:  # Ensure text is not empty
+                            response_parts.append(content_item.text)
                     # Handle other content types if needed (e.g., image, resource)
 
             result_str = (
