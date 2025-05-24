@@ -140,7 +140,7 @@ async def update_message_interface_id(
             .values(interface_message_id=interface_message_id)
         )
         result: Result = await db_context.execute_with_retry(stmt)
-        return result.rowcount > 0
+        return result.rowcount > 0  # type: ignore[attr-defined]
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in update_message_interface_id(internal_id={internal_id}): {e}",
@@ -353,7 +353,8 @@ async def get_grouped_message_history(
         )  # Cast for type checker
         # Convert RowMapping to dicts for easier handling
         dict_rows = [dict(row) for row in rows]
-        grouped_history = {}
+        # Initialize with the correct type annotation
+        grouped_history: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row_dict in dict_rows:  # Iterate over dictionaries
             group_key = (row_dict["interface_type"], row_dict["conversation_id"])
             if group_key not in grouped_history:

@@ -139,7 +139,7 @@ async def add_or_update_note(
                 )
                 # Execute update within the same transaction context
                 result = await db_context.execute_with_retry(update_stmt)
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore[attr-defined]
                     # This could happen if the note was deleted between the failed INSERT and this UPDATE
                     logger.error(
                         f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently."
@@ -165,7 +165,7 @@ async def delete_note(db_context: DatabaseContext, title: str) -> bool:
         stmt = delete(notes_table).where(notes_table.c.title == title)
         # Use execute_with_retry as commit is handled by context manager
         result = await db_context.execute_with_retry(stmt)
-        deleted_count = result.rowcount
+        deleted_count = result.rowcount  # type: ignore[attr-defined]
         if deleted_count > 0:
             logger.info(f"Deleted note: {title}")
             return True
