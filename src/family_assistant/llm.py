@@ -26,7 +26,7 @@ from litellm.exceptions import (
 
 if TYPE_CHECKING:
     from litellm import Message  # Add import for litellm.Message
-    from litellm.types import FileResponse  # Changed import path
+    from litellm.types.files import FileResponse  # Changed import path
     from litellm.types.utils import (
         ModelResponse,  # Import ModelResponse for type hinting
     )
@@ -41,9 +41,9 @@ LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in (
     "yes",
 )
 if LITELLM_DEBUG_ENABLED:
-    litellm.set_verbose = True
+    litellm.set_verbose(True)
     logger.info(
-        "Enabled LiteLLM verbose logging (set_verbose=True) because LITELLM_DEBUG is set."
+        "Enabled LiteLLM verbose logging (set_verbose(True)) because LITELLM_DEBUG is set."
     )
 else:
     logger.info("LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false).")
@@ -257,9 +257,9 @@ class LiteLLMClient:
 
             # Extract response message
             # Use litellm.Message as the type for response_message
-            response_message: Message | None = (
-                response.choices[0].message if response.choices else None
-            )
+            response_message: Message | None = None
+            if response.choices:
+                response_message = response.choices[0].message  # type: ignore[attr-defined]
 
             if not response_message:
                 logger.warning(
@@ -277,14 +277,14 @@ class LiteLLMClient:
             raw_tool_calls = response_message.get("tool_calls")
             reasoning_info = None
 
-            if hasattr(response, "usage") and response.usage:
+            if hasattr(response, "usage") and response.usage:  # type: ignore[attr-defined]
                 try:
-                    reasoning_info = response.usage.model_dump(mode="json")
+                    reasoning_info = response.usage.model_dump(mode="json")  # type: ignore[attr-defined]
                     logger.debug(
                         f"Extracted usage data as reasoning_info: {reasoning_info}"
                     )
                 except Exception as usage_err:
-                    logger.warning(f"Could not serialize response.usage: {usage_err}")
+                    logger.warning(f"Could not serialize response.usage: {usage_err}")  # type: ignore[attr-defined]
 
             tool_calls_list = []
             if raw_tool_calls:
@@ -364,7 +364,7 @@ class LiteLLMClient:
 
                     gemini_file_obj: FileResponse = await loop.run_in_executor(
                         None,  # Default ThreadPoolExecutor
-                        litellm.file_upload,
+                        litellm.files.file_upload,  # Corrected path to file_upload
                         io.BytesIO(file_bytes_content),  # file (BinaryIO)
                         os.path.basename(file_path),  # file_name
                         "gemini",  # custom_llm_provider
