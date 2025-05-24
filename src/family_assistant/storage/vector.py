@@ -793,7 +793,7 @@ async def update_document_title_in_db(
     )
     try:
         result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0:  # type: ignore
+        if result.rowcount > 0:  # type: ignore[attr-defined]
             logger.info(
                 f"Successfully updated title for document ID {document_id} to '{new_title.strip()}'."
             )
