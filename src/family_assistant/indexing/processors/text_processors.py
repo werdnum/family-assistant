@@ -125,7 +125,7 @@ class TextChunker(ContentProcessor):
         self,
         current_items: list[IndexableContent],
         original_document: Document,
-        initial_content_ref: IndexableContent,
+        initial_content_ref: IndexableContent | None,
         context: ToolExecutionContext,
     ) -> list[IndexableContent]:
         output_items: list[IndexableContent] = []
@@ -133,6 +133,10 @@ class TextChunker(ContentProcessor):
         for item in current_items:
             if item.content and item.mime_type in self.PROCESSED_MIME_TYPES:
                 if len(item.content) > 0:  # Ensure content is not empty string
+                    # Determine output embedding type using the map
+                    output_embedding_type = self.embedding_type_prefix_map.get(
+                        item.embedding_type, f"{item.embedding_type}_chunk"
+                    )
                     chunks = self._chunk_text_natively(item.content)
                     for i, chunk_text in enumerate(chunks):
                         chunk_metadata = item.metadata.copy()
@@ -142,10 +146,6 @@ class TextChunker(ContentProcessor):
                             "original_content_length": len(item.content),
                             "chunk_content_length": len(chunk_text),
                         })
-                        # Determine output embedding type using the map
-                        output_embedding_type = self.embedding_type_prefix_map.get(
-                            item.embedding_type, f"{item.embedding_type}_chunk"
-                        )
                         chunk_item = IndexableContent(
                             embedding_type=output_embedding_type,
                             source_processor=self.name,
