@@ -29,7 +29,7 @@ except ImportError:
     async_playwright = None  # Define for checks
 
 # Conditionally import MarkItDown and define a type for it
-MarkItDownType: type[MarkItDown] | None = None
+MarkItDownType: Optional[Type["ActualMarkItDownClass"]] = None
 try:
     from markitdown import MarkItDown as ActualMarkItDownClass
 
