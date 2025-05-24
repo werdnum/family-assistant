@@ -5,6 +5,7 @@ import random
 import traceback
 from collections.abc import Callable  # Added Any and Callable
 from typing import Any
+from typing import Protocol as _ProtocolType
 
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import (
@@ -77,8 +78,8 @@ try:
     logger.info("Vector storage module imported successfully.")
 except ImportError:
     # Define placeholder types if vector_storage is not available
-    class Base:
-        pass  # type: ignore
+    class Base:  # type: ignore
+        pass
 
     VectorBase = Base  # type: ignore
     logger.warning("storage/vector.py not found. Vector storage features disabled.")
@@ -96,22 +97,31 @@ except ImportError:
         )
         return -1
 
-    async def get_document_by_source_id(*args: Any, **kwargs: Any) -> None:  # type: ignore
-        pass
+    async def get_document_by_source_id(*args: Any, **kwargs: Any) -> Any:  # type: ignore # Actual: DocumentRecord | None
+        logger.warning(
+            "get_document_by_source_id called but vector storage is disabled. Returning None."
+        )
+        return None
 
-    async def get_document_by_id(*args: Any, **kwargs: Any) -> None:  # type: ignore
-        pass
+    async def get_document_by_id(*args: Any, **kwargs: Any) -> Any:  # type: ignore # Actual: DocumentRecord | None
+        logger.warning(
+            "get_document_by_id called but vector storage is disabled. Returning None."
+        )
+        return None
 
     async def add_embedding(*args: Any, **kwargs: Any) -> None:  # type: ignore
         pass
 
-    async def delete_document(*args: Any, **kwargs: Any) -> None:  # type: ignore
-        pass
+    async def delete_document(*args: Any, **kwargs: Any) -> bool:  # type: ignore
+        logger.warning(
+            "delete_document called but vector storage is disabled. Returning False."
+        )
+        return False
 
     async def query_vectors(*args: Any, **kwargs: Any) -> list[Any]:  # type: ignore
         return []  # Return an empty list for queries
 
-    class Document:  # type: ignore
+    class Document(_ProtocolType):  # type: ignore
         """Placeholder for the Document protocol."""
 
         pass
