@@ -35,7 +35,7 @@ class TitleExtractor(ContentProcessor):
         self,
         current_items: list[IndexableContent],
         original_document: Document,
-        initial_content_ref: IndexableContent,
+        initial_content_ref: IndexableContent | None,
         context: ToolExecutionContext,
     ) -> list[IndexableContent]:
         """
@@ -85,19 +85,29 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
         self,
         current_items: list[IndexableContent],
         original_document: Document,  # This should be the DocumentRecord instance
-        initial_content_ref: IndexableContent,  # Not directly used here
+        initial_content_ref: IndexableContent | None,  # Not directly used here
         context: ToolExecutionContext,
     ) -> list[IndexableContent]:
         """
         Checks for a fetched title in item metadata and updates the document record.
         """
-        if not hasattr(original_document, "id") or not original_document.id:
+        if not hasattr(original_document, "id"):
             logger.error(
-                f"[{self.name}] Original document is missing a valid 'id'. Cannot update title."
+                f"[{self.name}] Original document is missing 'id' attribute. Cannot update title."
             )
             return current_items
 
-        document_id = original_document.id
+        # We've confirmed 'id' attribute exists. Now get its value.
+        doc_id_value = original_document.id
+
+        if not doc_id_value:  # Check if the ID is None, 0, or other falsy values
+            logger.error(
+                f"[{self.name}] Original document's 'id' attribute is falsy ({doc_id_value}). Cannot update title."
+            )
+            return current_items
+        
+        # If we reach here, doc_id_value is a truthy ID.
+        document_id = doc_id_value
         current_doc_title = (
             original_document.title
         )  # Get current title to potentially avoid overwriting good titles
