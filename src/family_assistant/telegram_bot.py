@@ -397,7 +397,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             replied_to_interface_id = str(
                 last_update.message.reply_to_message.message_id
             )
-            is_reply = True
+            # is_reply = True # This variable was assigned but not used.
 
         all_texts = []
         first_photo_bytes = None
