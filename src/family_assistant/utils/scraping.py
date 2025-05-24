@@ -28,17 +28,20 @@ except ImportError:
     PlaywrightTimeoutError = Exception  # Define for except blocks
     async_playwright = None  # Define for checks
 
+# Conditionally import MarkItDown and define a type for it
+MarkItDownType: type[MarkItDown] | None = None
 try:
-    from markitdown import MarkItDown
+    from markitdown import MarkItDown as ActualMarkItDownClass
+
+    MarkItDownType = ActualMarkItDownClass
 except ImportError:
     # This should ideally not happen if dependencies are managed correctly,
     # but good to have a fallback for the library itself.
     # The calling code (processor/tool) should handle this more gracefully.
     logging.getLogger(__name__).error(
-        "markitdown library is not installed. Please install it."
+        "markitdown library is not installed. Please install it. HTML to Markdown conversion will be skipped."
     )
-    # Allow the module to load, but scraping that needs MarkItDown will fail.
-    MarkItDown = None
+    # MarkItDownType remains None
 
 
 # --- Constants ---
@@ -127,22 +130,20 @@ class PlaywrightScraper:
         self.verify_ssl = verify_ssl
         self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.playwright_available = _playwright_installed
-        if MarkItDown:
-            self.md_converter = MarkItDown()
+        if MarkItDownType is not None:
+            self.md_converter: ActualMarkItDownClass | None = MarkItDownType()
         else:
             self.md_converter = None
-            logger.error(
-                "MarkItDown library not available. HTML to Markdown conversion will be skipped."
-            )
+            # The error is already logged at import time if MarkItDownType is None
 
     async def _convert_bytes_to_markdown(
         self, content_bytes: bytes, filename: str | None
     ) -> str | None:
         """Helper to convert bytes to Markdown using MarkItDown in a thread."""
-        if not content_bytes or not self.md_converter:
-            if not self.md_converter:
+        if not content_bytes or self.md_converter is None:
+            if self.md_converter is None:  # Check instance, not type
                 logger.warning(
-                    "MarkItDown converter not initialized, cannot convert to markdown."
+                    "MarkItDown converter not initialized (likely due to import failure), cannot convert to markdown."
                 )
             return None
 
