@@ -102,7 +102,9 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
         # after a hasattr check. The type of id is expected to be int.
         doc_id_attr = original_document.id
 
-        if not isinstance(doc_id_attr, int) or not doc_id_attr:  # Ensure it's a truthy integer
+        if (
+            not isinstance(doc_id_attr, int) or not doc_id_attr
+        ):  # Ensure it's a truthy integer
             logger.error(
                 f"[{self.name}] Original document's 'id' attribute is not a truthy integer (found: {doc_id_attr!r}, type: {type(doc_id_attr).__name__}). Cannot update title."
             )
