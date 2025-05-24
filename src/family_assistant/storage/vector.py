@@ -259,7 +259,7 @@ async def add_document(
                 result = await db_context.execute_with_retry(insert_stmt)
                 # For SQLite, get the last inserted ID via inserted_primary_key
                 # Mypy might complain about inserted_primary_key, so add type: ignore if needed
-                pk_tuple = result.inserted_primary_key # type: ignore[attr-defined]
+                pk_tuple = result.inserted_primary_key  # type: ignore[attr-defined]
                 if pk_tuple:
                     doc_id = pk_tuple[0]
                 else:
@@ -288,7 +288,9 @@ async def add_document(
             ).returning(DocumentRecord.id)
             result = await db_context.execute_with_retry(stmt)
             doc_id_scalar = result.scalar_one()  # Get the inserted or existing ID
-            if doc_id_scalar is None: # Should not happen with scalar_one() but good for typing
+            if (
+                doc_id_scalar is None
+            ):  # Should not happen with scalar_one() but good for typing
                 raise RuntimeError(f"Failed to get ID for document {doc.source_id}")
             doc_id = doc_id_scalar
             logger.info(
@@ -626,7 +628,9 @@ async def query_vectors(
         embedding_filter_conditions.append(
             DocumentEmbeddingRecord.embedding_type.in_(embedding_type_filter)
         )
-    embedding_filter_expression: sa.sql.ColumnElement[bool] = and_(*embedding_filter_conditions)
+    embedding_filter_expression: sa.sql.ColumnElement[bool] = and_(
+        *embedding_filter_conditions
+    )
 
     logger.info("Filter for vector query: %s", doc_filter_expression)
 
@@ -669,7 +673,7 @@ async def query_vectors(
                 DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id
             )
             .where(doc_filter_expression)
-            .where(DocumentEmbeddingRecord.content.is_not(None)) # Use .is_not(None)
+            .where(DocumentEmbeddingRecord.content.is_not(None))  # Use .is_not(None)
             .where(tsvector_col.op("@@")(tsquery))
             .order_by(literal_column("score").desc())
             .limit(limit * 5)
@@ -701,7 +705,7 @@ async def query_vectors(
         vector_results_cte.c.distance,
         vector_results_cte.c.vec_rank,
     ]
-    final_query_select = ( # Renamed to avoid conflict with final_query variable later
+    final_query_select = (  # Renamed to avoid conflict with final_query variable later
         select(*final_select_cols)
         .select_from(DocumentEmbeddingRecord)
         .join(DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id)
@@ -728,18 +732,28 @@ async def query_vectors(
         final_select_cols.append(rrf_score)
         final_query_select = final_query_select.where(
             or_(
-                vector_results_cte.c.embedding_id.is_not(None), # Use .is_not(None)
-                fts_results_cte.c.embedding_id.is_not(None),   # Use .is_not(None)
+                vector_results_cte.c.embedding_id.is_not(None),  # Use .is_not(None)
+                fts_results_cte.c.embedding_id.is_not(None),  # Use .is_not(None)
             )
         )
-        final_query_select = final_query_select.where(doc_filter_expression)  # Explicitly apply doc_filter
+        final_query_select = final_query_select.where(
+            doc_filter_expression
+        )  # Explicitly apply doc_filter
         final_query_select = final_query_select.order_by(rrf_score.desc())
     else:
-        final_query_select = final_query_select.where(vector_results_cte.c.embedding_id.is_not(None)) # Use .is_not(None)
-        final_query_select = final_query_select.where(doc_filter_expression)  # Explicitly apply doc_filter
-        final_query_select = final_query_select.order_by(vector_results_cte.c.distance.asc())
+        final_query_select = final_query_select.where(
+            vector_results_cte.c.embedding_id.is_not(None)
+        )  # Use .is_not(None)
+        final_query_select = final_query_select.where(
+            doc_filter_expression
+        )  # Explicitly apply doc_filter
+        final_query_select = final_query_select.order_by(
+            vector_results_cte.c.distance.asc()
+        )
     final_query_select = final_query_select.limit(limit)
-    final_query = final_query_select.with_only_columns(*final_select_cols) # Assign to final_query
+    final_query = final_query_select.with_only_columns(
+        *final_select_cols
+    )  # Assign to final_query
 
     # --- 6. Execute and Return using DatabaseContext ---
     logger.info("Final vector query: %s", final_query)
@@ -779,230 +793,7 @@ async def update_document_title_in_db(
     )
     try:
         result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0: # type: ignore[attr-defined]
-            logger.info(
-                f"Successfully updated title for document ID {document_id} to '{new_title.strip()}'."
-            )
-        else:
-            logger.warning(
-                f"No document found with ID {document_id} to update title, or title was already the same."
-            )
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error updating title for document ID {document_id}: {e}",
-            exc_info=True,
-        )
-        raise  # Re-raise to allow task retry or failure handling
-
-
-# Export functions explicitly for clarity when importing elsewhere
-__all__ = [
-    "init_vector_db",
-    "update_document_title_in_db",  # Add new function to __all__
-    "add_document",
-    "get_document_by_source_id",
-    "get_document_by_id",
-    "add_embedding",
-    "delete_document",
-    "query_vectors",
-    "DocumentRecord",  # Export SQLAlchemy ORM model
-    "DocumentEmbeddingRecord",  # Export SQLAlchemy ORM model
-    "Document",  # Export the protocol
-]
-                column = getattr(DocumentRecord, key)
-                if isinstance(value, str | int | bool):
-                    doc_filter_conditions.append(column == value)
-                elif key.endswith("_gte") and isinstance(value, datetime):
-                    actual_key = key[:-4]
-                    if hasattr(DocumentRecord, actual_key):
-                        doc_filter_conditions.append(
-                            getattr(DocumentRecord, actual_key) >= value
-                        )
-                    else:
-                        logger.warning(
-                            f"Ignoring filter with unsupported key: {key} = {value}"
-                        )
-                elif key.endswith("_lte") and isinstance(value, datetime):
-                    actual_key = key[:-4]
-                    if hasattr(DocumentRecord, actual_key):
-                        doc_filter_conditions.append(
-                            getattr(DocumentRecord, actual_key) <= value
-                        )
-                    else:
-                        logger.warning(
-                            f"Ignoring filter with unsupported key: {key} = {value}"
-                        )
-                else:
-                    logger.warning(
-                        f"Ignoring filter with unsupported type or format: {key} = {value}"
-                    )
-                # Add more filter handling here
-            else:
-                logger.warning(f"Ignoring unknown filter key: {key}")
-    doc_filter = and_(*doc_filter_conditions) if doc_filter_conditions else sa.true()
-
-    # --- 2. Build Embedding Filter ---
-    embedding_filter_conditions = [
-        DocumentEmbeddingRecord.embedding_model == embedding_model
-    ]
-    if embedding_type_filter:
-        embedding_filter_conditions.append(
-            DocumentEmbeddingRecord.embedding_type.in_(embedding_type_filter)
-        )
-    embedding_filter = and_(*embedding_filter_conditions)
-
-    logger.info("Filter for vector query: %s", doc_filter)
-
-    # --- 3. Vector Search CTE ---
-    distance_op = DocumentEmbeddingRecord.embedding.cosine_distance
-    vector_subquery = (
-        select(
-            DocumentEmbeddingRecord.id.label("embedding_id"),
-            DocumentEmbeddingRecord.document_id,
-            distance_op(query_embedding).label("distance"),
-        )
-        .join(DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id)
-        .where(doc_filter)
-        .where(embedding_filter)
-        .order_by(literal_column("distance").asc())
-        .limit(limit * 5)
-        .subquery("vector_subquery")
-    )
-    vector_results_cte = select(
-        vector_subquery.c.embedding_id,
-        vector_subquery.c.document_id,
-        vector_subquery.c.distance,
-        func.row_number()
-        .over(order_by=vector_subquery.c.distance.asc())
-        .label("vec_rank"),
-    ).cte("vector_results")
-
-    # --- 4. FTS Search CTE (Conditional) ---
-    fts_results_cte = None
-    if keywords:
-        tsvector_col = func.to_tsvector("english", DocumentEmbeddingRecord.content)
-        tsquery = func.plainto_tsquery("english", keywords)
-        fts_subquery = (
-            select(
-                DocumentEmbeddingRecord.id.label("embedding_id"),
-                DocumentEmbeddingRecord.document_id,
-                func.ts_rank(tsvector_col, tsquery).label("score"),
-            )
-            .join(
-                DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id
-            )
-            .where(doc_filter)
-            .where(DocumentEmbeddingRecord.content is not None)
-            .where(tsvector_col.op("@@")(tsquery))
-            .order_by(literal_column("score").desc())
-            .limit(limit * 5)
-            .subquery("fts_subquery")
-        )
-        fts_results_cte = select(
-            fts_subquery.c.embedding_id,
-            fts_subquery.c.document_id,
-            fts_subquery.c.score,
-            func.row_number()
-            .over(order_by=fts_subquery.c.score.desc())
-            .label("fts_rank"),
-        ).cte("fts_results")
-
-    # --- 5. Final Query Construction (remains the same logic) ---
-    final_select_cols = [
-        DocumentEmbeddingRecord.id.label("embedding_id"),
-        DocumentEmbeddingRecord.document_id,
-        DocumentRecord.title,
-        DocumentRecord.source_type,
-        DocumentRecord.source_id,
-        DocumentRecord.source_uri,
-        DocumentRecord.created_at,
-        DocumentRecord.doc_metadata,
-        DocumentEmbeddingRecord.embedding_type,
-        DocumentEmbeddingRecord.content.label("embedding_source_content"),
-        DocumentEmbeddingRecord.embedding_metadata,  # Add embedding_metadata to output
-        DocumentEmbeddingRecord.chunk_index,
-        vector_results_cte.c.distance,
-        vector_results_cte.c.vec_rank,
-    ]
-    final_query = (
-        select(*final_select_cols)
-        .select_from(DocumentEmbeddingRecord)
-        .join(DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id)
-        .join(
-            vector_results_cte,
-            DocumentEmbeddingRecord.id == vector_results_cte.c.embedding_id,
-            isouter=True,
-        )
-    )
-    if fts_results_cte is not None:
-        final_select_cols.extend([
-            fts_results_cte.c.score.label("fts_score"),
-            fts_results_cte.c.fts_rank,
-        ])
-        final_query = final_query.join(
-            fts_results_cte,
-            DocumentEmbeddingRecord.id == fts_results_cte.c.embedding_id,
-            isouter=True,
-        )
-        rrf_score = (
-            func.coalesce(1.0 / (60 + vector_results_cte.c.vec_rank), 0.0)
-            + func.coalesce(1.0 / (60 + fts_results_cte.c.fts_rank), 0.0)
-        ).label("rrf_score")
-        final_select_cols.append(rrf_score)
-        final_query = final_query.where(
-            or_(
-                vector_results_cte.c.embedding_id is not None,
-                fts_results_cte.c.embedding_id is not None,
-            )
-        )
-        final_query = final_query.where(doc_filter)  # Explicitly apply doc_filter
-        final_query = final_query.order_by(rrf_score.desc())
-    else:
-        final_query = final_query.where(vector_results_cte.c.embedding_id is not None)
-        final_query = final_query.where(doc_filter)  # Explicitly apply doc_filter
-        final_query = final_query.order_by(vector_results_cte.c.distance.asc())
-    final_query = final_query.limit(limit)
-    final_query = final_query.with_only_columns(*final_select_cols)
-
-    # --- 6. Execute and Return using DatabaseContext ---
-    logger.info("Final vector query: %s", final_query)
-    try:
-        logger.debug(f"Executing vector search query: {final_query}")
-        # Use fetch_all which handles retry logic internally
-        rows = await db_context.fetch_all(final_query)
-        logger.info(f"Vector query returned {len(rows)} results.")
-        # fetch_all already returns list of dict-like mappings
-        return rows
-    except SQLAlchemyError as e:
-        logger.error(f"Database error during vector query: {e}", exc_info=True)
-        raise
-
-
-async def update_document_title_in_db(
-    db_context: DatabaseContext, document_id: int, new_title: str
-) -> None:
-    """
-    Updates the title of a specific document in the database.
-
-    Args:
-        db_context: The DatabaseContext to use for the operation.
-        document_id: The ID of the document to update.
-        new_title: The new title for the document.
-    """
-    if not new_title or not new_title.strip():
-        logger.warning(
-            f"Attempted to update document {document_id} with an empty title. Skipping."
-        )
-        return
-
-    stmt = (
-        sa.update(DocumentRecord)
-        .where(DocumentRecord.id == document_id)
-        .values(title=new_title.strip())
-    )
-    try:
-        result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0:
+        if result.rowcount > 0:  # type: ignore[attr-defined]
             logger.info(
                 f"Successfully updated title for document ID {document_id} to '{new_title.strip()}'."
             )
