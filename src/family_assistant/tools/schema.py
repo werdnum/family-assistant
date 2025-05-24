@@ -9,8 +9,12 @@ import tempfile  # For creating temporary files
 # Attempt to import schema generation tools, handle import error gracefully
 try:
     # Import generate_from_filename which works with file paths
-    from json_schema_for_humans.generate import generate_from_filename
-    from json_schema_for_humans.generation_configuration import GenerationConfiguration
+    from json_schema_for_humans.generate import (
+        generate_from_filename,  # type: ignore[import-untyped]
+    )
+    from json_schema_for_humans.generation_configuration import (
+        GenerationConfiguration,  # type: ignore[import-untyped]
+    )
 
     _SCHEMA_GENERATION_AVAILABLE = True
     # Configure once
