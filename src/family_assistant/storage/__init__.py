@@ -5,7 +5,6 @@ import random
 import traceback
 from collections.abc import Callable  # Added Any and Callable
 from typing import Any
-from typing import Protocol as _ProtocolType
 
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import (
