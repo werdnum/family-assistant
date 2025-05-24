@@ -367,7 +367,7 @@ else:
 
     # Define a placeholder if the library is missing, so imports don't break elsewhere
     # if code explicitly tries to import SentenceTransformerEmbeddingGenerator
-    class SentenceTransformerEmbeddingGenerator:  # type: ignore[no-redef] # noqa: F811
+    class SentenceTransformerEmbeddingGenerator:  # type: ignore[no-redef] # noqa: F811 # pyright: ignore[reportRedeclaration]
         def __init__(self, *args: object, **kwargs: object) -> None:
             raise ImportError(
                 "sentence-transformers library is not installed. Cannot use SentenceTransformerEmbeddingGenerator."
