@@ -9,6 +9,7 @@ from typing import (
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client  # Import the correct context manager
 from mcp.client.stdio import stdio_client
+from mcp.content import TextContent
 
 # Import storage functions needed by local tools
 # Import the context from the new types file
@@ -240,32 +241,38 @@ class MCPToolsProvider:
         logger.info(
             f"Starting parallel connection to {len(connection_tasks)} MCP server(s)..."
         )
-        results = await asyncio.gather(*connection_tasks, return_exceptions=True)
+        # Add explicit type hint for results to help type checker
+        results: list[Any] = await asyncio.gather(
+            *connection_tasks, return_exceptions=True
+        )
         logger.info("Finished parallel MCP connection attempts.")
 
         # --- Process results ---
-        for i, result in enumerate(results):
-            server_id = list(self._mcp_server_configs.keys())[
-                i
-            ]  # Get corresponding server_id
-            if isinstance(result, Exception):
+        for i, res_item in enumerate(results):
+            server_id = list(self._mcp_server_configs.keys())[i]
+
+            if isinstance(res_item, BaseException):
                 logger.error(
-                    f"Gather caught exception for server '{server_id}': {result}"
+                    f"Gather caught exception for server '{server_id}': {res_item}"
                 )
-            elif result:
-                session, discovered, tool_map = result
-                if session:
-                    self._sessions[server_id] = session  # Store successful session
-                    self._definitions.extend(discovered)  # Add sanitized tools
-                    self._tool_map.update(tool_map)  # Add mappings for this server
-                else:
-                    logger.warning(
-                        f"Connection/discovery seems to have failed silently for server '{server_id}' (result: {result})."
-                    )
-            else:
+            elif res_item is None:
+                # This case should ideally not be hit if _connect_and_discover_mcp always returns a tuple,
+                # even on failure (e.g., (None, [], {})).
                 logger.warning(
-                    f"Received unexpected empty result for server '{server_id}'."
+                    f"Received None result for server '{server_id}' from task."
                 )
+            else:
+                # Expect res_item to be a tuple: (ClientSession | None, list[dict], dict)
+                session, discovered_tools, tool_map_for_server = res_item
+                if session:
+                    self._sessions[server_id] = session
+                    self._definitions.extend(discovered_tools)
+                    self._tool_map.update(tool_map_for_server)
+                else:
+                    # This means _connect_and_discover_mcp returned, but no session was established.
+                    logger.warning(
+                        f"Connection/discovery for MCP server '{server_id}' completed but yielded no active session. Result: {res_item}"
+                    )
 
         self._initialized = True
         logger.info(
@@ -347,7 +354,7 @@ class MCPToolsProvider:
             response_parts = []
             if mcp_result.content:
                 for content_item in mcp_result.content:
-                    if hasattr(content_item, "text") and content_item.text:
+                    if isinstance(content_item, TextContent) and content_item.text:
                         response_parts.append(content_item.text)
                     # Handle other content types if needed (e.g., image, resource)
 
