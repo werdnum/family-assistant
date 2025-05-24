@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import (
     HashingWordEmbeddingGenerator,  # Added
-    MockEmbeddingGenerator,
 )
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.indexing.processors.dispatch_processors import (
@@ -118,7 +117,7 @@ async def mock_pipeline_embedding_generator() -> (
 @pytest_asyncio.fixture(scope="function")
 async def indexing_task_worker(
     pg_vector_db_engine: AsyncEngine,  # Depends on the DB engine
-    mock_pipeline_embedding_generator: MockEmbeddingGenerator,  # Depends on the mock generator
+    mock_pipeline_embedding_generator: HashingWordEmbeddingGenerator,  # Depends on the mock generator
 ) -> AsyncIterator[tuple[TaskWorker, asyncio.Event, asyncio.Event]]:
     """
     Sets up and tears down a TaskWorker instance configured for indexing tasks.
@@ -175,7 +174,7 @@ async def indexing_task_worker(
 @pytest.mark.asyncio
 async def test_indexing_pipeline_e2e(
     pg_vector_db_engine: AsyncEngine,
-    mock_pipeline_embedding_generator: MockEmbeddingGenerator,  # Get the generator instance
+    mock_pipeline_embedding_generator: HashingWordEmbeddingGenerator,  # Get the generator instance
     indexing_task_worker: tuple[
         TaskWorker, asyncio.Event, asyncio.Event
     ],  # Use the new fixture
@@ -227,6 +226,9 @@ async def test_indexing_pipeline_e2e(
             doc_db_id = await add_document(
                 db_context_for_pipeline, test_document_protocol
             )
+            # Set the ID on the protocol object so the pipeline can use it
+            test_document_protocol._id = doc_db_id  # type: ignore[attr-defined]
+
             original_doc_record = await get_document_by_source_id(
                 db_context_for_pipeline, doc_source_id
             )
@@ -382,7 +384,7 @@ async def test_indexing_pipeline_e2e(
 @pytest.mark.asyncio
 async def test_indexing_pipeline_pdf_processing(
     pg_vector_db_engine: AsyncEngine,
-    mock_pipeline_embedding_generator: MockEmbeddingGenerator,
+    mock_pipeline_embedding_generator: HashingWordEmbeddingGenerator,
     indexing_task_worker: tuple[TaskWorker, asyncio.Event, asyncio.Event],
     tmp_path: pathlib.Path,  # Pytest fixture for temporary directory
 ) -> None:
@@ -430,6 +432,9 @@ async def test_indexing_pipeline_pdf_processing(
             doc_db_id = await add_document(
                 db_context_for_pipeline, test_document_protocol
             )
+            # Set the ID on the protocol object so the pipeline can use it
+            test_document_protocol._id = doc_db_id  # type: ignore[attr-defined]
+
             original_doc_record = await get_document_by_source_id(
                 db_context_for_pipeline, doc_source_id
             )
