@@ -172,7 +172,7 @@ async def dequeue_task(
             if update_result.rowcount == 1:
                 # No need to call db_context.commit() here, context manager handles it
                 logger.info(f"Worker {worker_id} dequeued task {task_row.task_id}")
-                return dict(task_row)  # Return the original row data as a dict
+                return task_row._asdict()  # Return the original row data as a dict
             else:
                 # This means the row was locked or status changed between select and update
                 logger.warning(
