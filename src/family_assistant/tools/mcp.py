@@ -7,9 +7,8 @@ from typing import (
 )  # Added Tuple
 
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.sse import sse_client  # Import the correct context manager
-from mcp.client.stdio import stdio_client
-from mcp.content import TextContent
+from mcp.client import sse_client, stdio_client  # Import from mcp.client
+from mcp.types import TextContent  # Import TextContent from mcp.types
 
 # Import storage functions needed by local tools
 # Import the context from the new types file
