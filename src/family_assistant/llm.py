@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from litellm.types.files import (
         FileResponse,  # Corrected import path and moved to TYPE_CHECKING
     )
+    from litellm.utils import ModelResponse  # Import ModelResponse for type hinting
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,7 @@ class LiteLLMClient:
                     stream=False,  # Explicitly set stream to False
                     **completion_params,
                 )
+                response: ModelResponse = response  # Add type hint for response
             else:
                 logger.debug(
                     f"Calling LiteLLM model {model_arg} with {len(messages_arg)} messages. "
@@ -250,6 +252,7 @@ class LiteLLMClient:
                     stream=False,  # Explicitly set stream to False
                     **completion_params,
                 )
+                response: ModelResponse = response  # Add type hint for response
 
             # Extract response message
             # Use litellm.Message as the type for response_message
