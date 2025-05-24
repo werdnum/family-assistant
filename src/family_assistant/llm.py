@@ -26,7 +26,7 @@ from litellm.exceptions import (
 
 if TYPE_CHECKING:
     from litellm import Message  # Add import for litellm.Message
-    from litellm.types.files import FileResponse
+    from litellm.types import FileResponse  # Changed import path
     from litellm.types.utils import (
         ModelResponse,  # Import ModelResponse for type hinting
     )
