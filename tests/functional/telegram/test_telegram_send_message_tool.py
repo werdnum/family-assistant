@@ -36,7 +36,7 @@ def create_mock_context(
     context = ContextTypes.DEFAULT_TYPE(
         application=mock_application, chat_id=123, user_id=12345
     )
-    context._bot = mock_application.bot
+    context._bot = mock_application.bot  # type: ignore[attr-defined]
     if bot_data:
         context.bot_data.update(bot_data)
     return context
