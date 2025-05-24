@@ -18,7 +18,7 @@ from typing import (
 from zoneinfo import ZoneInfo
 
 import aiofiles
-import telegramify_markdown  # For escaping confirmation prompts
+import telegramify_markdown  # type: ignore[import-untyped] # For escaping confirmation prompts
 from dateutil import rrule
 from dateutil.parser import isoparse
 from sqlalchemy.sql import text
