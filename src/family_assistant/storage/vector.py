@@ -13,8 +13,8 @@ from typing import (
 )
 
 import sqlalchemy as sa
-from pgvector.sqlalchemy import (
-    Vector,  # type: ignore # noqa F401 - Needs to be imported for SQLAlchemy type mapping
+from pgvector.sqlalchemy import (  # type: ignore[import-untyped]
+    Vector,  # noqa F401 - Needs to be imported for SQLAlchemy type mapping
 )
 from sqlalchemy import (
     JSON,
