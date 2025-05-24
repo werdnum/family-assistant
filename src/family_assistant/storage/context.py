@@ -198,7 +198,7 @@ class DatabaseContext:
         Returns:
             The original callback for chaining.
         """
-        if self.conn is None or not self.conn.is_active:  # Check for active connection
+        if self.conn is None or not self.conn.in_transaction():  # Check for active transaction
             raise RuntimeError(
                 "on_commit called without an active database connection or outside of a transaction context."
             )
