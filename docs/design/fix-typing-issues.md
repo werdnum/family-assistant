@@ -1,299 +1,459 @@
-Okay, this is a substantial list of type errors! Let's break them down systematically.
+Okay, this is a significant list of type errors! Let's break them down into logical, incremental steps to address them. Many errors stem from missing type stubs, incorrect protocol implementations, and issues with how asynchronous context managers are handled.
 
-Based on the errors, we can group them into logical steps to address common causes and progressively improve type safety.
+Here's a plan:
 
-## Summary of Type Errors and Fixes
+**Summary of Error Categories:**
 
-Here's a breakdown of the issues based on the latest Mypy output and the proposed fixes, grouped into incremental steps:
+1.  **Missing Type Stubs & Incorrect Library Usage:** Errors related to `caldav`, `litellm`, `python-telegram-bot`, `docker`, and `playwright` where the type checker doesn't have enough information or specific library features are misused.
+2.  **Async Context Manager and Database Context Handling:** Issues with `get_db_context`, `DatabaseContext`, and how they conform to `AbstractAsyncContextManager`, primarily affecting `async with` usage and dependency injection.
+3.  **Protocol Conformance & Interface Mismatches:** Core protocols like `EmbeddingGenerator`, `Document`, `LLMInterface`, and `ToolsProvider` are not being correctly implemented by various classes, especially in main code and mocks.
+4.  **SQLAlchemy Type Issues:** Problems with SQLAlchemy's `Mapped` types, `Result` object attributes, and usage of `sqlalchemy.orm`.
+5.  **Unbound Variables & Faulty Logic:** Several instances of variables used before assignment, or significant code blocks (like in `storage/vector.py`) that seem broken.
+6.  **Telegram Bot Specifics:** Optional attribute access and specific Telegram object handling.
+7.  **Application and Tool Execution Context:** Mismatches in expected types for `Application` state/attributes and `ToolExecutionContext`.
+8.  **Test-Specific Type Problems:** Mock object incompatibilities, fixture return type annotations, and issues with patching in tests.
+9.  **General Argument Type Mismatches & Attribute Access:** Various functions being called with incorrect argument types or attempts to access non-existent attributes.
 
-**Step 1: Add Missing Type Stubs and Address Import-Related Errors**
+---
 
-*   **Common Cause:** Libraries missing type stubs or `py.typed` markers, issues with conditional imports, or incorrect import paths.
-*   **Files to Fix & Specific Errors:**
-    *   `src/family_assistant/tools/schema.py`:
-        *   L12, L15: `Skipping analyzing "json_schema_for_humans..." [import-untyped]`.
-        *   **Fix:** Add `# type: ignore[import-untyped]` to the import lines for `json_schema_for_humans.generate` and `json_schema_for_humans.generation_configuration` if `types-json-schema-for-humans` is not available or effective.
-    *   `src/family_assistant/indexing/ingestion.py`:
-        *   L10: `Skipping analyzing "filetype" [import-untyped]`.
-        *   **Fix:** Add `types-filetype` to `pyproject.toml` dev dependencies. If not available/effective, use `# type: ignore[import-untyped]` for the `filetype` import.
-    *   `src/family_assistant/utils/scraping.py`:
-        *   L20: `Cannot find implementation or library stub for module named "playwright.async_api" [import-not-found]`.
-        *   **Fix:** Ensure Playwright is installed and the import `from playwright.async_api import async_playwright` (or similar) is correct. Playwright ships its own types.
-        *   L157: `Item "None" of "MarkItDown | None" has no attribute "convert_stream" [union-attr]`.
-        *   **Fix:** Ensure `MarkItDownType` (or equivalent conditional import variable for `MarkItDown`) is checked for `None` before use, e.g., `if MarkItDownType is not None: MarkItDownType.convert_stream(...)`.
-    *   `src/family_assistant/embeddings.py`:
-        *   L21: `Cannot assign to a type [misc]`, `Incompatible types in assignment (expression has type "None", variable has type "type[SentenceTransformer]") [assignment]`.
-        *   L22: `Incompatible types in assignment (expression has type "None", variable has type Module) [assignment]`.
-        *   **Fix:** For conditional imports of `SentenceTransformer` and `torch.nn.Module`, ensure type hints for placeholder variables are `Optional[Type[ActualClass]]`, e.g., `SentenceTransformerClass: Optional[Type[SentenceTransformer]] = None`.
-        *   L359: `Name "SentenceTransformerEmbeddingGenerator" already defined on line 255 [no-redef]`.
-        *   **Fix:** Ensure `SentenceTransformerEmbeddingGenerator` is defined only once within its conditional scope (`if SENTENCE_TRANSFORMERS_AVAILABLE:`). Remove any duplicate definitions or re-imports.
-    *   `src/family_assistant/calendar_integration.py`:
-        *   L100, L208, L955: `Module has no attribute "readComponents" [attr-defined]` (from `vobject`).
-        *   **Fix:** Ensure `types-vobject` is installed and effective. If stubs are incomplete, consider `cast(Any, ics_data).readComponents()` or `# type: ignore[attr-defined]` on the problematic lines.
-    *   `tests/conftest.py`:
-        *   L7: `Library stubs not installed for "docker" [import-untyped]`.
-        *   **Fix:** Add `types-docker` to dev dependencies.
-        *   L11: `Skipping analyzing "testcontainers.postgres" [import-untyped]`.
-        *   **Fix:** Check if `types-testcontainers` or similar exist. If not, add `# type: ignore[import-untyped]` to the import.
-    *   Test files using `assertpy` (e.g., `tests/unit/indexing/processors/test_network_processors.py:11`, `tests/functional/telegram/test_telegram_send_message_tool.py:10`, etc.):
-        *   Error: `Library stubs not installed for "assertpy" [import-untyped]`.
-        *   **Fix:** Add `types-assertpy` to dev dependencies.
-    *   Test files using `telegramify_markdown` (e.g., `tests/functional/telegram/test_telegram_send_message_tool.py:9`):
-        *   Error: `Skipping analyzing "telegramify_markdown" [import-untyped]`.
-        *   **Fix:** Add `# type: ignore[import-untyped]` if no stubs package exists.
+Here are the suggested fixes, grouped into logical incremental steps:
 
-**Step 2: Refactor SQLAlchemy Usage and Database Interaction**
+**Step 1: Install Missing Type Stubs and Correct Basic Library Usage**
 
-*   **Common Cause:** Mismatches between SQLAlchemy's return types (`RowMapping`, `Result`) and their usage (expecting `dict`, direct attribute access), incorrect SQLAlchemy constructs, or missing type annotations.
-*   **Files to Fix & Specific Errors:**
-    *   `src/family_assistant/storage/context.py`:
-        *   L65: `Incompatible types in assignment (_AsyncGeneratorContextManager vs AsyncTransaction | None) [assignment]`.
-        *   L67: `"None" has no attribute "__aenter__" [attr-defined]`.
-        *   **Fix:** `self._transaction = await self._connection.begin()` should assign an `AsyncTransaction`. The `async with self._transaction:` block is incorrect if `_transaction` is not an async context manager itself. Manage commit/rollback in `__aexit__` based on `self._transaction`.
-        *   L169: `List comprehension has incompatible type List[RowMapping]; expected List[dict[str, Any]] [misc]`.
-        *   **Fix:** Convert `RowMapping` to `dict`: `[dict(row) for row in (await self._session.execute(query, params)).mappings().all()]`.
-        *   L186: `Incompatible return value type (got "RowMapping | None", expected "dict[str, Any] | None") [return-value]`.
-        *   **Fix:** Convert `RowMapping` to `dict`: `row = (await ...).mappings().one_or_none(); return dict(row) if row else None`.
-        *   L206: `Item "None" of "AsyncConnection | None" has no attribute "sync_connection" [union-attr]`.
-        *   **Fix:** Add `if self._connection and self._connection.is_active:` before accessing `self._connection.sync_connection`.
-    *   `src/family_assistant/storage/vector_search.py`:
-        *   Multiple `Incompatible types in assignment (..., target has type "int")` for `filters` dict (e.g., L109, L112, L115, L118, L135, L144, L177, L178, L207, L253).
-        *   **Fix:** Change `filters: dict[str, int]` to `filters: dict[str, Any] = {}`.
-    *   `src/family_assistant/storage/tasks.py`:
-        *   L155, L168: `Item "None" of "AsyncConnection | None" has no attribute "execute" [union-attr]`.
-        *   **Fix:** Ensure `self._connection` is not `None` when `execute_with_retry` is called (likely an issue in `DatabaseContext` logic if connection can be `None` there).
-        *   L173: `Incompatible return value type (got "RowMapping | Any", expected "dict[str, Any] | None") [return-value]`.
-        *   **Fix:** Convert `RowMapping` to `dict` if a single row is fetched and returned.
-        *   L214, L256, L327, L343: `"Result[Any]" has no attribute "rowcount" [attr-defined]`.
-        *   **Fix:** `Result` from DML (UPDATE, INSERT, DELETE) should have `rowcount`. Ensure the variable is indeed a `Result` object from such an operation.
-        *   L296-L329 (multiple `dict[str, Any]" has no attribute "status/retry_count/max_retries"`):
-        *   **Fix:** Access dictionary items using `task_details["status"]` or `task_details.get("retry_count")`, not attribute access.
-    *   `src/family_assistant/storage/vector.py`:
-        *   L261, L262: `"Result[Any]" has no attribute "inserted_primary_key" [attr-defined]`.
-        *   **Fix:** `Result` from an INSERT should have this. Ensure `result` is the direct object. Use `pk = result.inserted_primary_key; doc_id = pk[0] if pk else None`.
-        *   L283: `Incompatible types in assignment (ReturningInsert vs Insert) [assignment]`.
-        *   **Fix:** Broaden type of `stmt` to `Union[Insert, ReturningInsert]` or `ClauseElement`, or rely on type inference if `stmt` is not re-assigned before `.returning()`.
-        *   L524, L768: `"Result[Any]" has no attribute "rowcount" [attr-defined]`. (Same as in `tasks.py`)
-        *   L658, L717, L718, L724: `Argument ... has incompatible type "bool"; expected "ColumnElement[bool]..." [arg-type]`.
-        *   **Fix:** Use SQLAlchemy expressions like `my_table.c.col == True` or `sqlalchemy.sql.expression.true()` instead of Python `True`/`False` directly in `where` or `or_` clauses.
-    *   `src/family_assistant/storage/notes.py`:
-        *   L142, L168: `"Result[Any]" has no attribute "rowcount" [attr-defined]`. (Same as in `tasks.py`)
-    *   `src/family_assistant/storage/message_history.py`:
-        *   L143: `"Result[Any]" has no attribute "rowcount" [attr-defined]`. (Same as in `tasks.py`)
-        *   L356: `Need type annotation for "grouped_history" [var-annotated]`.
-        *   **Fix:** `grouped_history: dict[str, list[dict[str, Any]]] = defaultdict(list)`.
-    *   `src/family_assistant/storage/__init__.py`:
-        *   L378, L397: `Incompatible types in assignment (SQLAlchemyError/Exception vs DBAPIError | None) [assignment]`.
-        *   **Fix:** Broaden `db_exc: DBAPIError | None` to `db_exc: Exception | None` or `db_exc: SQLAlchemyError | None`.
+This step aims to provide the type checker with more information about external libraries, which should resolve a broad class of errors.
 
-**Step 3: Correct Async/Await Usage and Context Managers**
+*   **File to change:** `pyproject.toml`
+*   **Issue:** Missing type stubs for several libraries.
+*   **Fix:** Add the following to your `[project.optional-dependencies.dev]` section in `pyproject.toml`:
+    ```toml
+    # In [project.optional-dependencies.dev]
+    "types-caldav",
+    "python-telegram-bot-stubs",
+    "sqlalchemy-stubs", // If issues persist after other SQLAlchemy fixes
+    // types-docker is already present
+    // litellm and playwright should ship with types, but we'll address usage issues below
+    ```
+    Then run `uv pip install .[dev]` to install them.
 
-*   **Common Cause:** Missing `await` for async functions returning coroutines, or incorrectly `await`ing async context manager instances instead of using `async with`.
-*   **Files to Fix & Specific Errors:**
-    *   `src/family_assistant/web/auth.py`:
-        *   L102: `"Coroutine[Any, Any, DatabaseContext]" has no attribute "__aenter__" / "__aexit__" [attr-defined]`.
-        *   **Fix:** Change `async with get_db_context(...)` to `async with await get_db_context(...)`.
-    *   `src/family_assistant/telegram_bot.py`:
-        *   L459, L767: `Incompatible types in "await" (actual type "AbstractAsyncContextManager[DatabaseContext, bool | None]") [misc]`.
-        *   **Fix:** If `get_db_context(...)` is called, ensure it's `await`ed to get the instance (e.g., `db_ctx_cm = await get_db_context(...)`), and then use `async with db_ctx_cm:`. Do not `await` the context manager instance itself.
-    *   `tests/conftest.py`:
-        *   L119 (for `db_context` fixture): `The return type of an async generator function should be "AsyncGenerator" or one of its supertypes [misc]`.
-        *   **Fix:** Ensure the `db_context` async generator fixture has return type `AsyncGenerator[DatabaseContext, None]`.
+*   **File to change:** `src/family_assistant/llm.py`
+    *   **Issue (L40):** Private import `from litellm import _turn_on_debug`.
+    *   **Fix:** Replace with a public API for enabling debug mode if available, or remove if not critical for type checking. If essential for debugging, consider `# type: ignore[attr-defined]` if it's a known private API you need.
+    *   **Issue (L249, multiple errors):** `litellm.acompletion` call structure. Arguments are being passed as a single dictionary instead of keyword arguments.
+    *   **Fix:** Modify the call to `litellm.acompletion`. Instead of passing `self.llm_config` directly as multiple arguments, spread it or pick specific arguments:
+        ```python
+        # Example - adjust based on actual self.llm_config content and acompletion signature
+        params_for_litellm = self.llm_config.copy()
+        model_name = params_for_litellm.pop("model", self.model) # Assuming self.model is the default
+        # Ensure all keys in params_for_litellm are valid for acompletion
+        response: ModelResponse = await litellm.acompletion(
+            model=model_name,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            # Pass other relevant parameters from self.llm_config
+            temperature=params_for_litellm.get("temperature"),
+            max_tokens=params_for_litellm.get("max_tokens"),
+            # ... etc.
+            **params_for_litellm, # If there are other compatible params
+        )
+        ```
+    *   **Issue (L252-L276):** Accessing attributes like `choices`, `message`, `content`, `tool_calls`, `usage` on `litellm` response objects.
+    *   **Fix:** After stubs/correct `acompletion` call, verify the response structure. It's typically `response.choices[0].message.content`, `response.choices[0].message.tool_calls`, `response.usage.total_tokens`, etc. Adjust access patterns according to `litellm`'s `ModelResponse` and `Choice` objects.
 
-**Step 4: Resolve LLM and Embedding Related Type Issues**
+*   **File to change:** `src/family_assistant/calendar_integration.py`
+    *   **Issue (L196-L203):** Accessing `status_code` / `text` on `BaseException` for `httpx` errors.
+    *   **Fix:** Change `except httpx.HTTPError as e:` or `except Exception as e:` to `except httpx.HTTPStatusError as e:`. Then `e.response.status_code` and `e.response.text` will be correctly typed.
+    *   **Issue (L689, L862, L1050, etc.):** `caldav.lib` is not a known attribute.
+    *   **Fix:** After installing `types-caldav`, these errors might resolve if `caldav.lib` is part of its typed API. More likely, exceptions are directly under `caldav.error` (e.g., `caldav.error.NotFoundError`). Update imports and exception handling:
+        ```python
+        from caldav import davclient # or specific client
+        from caldav.lib import error as caldav_errors # Or from caldav import error as caldav_errors
 
-*   **Common Cause:** Incorrect data structures for LLM functions, `SentenceTransformer` constructor arguments, redefinitions in mock files.
-*   **Files to Fix & Specific Errors:**
-    *   `src/family_assistant/llm.py`:
-        *   L226-L236: `Incompatible types in assignment (str/list vs dict[str, Any])` for `current_input_args`.
-        *   **Fix:** Initialize `current_input_args: dict[str, Any] = {"method": method_name}` then add other keys: `current_input_args["messages"] = messages_param`.
-        *   L269, L270: `Item "ChatCompletion...MessageParam" ... has no attribute "content"/"tool_calls" [union-attr]`.
-        *   **Fix:** `message` is a dict from LiteLLM. Access fields using `message.get("content")` and `message.get("tool_calls")`, checking for `None`.
-    *   `src/family_assistant/embeddings.py`:
-        *   L291: Multiple `Argument 3 to "SentenceTransformer" has incompatible type "**dict[str, object]" [arg-type]`.
-        *   **Fix:** Remove `**kwargs` from `SentenceTransformerEmbeddingGenerator.__init__` and its call to `SentenceTransformerClass`. Pass allowed arguments explicitly (e.g., `device=device`).
-    *   `tests/mocks/mock_llm.py`:
-        *   L17: `Name "LLMOutput" already defined [no-redef]`.
-        *   L28: `Name "LLMInterface" already defined [no-redef]`.
-        *   **Fix:** Review conditional imports. If these types are defined under `if TYPE_CHECKING:` and also in a fallback `else:`, ensure names are unique or structure prevents redefinition.
-    *   `tests/functional/telegram/test_telegram_send_message_tool.py`, `tests/functional/telegram/test_telegram_handler.py`, `tests/functional/telegram/test_telegram_confirmation.py`:
-        *   Multiple `LLMInterface" has no attribute "rules"/"_calls" [attr-defined]`.
-        *   **Fix:** The `RuleBasedMockLLMClient` (which implements `LLMInterface`) should have these attributes if tests access them. Add them to `RuleBasedMockLLMClient` or adjust tests to use public methods for interaction/assertion.
-    *   `tests/functional/indexing/test_email_indexing.py`, `tests/functional/indexing/test_document_indexing.py`:
-        *   Multiple `MockEmbeddingGenerator" has no attribute "_test_query_..." [attr-defined]`.
-        *   **Fix:** Add these test-specific query embeddings to `MockEmbeddingGenerator` or use its public methods to set up mock responses.
+        try:
+            # ... caldav operations ...
+        except caldav_errors.NotFoundError: # Or appropriate specific exception
+            # ... handle ...
+        ```
 
-**Step 5: Address Type Hinting and Protocol Mismatches in Core Logic (Processing, Tools, Telegram, Calendar, Tests)**
+*   **File to change:** `tests/conftest.py`
+    *   **Issue (L101):** `docker.errors` is not a known attribute.
+    *   **Fix:** Import specific exceptions: `from docker.errors import ImageNotFound, APIError # or other needed exceptions`.
 
-*   **Common Cause:** Function arguments/return types not matching definitions, incorrect attribute access on `None` or union types, signature mismatches, missing annotations in test files.
-*   **Files to Fix & Specific Errors:**
-    *   `src/family_assistant/processing.py`:
-        *   L354: `Incompatible types in assignment (None vs str)` for `tool_call_id`.
-        *   **Fix:** Change `tool_call_id` type to `str | None` and handle `None`.
-    *   `src/family_assistant/tools/types.py`:
-        *   L39: `Name "embedding_generator" already defined on line 36 [no-redef]`.
-        *   **Fix:** Rename or remove one of the `embedding_generator` fields in `ToolExecutionContext`.
-    *   `src/family_assistant/tools/mcp.py`:
-        *   L256: `"BaseException" object is not iterable [misc]`.
-        *   **Fix:** Simplify error logging: `log_entry["error_message"] = str(e)`, `log_entry["error_args"] = repr(e.args)`.
-    *   `src/family_assistant/tools/__init__.py`:
-        *   L639: `Name "_scan_user_docs" already defined on line 610 [no-redef]`.
-        *   **Fix:** Remove or rename the duplicate function.
-        *   L833, L836: `Argument 1 to "format_datetime_or_date" has incompatible type "Any | None"; expected "datetime | date" [arg-type]`.
-        *   **Fix:** Check `isinstance(value, (datetime, date))` before passing, or ensure `event.get("DTSTART", {}).get("value")` is correctly typed/parsed earlier.
-        *   L1793: `Unexpected keyword argument ... for request_confirmation_callback [call-arg]`.
-        *   **Fix:** The callback passed to `ConfirmingToolsProvider` should match `(prompt_text: str, tool_name: str, tool_args: dict[str, Any])`. Call it as `await self.request_confirmation_callback(prompt, name, arguments)`.
-    *   `src/family_assistant/telegram_bot.py`:
-        *   Numerous `Item "None" of "..." has no attribute "..." [union-attr]` (e.g., L130, L306, L309, L329, L380, L819, L865, L866, L873-L892, L1002-L1044, L1065, L1184).
-        *   **Fix:** Add explicit `None` checks (e.g., `if update.message and update.message.chat:`). For `forward_origin` (L399-L403), check specific type like `isinstance(forward_origin, telegram.MessageOriginUser)`. For `query.message.text_markdown_v2` (L1019), check `isinstance(query.message, telegram.Message)`.
-        *   L187: `Cannot infer type of lambda [misc]`.
-        *   **Fix:** If `self.queue_message` is async, use `lambda u, c: asyncio.create_task(self.queue_message(u,c))`, or define a small async helper.
-        *   L399-L403: `MessageOrigin" has no attribute "sender_user"/"sender_chat" [attr-defined]`.
-        *   **Fix:** Use type guards (e.g. `if isinstance(forward_origin, MessageOriginUser): ... elif isinstance(forward_origin, MessageOriginChat): ...`) before accessing specific attributes.
-        *   L423: `Dict entry 1 has incompatible type "str": "dict[str, str]"; expected "str": "str" [dict-item]`.
-        *   **Fix:** Ensure `message_text` is `str`. If `trigger_content_parts` is `list[dict[str, Any]]`, this should be fine. If it's `list[dict[str, str]]`, then `{"type": "image_url", "image_url": {"url": base64_image_data_url}}` would be an issue. The error points to the text part, so `message_text` type is key.
-        *   L564: `Argument "request_confirmation_callback" ... has incompatible type ... [arg-type]`.
-        *   **Fix:** Adapt `self.telegram_confirmation_ui_manager.request_confirmation` using `functools.partial` or a lambda to match the expected `(prompt, name, args)` signature for `generate_llm_response_for_chat`.
-        *   L1123: `Argument "message_batcher" to "TelegramUpdateHandler" has incompatible type "None" [arg-type]`.
-        *   **Fix:** Pass a valid `MessageBatcher` instance (e.g., `NoBatchMessageBatcher()`).
-        *   L1133: `Incompatible types in assignment (NoBatchMessageBatcher vs DefaultMessageBatcher) [assignment]`.
-        *   **Fix:** Type `message_batcher` as the protocol `MessageBatcher`.
-    *   `src/family_assistant/task_worker.py`:
-        *   L396, L397: `Argument ... to "ToolExecutionContext" has incompatible type "Any | None"; expected "str" [arg-type]`.
-        *   **Fix:** `ToolExecutionContext` fields `interface_type`, `conversation_id` must accept `str | None`, or provide default string values (e.g., `"unknown"`) from `task_payload.get("...", "unknown")`.
-    *   `src/family_assistant/calendar_integration.py`:
-        *   L196, L198, L203: `Item "BaseException" of "Response | BaseException" has no attribute "status_code"/"text" [union-attr]`.
-        *   **Fix:** Check `isinstance(response_or_exc, httpx.Response)` before accessing response attributes.
-        *   L887, (tools L833, L836): `Argument 1 to "format_datetime_or_date" has incompatible type "Any | None"; expected "datetime | date" [arg-type]`.
-        *   **Fix:** Ensure the value from `event.get("DTSTART", {}).get("value")` is `datetime` or `date`. Add `isinstance` check or parse appropriately.
-        *   L1044: `Item "dict[Any, Any]" of "Any | dict[Any, Any]" has no attribute "value" [union-attr]`.
-        *   **Fix:** Check if `dt_val` is a dict and has 'value' before `dt_val.value`.
-        *   L1068, L1148: `Incompatible return value type (got "str | None", expected "str") [return-value]`.
-        *   **Fix:** Ensure these functions always return `str`, or change return type to `str | None` and update callers.
-    *   `tests/helpers.py`:
-        *   L162: `Need type annotation for "cols_to_select" [var-annotated]`.
-        *   **Fix:** `cols_to_select: list[str] = [...]`.
-    *   `tests/unit/test_processing_history_formatting.py`:
-        *   L42, L43: `MockLLMClient`/`MockToolsProvider` incompatible with protocols `LLMInterface`/`ToolsProvider`.
-        *   **Fix:** Ensure mock classes fully implement all methods (even if just `pass` or `NotImplementedError`) of their respective protocols.
-        *   L129, L172: `Argument 1 to "_format_history_for_llm" ... has incompatible type "list[object]"; expected "list[dict[str, Any]]" [arg-type]`.
-        *   **Fix:** Ensure test data passed matches `list[dict[str, Any]]`.
-    *   `tests/functional/test_smoke_notes.py`, `tests/functional/test_mcp_integration.py`, `tests/functional/test_smoke_callback.py`, `tests/functional/telegram/conftest.py`, `tests/functional/indexing/test_email_indexing.py`, `tests/functional/indexing/test_document_indexing.py`:
-        *   Multiple `Need type annotation for "dummy_..." / "test_app_config"` [var-annotated].
-        *   **Fix:** Add `dict[str, Any]` or more specific types.
-        *   Multiple argument type errors for context providers, handlers, services.
-        *   **Fix:** Align fixture provisions with constructor/method signatures.
-    *   `tests/conftest.py`:
-        *   L116: `Value of type variable "_R" of function cannot be "AsyncEngine" [type-var]`.
-        *   **Fix:** Review the `db_engine` fixture. If it's a generator, ensure correct `yield` type.
-        *   L203: `Argument "processing_service" to "TaskWorker" has incompatible type "None" [arg-type]`.
-        *   **Fix:** Ensure `task_worker_fixture` receives a valid `ProcessingService` instance.
-    *   `tests/functional/telegram/test_telegram_send_message_tool.py`, `tests/functional/telegram/test_telegram_handler.py`:
-        *   `CallbackContext[...] has no attribute "_bot" [attr-defined]`.
-        *   **Fix:** Access via `context.bot`.
-    *   `tests/functional/telegram/test_telegram_confirmation.py`:
-        *   L173: `"None" object is not iterable [misc]`.
-        *   **Fix:** Check for `None` before iterating, likely related to `mock_llm_client.rules`.
+*   **File to change:** `src/family_assistant/utils/scraping.py`
+    *   **Issue (L20):** Private import usage for `PlaywrightContextManager`.
+    *   **Fix:** Playwright's async context manager is obtained via `async_playwright()`. The type of the object yielded by `async with async_playwright() as p:` is `Playwright`.
+        Change the type hint for `async_playwright`:
+        ```python
+        from collections.abc import Callable
+        from contextlib import AbstractAsyncContextManager # Or from typing_extensions for older Python
+        from playwright.async_api import Playwright # Add this import
 
-**Step 6: Fix Type Issues in Indexing Pipeline and Processors (including related Test files)**
+        # ...
+        async_playwright_factory: Callable[[], AbstractAsyncContextManager[Playwright]] | None
+        ```
+        And update `_get_playwright_context_manager` if its return type hint was `PlaywrightContextManager`.
 
-*   **Common Cause:** `ContentProcessor` mismatches, `Document` protocol vs. `DocumentRecord` issues, test data/fixture problems.
-*   **Files to Fix & Specific Errors:**
-    *   `src/family_assistant/indexing/pipeline.py`:
-        *   L190: `Argument "initial_content_ref" to "process" of "ContentProcessor" has incompatible type "IndexableContent | None"; expected "IndexableContent" [arg-type]`.
-        *   **Fix:** Change `ContentProcessor` protocol's `process` method signature for `initial_content_ref` to `IndexableContent | None` if some processors can handle `None`. Otherwise, ensure all callers pass non-None.
-    *   `src/family_assistant/indexing/email_indexer.py`:
-        *   L212: `Argument 1 to "from_row" of "EmailDocument" has incompatible type "dict[str, Any]"; expected "RowMapping" [arg-type]`.
-        *   **Fix:** If `fetch_one` returns `dict`, `EmailDocument.from_row` needs to accept `dict` or be called with `RowMapping` before conversion.
-        *   L303: `Argument "original_document" to "run" of "IndexingPipeline" has incompatible type "DocumentRecord"; expected "Document" [arg-type]`.
-        *   **Fix:** Ensure `DocumentRecord` (SQLAlchemy model) correctly implements all properties/methods of the `Document` protocol. This might involve adding `@property` decorators to `DocumentRecord` to match expected attributes like `created_at: datetime | None` (not `Mapped[...]`) and `metadata: dict[str, Any] | None`.
-    *   `src/family_assistant/indexing/processors/llm_processors.py`:
-        *   L141, L443: `Argument "tool_choice" to "generate_response" of "LLMInterface" has incompatible type "dict[str, Collection[str]]"; expected "str | None" [arg-type]`.
-        *   **Fix:** Update `LLMInterface` protocol for `tool_choice` to accept `str | dict[str, Any] | None` (or a more specific `TypedDict` like LiteLLM's `ChatCompletionNamedToolChoiceParam`).
-    *   `src/family_assistant/indexing/processors/file_processors.py`:
-        *   L68: `"Document" has no attribute "id" [attr-defined]`.
-        *   **Fix:** Add `id: int` (or appropriate type) to the `Document` protocol.
-    *   `src/family_assistant/indexing/processors/dispatch_processors.py`:
-        *   L136: `Item "None" of "Application[...] | None" has no attribute "new_task_event" [union-attr]`.
-        *   **Fix:** Check `if context.application:` before `context.application.new_task_event.set()`.
-    *   `src/family_assistant/indexing/document_indexer.py`:
-        *   L113-L140: `Argument 1 to "append" of "list" has incompatible type ...; expected "TitleExtractor" [arg-type]`.
-        *   **Fix:** Initialize `base_processors: list[ContentProcessor] = [TitleExtractor(...)]`.
-        *   L155: `Argument "processors" to "IndexingPipeline" has incompatible type "list[TitleExtractor]"; expected "list[ContentProcessor]" [arg-type]`.
-        *   **Fix:** Ensure `base_processors` is `list[ContentProcessor]`.
-        *   L259: `Incompatible types in assignment (int vs str)` for `original_document_id`.
-        *   **Fix:** `original_document_id=str(original_document.id)`.
-        *   L319: `Argument "original_document" to "run" of "IndexingPipeline" has incompatible type "DocumentRecord"; expected "Document" [arg-type]`. (Same as `email_indexer.py` L303).
-    *   `tests/unit/indexing/processors/test_network_processors.py`:
-        *   L235, L508: `Argument 1 to "open"/"remove" has incompatible type "str | None" [arg-type]`.
-        *   **Fix:** Ensure path arguments are not `None` before calling `open`/`os.remove`.
-    *   `tests/functional/indexing/test_indexing_pipeline.py`:
-        *   L108: `Incompatible return value type (HashingWordEmbeddingGenerator vs MockEmbeddingGenerator) [return-value]`.
-        *   **Fix:** Ensure fixture returns the expected type or adjust test expectations.
-        *   L126, (and similar in `test_email_indexing.py`, `test_document_indexing.py`): `Argument "processing_service" to "TaskWorker" has incompatible type "None" [arg-type]`.
-        *   **Fix:** Ensure `task_worker` fixture receives a valid `ProcessingService`.
-        *   L225: `Item "None" of "DocumentRecord | None" has no attribute "id" [union-attr]`.
-        *   **Fix:** Check for `None` before accessing `id`.
-        *   L255, L461: `Argument "original_document" to "run" of "IndexingPipeline" has incompatible type "DocumentRecord | None"; expected "Document" [arg-type]`.
-        *   **Fix:** Ensure a valid `Document` is passed, and it's not `None`.
-    *   `tests/functional/indexing/processors/test_llm_intelligence_processor.py`:
-        *   L22: `The return type of a generator function should be "Generator" or one of its supertypes [misc]`.
-        *   **Fix:** Add `-> Generator[Any, None, None]` or more specific types to the generator fixture.
-    *   `tests/functional/indexing/test_email_indexing.py`:
-        *   L1517, L1779 (and similar in `test_document_indexing.py`): `Argument "application" to "TaskWorker" has incompatible type "FastAPI"; expected "Application[...]" [arg-type]`.
-        *   **Fix:** Mock `application` to conform to `telegram.ext.Application` or adjust `TaskWorker` if it can accept a more generic app type.
-        *   L488, L1354: `Value of type "dict[str, Any] | None" is not indexable [index]`.
-        *   L493-L506, L1357-L1367: `Item "None" of "dict[str, Any] | None" has no attribute "get" [union-attr]`.
-        *   **Fix:** Check for `None` before indexing or calling `.get()` on dicts that might be `None`.
-        *   L1211, L1212: `Argument "chunk_size"/"chunk_overlap" to "TextChunker" has incompatible type "object" [arg-type]`.
-        *   **Fix:** Ensure these are passed as `int`.
-        *   L1592 (and `test_document_indexing.py` L877): `Unsupported operand types for > ("float" and "None") [operator]`.
-        *   **Fix:** Ensure operands for comparison are not `None`.
-    *   `tests/functional/indexing/test_document_indexing.py`:
-        *   L167: `Value of type variable "_R" of function cannot be "AsyncClient" [type-var]`.
-        *   L168: `The return type of an async generator function should be "AsyncGenerator" ... [misc]`.
-        *   **Fix:** Adjust `async_client_fixture` return type to `AsyncGenerator[AsyncClient, None]`.
-        *   L242: `Item "Application[...] | None" has no attribute "state" [union-attr]`.
-        *   **Fix:** Check for `None` before `app.state`.
-        *   L941, L1233: `"ScrapeResult" has no attribute "status_code" [attr-defined]`.
-        *   **Fix:** Add `status_code` to `ScrapeResult` or adjust tests if it's not expected.
+---
 
-**Step 7: Resolve Type Issues in Web Layer (Routers, Dependencies)**
+**Step 2: Refactor `get_db_context` and Correct Async Context Manager Usage**
 
-*   **Common Cause:** FastAPI dependency default arguments, query parameter types, async generator return types.
-*   **Files to Fix & Specific Errors:**
-    *   `src/family_assistant/web/dependencies.py`:
-        *   L31: `The return type of an async generator function should be "AsyncGenerator" ... [misc]`.
-        *   **Fix:** `async def get_db_context_dependency(...) -> AsyncGenerator[DatabaseContext, None]:`.
-    *   `src/family_assistant/web/routers/vector_search.py`:
-        *   L160, L161, L166, L167: `Incompatible default for argument ... (default has type "None", argument has type "list[str]") [assignment]`.
-        *   **Fix:** Change types to `Optional[list[str]] = Query(None, ...)` or `list[str] | None = Query(None, ...)`.
-        *   L268: `Argument "search_type" to "VectorSearchQuery" has incompatible type "str"; expected "Literal['semantic', 'keyword', 'hybrid']" [arg-type]`.
-        *   **Fix:** Validate `search_type` against `Literal` values and `cast` it, or change route parameter type to this `Literal`.
-        *   L286: `List item 0 has incompatible type "str | None"; expected "str" [list-item]`.
-        *   **Fix:** Ensure items in `metadata_filters_list` are `str`, not `None`, e.g., `if key is not None and value is not None:`.
-    *   `src/family_assistant/web/routers/notes.py`:
-        *   L93: `Incompatible default for argument "db_context" (None vs DatabaseContext) [assignment]`.
-        *   **Fix:** `db_context: DatabaseContext = Depends(get_db_context_dependency)`.
-    *   `src/family_assistant/web/routers/history.py`:
-        *   L92: `Need type annotation for "grouped_by_turn_id" [var-annotated]`.
-        *   **Fix:** `grouped_by_turn_id: dict[str, list[dict[str, Any]]] = defaultdict(list)`.
-    *   `src/family_assistant/web/routers/api.py`:
-        *   L76: `Unexpected keyword argument "calendar_config" for "ToolExecutionContext" [call-arg]`.
-        *   **Fix:** Remove from `ToolExecutionContext` instantiation or add to its definition.
-        *   L202: `Incompatible default for argument "db_context" (None vs DatabaseContext) [assignment]`.
-        *   **Fix:** `db_context: DatabaseContext = Depends(get_db_context_dependency)`.
+This step focuses on fixing the fundamental issue with how `DatabaseContext` is created and used, which causes numerous `__aenter__`/`__aexit__` errors.
 
-**Step 8: Final Pass and Miscellaneous Fixes (`__main__.py`)**
+*   **File to change:** `src/family_assistant/storage/context.py`
+    *   **Issue:** `get_db_context` is an `async def` function that returns a `DatabaseContext` instance. This makes `get_db_context()` a coroutine, while it's often used as a factory for a context manager. `DatabaseContext` itself is an async context manager.
+    *   **Fix:** Make `get_db_context` a regular synchronous function.
+        ```python
+        # Change this:
+        # async def get_db_context(
+        #     engine: AsyncEngine | None = None, max_retries: int = 3, base_delay: float = 0.5
+        # ) -> "DatabaseContext":
+        # To this:
+        def get_db_context(
+            engine: AsyncEngine | None = None, max_retries: int = 3, base_delay: float = 0.5
+        ) -> "DatabaseContext":
+            # ... (any synchronous setup if needed) ...
+            return DatabaseContext(
+                engine or get_engine(), max_retries=max_retries, base_delay=base_delay
+            )
+        ```
 
-*   **Common Cause:** Lambda type inference, handler signature mismatches.
-*   **Files to Fix & Specific Errors:**
-    *   `src/family_assistant/__main__.py`:
-        *   L913: `Argument "get_db_context_func" to "TelegramService" has incompatible type ... [arg-type]`.
-        *   **Fix:** `TelegramService` constructor expects `Callable[..., AbstractAsyncContextManager[DatabaseContext, bool | None]]`. `get_db_context` is `async def ... -> DatabaseContext`. Wrap `get_db_context` or adjust `TelegramService`'s expectation. A simple wrapper: `lambda **kwargs: get_db_context(engine=kwargs.get("engine", main_engine), ...)`.
-        *   L954: `Argument 2 to "register_task_handler" of "TaskWorker" has incompatible type ... [arg-type]`.
-        *   **Fix:** `TaskWorker` expects handler `Callable[[ToolExecutionContext, Any], Awaitable[None]]`. Current handlers like `handle_process_document_task` take `(DatabaseContext, payload)`. Adapt handlers to take `ToolExecutionContext` and create/get `DatabaseContext` within, or have `TaskWorker` create `ToolExecutionContext` and pass it. The latter is cleaner: change handler signatures to `async def my_handler(exec_context: ToolExecutionContext, payload: Any)`.
-        *   L1078: `Cannot infer type of lambda [misc]`.
-        *   **Fix:** `default_factory=lambda: str(os.getenv("TELEGRAM_BOT_NAME", ""))`.
+*   **Files to change:** `src/family_assistant/__main__.py` (L913), `src/family_assistant/telegram_bot.py` (for `TelegramUpdateHandler` init), `tests/functional/telegram/conftest.py` (L157, L173), `tests/functional/test_smoke_notes.py` (L166)
+    *   **Issue:** Parameters like `get_db_context_func` are typed expecting a complex async factory, or the call sites are incorrect due to `get_db_context` being async.
+    *   **Fix:** With `get_db_context` now being a synchronous factory, update type hints for `get_db_context_func` to `Callable[..., DatabaseContext]`.
+        In `Application.__init__` and `TelegramUpdateHandler.__init__`:
+        ```python
+        # Example for Application or TelegramUpdateHandler
+        from collections.abc import Callable
+        # ...
+        def __init__(self, ..., get_db_context_func: Callable[..., DatabaseContext], ...):
+            self.get_db_context = get_db_context_func # Store the factory
+        ```
+        Calls like `async with self.get_db_context() as db:` will now correctly use the `DatabaseContext` instance returned by the factory.
+        The errors in `__main__.py:913` and `tests/functional/telegram/conftest.py` regarding `CoroutineType` vs `AbstractAsyncContextManager` for `get_db_context_func` should resolve.
 
-This structured approach should help in tackling these errors methodically. Remember to run Mypy after each step to see the progress. Good luck!
+*   **File to change:** `src/family_assistant/web/dependencies.py`
+    *   **Issue (L31, L35):** FastAPI dependency `get_db` return type.
+    *   **Fix:** Ensure `get_db` is correctly typed as an async generator yielding `DatabaseContext`.
+        ```python
+        from collections.abc import AsyncIterator # Use AsyncIterator
+
+        # ...
+        async def get_db(
+            # ... params ...
+        ) -> AsyncIterator[DatabaseContext]: # Changed to AsyncIterator
+            db_ctx = get_db_context() # Now a sync call
+            async with db_ctx as db: # db_ctx is the DatabaseContext instance
+                yield db
+        ```
+
+*   **File to change:** `src/family_assistant/web/auth.py`
+    *   **Issue (L102):** Using `get_db_context()` with `async with`.
+    *   **Fix:** This should now work correctly after `get_db_context` is made synchronous:
+        ```python
+        async with get_db_context() as db_context: # get_db_context() returns DatabaseContext instance
+            # ...
+        ```
+
+---
+
+**Step 3: Critical Code Cleanup in `storage/vector.py`**
+
+This addresses a major structural problem.
+
+*   **File to change:** `src/family_assistant/storage/vector.py`
+    *   **Issue (L812-L981):** A large block of code, seemingly a corrupted duplication of `query_vector_store_in_db_only`'s body and a duplicate `update_document_title_in_db` definition, exists outside any function, causing numerous `UndefinedVariable`, indentation, `await` outside async, and `return` outside function errors.
+    *   **Fix:**
+        1.  Delete the entire block of code starting from the line `distance_op = DocumentEmbeddingRecord.embedding.cosine_distance` (around L812) down to `return results_with_scores` (around L975 or just before the second `def update_document_title_in_db`).
+        2.  Remove the duplicate definition of `update_document_title_in_db` (the one that appears after the problematic block). There should only be one definition of this function.
+    *   **Issue (L110, L147):** `sqlalchemy.orm` access.
+    *   **Fix:** These are generally correct. If errors persist after installing `sqlalchemy-stubs`, ensure direct imports: `from sqlalchemy.orm import declarative_base, Mapped`.
+    *   **Issue (L895, L954, L955, L961):** Using raw booleans (`True`/`False`) in SQLAlchemy `where()` or `or_()` clauses.
+    *   **Fix:** Use `sqlalchemy.sql.expression.true()` and `sqlalchemy.sql.expression.false()`.
+        ```python
+        from sqlalchemy import true as sql_true, false as sql_false, or_, and_ # etc.
+
+        # Example
+        # query = query.where(True) # Incorrect
+        query = query.where(sql_true()) # Correct
+
+        # combined_conditions = or_(True, existing_condition) # Incorrect
+        # combined_conditions = or_(sql_true(), existing_condition) # Correct
+        ```
+        This applies to the `_build_document_filters` and `_build_embedding_filters` helper methods if they construct conditions this way.
+
+---
+
+**Step 4: Address Protocol Conformance and Interface Mismatches (LLM, Embedding, Document)**
+
+*   **Files to change:** `src/family_assistant/__main__.py` (L704), `src/family_assistant/embeddings.py` (L261)
+    *   **Issue:** `SentenceTransformerEmbeddingGenerator` and `EmbeddingGenerator` protocol mismatch. The error in `__main__.py` mentions `model_name` is not present on `SentenceTransformerEmbeddingGenerator` for the protocol. The "obscured" error in `embeddings.py` points to a naming conflict or confusion due to conditional definition.
+    *   **Fix for `embeddings.py` (L261):** The `SentenceTransformerEmbeddingGenerator` is defined inside `if SENTENCE_TRANSFORMERS_AVAILABLE:`. This can confuse linters. Ensure it's uniquely named or provide a clear stub if the library is unavailable.
+        ```python
+        # In embeddings.py
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            # Ensure this class correctly implements EmbeddingGenerator
+            class SentenceTransformerEmbeddingGenerator(EmbeddingGenerator): # Explicitly inherit
+                def __init__(
+                    self, model_name_or_path: str, device: str | None = None, **kwargs: object
+                ) -> None:
+                    # ...
+                    self.model_name = model_name_or_path # Store if needed for protocol
+                    # ...
+                async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
+                    # ... implementation ...
+        else:
+            # Optional: Define a placeholder if needed for type checking in all paths
+            class SentenceTransformerEmbeddingGenerator(EmbeddingGenerator):
+                def __init__(self, *args: Any, **kwargs: Any) -> None:
+                    raise NotImplementedError("sentence-transformers not available")
+                async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
+                    raise NotImplementedError("sentence-transformers not available")
+        ```
+    *   **Fix for `__main__.py` (L704):** The `EmbeddingGenerator` protocol in `embeddings.py` expects `async def generate_embeddings(...)`. The error says `"generate_embeddings" is not present`. This implies the `SentenceTransformerEmbeddingGenerator` instance being created in `__main__.py` (or the class definition it's using) doesn't match. Ensure the class has the method. The `model_name` part of the error is confusing as it's not in the `EmbeddingGenerator` protocol. It might be an issue with how the instance is created or used later in `__main__.py`. Double-check the constructor call and subsequent usage.
+
+*   **File to change:** `tests/mocks/mock_llm.py`
+    *   **Issue (L13 and throughout tests):** `LLMOutput` and `LLMInterface` types from `tests.mocks.mock_llm` are incompatible with those from `family_assistant.llm`. This is due to the try-except import fallback.
+    *   **Fix:** Remove the try-except import for `LLMInterface` and `LLMOutput`. Always import from the main application.
+        ```python
+        # In tests/mocks/mock_llm.py
+        # Remove the try-except block:
+        # try:
+        # from family_assistant.llm import LLMInterface as LLMInterface_real, LLMOutput as LLMOutput_real # noqa: E402
+        # except ImportError:
+        #     # ... fallback definitions ...
+        # else:
+        #     LLMInterface = LLMInterface_real
+        #     LLMOutput = LLMOutput_real
+
+        # Always import directly:
+        from family_assistant.llm import LLMInterface, LLMOutput # noqa: E402
+        from typing import Any, Callable, Coroutine, Literal # etc.
+
+        # Ensure RuleBasedMockLLMClient and other mocks correctly implement this imported LLMInterface
+        # and use this imported LLMOutput.
+        class RuleBasedMockLLMClient(LLMInterface):
+            # ...
+            async def generate_response(
+                self,
+                messages: list[dict[str, Any]],
+                tools: list[dict[str, Any]] | None = None,
+                tool_choice: str | None = "auto",
+                # ... any other params from LLMInterface ...
+            ) -> Coroutine[Any, Any, LLMOutput]: # Ensure return type is the imported LLMOutput
+                # ...
+                # return matched_rule_output
+        ```
+        This will fix many `RuleBasedMockLLMClient is not assignable to LLMInterface` errors in test files.
+
+*   **Files to change:** `src/family_assistant/indexing/document_indexer.py` (L319), `src/family_assistant/indexing/email_indexer.py` (L303), `tests/functional/indexing/test_indexing_pipeline.py` (L255, L460)
+    *   **Issue:** Passing `DocumentRecord` (SQLAlchemy model with `Mapped[str]`) to functions expecting `Document` (protocol, likely expecting resolved `str`).
+    *   **Fix:** At runtime, SQLAlchemy typically resolves `Mapped[str]` to `str` upon attribute access. This might be a type checker limitation.
+        1.  Ensure the `Document` protocol (defined likely in `src/family_assistant/storage/vector_store_protocol_corrected.py` or a similar place, or should be if not) expects `str` for its attributes like `source_type`, `source_id`.
+        2.  At the call site where a `DocumentRecord` is passed as a `Document`, if the error persists:
+            ```python
+            from typing import cast
+            from family_assistant.storage.vector_store_protocol_corrected import Document # Adjust import
+
+            # ...
+            document_record: DocumentRecord = get_document_record()
+            # pipeline.run(..., original_document=document_record, ...) # Causes error
+            pipeline.run(..., original_document=cast(Document, document_record), ...)
+            # Or, if it's a specific argument:
+            # pipeline.run(..., original_document=document_record, ...) # type: ignore[arg-type]
+            ```
+        This assumes the runtime shapes are compatible.
+
+*   **File to change:** `src/family_assistant/__main__.py` (L954)
+    *   **Issue:** Task handler signature mismatch. `_handle_embed_and_store_batch` takes `(DatabaseContext, payload)` but `TaskWorker.register_task_handler` expects `(ToolExecutionContext, Any)`.
+    *   **Fix:** Modify `_handle_embed_and_store_batch` signature and logic:
+        ```python
+        from family_assistant.tools.types import ToolExecutionContext # Add import
+
+        async def _handle_embed_and_store_batch(
+            context: ToolExecutionContext, payload: dict[str, Any]
+        ) -> None:
+            async with context.db_provider() as db_context: # Get db_context from ToolExecutionContext
+                # ... existing logic using db_context and payload ...
+        ```
+
+---
+
+**Step 5: Address Unbound Variables, Remaining Attribute Access, and Argument Mismatches**
+
+*   **File to change:** `src/family_assistant/__main__.py`
+    *   **Issue (L739):** `"None" is not awaitable`. This is because `run_migrations_online_async_wrapper` returns `None` if not using PostgreSQL, and this `None` is added to `tasks_to_run`.
+    *   **Fix (L729-L739):**
+        ```python
+        migrator_task = None
+        if str(DATABASE_URL).startswith("postgresql"):
+            migrator_task = run_migrations_online_async_wrapper()
+
+        tasks_to_run = [ # Removed other tasks for brevity, add them back
+            # ... other tasks ...
+        ]
+        if migrator_task:
+            tasks_to_run.append(migrator_task)
+        if task_worker: # Assuming task_worker might also be conditional
+            tasks_to_run.append(task_worker.run(wake_up_event))
+
+        if tasks_to_run: # Ensure tasks_to_run is not empty
+            await asyncio.gather(*tasks_to_run)
+        else:
+            logger.info("No main tasks to run (e.g., no DB migration, no task worker).")
+        ```
+
+*   **Files with unbound variables:**
+    *   `src/family_assistant/indexing/processors/llm_processors.py` (L177, L499 `arguments_str`): Initialize `arguments_str: str | None = None` before the `try` block.
+    *   `src/family_assistant/indexing/processors/text_processors.py` (L158 `output_embedding_type`): Initialize before use, e.g., `output_embedding_type: str = ""`.
+    *   `src/family_assistant/processing.py` (L441 `final_reasoning_info`): Initialize `final_reasoning_info: dict[str, Any] | None = None`.
+    *   `src/family_assistant/tools/schema.py` (L86-89 `infile_path`, `outfile_path`): Initialize these paths, e.g., `infile_path: Path | None = None`.
+    *   `src/family_assistant/utils/scraping.py` (L161 `ActualMarkItDownClass`):
+        `MarkItDownType: type["ActualMarkItDownClass"] | None = None` and then `_MarkItDown_cls: MarkItDownType | None = None`. If `markitdown` is imported, `_MarkItDown_cls` is set. The reference to `ActualMarkItDownClass` in `_convert_bytes_to_markdown` likely means `_MarkItDown_cls` should be checked for `None` before use.
+        ```python
+        if self._MarkItDown_cls:
+             md = self._MarkItDown_cls(file_path=temp_pdf_path) # Call the class
+             # ...
+        else:
+            # Handle case where markitdown is not available
+            logger.warning("MarkItDown library not available for PDF processing.")
+            return "Error: PDF processing library not available."
+        ```
+    *   `src/family_assistant/telegram_bot.py` (L763 `user_message_id`): Initialize `user_message_id: int | None = None`.
+
+*   **Attribute Access and Argument Errors:**
+    *   `src/family_assistant/indexing/processors/dispatch_processors.py` (L136): `context.application.new_task_event`.
+        *   **Fix:** `ToolExecutionContext.application` refers to `telegram.ext.Application`. Ensure `new_task_event` is an attribute you've added to this `Application` instance (e.g., in `__main__.py` via `app.new_task_event = asyncio.Event()`). If `application` can be `None` in `ToolExecutionContext`, check for it.
+    *   `src/family_assistant/indexing/processors/file_processors.py` (L68), `src/family_assistant/indexing/processors/metadata_processors.py` (L94, L100): `original_document.id`.
+        *   **Fix:** If `original_document` is typed as the `Document` protocol, ensure `id: int` (or appropriate type) is part of the protocol definition.
+    *   `src/family_assistant/storage/context.py` (L201): `self.connection.is_active`.
+        *   **Fix:** This attribute should exist on `aiosqlite.Connection` or `asyncpg.Connection`. Ensure `self.connection` is not `None` and is correctly typed.
+    *   `src/family_assistant/storage/tasks.py` (L345), `src/family_assistant/storage/vector.py` (L529): `result.rowcount`.
+        *   **Fix:** `SQLAlchemy` `Result` objects have `rowcount`. Ensure `result` is not `None`. This might be a stub issue if `sqlalchemy-stubs` are not yet effective.
+    *   `src/family_assistant/tools/mcp.py` (L256): `"BaseException" is not iterable`.
+        *   **Fix:** Likely `for detail in e.args:` or similar if `e` is an exception with details. `mcp.exceptions.MCPError` might have specific fields.
+    *   `src/family_assistant/tools/mcp.py` (L350-351): `content_part.text` on `ImageContent`/`EmbeddedResource`.
+        *   **Fix:** These `mcp` types likely don't have a `.text` attribute. Check `mcp` documentation for how to get textual descriptions or relevant data from these content parts. It might be `content_part.description` or you might need to handle them differently.
+    *   `src/family_assistant/indexing/document_indexer.py` (L259): `metadata_dict[key] = int_value`. If `metadata_dict` expects string values, use `str(int_value)`.
+    *   `src/family_assistant/indexing/email_indexer.py` (L212): `EmailDocument.from_row(dict_row)`. `from_row` expects `RowMapping`.
+        *   **Fix:** If `dict_row` is a `dict`, you might need to convert it or ensure `EmailDocument.from_row` can handle a `dict`. `cast(RowMapping, dict_row)` is an option if the structure is compatible.
+    *   `src/family_assistant/indexing/pipeline.py` (L190): `processor.process(..., initial_content_ref=parent_ref)`. `parent_ref` can be `None`.
+        *   **Fix:** Ensure processors whose `process` method expects a non-optional `initial_content_ref` are called with a valid one, or update their signatures to accept `IndexableContent | None`.
+    *   `src/family_assistant/indexing/processors/llm_processors.py` (L141, L443): `tool_choice={"type": "function", ...}`.
+        *   **Fix:** The `litellm.acompletion` function *does* support this dictionary format for `tool_choice`. This error suggests the type stub for `litellm` might be too strict or outdated for this parameter. If `litellm` stubs are up-to-date, this might require a `# type: ignore[arg-type]`.
+    *   `src/family_assistant/llm.py` (L226-L236, dictionary assignments): e.g., `record_args["method_name"] = method_name`.
+        *   **Fix:** These assignments look correct for a `dict[str, Any]`. If errors persist, it could be a very specific type inference issue. Explicitly annotate `record_args: dict[str, Any] = {}`. If this is already the case, this might be a `pyright` quirk or a more complex type interaction.
+    *   `src/family_assistant/web/routers/api.py` (L76, L80): Call signature mismatches for `process_message` (missing `turn_id`) and `fetch_upcoming_events` (using `calendar_config` which might be removed/renamed).
+        *   **Fix:** Update the calls to match the current function signatures.
+    *   `src/family_assistant/web/routers/vector_search.py` (L160, L161, L166, L167): Passing `None` from `Form(None)` to list parameters.
+        *   **Fix:** Use `embedding_types=embedding_type or []` when constructing `VectorSearchQuery` or other objects.
+    *   `src/family_assistant/web/routers/vector_search.py` (L268): `search_type_form` (str) to `VectorSearchQuery.search_type` (Literal).
+        *   **Fix:** Validate `search_type_form` and cast or map to the Literal type.
+            ```python
+            from typing import cast, Literal
+            SearchTypeLiteral = Literal['semantic', 'keyword', 'hybrid']
+            # ...
+            query_search_type = cast(SearchTypeLiteral, search_type_form) # Add validation
+            ```
+    *   `src/family_assistant/web/routers/vector_search.py` (L286): `generate_embeddings(texts=[query_text])` where `query_text` can be `None`.
+        *   **Fix:** Ensure `query_text` is `str` before passing: `if query_text: embeddings = await emb_gen.generate_embeddings(texts=[query_text])`.
+    *   `src/family_assistant/task_worker.py` (L396, L397): `task_payload.get(...)` can return `None`.
+        *   **Fix:** Provide defaults or raise error if required: `interface_type = task_payload.get("interface_type", "unknown")`.
+    *   `src/family_assistant/telegram_bot.py` (L421): `final_messages_for_llm.append({"role": "user", "content": content_parts})`.
+        *   **Fix:** `content_parts` is `list[dict[str, str]]`. `litellm` user message content can be a string or a list of content blocks for multimodal. If `content_parts` represents multimodal content, it's likely correct. The error suggests `final_messages_for_llm` is typed too narrowly (`list[dict[str, str]]`). It should be `list[dict[str, Any]]` or the more specific `list[ChatCompletionMessageParam]` from `litellm.types`.
+    *   `src/family_assistant/telegram_bot.py` (L564): `request_confirmation_callback` signature mismatch (extra `timeout`).
+        *   **Fix:** Align the callback signature in `TelegramConfirmationUIManager.request_confirmation` with what `ProcessingService.generate_llm_response_for_chat` expects, or vice-versa. It seems `ProcessingService` expects `(prompt_text, tool_name, tool_args)` but `TelegramConfirmationUIManager` provides `(..., timeout)`.
+    *   `src/family_assistant/telegram_bot.py` (L1123): `message_batcher=None` passed to `TelegramUpdateHandler`.
+        *   **Fix:** `TelegramUpdateHandler.__init__` expects `message_batcher: MessageBatcher`. Ensure a valid `MessageBatcher` (e.g., `NoBatchMessageBatcher()`) is always passed if `telegram_app_config.message_batcher` can be `None`.
+    *   `src/family_assistant/tools/__init__.py` (L833, L836): `event.get("DTSTART", {}).get("dt")` can be `None`.
+        *   **Fix:** Check for `None` before calling `format_datetime_or_date`.
+            ```python
+            dt_val = event.get("DTSTART", {}).get("dt")
+            if dt_val:
+                start_str = format_datetime_or_date(dt_val, timezone_str)
+            ```
+    *   `src/family_assistant/tools/__init__.py` (L1794): `get_user_from_username_or_id()` missing arguments.
+        *   **Fix:** Provide the required arguments for this function call.
+
+---
+
+**Step 6: Address Telegram-Specific and Test Environment Issues**
+
+*   **File to change:** `src/family_assistant/telegram_bot.py` (numerous `reportOptionalMemberAccess` errors)
+    *   **Issue:** Accessing attributes on `telegram` objects that might be `None` (e.g., `update.message`, `query.message`).
+    *   **Fix:** After installing `python-telegram-bot-stubs`, these will be more apparent. Use conditional access:
+        ```python
+        if update.message and update.message.chat: # Check both message and chat
+            chat_id = update.message.chat.id
+        # For query.message.reply_text:
+        if query and query.message:
+            await query.message.reply_text(...)
+        ```
+        For `MessageOrigin` attributes (L399-L403), check stubs for correct access (e.g. `update.effective_message.forward_from_user`, `update.effective_message.forward_from_chat`).
+        `query.message.text_markdown_v2` (L1019): `text_markdown_v2` might not be a direct attribute or could be on `query.message.effective_attachment` if it's a caption.
+
+*   **Fixture Return Types in Tests:** (`tests/conftest.py`, `tests/functional/...`)
+    *   **Issue:** Fixtures yielding values are typed with the yielded type, not `Iterator` or `AsyncIterator`.
+    *   **Fix:**
+        ```python
+        from collections.abc import Iterator, AsyncIterator # Use these
+
+        @pytest.fixture
+        def my_path_fixture() -> Iterator[Path]: # Not -> Path
+            p = Path("...")
+            yield p
+            # cleanup
+
+        @pytest_asyncio.fixture
+        async def my_async_client_fixture() -> AsyncIterator[AsyncClient]: # Not -> AsyncClient
+            async with AsyncClient(...) as client:
+                yield client
+        ```
+        Apply this to affected fixtures in:
+        `tests/conftest.py` (L119, L160 `db_engine`)
+        `tests/functional/indexing/processors/test_llm_intelligence_processor.py` (L22, L30 `temp_file_path_fixture`)
+        `tests/functional/indexing/test_document_indexing.py` (L171, L211 `test_app_client_with_docs`)
+
+*   **`with patch(...)` errors in tests:** (`tests/functional/telegram/test_telegram_confirmation.py`, `tests/unit/indexing/processors/test_network_processors.py`)
+    *   **Issue:** `Object of type "Generator[None, None, None]" cannot be used with "with"`. This often happens when patching a non-context-manager or if a `contextlib.contextmanager` decorated fixture is not typed correctly.
+    *   **Fix for `test_network_processors.py` (L235, `open`):** `mock_open_with_interrupt` should be compatible with `open`. If using `unittest.mock.mock_open`, it is a context manager. Ensure `mock_open_with_interrupt` itself is structured correctly. If it's a generator, it needs `@contextlib.contextmanager`.
+    *   **Fix for `test_telegram_confirmation.py` (L155 etc.):** If `mock_confirmation_timeout` is a fixture using `@contextlib.contextmanager`, its type hint should be `Iterator[None]` or `ContextManager[None]`.
+        ```python
+        from contextlib import contextmanager
+        from collections.abc import Iterator
+
+        @contextmanager
+        def mock_confirmation_timeout() -> Iterator[None]: # Type hint for the generator
+            # ... setup ...
+            yield
+            # ... teardown ...
+        ```
+    *   For `os.remove` (L508 in `test_network_processors.py`): `os.remove(temp_file_path)` argument should be checked if `temp_file_path` can be `None`.
+
+*   **Mock Attribute Assignments in Tests:** (`tests/functional/indexing/test_document_indexing.py` L162, L163, etc.)
+    *   **Issue:** Assigning to attributes not defined on `MockEmbeddingGenerator`.
+    *   **Fix:** Either define these attributes in `MockEmbeddingGenerator` or use `mocker.patch.object(mock_embedding_generator, '_test_query_semantic_embedding', return_value=...)`.
+
+*   **`Application` type mismatch in `ToolExecutionContext` for tests:** (`tests/functional/indexing/...`)
+    *   **Issue:** `ToolExecutionContext` expects `telegram.ext.Application`, but `FastAPI` app instance is passed.
+    *   **Fix:** In test setups for indexing (where the Telegram bot part might not be relevant), provide a mock `telegram.ext.Application` or `None` if `ToolExecutionContext.application` is optional and handled.
+        ```python
+        from unittest.mock import MagicMock
+        # ...
+        mock_bot_app = MagicMock(spec=telegram.ext.Application)
+        # If new_task_event is needed:
+        mock_bot_app.new_task_event = asyncio.Event()
+        tool_exec_context = ToolExecutionContext(application=mock_bot_app, ...)
+        ```
+
+*   **`tests/conftest.py` (L203):** `TelegramApplication(processing_service=None, ...)`
+    *   **Fix:** `TelegramApplication.__init__` likely expects a `ProcessingService` instance. Provide a mock: `mock_processing_service = MagicMock(spec=ProcessingService)`.
+
+*   **`tests/functional/telegram/test_telegram_handler.py` (L45):** `context._bot = mock_bot`.
+    *   **Fix:** If `context.bot` is a public property with a setter, use that. Otherwise, this is internal manipulation for testing and might need `# type: ignore[assignment]` or `object.__setattr__(context, '_bot', mock_bot)`.
+
+*   **`tests/unit/test_processing_history_formatting.py` (L42, L43):** Mock types vs Protocol.
+    *   **Fix:**
+        *   `MockLLMClient` needs to implement `async def format_user_message_with_file(...)` as per `LLMInterface`.
+        *   `MockToolsProvider` needs `async def close(...)`. Its `execute_tool` return type must be `str` (or whatever `ToolsProvider` protocol dictates).
+
+This is a comprehensive list. Work through these steps methodically, re-running the type checker after each major step or file group to see which errors resolve. Good luck!
