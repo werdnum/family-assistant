@@ -28,6 +28,7 @@ from telegram import (
 )
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import Conflict  # Import telegram errors for specific checking
+from telegram import MessageOriginUser, MessageOriginChat, MessageOriginChannel, MessageOriginHiddenUser, Message
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -109,12 +110,10 @@ class DefaultMessageBatcher(MessageBatcher):
         self, batch_processor: BatchProcessor, batch_delay_seconds: float = 0.5
     ) -> None:
         self.batch_processor = batch_processor
-        self.batch_delay_seconds = (
-            batch_delay_seconds  # Delay before processing a batch
-        )
+        self.batch_delay_seconds = batch_delay_seconds
         self.chat_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.message_buffers: dict[int, list[tuple[Update, bytes | None]]] = (
-            defaultdict(list)
+        self.message_buffers: dict[int, list[tuple[Update, bytes | None]]] = defaultdict(
+            list
         )
         self.processing_tasks: dict[int, asyncio.Task] = {}
         self.batch_timers: dict[
@@ -127,6 +126,11 @@ class DefaultMessageBatcher(MessageBatcher):
         context: ContextTypes.DEFAULT_TYPE,
         photo_bytes: bytes | None,
     ) -> None:
+        if not update.effective_chat:
+            logger.warning(
+                "DefaultMessageBatcher: Update has no effective_chat, skipping."
+            )
+            return
         chat_id = update.effective_chat.id
         async with self.chat_locks[chat_id]:
             self.message_buffers[chat_id].append((update, photo_bytes))
@@ -233,8 +237,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         processing_service: "ProcessingService",  # Use string quote for forward reference
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager["DatabaseContext"]
-        ],  # Closing bracket was misplaced
-        message_batcher: MessageBatcher,  # Inject the batcher
+        ],
+        message_batcher: MessageBatcher | None,  # Inject the batcher, can be None initially
         confirmation_manager: ConfirmationUIManager,  # Inject confirmation manager
     ) -> None:
         # Check for debug mode environment variable
@@ -303,7 +307,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Sends a welcome message when the /start command is issued."""
+        if not update.effective_user:
+            logger.warning("Update has no effective_user, cannot process /start.")
+            return
         user_id = update.effective_user.id
+
+        if not update.message:  # Ensure message object exists to reply to
+            logger.warning("Update has no message, cannot reply to /start.")
+            return
+
         if self.allowed_user_ids and user_id not in self.allowed_user_ids:
             logger.warning(f"Unauthorized /start command from chat_id {user_id}")
             await update.message.reply_text(
@@ -374,11 +386,16 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         logger.debug(
             f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update."
         )
+
         # Check if the last message is a reply
-        is_reply = bool(last_update.message and last_update.message.reply_to_message)
-        replied_to_interface_id = (
-            str(last_update.message.reply_to_message.message_id) if is_reply else None
-        )
+        replied_to_interface_id: str | None = None
+        is_reply = False
+        if last_update.message and last_update.message.reply_to_message:
+            replied_to_interface_id = str(
+                last_update.message.reply_to_message.message_id
+            )
+            is_reply = True
+
         all_texts = []
         first_photo_bytes = None
         forward_context = ""
@@ -396,12 +413,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 if update_item.message.forward_origin:
                     origin = update_item.message.forward_origin
                     original_sender_name = "Unknown Sender"
-                    if origin.sender_user:
+                    if isinstance(origin, MessageOriginUser):
                         original_sender_name = origin.sender_user.first_name or "User"
-                    elif origin.sender_chat:
-                        original_sender_name = (
-                            origin.sender_chat.title or "Chat/Channel"
-                        )
+                    elif isinstance(origin, MessageOriginHiddenUser):
+                        original_sender_name = origin.sender_user_name or "Hidden User"
+                    elif isinstance(origin, MessageOriginChat):
+                        original_sender_name = origin.sender_chat.title or "Chat"
+                    elif isinstance(origin, MessageOriginChannel):
+                        original_sender_name = origin.chat.title or "Channel"
                     forward_context = f"(forwarded from {original_sender_name}) "
                     logger.debug(
                         f"Detected forward context from {original_sender_name} in last message."
@@ -411,8 +430,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         logger.debug(f"Combined text: '{combined_text[:100]}...'")
 
         formatted_user_text_content = f"{forward_context}{combined_text}".strip()
-        text_content_part = {"type": "text", "text": formatted_user_text_content}
-        trigger_content_parts = [text_content_part]
+        text_content_part: dict[str, Any] = {
+            "type": "text",
+            "text": formatted_user_text_content,
+        }
+        trigger_content_parts: list[dict[str, Any]] = [text_content_part]
 
         if first_photo_bytes:
             try:
@@ -455,8 +477,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 return
 
-            db_context_getter = self.get_db_context()  # Get the coroutine first
-            async with await db_context_getter as db_context:
+            db_context_getter = self.get_db_context()
+            async with db_context_getter as db_context:
                 # --- Determine Thread Root ID ---
                 thread_root_id_for_turn: int | None = None
                 if replied_to_interface_id:
@@ -536,14 +558,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         prompt_text: str,
                         tool_name: str,
                         tool_args: dict[str, Any],
-                        timeout: float,
+                        # timeout: float, # Timeout is handled by the confirmation manager's config
                     ) -> bool:
                         return await self.confirmation_manager.request_confirmation(
-                            chat_id=chat_id,  # Use captured chat_id
+                            chat_id=chat_id,
                             prompt_text=prompt_text,
                             tool_name=tool_name,
                             tool_args=tool_args,
-                            timeout=timeout,
+                            timeout=self.confirmation_manager.confirmation_timeout,  # Use manager's default
                         )
 
                     # Use the wrapper function as the callback
@@ -763,12 +785,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             if processing_error_traceback and user_message_id:
                 try:
                     # Get a new context for this update attempt
-                    async with (
-                        await self.get_db_context() as db_ctx_err
-                    ):  # Use await directly
+                    async with self.get_db_context() as db_ctx_err:
                         # Fetch the user message's internal ID first (can't update by interface ID)
                         user_msg_record = await self.storage.get_message_by_interface_id(
-                            db_ctx_err,
+                            db_context=db_ctx_err,
                             interface_type,
                             conversation_id,  # Correct variable name was already here
                             str(user_message_id),
@@ -808,16 +828,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         logger.error(f"Exception while handling an update: {error}", exc_info=error)
 
         if self.telegram_service:
-            self.telegram_service._last_error = error
+            self.telegram_service._last_error = error # type: ignore[attr-defined] # _last_error is on TelegramService
             if isinstance(error, Conflict):
                 logger.critical(
                     f"Telegram Conflict error detected: {error}. Polling will likely stop."
                 )
-            elif isinstance(error, Exception):
-                pass
+            # No need for `elif isinstance(error, Exception): pass`
 
-        tb_list = traceback.format_exception(None, error, error.__traceback__)
-        tb_string = "".join(tb_list)
+        if error:
+            tb_list = traceback.format_exception(None, error, error.__traceback__)
+            tb_string = "".join(tb_list)
+        else:
+            tb_string = "No exception context available."
 
         update_str = update.to_dict() if isinstance(update, Update) else str(update)
         message = (
@@ -862,8 +884,21 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:  # noqa: E501
         """Buffers incoming messages and triggers processing if not already running."""
+        if not update.effective_user:
+            logger.warning("Message handler: Update has no effective_user.")
+            return
         user_id = update.effective_user.id
+
+        if not update.effective_chat:
+            logger.warning("Message handler: Update has no effective_chat.")
+            return
         chat_id = update.effective_chat.id
+
+        if not update.message:
+            logger.warning("Message handler: Update has no message.")
+            return
+        # Now safe to access update.message attributes
+
         photo_bytes = None
 
         if self.allowed_user_ids and user_id not in self.allowed_user_ids:
@@ -875,6 +910,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 f"Message {update.message.message_id} from chat {chat_id} contains photo."
             )
             try:
+                # photo is a tuple of PhotoSize objects, last one is usually largest
                 photo_size = update.message.photo[-1]
                 photo_file = await photo_size.get_file()
                 with io.BytesIO() as buf:
@@ -999,24 +1035,49 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
     ) -> None:
         """Handles button presses for tool confirmations."""
         query = update.callback_query
+        if not query:
+            logger.warning("Confirmation callback: Update has no callback_query.")
+            return
         await query.answer()
 
         callback_data = query.data
+        if not callback_data:
+            logger.error("Confirmation callback: No data in callback_query.")
+            if query.message: # Try to edit message if possible
+                try:
+                    await query.edit_message_text(text="Error: Missing callback data.")
+                except Exception as e:
+                    logger.error(f"Error editing message on missing callback data: {e}")
+            return
+
         logger.info(f"Received confirmation callback: {callback_data}")
 
         try:
             _, confirm_uuid, action = callback_data.split(":")
         except ValueError:
             logger.error(f"Invalid confirmation callback data format: {callback_data}")
-            await query.edit_message_text(text="Error: Invalid callback data.")
+            if query.message:
+                try:
+                    await query.edit_message_text(text="Error: Invalid callback data.")
+                except Exception as e:
+                    logger.error(f"Error editing message on invalid callback data: {e}")
             return
 
-        confirmation_future = self.pending_confirmations.get(
-            confirm_uuid
-        )  # Use get() to avoid popping yet
+        confirmation_future = self.pending_confirmations.get(confirm_uuid)
 
         if confirmation_future and not confirmation_future.done():
-            original_text = query.message.text_markdown_v2
+            if not query.message or not isinstance(query.message, Message):
+                logger.error(
+                    "Callback query message is not accessible or not a standard message."
+                )
+                # Cannot edit message text if query.message is not a proper Message
+                # Set future to prevent hang, but can't update UI
+                confirmation_future.set_exception(
+                    RuntimeError("Callback message not editable")
+                )
+                return
+
+            original_text = query.message.text_markdown_v2_urled or query.message.text or "" # Fallback
             status_text = ""
             if action == "yes":
                 logger.debug(f"Setting confirmation result for {confirm_uuid} to True")
@@ -1062,6 +1123,9 @@ class NoBatchMessageBatcher(MessageBatcher):
         context: ContextTypes.DEFAULT_TYPE,
         photo_bytes: bytes | None,
     ) -> None:
+        if not update.effective_chat:
+            logger.warning("NoBatchMessageBatcher: Update has no effective_chat.")
+            return
         chat_id = update.effective_chat.id
         logger.info(
             f"NoBatchMessageBatcher: Immediately processing update {update.update_id} for chat {chat_id}"
@@ -1180,11 +1244,19 @@ class TelegramService:
         logger.info("Starting Telegram polling...")
         await self.application.initialize()
         await self.application.start()
-        # Use Update.ALL_TYPES to ensure all relevant updates are received
-        await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        self._was_started = True  # Mark as started
-        self._last_error = None  # Clear last error on successful start
-        logger.info("Telegram polling started successfully.")
+        if self.application.updater:
+            # Use Update.ALL_TYPES to ensure all relevant updates are received
+            await self.application.updater.start_polling(
+                allowed_updates=Update.ALL_TYPES
+            )
+            self._was_started = True  # Mark as started
+            self._last_error = None  # Clear last error on successful start
+            logger.info("Telegram polling started successfully.")
+        else:
+            logger.error(
+                "Application updater not available after start. Polling cannot begin."
+            )
+            # Consider raising an error or setting a state indicating failure
 
     @property
     def last_error(self) -> Exception | None:
