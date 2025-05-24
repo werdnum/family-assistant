@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-import filetype
+import filetype  # type: ignore[import-untyped]
 
 from family_assistant import storage
 from family_assistant.storage.context import DatabaseContext
