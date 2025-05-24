@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo  # Import ZoneInfo
 import caldav
 import httpx  # Import httpx
 import vobject
-from caldav.lib.error import DAVError, NotFoundError
+from caldav.exceptions import DAVError, NotFoundError  # Corrected import path
 from dateutil.parser import isoparse  # For parsing ISO strings in tools
 
 if TYPE_CHECKING:
@@ -188,37 +188,44 @@ async def _fetch_ical_events_async(
 
         for i, result in enumerate(results):
             url = ical_urls[i]
-            if isinstance(result, Exception):
+            if isinstance(result, httpx.Response):
+                if result.status_code != 200:
+                    logger.error(
+                        f"Failed to fetch iCal URL {url}: Status {result.status_code}"
+                    )
+                    continue
+                try:
+                    ical_data = result.text
+                    logger.debug(
+                        f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
+                    )
+                    # Use vobject to parse the fetched data
+                    cal = vobject.readComponents(ical_data)  # type: ignore[attr-defined]
+                    count = 0
+                    for component in cal:
+                        if component.name.upper() == "VEVENT":
+                            parsed = parse_event(
+                                component.serialize(),
+                                timezone_str=timezone_str,  # Pass timezone here
+                            )  # Reuse existing parser
+                            if parsed:
+                                all_events.append(parsed)
+                                count += 1
+                    logger.info(f"Parsed {count} events from iCal URL: {url}")
+                except Exception as e:
+                    logger.error(
+                        f"Error parsing iCal data from {url}: {e}", exc_info=True
+                    )
+            elif isinstance(result, Exception):
                 logger.error(
                     f"Error fetching iCal URL {url}: {result}", exc_info=result
                 )
-                continue
-            elif result.status_code != 200:
+                # continue is implicit as this is an elif block
+            else:
+                # This case should ideally not be reached if gather behaves as expected
                 logger.error(
-                    f"Failed to fetch iCal URL {url}: Status {result.status_code}"
+                    f"Unexpected type in results for {url}: {type(result)}. Skipping."
                 )
-                continue
-
-            try:
-                ical_data = result.text
-                logger.debug(
-                    f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
-                )
-                # Use vobject to parse the fetched data
-                cal = vobject.readComponents(ical_data)  # type: ignore[attr-defined]
-                count = 0
-                for component in cal:
-                    if component.name.upper() == "VEVENT":
-                        parsed = parse_event(
-                            component.serialize(),
-                            timezone_str=timezone_str,  # Pass timezone here
-                        )  # Reuse existing parser
-                        if parsed:
-                            all_events.append(parsed)
-                            count += 1
-                logger.info(f"Parsed {count} events from iCal URL: {url}")
-            except Exception as e:
-                logger.error(f"Error parsing iCal data from {url}: {e}", exc_info=True)
 
     logger.info(
         f"Fetched and parsed {len(all_events)} total events from {len(ical_urls)} iCal URL(s)."
@@ -686,7 +693,7 @@ async def add_calendar_event_tool(
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, save_event_sync)
             return result
-        except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:
+        except (DAVError, ConnectionError, Exception) as sync_err:
             logger.error(
                 f"Error during synchronous CalDAV save operation: {sync_err}",
                 exc_info=True,
@@ -859,7 +866,7 @@ async def search_calendar_events_tool(
                         )
                         break  # Stop searching other calendars if limit reached
 
-            except (caldav.lib.error.DAVError, ConnectionError, Exception) as sync_err:
+            except (DAVError, ConnectionError, Exception) as sync_err:
                 logger.error(
                     f"Error searching calendar {cal_url}: {sync_err}", exc_info=True
                 )
@@ -882,10 +889,14 @@ async def search_calendar_events_tool(
         # Format for LLM (e.g., numbered list)
         response_lines = ["Found potential matches:"]
         for i, details in enumerate(matching_events_details):
-            # Format start/end for display here, passing the timezone
-            start_str = format_datetime_or_date(
-                details.get("start"), exec_context.timezone_str, is_end=False
-            )
+            start_value = details.get("start")
+            if start_value is None:
+                start_str = "Unknown Start Time"
+            else:
+                # Format start/end for display here, passing the timezone
+                start_str = format_datetime_or_date(
+                    start_value, exec_context.timezone_str, is_end=False
+                )
             response_lines.append(
                 f"{i + 1}. Summary: '{details['summary']}', Start: {start_str}, UID: {details['uid']}, Calendar: {details['calendar_url']}"
             )
@@ -1040,19 +1051,23 @@ async def modify_calendar_event_tool(
                     # Save the event, allowing overwrite since we are modifying an existing event
                     event.save(no_overwrite=False)
                     logger.info(f"Successfully saved modified event UID {uid}")
-                    return (
-                        f"OK. Event '{getattr(vevent, 'summary', {}).value}' updated."
+                    summary_text = (
+                        vevent.summary.value
+                        if hasattr(vevent, "summary")
+                        and hasattr(vevent.summary, "value")
+                        else "N/A"
                     )
+                    return f"OK. Event '{summary_text}' updated."
                 else:
                     # This case should be caught earlier, but handle defensively
                     return "No changes applied."
 
-        except caldav.lib.error.NotFoundError:
+        except NotFoundError:
             logger.error(f"Event with UID {uid} not found in calendar {calendar_url}.")
             return f"Error: Event with UID {uid} not found."
         # Removed PreconditionFailed handler as ETag is not used
         except (
-            caldav.lib.error.DAVError,
+            DAVError,
             ConnectionError,
             ValueError,
             Exception,
@@ -1064,8 +1079,10 @@ async def modify_calendar_event_tool(
 
     try:
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, modify_sync)
-        return result
+        actual_result: str | None = await loop.run_in_executor(None, modify_sync)
+        if actual_result is None:
+            return "Error: Modify operation completed without a specific message."
+        return actual_result
     except Exception as e:
         logger.error(f"Unexpected error modifying calendar event: {e}", exc_info=True)
         return f"Error: An unexpected error occurred while modifying the event. {e}"
@@ -1126,13 +1143,13 @@ async def delete_calendar_event_tool(
                 logger.info(f"Successfully deleted event UID {uid}")
                 return f"OK. Event '{summary}' deleted."
 
-        except caldav.lib.error.NotFoundError:
+        except NotFoundError:
             logger.error(
                 f"Event with UID {uid} not found in calendar {calendar_url} for deletion."
             )
             return f"Error: Event with UID {uid} not found."
         except (
-            caldav.lib.error.DAVError,
+            DAVError,
             ConnectionError,
             ValueError,
             Exception,
@@ -1144,8 +1161,10 @@ async def delete_calendar_event_tool(
 
     try:
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, delete_sync)
-        return result
+        actual_result: str | None = await loop.run_in_executor(None, delete_sync)
+        if actual_result is None:
+            return "Error: Delete operation completed without a specific message."
+        return actual_result
     except Exception as e:
         logger.error(f"Unexpected error deleting calendar event: {e}", exc_info=True)
         return f"Error: An unexpected error occurred while deleting the event. {e}"
@@ -1184,10 +1203,10 @@ def _fetch_event_details_sync(
                     f"Failed to parse event data for UID {uid} in {calendar_url}"
                 )
                 return None
-    except caldav.lib.error.NotFoundError:
+    except NotFoundError:
         logger.warning(f"Event UID {uid} not found in {calendar_url}")
         return None
-    except (caldav.lib.error.DAVError, ConnectionError, Exception) as e:
+    except (DAVError, ConnectionError, Exception) as e:
         logger.error(
             f"Error fetching event details for UID {uid} from {calendar_url}: {e}",
             exc_info=True,
