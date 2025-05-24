@@ -61,7 +61,7 @@ class LLMIntelligenceProcessor(ContentProcessor):
         self,
         current_items: list[IndexableContent],
         original_document: "Document",  # noqa: ARG002
-        initial_content_ref: IndexableContent,  # noqa: ARG002
+        initial_content_ref: IndexableContent | None,  # noqa: ARG002
         context: "ToolExecutionContext",
     ) -> list[IndexableContent]:
         processed_items: list[IndexableContent] = []
@@ -138,12 +138,13 @@ class LLMIntelligenceProcessor(ContentProcessor):
                 llm_response = await self.llm_client.generate_response(
                     messages=messages,
                     tools=tools,
-                    tool_choice=tool_choice_for_llm,
+                    tool_choice="required",  # Ensure LLM calls the specified tool
                 )
 
                 if llm_response.tool_calls:
                     for tool_call in llm_response.tool_calls:
                         if tool_call.get("function", {}).get("name") == self.tool_name:
+                            arguments_str = "{}"  # Initialize for safety in error logging
                             try:
                                 arguments_str = tool_call.get("function", {}).get(
                                     "arguments", "{}"
@@ -377,7 +378,7 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
         self,
         current_items: list[IndexableContent],
         original_document: "Document",
-        initial_content_ref: IndexableContent,
+        initial_content_ref: IndexableContent | None,
         context: "ToolExecutionContext",
     ) -> list[IndexableContent]:
         processed_items: list[IndexableContent] = []
@@ -440,12 +441,13 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                 messages = [{"role": "system", "content": system_prompt}, user_message]
 
                 llm_response = await self.llm_client.generate_response(
-                    messages=messages, tools=tools, tool_choice=tool_choice_for_llm
+                    messages=messages, tools=tools, tool_choice="required"
                 )
 
                 if llm_response.tool_calls:
                     for tool_call in llm_response.tool_calls:
                         if tool_call.get("function", {}).get("name") == self.tool_name:
+                            arguments_str = "{}"  # Initialize for safety in error logging
                             try:
                                 arguments_str = tool_call.get("function", {}).get(
                                     "arguments", "{}"
