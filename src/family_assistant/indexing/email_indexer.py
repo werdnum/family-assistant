@@ -11,7 +11,6 @@ from typing import Any, cast
 from sqlalchemy import select  # Import select and update
 
 # Import RowMapping for type hinting in from_row
-from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
@@ -90,9 +89,9 @@ class EmailDocument(Document):
         return self._attachment_info_raw
 
     @classmethod
-    def from_row(cls, row: RowMapping) -> "EmailDocument":
+    def from_row(cls, row: Mapping[str, Any]) -> "EmailDocument":
         """
-        Creates an EmailDocument instance from a SQLAlchemy RowMapping
+        Creates an EmailDocument instance from a SQLAlchemy RowMapping (or compatible mapping)
         representing a row from the received_emails table.
         """
         # Ensure required fields are present
