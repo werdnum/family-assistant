@@ -49,8 +49,7 @@ def create_mock_context(
     context = ContextTypes.DEFAULT_TYPE(
         application=mock_application, chat_id=123, user_id=12345
     )
-    # Explicitly assign the bot from the mock application using setattr
-    context._bot = mock_application.bot
+    # The bot should be automatically set from mock_application.bot
     # Do not reassign bot_data, update it instead
     if bot_data:
         context.bot_data.update(bot_data)
