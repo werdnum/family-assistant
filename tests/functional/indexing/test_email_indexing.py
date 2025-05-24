@@ -1252,7 +1252,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     dummy_calendar_config_pdf = {}
     dummy_timezone_str_pdf = "UTC"
     worker = TaskWorker(
-        processing_service=None,
+        processing_service=MagicMock(spec=ProcessingService),
         application=mock_application_pdf,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_pdf,
