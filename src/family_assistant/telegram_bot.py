@@ -558,17 +558,24 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # Define an explicit wrapper function for the confirmation callback
                     # This captures `self` (for `self.confirmation_manager`) and `chat_id` from the outer scope
                     async def confirmation_callback_wrapper(
-                        prompt_text: str,
-                        tool_name: str,
-                        tool_args: dict[str, Any],
-                        # timeout: float, # Timeout is handled by the confirmation manager's config
+                        # These parameters are dictated by the expected signature in ProcessingService
+                        # (as per the type error message)
+                        callback_chat_id: int,
+                        callback_prompt_text: str,
+                        _unused_param_str_opt: str | None,  # e.g., from ToolExecutionContext if it were passed
+                        callback_tool_name: str,
+                        _unused_param_str: str,  # e.g., from ToolExecutionContext
+                        callback_tool_args: dict[str, Any],
+                        callback_timeout: float,
                     ) -> bool:
+                        # The `chat_id` from the outer scope should ideally match `callback_chat_id`.
+                        # We use the parameters passed to the callback by ProcessingService.
                         return await self.confirmation_manager.request_confirmation(
-                            chat_id=chat_id,
-                            prompt_text=prompt_text,
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            timeout=self.confirmation_manager.confirmation_timeout,  # Use manager's default
+                            chat_id=callback_chat_id,
+                            prompt_text=callback_prompt_text,
+                            tool_name=callback_tool_name,
+                            tool_args=callback_tool_args,
+                            timeout=callback_timeout,  # Use the timeout passed by ProcessingService
                         )
 
                     # Use the wrapper function as the callback
