@@ -3,7 +3,7 @@ Handles the indexing process for documents uploaded via the API.
 """
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -33,6 +33,7 @@ from family_assistant.indexing.processors.network_processors import (
     WebFetcherProcessor,  # Added
 )
 from family_assistant.indexing.processors.text_processors import TextChunker  # Added
+from family_assistant.indexing.types import Document  # Added
 from family_assistant.llm import LLMInterface  # Added
 from family_assistant.storage.vector import get_document_by_id
 from family_assistant.tools import ToolExecutionContext
@@ -249,7 +250,7 @@ class DocumentIndexer:
                     continue
 
                 embedding_type = key
-                metadata_for_item = {"original_key": key}
+                metadata_for_item: dict[str, Any] = {"original_key": key}
 
                 if key.startswith("content_chunk_"):
                     embedding_type = "content_chunk"
@@ -314,9 +315,10 @@ class DocumentIndexer:
             )
             # Pass the list of items directly to the pipeline's run method.
             # The pipeline's run method will determine how to handle initial_content_ref from this list.
+            conforming_document = cast("Document", original_document_record)
             await self.pipeline.run(
                 initial_items=initial_items,
-                original_document=original_document_record,
+                original_document=conforming_document,
                 context=exec_context,
             )
         except Exception as e:
