@@ -55,7 +55,7 @@ class ContentProcessor(Protocol):
         self,
         current_items: list[IndexableContent],
         original_document: "Document",
-        initial_content_ref: IndexableContent,
+        initial_content_ref: IndexableContent | None,
         context: "ToolExecutionContext",
     ) -> list[IndexableContent]:
         """
@@ -64,7 +64,7 @@ class ContentProcessor(Protocol):
         Args:
             current_items: Content items from the previous stage or initial input.
             original_document: The Document object representing the source item.
-            initial_content_ref: The very first IndexableContent item created for the document.
+            initial_content_ref: The very first IndexableContent item created for the document, or None if the pipeline started with no items.
             context: Execution context providing access to database, task queue, etc.
 
         Returns:
