@@ -78,7 +78,6 @@ async def execute_tool_api(
         conversation_id=f"api_call_{uuid.uuid4()}",
         turn_id=f"api_turn_{uuid.uuid4()}",
         db_context=db_context,
-        # calendar_config=calendar_config,  # Removed as per lint error "No parameter named 'calendar_config'"
         timezone_str=timezone_str,  # Pass fetched timezone string
         application=None,  # No Telegram app here
         request_confirmation_callback=None,  # No confirmation from API for now
@@ -165,6 +164,8 @@ async def upload_document(
             description="Primary title for the document (can also be in content_parts).",
         ),
     ],
+    # Other dependencies
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
     # Optional Form fields
     content_parts_json: Annotated[
         str | None,
@@ -199,8 +200,6 @@ async def upload_document(
             description="JSON string representing a dictionary of additional metadata.",
         ),
     ] = None,
-    # Other dependencies
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> DocumentUploadResponse:
     """
     API endpoint to upload document metadata and content parts for indexing.
