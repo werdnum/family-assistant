@@ -150,7 +150,10 @@ async def test_confirmation_accepted(
 
         # Act & Assert within patch contexts
         # The confirming_wrapper is patched onto processing_service for the duration of this inner 'with' block.
-        with patch.object(fix.processing_service, "tools_provider", confirming_wrapper):
+        processing_service_patcher = patch.object(
+            fix.processing_service, "tools_provider", confirming_wrapper
+        )
+        with processing_service_patcher:
             # Act: Call the handler within the context where the tools_provider is patched
             await fix.handler.message_handler(update, context)
 
@@ -319,7 +322,10 @@ async def test_confirmation_rejected(
 
         # Act & Assert within patch contexts
         # The confirming_wrapper is patched onto processing_service for the duration of this inner 'with' block.
-        with patch.object(fix.processing_service, "tools_provider", confirming_wrapper):
+        processing_service_patcher = patch.object(
+            fix.processing_service, "tools_provider", confirming_wrapper
+        )
+        with processing_service_patcher:
             # Act
             await fix.handler.message_handler(update, context)
 
@@ -456,7 +462,10 @@ async def test_confirmation_timed_out(
 
         # Act & Assert within patch contexts
         # The confirming_wrapper is patched onto processing_service for the duration of this inner 'with' block.
-        with patch.object(fix.processing_service, "tools_provider", confirming_wrapper):
+        processing_service_patcher = patch.object(
+            fix.processing_service, "tools_provider", confirming_wrapper
+        )
+        with processing_service_patcher:
             # Act
             await fix.handler.message_handler(update, context)
 
