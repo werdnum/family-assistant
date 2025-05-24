@@ -92,9 +92,39 @@ async def test_llm_processor_with_file_input_summarization(
         ):
             return False
 
-        # Check tool choice
-        if kwargs.get("tool_choice")["function"]["name"] != tool_name_for_extraction:  # type: ignore[index]
+        # Check tool_choice argument
+        if kwargs.get("tool_choice") != "required":
+            logger.debug(
+                f"generate_response_matcher: tool_choice is not 'required'. Got: {kwargs.get('tool_choice')}"
+            )
             return False
+
+        # Check that the 'tools' argument contains the expected tool definition
+        tools_arg = kwargs.get("tools")
+        if not isinstance(tools_arg, list) or len(tools_arg) != 1:
+            logger.debug(
+                f"generate_response_matcher: tools argument is not a list of one. Got: {tools_arg}"
+            )
+            return False
+
+        tool_in_list = tools_arg[0]
+        if not isinstance(tool_in_list, dict) or tool_in_list.get("type") != "function":
+            logger.debug(
+                f"generate_response_matcher: tool in list is not a function type. Got: {tool_in_list}"
+            )
+            return False
+
+        function_definition = tool_in_list.get("function")
+        if (
+            not isinstance(function_definition, dict)
+            or function_definition.get("name") != tool_name_for_extraction
+        ):
+            logger.debug(
+                f"generate_response_matcher: function name mismatch or not a dict. Expected {tool_name_for_extraction}, got {function_definition}"
+            )
+            return False
+
+        # The parameters schema is also checked by the main test assertions later.
 
         logger.debug(f"generate_response_matcher matched with kwargs: {kwargs}")
         return True
@@ -230,7 +260,4 @@ async def test_llm_processor_with_file_input_summarization(
         generate_call_args.get("tools")[0]["function"]["parameters"]
         == processor_output_schema
     )  # type: ignore[index]
-    assert (
-        generate_call_args.get("tool_choice")["function"]["name"]
-        == tool_name_for_extraction
-    )  # type: ignore[index]
+    assert generate_call_args.get("tool_choice") == "required"
