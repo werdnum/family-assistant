@@ -6,13 +6,14 @@ import signal  # Import the signal module
 import socket
 import uuid  # Added for turn_id
 from collections.abc import AsyncGenerator
+from typing import cast
 from unittest.mock import MagicMock  # Keep mocks for LLM
 
 import pytest
 import pytest_asyncio  # Import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.llm import LLMInterface, LLMOutput
+from family_assistant.llm import LLMInterface  # LLMOutput will come from mocks
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import necessary components from the application
@@ -29,7 +30,8 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 from tests.mocks.mock_llm import (
-    MatcherArgs,  # Added import
+    LLMOutput,  # Use LLMOutput from mocks for rules
+    MatcherArgs,
     Rule,
     RuleBasedMockLLMClient,
     get_last_message_text,
@@ -215,10 +217,14 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
 
     # --- Instantiate Mock LLM ---
     # Use default response for unexpected calls during the flow
-    llm_client: LLMInterface = RuleBasedMockLLMClient(
+    # Cast is used because the type checker sees tests.mocks.mock_llm.LLMOutput
+    # as different from family_assistant.llm.LLMOutput, making RuleBasedMockLLMClient
+    # not strictly assignable to LLMInterface.
+    _mock_llm_impl = RuleBasedMockLLMClient(
         rules=[tool_call_rule, tool_result_rule],
         default_response=LLMOutput(content="Default mock response for MCP test."),
     )
+    llm_client: LLMInterface = cast("LLMInterface", _mock_llm_impl)
     logger.info("Using RuleBasedMockLLMClient for MCP test.")
 
     # --- Instantiate Dependencies ---
@@ -285,7 +291,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
             conversation_id=str(TEST_CHAT_ID),
             turn_id=str(uuid.uuid4()),  # Added turn_id
             trigger_content_parts=user_request_trigger,
-            trigger_interface_message_id=user_message_id,
+            trigger_interface_message_id=str(user_message_id),
             user_name=TEST_USER_NAME,
         )
 
@@ -416,10 +422,12 @@ async def test_mcp_time_conversion_sse(
     tool_result_rule: Rule = (tool_result_matcher, final_response)
 
     # --- Instantiate Mock LLM ---
-    llm_client: LLMInterface = RuleBasedMockLLMClient(
+    # Cast is used for the same reasons as in the stdio test.
+    _mock_llm_impl_sse = RuleBasedMockLLMClient(
         rules=[tool_call_rule, tool_result_rule],
         default_response=LLMOutput(content="Default mock response for MCP SSE test."),
     )
+    llm_client: LLMInterface = cast("LLMInterface", _mock_llm_impl_sse)
     logger.info("Using RuleBasedMockLLMClient for MCP SSE test.")
 
     # --- Instantiate Dependencies ---
@@ -492,7 +500,7 @@ async def test_mcp_time_conversion_sse(
             conversation_id=str(TEST_CHAT_ID),
             turn_id=str(uuid.uuid4()),  # Added turn_id
             trigger_content_parts=user_request_trigger,
-            trigger_interface_message_id=user_message_id,
+            trigger_interface_message_id=str(user_message_id),
             user_name=TEST_USER_NAME,
         )
 
