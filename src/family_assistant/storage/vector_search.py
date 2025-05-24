@@ -100,7 +100,7 @@ async def query_vector_store(
         )
 
     # --- Parameter Mapping and Query Construction (using raw SQL example) ---
-    params = {"limit": query.limit, "rrf_k": query.rrf_k}
+    params: dict[str, Any] = {"limit": query.limit, "rrf_k": query.rrf_k}
     doc_where_clauses = ["1=1"]
     embed_where_clauses = ["1=1"]
 
