@@ -20,6 +20,7 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
+from litellm.types import FileResponse  # Added for typing gemini_file_obj
 
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
 
@@ -36,16 +37,13 @@ LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in (
     "yes",
 )
 if LITELLM_DEBUG_ENABLED:
-    try:
-        litellm._turn_on_debug()  # Use the suggested internal function
-        logger.info(
-            "Enabled LiteLLM internal debug logging via _turn_on_debug() because LITELLM_DEBUG is set."
-        )
-    except Exception as e:
-        logger.error(f"Failed to enable LiteLLM debug logging: {e}", exc_info=True)
+    litellm.set_verbose = True
+    logger.info(
+        "Enabled LiteLLM verbose logging (set_verbose=True) because LITELLM_DEBUG is set."
+    )
 else:
     logger.info(
-        "LiteLLM internal debug logging is disabled (LITELLM_DEBUG not set or false)."
+        "LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false)."
     )
 # --- End Debug Logging Control ---
 
@@ -193,8 +191,11 @@ class LiteLLMClient:
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generates a response using LiteLLM from a pre-structured message list."""
-        # Start with default kwargs passed during initialization
-        call_kwargs = self.default_kwargs.copy()
+        model_arg: str = self.model
+        messages_arg: list[dict[str, Any]] = messages
+
+        # Start with default kwargs passed during initialization (e.g., temperature, max_tokens)
+        completion_params: dict[str, Any] = self.default_kwargs.copy()
 
         # Find and merge model-specific parameters from config
         reasoning_params_config = None
@@ -208,45 +209,45 @@ class LiteLLMClient:
 
             if matched:
                 logger.debug(f"Applying parameters for pattern '{pattern}': {params}")
-                # Separate reasoning params if present
-                if "reasoning" in params and isinstance(params["reasoning"], dict):
-                    reasoning_params_config = params["reasoning"].copy()
-                    # Remove reasoning from top-level params to avoid duplication
-                    params_copy = params.copy()
-                    del params_copy["reasoning"]
-                    call_kwargs.update(params_copy)  # Merge non-reasoning params
-                else:
-                    # Merge all params if no 'reasoning' key
-                    call_kwargs.update(params)
-                # Assuming only one pattern should match, break after first match?
-                # Or allow multiple patterns to contribute/override? Let's assume first match wins for now.
+                params_to_merge = params.copy()
+                if "reasoning" in params_to_merge and isinstance(
+                    params_to_merge["reasoning"], dict
+                ):
+                    reasoning_params_config = params_to_merge.pop("reasoning")
+                completion_params.update(params_to_merge)
                 break  # Stop after first matching pattern
 
-        # Add model and messages (always required)
-        call_kwargs["model"] = self.model
-        call_kwargs["messages"] = messages
-
-        # Sanitize tools *before* adding them to kwargs
-        sanitized_tools = None
-        # Add tools and tool_choice if tools are provided
-        if tools:
-            # Sanitize a copy of the tools list for LiteLLM compatibility
-            sanitized_tools = _sanitize_tools_for_litellm(tools)
-            call_kwargs["tools"] = sanitized_tools  # Pass the sanitized list
-            call_kwargs["tool_choice"] = tool_choice
-
-        # Add the nested 'reasoning' object specifically for OpenRouter models if configured
+        # Add the 'reasoning' object to completion_params for OpenRouter models if configured
         if self.model.startswith("openrouter/") and reasoning_params_config:
-            call_kwargs["reasoning"] = reasoning_params_config
+            completion_params["reasoning"] = reasoning_params_config
             logger.debug(
-                f"Adding nested 'reasoning' parameter for OpenRouter: {reasoning_params_config}"
+                f"Adding 'reasoning' parameter for OpenRouter: {reasoning_params_config}"
             )
 
-        logger.debug(
-            f"Calling LiteLLM model {self.model} with {len(messages)} messages. Tools provided: {bool(sanitized_tools)}. Final Kwargs: {json.dumps(call_kwargs, default=str)}"  # Use json.dumps for better logging
-        )
         try:
-            response = await acompletion(**call_kwargs)
+            if tools:
+                sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
+                logger.debug(
+                    f"Calling LiteLLM model {model_arg} with {len(messages_arg)} messages. "
+                    f"Tools provided. Tool choice: {tool_choice}. Other params: {json.dumps(completion_params, default=str)}"
+                )
+                response = await acompletion(
+                    model=model_arg,
+                    messages=messages_arg,
+                    tools=sanitized_tools_arg,
+                    tool_choice=tool_choice,
+                    **completion_params,
+                )
+            else:
+                logger.debug(
+                    f"Calling LiteLLM model {model_arg} with {len(messages_arg)} messages. "
+                    f"No tools provided. Other params: {json.dumps(completion_params, default=str)}"
+                )
+                response = await acompletion(
+                    model=model_arg,
+                    messages=messages_arg,
+                    **completion_params,
+                )
 
             # Extract response message
             response_message: ChatCompletionMessageParam | None = (
@@ -257,22 +258,20 @@ class LiteLLMClient:
                 logger.warning(
                     f"LiteLLM response structure unexpected or empty: {response}"
                 )
-                # Raise an error or return empty output? Let's raise for clarity.
                 raise APIError(
                     message="Received empty or unexpected response from LiteLLM.",
                     llm_provider="litellm",
                     model=self.model,
                     status_code=500,
-                )  # Simulate server error
+                )
 
             # Extract content, tool calls, and potentially reasoning/usage info
-            content = response_message.content
-            raw_tool_calls = response_message.tool_calls
+            content = response_message.get("content")
+            raw_tool_calls = response_message.get("tool_calls")
             reasoning_info = None
-            # Example: Extract usage data if available (common place for token counts)
+
             if hasattr(response, "usage") and response.usage:
                 try:
-                    # Convert Pydantic usage object to dict
                     reasoning_info = response.usage.model_dump(mode="json")
                     logger.debug(
                         f"Extracted usage data as reasoning_info: {reasoning_info}"
@@ -280,26 +279,22 @@ class LiteLLMClient:
                 except Exception as usage_err:
                     logger.warning(f"Could not serialize response.usage: {usage_err}")
 
-            # Add other potential reasoning fields if the model/API provides them
-
-            # Convert LiteLLM ToolCall objects to simple dicts for the LLMOutput
             tool_calls_list = []
             if raw_tool_calls:
                 for tc in raw_tool_calls:
-                    # Assuming tc is a Pydantic model like ToolCall
+                    # tc should be a dict-like structure (ToolCall)
                     tool_calls_list.append(
-                        tc.model_dump(mode="json")
-                    )  # Use model_dump for pydantic v2+
+                        dict(tc)
+                    )  # Ensure it's a plain dict for LLMOutput
 
             logger.debug(
                 f"LiteLLM response received. Content: {bool(content)}. Tool Calls: {len(tool_calls_list)}. Reasoning: {bool(reasoning_info)}"
             )
             return LLMOutput(
-                content=content,
+                content=content,  # type: ignore # content can be str | None
                 tool_calls=tool_calls_list if tool_calls_list else None,
-                reasoning_info=reasoning_info,  # Pass extracted reasoning info
+                reasoning_info=reasoning_info,
             )
-
         except (
             APIConnectionError,
             Timeout,
@@ -355,14 +350,19 @@ class LiteLLMClient:
                         file_bytes_content = await f_bytes_io.read()
 
                     loop = asyncio.get_running_loop()
-                    gemini_file_obj = await loop.run_in_executor(
+                    # Use litellm.file_upload for more generic provider support
+                    gemini_api_key = os.getenv("GEMINI_API_KEY")
+                    if not gemini_api_key:  # Redundant check, but good practice
+                        raise ValueError("GEMINI_API_KEY is required.")
+
+                    gemini_file_obj: FileResponse = await loop.run_in_executor(
                         None,  # Default ThreadPoolExecutor
-                        litellm.create_file,
-                        file_bytes_content,
-                        "user_data",
-                        {"custom_llm_provider": "gemini"},
-                        os.path.basename(file_path),  # Pass filename
-                        os.getenv("GEMINI_API_KEY"),
+                        litellm.file_upload,
+                        file_bytes_content,  # file (bytes)
+                        os.path.basename(file_path),  # file_name
+                        "gemini",  # custom_llm_provider
+                        gemini_api_key,  # api_key
+                        # model argument is optional for file_upload, let gemini provider handle
                     )
                     logger.info(f"File uploaded to Gemini, ID: {gemini_file_obj.id}")
                     user_content_parts.append({
