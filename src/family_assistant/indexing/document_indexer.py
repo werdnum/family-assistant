@@ -38,7 +38,9 @@ from family_assistant.storage.vector import get_document_by_id
 from family_assistant.tools import ToolExecutionContext
 
 if TYPE_CHECKING:
-    from family_assistant.indexing.types import Document  # Added
+    from family_assistant.indexing.pipeline import (
+        Document,  # Assuming Document is defined/exported here
+    )
 from family_assistant.utils.scraping import Scraper  # Added
 
 logger = logging.getLogger(__name__)
