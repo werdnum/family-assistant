@@ -44,9 +44,7 @@ if LITELLM_DEBUG_ENABLED:
         "Enabled LiteLLM verbose logging (set_verbose=True) because LITELLM_DEBUG is set."
     )
 else:
-    logger.info(
-        "LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false)."
-    )
+    logger.info("LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false).")
 # --- End Debug Logging Control ---
 
 
