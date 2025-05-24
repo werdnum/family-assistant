@@ -976,8 +976,8 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         chat_id: int,
         # Add interface_type and turn_id to match the Protocol
         # Mark as unused for now if not directly used in this method's logic
-        _interface_type: str,  # New parameter
-        _turn_id: str | None,  # New parameter
+        interface_type: str,  # New parameter
+        turn_id: str | None,  # New parameter
         prompt_text: str,
         tool_name: str,
         tool_args: dict[str, Any],
