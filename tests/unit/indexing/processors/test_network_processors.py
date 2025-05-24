@@ -136,7 +136,7 @@ async def test_fetch_markdown_content_success(
         [input_item], mock_document, input_item, mock_tool_execution_context
     )
 
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(results).is_length(1)
         result_item = results[0]
         assert_that(result_item.embedding_type).is_equal_to("fetched_content_markdown")
@@ -181,7 +181,7 @@ async def test_fetch_text_content_success(
         [input_item], mock_document, input_item, mock_tool_execution_context
     )
 
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(results).is_length(1)
         result_item = results[0]
         assert_that(result_item.embedding_type).is_equal_to("fetched_content_text")
@@ -219,7 +219,7 @@ async def test_fetch_image_content_success(
         [input_item], mock_document, input_item, mock_tool_execution_context
     )
 
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(results).is_length(1)
         result_item = results[0]
         assert_that(result_item.embedding_type).is_equal_to("fetched_content_binary")
@@ -242,7 +242,7 @@ async def test_fetch_image_content_success(
         assert_that(temp_file_path).is_equal_to(result_item.ref)
 
     processor.cleanup_temp_files()
-    with soft_assertions():
+    with soft_assertions():  # type: ignore
         assert_that(temp_file_path).does_not_exist()
         assert_that(processor._temp_files).is_empty()
 
@@ -273,7 +273,7 @@ async def test_scraper_error_passes_through_item(
         [input_item], mock_document, input_item, mock_tool_execution_context
     )
 
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(results).is_length(1)
         assert_that(results[0]).is_same_as(input_item)  # Should be the exact same item
     processor.cleanup_temp_files()
@@ -298,7 +298,7 @@ async def test_non_target_embedding_type_passes_through(
         [input_item], mock_document, input_item, mock_tool_execution_context
     )
 
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(results).is_length(1)
         assert_that(results[0]).is_same_as(input_item)
     processor.cleanup_temp_files()
@@ -417,7 +417,7 @@ async def test_multiple_items_processing(
         initial_items, mock_document, mock_initial_ref, mock_tool_execution_context
     )
 
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(results).is_length(5)
 
         fetched_md_items = [
@@ -463,7 +463,7 @@ async def test_cleanup_temp_files_no_files(
     # Call process with no items that would create temp files
     await processor.process([], MagicMock(), MagicMock(), MagicMock())
 
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(processor._temp_files).is_empty()
     processor.cleanup_temp_files()  # Should not raise error
     assert_that(processor._temp_files).is_empty()
@@ -498,7 +498,7 @@ async def test_cleanup_temp_files_file_externally_deleted(
         [input_item], mock_document, input_item, mock_tool_execution_context
     )
 
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(results).is_length(1)
         result_item = results[0]
         assert_that(result_item.ref).is_not_none()
@@ -549,7 +549,7 @@ def test_del_cleanup_fallback(
     # For now, let's focus on the explicit cleanup_temp_files tests.
 
     # We can check if the log message from __del__ was emitted.
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore
         assert_that(caplog.text).contains(
             f"{WebFetcherProcessor(MockScraper({}), default_config).name} instance being deleted"
         )
