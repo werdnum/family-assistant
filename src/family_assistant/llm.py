@@ -24,7 +24,7 @@ from litellm.exceptions import (
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
 
 if TYPE_CHECKING:
-    from litellm.types.completion import ChatCompletionMessageParam
+    from litellm import Message  # Add import for litellm.Message
     from litellm.types.files import (
         FileResponse,  # Corrected import path and moved to TYPE_CHECKING
     )
@@ -236,6 +236,7 @@ class LiteLLMClient:
                     messages=messages_arg,
                     tools=sanitized_tools_arg,
                     tool_choice=tool_choice,
+                    stream=False,  # Explicitly set stream to False
                     **completion_params,
                 )
             else:
@@ -246,11 +247,13 @@ class LiteLLMClient:
                 response = await acompletion(
                     model=model_arg,
                     messages=messages_arg,
+                    stream=False,  # Explicitly set stream to False
                     **completion_params,
                 )
 
             # Extract response message
-            response_message: ChatCompletionMessageParam | None = (
+            # Use litellm.Message as the type for response_message
+            response_message: Message | None = (
                 response.choices[0].message if response.choices else None
             )
 
