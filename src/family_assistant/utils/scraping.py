@@ -17,9 +17,13 @@ import httpx
 # --- Scraping Imports ---
 try:
     # Use Async API imports
-    from playwright.async_api import Error as PlaywrightError
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-    from playwright.async_api import async_playwright
+    from playwright.async_api import (
+        Error as PlaywrightError,  # type: ignore[import-not-found]
+    )
+    from playwright.async_api import (
+        TimeoutError as PlaywrightTimeoutError,  # type: ignore[import-not-found]
+    )
+    from playwright.async_api import async_playwright  # type: ignore[import-not-found]
 
     _playwright_installed = True
 except ImportError:
@@ -154,6 +158,9 @@ class PlaywrightScraper:
                 logger.debug(
                     f"MarkItDown: Attempting conversion for {effective_filename}"
                 )
+                assert (
+                    self.md_converter is not None
+                )  # Ensure converter is not None here
                 result = self.md_converter.convert_stream(
                     stream, filename=effective_filename
                 )
