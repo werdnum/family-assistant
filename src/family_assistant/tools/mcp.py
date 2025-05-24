@@ -55,7 +55,7 @@ class MCPToolsProvider:
 
         async def _connect_and_discover_mcp(
             server_id: str, server_conf: dict[str, Any]
-        ) -> tuple[ClientSession | None, list[dict[str, Any]], dict[str, str]]:
+        ) -> tuple["ClientSession" | None, list[dict[str, Any]], dict[str, str]]:
             """Connects to a single MCP server, discovers tools, and returns results."""
             discovered_tools = []
             tool_map = {}
