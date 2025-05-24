@@ -1793,15 +1793,15 @@ class ConfirmingToolsProvider(ToolsProvider):
                 chat_id_for_callback: int = int(context.conversation_id)
 
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
-                # Pass all arguments positionally to match the Callable signature
+                # Pass arguments by keyword to ensure correct mapping, especially for mocks.
                 user_confirmed = await typed_callback(
-                    chat_id_for_callback,  # Arg 1 (chat_id: int)
-                    context.interface_type,  # Arg 2 (interface_type: str)
-                    context.turn_id,  # Arg 3 (turn_id: Optional[str])
-                    confirmation_prompt,  # Arg 4 (prompt_text: str)
-                    name,  # Arg 5 (tool_name: str)
-                    arguments,  # Arg 6 (tool_args: dict[str, Any])
-                    self.confirmation_timeout,  # Arg 7 (timeout: float)
+                    chat_id=chat_id_for_callback,
+                    interface_type=context.interface_type,
+                    turn_id=context.turn_id,
+                    prompt_text=confirmation_prompt,
+                    tool_name=name,  # Actual tool name
+                    tool_args=arguments,
+                    timeout=self.confirmation_timeout,
                 )
 
                 if user_confirmed:
