@@ -71,7 +71,9 @@ async def telegram_handler_fixture(
     # Use RuleBasedMockLLMClient - rules will be set per-test
     mock_llm = RuleBasedMockLLMClient(
         rules=[],  # Start with empty rules
-        default_response=MockLLMOutput(content="Default mock response (no rule matched)"),  # Use MockLLMOutput here
+        default_response=MockLLMOutput(
+            content="Default mock response (no rule matched)"
+        ),  # Use MockLLMOutput here
     )
 
     mock_bot = AsyncMock(name="MockBot")
