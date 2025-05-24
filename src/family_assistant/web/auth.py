@@ -109,44 +109,44 @@ async def get_user_from_api_token(
             logger.debug(f"API token with prefix {token_prefix} not found.")
             return None
 
-        if not pwd_context.verify(token_secret_part, token_row.hashed_token):
+        if not pwd_context.verify(token_secret_part, token_row["hashed_token"]):
             logger.warning(
                 f"Invalid API token provided for prefix {token_prefix}."
             )  # Potentially log user_identifier if available and safe
             return None
 
-        if token_row.is_revoked:
+        if token_row["is_revoked"]:
             logger.warning(
-                f"Attempt to use revoked API token (ID: {token_row.id}, User: {token_row.user_identifier})."
+                f"Attempt to use revoked API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."
             )
             return None
 
         now = datetime.now(timezone.utc)
-        if token_row.expires_at and token_row.expires_at < now:
+        if token_row["expires_at"] and token_row["expires_at"] < now:
             logger.warning(
-                f"Attempt to use expired API token (ID: {token_row.id}, User: {token_row.user_identifier})."
+                f"Attempt to use expired API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."
             )
             return None
 
         # Update last_used_at
         update_query = (
             update(api_tokens_table)
-            .where(api_tokens_table.c.id == token_row.id)
+            .where(api_tokens_table.c.id == token_row["id"])
             .values(last_used_at=now)
         )
         await db.execute_with_retry(update_query)
         # No need to commit explicitly if get_db_context handles transaction lifecycle
 
         logger.info(
-            f"API token authenticated for user: {token_row.user_identifier} (Token ID: {token_row.id})"
+            f"API token authenticated for user: {token_row['user_identifier']} (Token ID: {token_row['id']})"
         )
         # Mimic OIDC userinfo structure for session consistency
         return {
-            "sub": token_row.user_identifier,
-            "name": token_row.user_identifier,  # Or a display name if available
-            "email": token_row.user_identifier,  # Or actual email if available
+            "sub": token_row["user_identifier"],
+            "name": token_row["user_identifier"],  # Or a display name if available
+            "email": token_row["user_identifier"],  # Or actual email if available
             "source": "api_token",
-            "token_id": token_row.id,
+            "token_id": token_row["id"],
         }
 
 
