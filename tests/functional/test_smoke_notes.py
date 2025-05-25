@@ -197,10 +197,7 @@ async def test_add_and_retrieve_note_rule_mock(
         f"Instantiated ProcessingService with {type(llm_client).__name__}, {type(composite_provider).__name__}, service_config, server_url, and app_config"
     )
 
-    # Mock Application instance needed for ToolExecutionContext
-    mock_application = MagicMock()
-    # If specific attributes/methods of application are needed by tools, mock them here
-    # e.g., mock_application.bot.send_message = AsyncMock()
+    # mock_application is no longer needed for ToolExecutionContext
 
     # --- Part 1: Add the note ---
     add_note_text = f"Please remember this note. Title: {test_note_title}. Content: {TEST_NOTE_CONTENT}"
