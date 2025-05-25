@@ -217,10 +217,16 @@ async def test_send_message_to_user_tool(
             ).is_equal_to(message_for_bob)
             assert_that(kwargs_to_bob).described_as(
                 "kwargs for message to Bob"
-            ).does_not_contain_key("reply_to_message_id")
+            ).contains_key("reply_to_message_id")
+            assert_that(kwargs_to_bob["reply_to_message_id"]).described_as(
+                "Reply ID for message to Bob"
+            ).is_none()
             assert_that(kwargs_to_bob).described_as(
                 "kwargs for message to Bob"
-            ).does_not_contain_key("parse_mode")
+            ).contains_key("parse_mode")
+            assert_that(kwargs_to_bob["parse_mode"]).described_as(
+                "Parse mode for message to Bob"
+            ).is_none()
 
             # Call 2: Final confirmation sent to Alice by the handler
             args_to_alice, kwargs_to_alice = fix.mock_bot.send_message.call_args_list[1]
