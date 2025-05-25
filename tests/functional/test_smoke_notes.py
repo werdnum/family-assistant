@@ -4,6 +4,7 @@ import logging
 
 # Import storage functions for assertion (will use the patched engine)
 import uuid  # Added for turn_id
+from typing import TYPE_CHECKING  # Added TYPE_CHECKING
 from unittest.mock import MagicMock  # For mocking Application
 
 import pytest
@@ -14,7 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine  # Added for type hints
 from family_assistant.context_providers import (
     NotesContextProvider,
 )
-from family_assistant.llm import LLMInterface  # Keep Interface
+
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMInterface  # Keep Interface
 
 # Import necessary classes for instantiation
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
