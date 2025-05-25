@@ -47,6 +47,9 @@ class ProcessingServiceConfig:
     timezone_str: str
     max_history_messages: int
     history_max_age_hours: int
+    tools_config: dict[
+        str, Any
+    ]  # Added to hold tool configurations like 'confirm_tools'
 
 
 # --- Processing Service Class ---
@@ -183,11 +186,38 @@ class ProcessingService:
             # List to store all messages generated *within this turn*
             # This list will be returned by the function
             turn_messages: list[dict[str, Any]] = []
-            all_tools = await self.tools_provider.get_tool_definitions()
-            if all_tools:
-                logger.info(f"Providing {len(all_tools)} tools to LLM.")
+            all_tool_definitions = await self.tools_provider.get_tool_definitions()
+            tools_for_llm = all_tool_definitions
+
+            if request_confirmation_callback is None:
+                # If no confirmation mechanism is available, filter out tools that require it.
+                confirmable_tool_names = self.service_config.tools_config.get(
+                    "confirm_tools", []
+                )
+                if confirmable_tool_names:
+                    logger.info(
+                        f"No confirmation callback available. Filtering out tools requiring confirmation: {confirmable_tool_names}"
+                    )
+                    tools_for_llm = [
+                        tool_def
+                        for tool_def in all_tool_definitions
+                        if tool_def.get("function", {}).get("name")
+                        not in confirmable_tool_names
+                    ]
+                    logger.info(
+                        f"Providing {len(tools_for_llm)} tools to LLM after filtering (originally {len(all_tool_definitions)})."
+                    )
+                else:
+                    logger.info(
+                        "No confirmation callback, but no tools are listed in 'confirm_tools'. All tools will be available."
+                    )
+
+            if tools_for_llm:
+                logger.info(f"Providing {len(tools_for_llm)} tools to LLM.")
             else:
-                logger.info("No tools available from provider.")
+                logger.info(
+                    "No tools available to provide to LLM (either none defined or all filtered out)."
+                )
 
             # --- Tool Call Loop ---
             while current_iteration <= max_iterations:
@@ -208,13 +238,14 @@ class ProcessingService:
                 # --- LLM Call ---
                 llm_output: LLMOutput = await self.llm_client.generate_response(
                     messages=messages,
-                    tools=all_tools,
+                    tools=tools_for_llm,  # Use the potentially filtered list
                     # Allow tools on all iterations except the last forced one?
                     # Or force 'none' if the previous call didn't request tools?
                     # Let's allow 'auto' for now, unless we hit max iterations.
                     tool_choice=(
                         "auto"
-                        if all_tools and current_iteration < max_iterations
+                        if tools_for_llm
+                        and current_iteration < max_iterations  # Check tools_for_llm
                         else "none"
                     ),
                 )
