@@ -7,7 +7,7 @@ import io
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field  # Added asdict
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import aiofiles  # type: ignore[import-untyped] # For async file operations
@@ -52,14 +52,29 @@ else:
 # --- End Debug Logging Control ---
 
 
+@dataclass(frozen=True)
+class ToolCallFunction:
+    """Represents the function to be called in a tool call."""
+
+    name: str
+    arguments: str  # JSON string of arguments
+
+
+@dataclass(frozen=True)
+class ToolCallItem:
+    """Represents a single tool call requested by the LLM."""
+
+    id: str
+    type: str  # Usually "function"
+    function: ToolCallFunction
+
+
 @dataclass
 class LLMOutput:
     """Standardized output structure from an LLM call."""
 
     content: str | None = None
-    tool_calls: list[dict[str, Any]] | None = field(
-        default=None
-    )  # Store raw tool call dicts
+    tool_calls: list[ToolCallItem] | None = field(default=None)
     reasoning_info: dict[str, Any] | None = field(
         default=None
     )  # Store reasoning/usage data
@@ -295,45 +310,47 @@ class LiteLLMClient:
                     # It has attributes: id, type, function.
                     # tc_obj.function is a litellm.types.Function object with name and arguments.
 
-                    function_dict_for_output: dict[str, str]
+                    func_name: str | None = None
+                    func_args: str | None = None
+
                     if hasattr(tc_obj, "function") and tc_obj.function:
-                        if hasattr(tc_obj.function, "name") and hasattr(
-                            tc_obj.function, "arguments"
-                        ):
-                            function_dict_for_output = {
-                                "name": tc_obj.function.name,
-                                "arguments": tc_obj.function.arguments,  # arguments is already a string
-                            }
-                        else:
-                            logger.warning(
-                                f"ToolCall's function object is missing name/arguments: {tc_obj.function}"
-                            )
-                            function_dict_for_output = {
-                                "name": "malformed_function_in_llm_output",
-                                "arguments": "{}",
-                            }
+                        if hasattr(tc_obj.function, "name"):
+                            func_name = tc_obj.function.name
+                        if hasattr(tc_obj.function, "arguments"):
+                            func_args = tc_obj.function.arguments  # arguments is already a string
                     else:
                         logger.warning(
                             f"ToolCall object is missing function attribute or it's None: {tc_obj}"
                         )
-                        function_dict_for_output = {
-                            "name": "missing_function_in_llm_output",
-                            "arguments": "{}",
-                        }
 
-                    tool_call_item_dict = {
-                        "id": tc_obj.id if hasattr(tc_obj, "id") else None,
-                        "type": tc_obj.type if hasattr(tc_obj, "type") else None,
-                        "function": function_dict_for_output,
-                    }
+                    if not func_name or func_args is None:  # Arguments can be an empty string
+                        logger.warning(
+                            f"ToolCall's function object is missing name or arguments: name='{func_name}', args_present={func_args is not None}. Full object: {tc_obj.function if hasattr(tc_obj, 'function') else 'N/A'}"
+                        )
+                        # Create a placeholder ToolCallFunction to avoid downstream errors
+                        tool_call_function = ToolCallFunction(
+                            name=func_name or "malformed_function_in_llm_output",
+                            arguments=func_args or "{}",
+                        )
+                    else:
+                        tool_call_function = ToolCallFunction(
+                            name=func_name, arguments=func_args
+                        )
 
-                    if not tool_call_item_dict["id"] or not tool_call_item_dict["type"]:
+                    tc_id = tc_obj.id if hasattr(tc_obj, "id") else None
+                    tc_type = tc_obj.type if hasattr(tc_obj, "type") else None
+
+                    if not tc_id or not tc_type:
                         logger.error(
-                            f"ToolCall item from LLM missing id or type: {tool_call_item_dict}. Skipping."
+                            f"ToolCall item from LLM missing id ('{tc_id}') or type ('{tc_type}'). Skipping."
                         )
                         continue
 
-                    tool_calls_list.append(tool_call_item_dict)
+                    tool_calls_list.append(
+                        ToolCallItem(
+                            id=tc_id, type=tc_type, function=tool_call_function
+                        )
+                    )
 
             logger.debug(
                 f"LiteLLM response received. Content: {bool(content)}. Tool Calls: {len(tool_calls_list)}. Reasoning: {bool(reasoning_info)}"
@@ -634,7 +651,9 @@ class RecordingLLMClient:
         output_data: LLMOutput,  # This is for generate_response
     ) -> None:
         # Ensure output_data is serializable (LLMOutput should be)
-        record = {"input": input_data, "output": output_data.__dict__}
+        # Convert ToolCallItem objects to dicts for JSON serialization
+        output_dict = asdict(output_data)
+        record = {"input": input_data, "output": output_dict}
         await self._write_record_to_file(record)
 
     async def _write_record_to_file(self, record: dict[str, Any]) -> None:
@@ -774,19 +793,42 @@ class PlaybackLLMClient:
             if record.get("input") == current_input_args:
                 logger.info(f"Found matching interaction in {self.recording_path}.")
                 output_data = record["output"]
-                if not isinstance(output_data, dict) or not all(
-                    k in output_data for k in ["content", "tool_calls"]
-                ):  # Basic check for LLMOutput structure
+                if not isinstance(output_data, dict):
                     logger.error(
-                        f"Recorded output for matched input is not a valid LLMOutput structure: {output_data}"
+                        f"Recorded output for matched input is not a dict: {output_data}"
                     )
-                    raise LookupError(
-                        "Matched recorded output is not a valid LLMOutput structure."
-                    )
+                    raise LookupError("Matched recorded output is not a dictionary.")
+
+                # Reconstruct ToolCallItem objects from dicts
+                tool_calls_data = output_data.get("tool_calls")
+                reconstructed_tool_calls: list[ToolCallItem] | None = None
+                if isinstance(tool_calls_data, list):
+                    reconstructed_tool_calls = []
+                    for tc_dict in tool_calls_data:
+                        if isinstance(tc_dict, dict):
+                            func_dict = tc_dict.get("function")
+                            if isinstance(func_dict, dict):
+                                tool_call_function = ToolCallFunction(
+                                    name=func_dict.get("name", "unknown_playback_func"),
+                                    arguments=func_dict.get("arguments", "{}"),
+                                )
+                                reconstructed_tool_calls.append(
+                                    ToolCallItem(
+                                        id=tc_dict.get("id", "unknown_playback_id"),
+                                        type=tc_dict.get("type", "function"),
+                                        function=tool_call_function,
+                                    )
+                                )
+                            else:
+                                logger.warning(f"Skipping malformed function dict in playback: {func_dict}")
+                        else:
+                            logger.warning(f"Skipping malformed tool_call item in playback: {tc_dict}")
+                elif tool_calls_data is not None:
+                     logger.warning(f"Expected list for tool_calls in playback, got {type(tool_calls_data)}")
 
                 matched_output = LLMOutput(
                     content=output_data.get("content"),
-                    tool_calls=output_data.get("tool_calls"),
+                    tool_calls=reconstructed_tool_calls,
                     reasoning_info=output_data.get("reasoning_info"),
                 )
                 logger.debug(

@@ -234,62 +234,31 @@ class ProcessingService:
                         f"LLM provided no text content in iteration {current_iteration}."
                     )
 
-                # --- Serialize tool_calls from LLM output before use ---
-                raw_tool_calls_from_llm = llm_output.tool_calls
-                serialized_tool_calls_for_turn = (
-                    None  # This will be used for the rest of the turn
-                )
-                if raw_tool_calls_from_llm:
+                # --- Convert ToolCallItem objects to dicts for storage/LLM API ---
+                # raw_tool_calls_from_llm is now list[ToolCallItem] | None
+                raw_tool_call_items_from_llm = llm_output.tool_calls
+                
+                # serialized_tool_calls_for_turn will be list[dict[str, Any]] | None
+                # This is what gets stored in DB and sent to next LLM call.
+                serialized_tool_calls_for_turn = None
+                if raw_tool_call_items_from_llm:
                     serialized_tool_calls_for_turn = []
-                    for tc_data in raw_tool_calls_from_llm:
-                        if not isinstance(tc_data, dict):
-                            logger.error(f"Skipping non-dict tool_call item: {tc_data}")
-                            continue
-
-                        current_tc_id = tc_data.get("id")
-                        current_tc_type = tc_data.get("type")
-
-                        if not current_tc_id or not current_tc_type:
-                            logger.warning(
-                                f"Tool call item missing 'id' or 'type' in raw_tool_calls_from_llm: {tc_data}. Skipping."
-                            )
-                            continue
-
-                        serialized_tc_item = {
-                            "id": current_tc_id,
-                            "type": current_tc_type,
+                    for tool_call_item in raw_tool_call_items_from_llm:
+                        # Convert ToolCallItem and its ToolCallFunction to dicts
+                        # This uses dataclasses.asdict implicitly if ToolCallItem is a dataclass
+                        # or requires manual conversion if it's a NamedTuple.
+                        # Since we chose dataclass, asdict is the way.
+                        # However, asdict is recursive. We want a specific structure.
+                        tool_call_dict = {
+                            "id": tool_call_item.id,
+                            "type": tool_call_item.type,
+                            "function": {
+                                "name": tool_call_item.function.name,
+                                "arguments": tool_call_item.function.arguments,
+                            },
                         }
-
-                        # function_details is expected to be a dict from LLMOutput (or None)
-                        function_details_dict = tc_data.get("function")
-
-                        if isinstance(function_details_dict, dict):
-                            # Ensure 'name' and 'arguments' keys exist, even if llm.py should guarantee it.
-                            if (
-                                "name" in function_details_dict
-                                and "arguments" in function_details_dict
-                            ):
-                                serialized_tc_item["function"] = function_details_dict
-                            else:
-                                logger.error(
-                                    f"Tool call {current_tc_id} function details dict is missing 'name' or 'arguments': {function_details_dict}"
-                                )
-                                serialized_tc_item["function"] = {
-                                    "name": "incomplete_function_data_in_processing",
-                                    "arguments": "{}",
-                                }
-                        else:
-                            # Handles if function_details_dict is None or not a dict
-                            logger.error(
-                                f"Tool call {current_tc_id} has malformed or missing function details. Expected dict, got {type(function_details_dict)}: {function_details_dict}"
-                            )
-                            serialized_tc_item["function"] = {
-                                "name": "malformed_or_missing_function_data_in_processing",
-                                "arguments": "{}",
-                            }
-
-                        serialized_tool_calls_for_turn.append(serialized_tc_item)
-                # --- End of tool_calls serialization ---
+                        serialized_tool_calls_for_turn.append(tool_call_dict)
+                # --- End of ToolCallItem to dict conversion ---
 
                 # --- Add Assistant Message to Turn History ---
                 # This includes the LLM's text response AND any tool calls it requested
@@ -327,20 +296,24 @@ class ProcessingService:
                 # --- Execute Tool Calls and Prepare Responses ---
                 # --- Execute Tool Calls and Prepare Responses ---
                 tool_response_messages_for_llm = []  # For next LLM call context
-                # Iterate over the serialized version of tool calls
-                for tool_call_dict in serialized_tool_calls_for_turn:
-                    call_id = tool_call_dict.get(
-                        "id"
-                    )  # Already checked for presence above
-                    function_info = tool_call_dict.get(
-                        "function", {}
-                    )  # Should be a dict now
-                    function_name = function_info.get("name")
-                    function_args_str = function_info.get("arguments", "{}")
+                # Iterate over the ToolCallItem objects if they exist
+                # raw_tool_call_items_from_llm is list[ToolCallItem] | None
+                if raw_tool_call_items_from_llm:
+                    for tool_call_item_obj in raw_tool_call_items_from_llm:
+                        call_id = tool_call_item_obj.id
+                        function_name = tool_call_item_obj.function.name
+                        function_args_str = tool_call_item_obj.function.arguments
 
-                    if not call_id or not function_name:
-                        logger.error(
-                            f"Skipping invalid tool call dict in iteration {current_iteration}: {tool_call_dict}"
+                        # Note: Validation for presence of id, type, function.name, function.arguments
+                        # should ideally be handled during ToolCallItem creation in LiteLLMClient.
+                        # Here, we assume they are valid if the object was created.
+
+                        # The following error handling for missing call_id or function_name
+                        # might be redundant if LiteLLMClient guarantees valid objects.
+                        # However, keeping a light check for robustness.
+                        if not call_id or not function_name:
+                            logger.error(
+                                f"Skipping invalid tool call object in iteration {current_iteration}: id='{call_id}', name='{function_name}'"
                         )
                         # Define the error message content
                         error_content = "Error: Invalid tool call structure."
