@@ -98,6 +98,12 @@ async def telegram_handler_fixture(
     mock_telegram_service.new_task_event = (
         asyncio.Event()
     )  # Add new_task_event attribute
+    # Add the chat_interface attribute, using the real TelegramChatInterface with the mock application
+    from family_assistant.telegram_bot import (
+        TelegramChatInterface,  # Import locally to avoid circularity if moved
+    )
+
+    mock_telegram_service.chat_interface = TelegramChatInterface(mock_application)
 
     # 2. Instantiate Real Components with Mocks
     # Configure ToolsProvider (using Local for simplicity initially)
