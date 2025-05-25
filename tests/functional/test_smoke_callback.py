@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # LLMOutput removed
+from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import necessary components from the application
@@ -94,17 +95,17 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     schedule_response = MockLLMOutput(  # Use the mock's LLMOutput
         content=f"OK, I will schedule a callback for {callback_time_iso} with context: '{CALLBACK_CONTEXT}'.",
         tool_calls=[
-            {
-                "id": schedule_tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": "schedule_future_callback",
-                    "arguments": json.dumps({
+            ToolCallItem(
+                id=schedule_tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name="schedule_future_callback",
+                    arguments=json.dumps({
                         "callback_time": callback_time_iso,
                         "context": CALLBACK_CONTEXT,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     schedule_rule: Rule = (schedule_matcher, schedule_response)
