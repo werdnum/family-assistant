@@ -195,15 +195,16 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
 
     # Instantiate Task Worker
     # Add a mock embedding generator for the TaskWorker
-    mock_embedding_generator = (
-        MagicMock()
-    )  # Using a simple MagicMock for this test's purpose
+    mock_embedding_generator = MagicMock()
+    mock_chat_interface_for_worker = MagicMock()  # For TaskWorker
+
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
-        application=mock_application,
+        chat_interface=mock_chat_interface_for_worker,  # Pass ChatInterface
+        new_task_event=test_new_task_event,  # Pass the event from above
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
-        embedding_generator=mock_embedding_generator,  # Pass the generator
+        embedding_generator=mock_embedding_generator,
     )
     # Register the necessary handler for this test
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
@@ -228,7 +229,8 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
             schedule_error,
         ) = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,  # Renamed db_context
-            application=mock_application,  # Pass mock application
+            chat_interface=mock_chat_interface_for_worker,  # Pass ChatInterface used by worker
+            new_task_event=test_new_task_event,  # Pass event
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
             turn_id=str(uuid.uuid4()),  # Added turn_id
