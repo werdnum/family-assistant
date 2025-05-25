@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from telegram.ext import Application  # Keep Application for type checking
-
     from family_assistant.embeddings import EmbeddingGenerator  # Add this import
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
@@ -41,7 +39,6 @@ class ToolExecutionContext:
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     turn_id: str | None  # The ID of the current processing turn
     db_context: "DatabaseContext"
-    application: Optional["Application"] = None
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC"  # Default, should be overridden
     request_confirmation_callback: (
