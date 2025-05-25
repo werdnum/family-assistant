@@ -22,6 +22,8 @@ from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 # CHANGED: LLMOutput from family_assistant.llm aliased
+from family_assistant.llm import ToolCallFunction, ToolCallItem
+
 # Import mock LLM helpers
 # CHANGED: LLMOutput and RuleBasedMockLLMClient added here
 from tests.mocks.mock_llm import (
@@ -219,16 +221,16 @@ async def test_add_note_tool_usage(
     add_note_tool_call = LLMOutput(
         content=llm_tool_request_text,  # Optional text
         tool_calls=[
-            {
-                "id": tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": "add_or_update_note",
-                    "arguments": json.dumps(  # Use json.dumps
+            ToolCallItem(
+                id=tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name="add_or_update_note",
+                    arguments=json.dumps(  # Use json.dumps
                         {"title": test_note_title, "content": test_note_content}
                     ),
-                },
-            }
+                ),
+            )
         ],
     )
     rule_add_note_request: Rule = (add_note_matcher, add_note_tool_call)
@@ -357,17 +359,17 @@ async def test_tool_result_in_subsequent_history(
     add_note_tool_call_t1 = LLMOutput(
         content=llm_tool_request_text_1,
         tool_calls=[
-            {
-                "id": tool_call_id_1,
-                "type": "function",
-                "function": {
-                    "name": "add_or_update_note",
-                    "arguments": json.dumps({
+            ToolCallItem(
+                id=tool_call_id_1,
+                type="function",
+                function=ToolCallFunction(
+                    name="add_or_update_note",
+                    arguments=json.dumps({
                         "title": test_note_title,
                         "content": test_note_content,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     rule_add_note_request_t1: Rule = (add_note_matcher_t1, add_note_tool_call_t1)
