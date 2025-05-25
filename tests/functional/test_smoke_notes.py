@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine  # Added for type hints
 from family_assistant.context_providers import (
     NotesContextProvider,
 )
-from family_assistant.llm import LLMInterface, LLMOutput  # Keep Interface and Output
+from family_assistant.llm import LLMInterface  # Keep Interface
 
 # Import necessary classes for instantiation
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -35,6 +35,9 @@ from family_assistant.tools import (
 )
 
 # Import the rule-based mock
+from tests.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
+)
 from tests.mocks.mock_llm import (
     MatcherArgs,  # Added import
     Rule,
@@ -90,7 +93,7 @@ async def test_add_and_retrieve_note_rule_mock(
             and tools is not None  # Check that tools were actually provided
         )
 
-    add_note_response = LLMOutput(
+    add_note_response = MockLLMOutput(  # Use the mock's LLMOutput
         content="OK, I will add that note via the rule-based mock.",
         tool_calls=[
             {
@@ -121,7 +124,7 @@ async def test_add_and_retrieve_note_rule_mock(
             and f"note titled '{test_note_title}'".lower() in last_text
         )
 
-    retrieve_note_response = LLMOutput(
+    retrieve_note_response = MockLLMOutput(  # Use the mock's LLMOutput
         content=f"Rule-based mock says: The note '{test_note_title}' contains: {TEST_NOTE_CONTENT}",
         tool_calls=None,  # No tool call for retrieval
     )
