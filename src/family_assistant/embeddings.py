@@ -7,7 +7,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable  # Added Type, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from litellm import aembedding
 from litellm.exceptions import (
@@ -19,15 +19,22 @@ from litellm.exceptions import (
 )
 
 # Declare module/class variables that will be conditionally populated
-_SentenceTransformer_cls: type[Any] | None = None
+if TYPE_CHECKING:
+    from sentence_transformers import (  # pyright: ignore[reportMissingTypeStubs]
+        SentenceTransformer,
+    )
+
+_SentenceTransformer_cls: type["SentenceTransformer"] | None = None
 _np_module: Any | None = None
 SENTENCE_TRANSFORMERS_AVAILABLE: bool  # Will be set in the try/except block
 
 # Import sentence-transformers if available, otherwise skip the class definition
 try:
     # sentence-transformers returns numpy arrays or torch tensors, need numpy for conversion
-    import numpy
-    from sentence_transformers import SentenceTransformer as ActualSentenceTransformer
+    import numpy  # pyright: ignore[reportMissingTypeStubs]
+    from sentence_transformers import (  # pyright: ignore[reportMissingTypeStubs]
+        SentenceTransformer as ActualSentenceTransformer,
+    )
 
     _np_module = numpy
     _SentenceTransformer_cls = ActualSentenceTransformer
