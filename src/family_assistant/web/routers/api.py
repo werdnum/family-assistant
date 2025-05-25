@@ -76,8 +76,8 @@ async def execute_tool_api(
         conversation_id=f"api_call_{uuid.uuid4()}",
         turn_id=f"api_turn_{uuid.uuid4()}",
         db_context=db_context,
+        chat_interface=None,  # No direct chat interface for API calls
         timezone_str=timezone_str,  # Pass fetched timezone string
-        application=None,  # No Telegram app here
         request_confirmation_callback=None,  # No confirmation from API for now
         processing_service=None,  # API endpoint doesn't have access to this
     )
