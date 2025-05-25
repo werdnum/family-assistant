@@ -126,11 +126,15 @@ async def indexing_task_worker(
     mock_application = MagicMock()
     # Ensure the mock_pipeline_embedding_generator is set on the mock_application's state
     # so that TaskWorker can pick it up when creating ToolExecutionContext.
-    mock_application.state.embedding_generator = mock_pipeline_embedding_generator
+    # mock_application.state.embedding_generator = mock_pipeline_embedding_generator # No longer needed this way
+
+    mock_chat_interface_for_worker = MagicMock()
+    new_task_event_for_worker = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=MagicMock(),  # Use MagicMock for ProcessingService
-        application=mock_application,
+        chat_interface=mock_chat_interface_for_worker,
+        new_task_event=new_task_event_for_worker,
         embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
         timezone_str="UTC",
@@ -215,7 +219,8 @@ async def test_indexing_pipeline_e2e(
                 conversation_id="test-indexing-conv",
                 turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
-                application=MagicMock(),  # Provide a mock application object
+                chat_interface=MagicMock(),  # Provide a mock ChatInterface
+                new_task_event=test_new_task_event,  # Pass the event from fixture
                 embedding_generator=mock_pipeline_embedding_generator,
             )
 
@@ -422,7 +427,8 @@ async def test_indexing_pipeline_pdf_processing(
                 conversation_id="test-pdf-pipeline-conv",
                 turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
-                application=MagicMock(),
+                chat_interface=MagicMock(),  # Provide a mock ChatInterface
+                new_task_event=test_new_task_event,  # Pass the event from fixture
                 embedding_generator=mock_pipeline_embedding_generator,
             )
 

@@ -288,7 +288,8 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
             processing_error_traceback,
         ) = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,
-            application=MagicMock(),
+            chat_interface=MagicMock(),  # Add mock ChatInterface
+            new_task_event=asyncio.Event(),  # Add new_task_event
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             turn_id=str(uuid.uuid4()),  # Added turn_id
@@ -498,7 +499,8 @@ async def test_mcp_time_conversion_sse(
             processing_error_traceback,
         ) = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,
-            application=MagicMock(),
+            chat_interface=MagicMock(),  # Add mock ChatInterface
+            new_task_event=asyncio.Event(),  # Add new_task_event
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             turn_id=str(uuid.uuid4()),  # Added turn_id

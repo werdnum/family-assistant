@@ -1,11 +1,9 @@
 import asyncio
 import json  # Added json import
 import logging
-
-# Import storage functions for assertion (will use the patched engine)
 import uuid  # Added for turn_id
-from typing import TYPE_CHECKING  # Added TYPE_CHECKING
-from unittest.mock import MagicMock  # For mocking Application
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import text  # To query DB directly for assertion
@@ -219,7 +217,8 @@ async def test_add_and_retrieve_note_rule_mock(
             add_error,
         ) = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,  # Pass the context
-            application=mock_application,
+            chat_interface=MagicMock(),  # Add mock ChatInterface
+            new_task_event=asyncio.Event(),  # Add new_task_event
             interface_type="test",  # Added interface type
             conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
             turn_id=str(uuid.uuid4()),  # Added turn_id
@@ -228,7 +227,6 @@ async def test_add_and_retrieve_note_rule_mock(
                 user_message_id_add
             ),  # Added missing argument
             user_name=TEST_USER_NAME,
-            # model_name argument removed
         )
     # Assertions remain outside the context manager
     assert add_error is None, (
@@ -289,16 +287,16 @@ async def test_add_and_retrieve_note_rule_mock(
             retrieve_error,
         ) = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,  # Pass the context
+            chat_interface=MagicMock(),  # Add mock ChatInterface
+            new_task_event=asyncio.Event(),  # Add new_task_event
             interface_type="test",  # Added missing interface type
             conversation_id=str(TEST_CHAT_ID),  # Added missing conversation ID
-            application=mock_application,
             turn_id=str(uuid.uuid4()),  # Added turn_id
             trigger_content_parts=retrieve_note_trigger,
             trigger_interface_message_id=str(
                 user_message_id_retrieve
             ),  # Added missing argument
             user_name=TEST_USER_NAME,
-            # model_name argument removed
         )
 
         # model_name argument removed
