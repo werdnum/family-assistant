@@ -22,6 +22,7 @@ from family_assistant import (
 
 # --- NEW: Import ContextProvider ---
 from .context_providers import ContextProvider
+from .interfaces import ChatInterface  # Import ChatInterface
 
 # Import the LLM interface and output structure
 from .llm import LLMInterface, LLMOutput
@@ -135,10 +136,12 @@ class ProcessingService:
         interface_type: str,
         conversation_id: str,
         turn_id: str,  # Added turn_id
+        chat_interface: ChatInterface | None,  # Added chat_interface
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
             Callable[
-                [int, str, str | None, str, str, dict[str, Any], float], Awaitable[bool]
+                [str, str, str | None, str, str, dict[str, Any], float],
+                Awaitable[bool],  # Changed int to str
             ]
             | None
         ) = None,
@@ -155,6 +158,8 @@ class ProcessingService:
             # --- Updated args based on refactoring plan ---
             interface_type: Identifier for the interaction interface (e.g., 'telegram').
             conversation_id: Identifier for the conversation (e.g., chat ID string).
+            turn_id: The ID for the current processing turn.
+            chat_interface: The interface for sending messages back to the chat.
             request_confirmation_callback: Function to request user confirmation for tools.
 
         Returns:
@@ -382,6 +387,7 @@ class ProcessingService:
                             conversation_id=conversation_id,
                             turn_id=turn_id,
                             db_context=db_context,
+                            chat_interface=chat_interface,  # Pass chat_interface
                             timezone_str=self.timezone_str,
                             request_confirmation_callback=request_confirmation_callback,
                             processing_service=self,
@@ -554,10 +560,12 @@ class ProcessingService:
         user_name: str,
         turn_id: str | None = None,  # Made turn_id optional, moved after non-defaults
         replied_to_interface_id: str | None = None,  # Added for reply context
+        chat_interface: ChatInterface | None = None,  # Added chat_interface
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
             Callable[
-                [int, str, str | None, str, str, dict[str, Any], float], Awaitable[bool]
+                [str, str, str | None, str, str, dict[str, Any], float],
+                Awaitable[bool],  # Changed int to str
             ]
             | None
         ) = None,
@@ -574,6 +582,7 @@ class ProcessingService:
             trigger_interface_message_id: The interface-specific ID of the triggering message.
             user_name: The user name to format into the system prompt.
             replied_to_interface_id: Optional interface-specific ID of the message being replied to.
+            chat_interface: Optional interface for sending messages back to the chat.
             request_confirmation_callback: Optional callback for tool confirmations.
 
         Returns:
@@ -806,6 +815,7 @@ class ProcessingService:
                 interface_type=interface_type,  # Pass interface_type
                 conversation_id=conversation_id,  # Pass conversation_id
                 turn_id=turn_id,  # Pass the turn_id
+                chat_interface=chat_interface,  # Pass chat_interface
                 request_confirmation_callback=request_confirmation_callback,
             )
             # Add context info (turn_id, etc.) to each generated message *before* returning # Marked line 641
