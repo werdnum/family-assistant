@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 class ConfirmationCallbackProtocol(Protocol):
     async def __call__(
         self,
-        chat_id: int,
+        conversation_id: str,  # Changed from chat_id: int
         interface_type: str,
         turn_id: str | None,
         prompt_text: str,
