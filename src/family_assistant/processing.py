@@ -402,6 +402,9 @@ class ProcessingService:
                             context=tool_execution_context,
                         )
                         logger.debug(
+                            f"Tool '{function_name}' (call_id: {call_id}) executed. Result type: {type(tool_response_content)}. Result (first 200 chars): {str(tool_response_content)[:200]}"
+                        )
+                        logger.debug(
                             f"Tool '{function_name}' executed successfully, result: {str(tool_response_content)[:200]}..."
                         )
                     except ToolNotFoundError as tnfe:
