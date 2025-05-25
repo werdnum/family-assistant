@@ -152,6 +152,69 @@ def test_format_history_with_tool_call(processing_service: ProcessingService) ->
     assert actual_output == expected_output
 
 
+def test_format_history_preserves_leading_tool_and_assistant_tool_calls(
+    processing_service: ProcessingService,
+) -> None:
+    """
+    Test that _format_history_for_llm correctly formats and preserves
+    leading 'tool' messages and 'assistant' messages with 'tool_calls'.
+    The actual pruning of such leading messages happens later in
+    generate_llm_response_for_chat, which consumes the output of this method.
+    """
+    tool_call_id1 = "call_t1"
+    tool_call_id2 = "call_a2"
+    tool_name2 = "another_tool"
+    tool_args2 = {"param": "value"}
+
+    history_messages = [
+        {
+            "role": "tool",
+            "tool_call_id": tool_call_id1,
+            "content": "Response from first tool",
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": tool_call_id2,
+                    "type": "function",
+                    "function": {
+                        "name": tool_name2,
+                        "arguments": json.dumps(tool_args2),
+                    },
+                }
+            ],
+        },
+        {"role": "user", "content": "Follow-up user message"},
+    ]
+
+    expected_output = [
+        {
+            "role": "tool",
+            "tool_call_id": tool_call_id1,
+            "content": "Response from first tool",
+        },
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": tool_call_id2,
+                    "type": "function",
+                    "function": {
+                        "name": tool_name2,
+                        "arguments": json.dumps(tool_args2),
+                    },
+                }
+            ],
+        },
+        {"role": "user", "content": "Follow-up user message"},
+    ]
+
+    actual_output = processing_service._format_history_for_llm(history_messages)
+    assert actual_output == expected_output
+
+
 def test_format_history_filters_errors(processing_service: ProcessingService) -> None:
     """Test that messages with role 'error' are filtered out."""
     history_messages = [
