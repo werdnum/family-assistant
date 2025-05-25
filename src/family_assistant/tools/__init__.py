@@ -1807,12 +1807,13 @@ class ConfirmingToolsProvider(ToolsProvider):
                 # Determine chat_id_for_callback. This must be an int.
                 # If context.conversation_id is not a valid int string, int() will raise ValueError,
                 # which will be caught by the outer `except Exception as conf_err` block.
-                chat_id_for_callback: int = int(context.conversation_id)
+                # The callback now expects conversation_id as a string.
+                # chat_id_for_callback: int = int(context.conversation_id) # No longer needed
 
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
                 # Pass arguments by keyword to ensure correct mapping, especially for mocks.
                 user_confirmed = await typed_callback(
-                    chat_id=chat_id_for_callback,
+                    conversation_id=context.conversation_id,  # Pass conversation_id (string)
                     interface_type=context.interface_type,
                     turn_id=context.turn_id,
                     prompt_text=confirmation_prompt,
