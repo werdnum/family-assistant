@@ -1008,14 +1008,16 @@ async def test_keyword_filtering(
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
     dummy_timezone_str_kw = "UTC"
-    # Re-using mock_chat_interface_kw and worker_new_task_event_kw from the ranking test section
-    # as this is a similar setup. If distinct mocks are needed, define new ones.
+    # Define new mocks for this test scope
+    mock_chat_interface_keyword_test = MagicMock()
+    worker_new_task_event_keyword_test = asyncio.Event()
+
     worker = TaskWorker(
         processing_service=MagicMock(
             spec=ProcessingService
         ),  # No processing service needed for this handler
-        chat_interface=mock_chat_interface_kw,  # Assuming reuse is ok
-        new_task_event=worker_new_task_event_kw,  # Assuming reuse is ok
+        chat_interface=mock_chat_interface_keyword_test,
+        new_task_event=worker_new_task_event_keyword_test,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,  # Now defined
         timezone_str=dummy_timezone_str_kw,
