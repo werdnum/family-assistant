@@ -267,14 +267,16 @@ class TaskWorker:
     def __init__(
         self,
         processing_service: ProcessingService,
-        chat_interface: ChatInterface,  # Changed from application
+        chat_interface: ChatInterface,
+        new_task_event: asyncio.Event,  # Add new_task_event
         calendar_config: dict[str, Any],
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
-        self.chat_interface = chat_interface  # Store ChatInterface
+        self.chat_interface = chat_interface
+        self.new_task_event = new_task_event  # Store the event
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.embedding_generator = embedding_generator
@@ -378,7 +380,8 @@ class TaskWorker:
                     uuid.uuid4()
                 ),  # Generate a new turn_id for this task execution
                 db_context=db_context,
-                chat_interface=self.chat_interface,  # Pass ChatInterface
+                chat_interface=self.chat_interface,
+                new_task_event=self.new_task_event,  # Pass the event
                 timezone_str=self.timezone_str,
                 processing_service=self.processing_service,
                 embedding_generator=self.embedding_generator,

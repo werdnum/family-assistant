@@ -160,6 +160,7 @@ class ProcessingService:
             conversation_id: Identifier for the conversation (e.g., chat ID string).
             turn_id: The ID for the current processing turn.
             chat_interface: The interface for sending messages back to the chat.
+            new_task_event: Event to notify task worker.
             request_confirmation_callback: Function to request user confirmation for tools.
 
         Returns:
@@ -387,7 +388,8 @@ class ProcessingService:
                             conversation_id=conversation_id,
                             turn_id=turn_id,
                             db_context=db_context,
-                            chat_interface=chat_interface,  # Pass chat_interface
+                            chat_interface=chat_interface,
+                            new_task_event=new_task_event,  # Pass new_task_event
                             timezone_str=self.timezone_str,
                             request_confirmation_callback=request_confirmation_callback,
                             processing_service=self,
@@ -583,6 +585,7 @@ class ProcessingService:
             user_name: The user name to format into the system prompt.
             replied_to_interface_id: Optional interface-specific ID of the message being replied to.
             chat_interface: Optional interface for sending messages back to the chat.
+            new_task_event: Optional event to notify task worker.
             request_confirmation_callback: Optional callback for tool confirmations.
 
         Returns:
@@ -815,7 +818,8 @@ class ProcessingService:
                 interface_type=interface_type,  # Pass interface_type
                 conversation_id=conversation_id,  # Pass conversation_id
                 turn_id=turn_id,  # Pass the turn_id
-                chat_interface=chat_interface,  # Pass chat_interface
+                chat_interface=chat_interface,
+                new_task_event=new_task_event,  # Pass new_task_event
                 request_confirmation_callback=request_confirmation_callback,
             )
             # Add context info (turn_id, etc.) to each generated message *before* returning # Marked line 641

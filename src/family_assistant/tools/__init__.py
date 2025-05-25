@@ -265,6 +265,7 @@ async def schedule_future_callback_tool(
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
+            notify_event=exec_context.new_task_event,  # Use event from context
         )
         logger.info(
             f"Scheduled LLM callback task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
