@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from family_assistant.embeddings import EmbeddingGenerator  # Add this import
+    from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
 
@@ -20,15 +21,15 @@ class ToolExecutionContext:
 
     Attributes:
         interface_type: Identifier for the communication interface (e.g., 'telegram', 'web').
-        conversation_id: Unique ID for the conversation (e.g., Telegram chat ID).
+        conversation_id: Unique ID for the conversation (e.g., Telegram chat ID string, web session UUID).
         turn_id: Optional ID for the current processing turn.
         db_context: Database context for data access.
-        application: Optional Telegram application instance, if applicable.
+        chat_interface: Optional interface for sending messages back to the chat.
         timezone_str: Timezone string for localization, defaults to "UTC".
         request_confirmation_callback: Optional callback to request user confirmation.
             This function is typically called by `ConfirmingToolsProvider`.
             Expected signature:
-            (chat_id: int, interface_type: str, turn_id: str | None,
+            (conversation_id: str, interface_type: str, turn_id: str | None,
              prompt_text: str, tool_name: str, tool_args: dict[str, Any], timeout: float)
             -> Awaitable[bool]
         processing_service: Optional service for core processing logic.
@@ -39,11 +40,12 @@ class ToolExecutionContext:
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     turn_id: str | None  # The ID of the current processing turn
     db_context: "DatabaseContext"
+    chat_interface: Optional["ChatInterface"] = None  # Replaced application
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC"  # Default, should be overridden
     request_confirmation_callback: (
         Callable[
-            [int, str, str | None, str, str, dict[str, Any], float],
+            [str, str, str | None, str, str, dict[str, Any], float],  # Changed chat_id to str
             Awaitable[bool],
         ]
         | None
