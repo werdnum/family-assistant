@@ -1,3 +1,4 @@
+import asyncio  # Add asyncio for Event type hint
 import json
 import logging
 import traceback  # Added for error traceback
