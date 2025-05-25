@@ -193,31 +193,27 @@ async def task_worker_manager() -> AsyncGenerator[
     registered by default. Tests using this fixture are responsible for
     registering necessary handlers on the yielded worker instance.
     """
-    mock_application = MagicMock()  # Generic mock, tests can replace if needed
-    # Add a default mock embedding generator for the TaskWorker in the fixture
-    mock_embedding_gen = (
-        MagicMock()
-    )  # Simple MagicMock, tests can customize if needed by replacing app state
-    mock_application.state.embedding_generator = (
-        mock_embedding_gen  # Make it accessible if needed
-    )
+    mock_chat_interface = MagicMock()  # Mock ChatInterface
+    mock_embedding_gen = MagicMock()
+    new_task_event_for_worker = asyncio.Event()  # Event for the worker itself
 
     worker = TaskWorker(
-        processing_service=MagicMock(
-            spec=ProcessingService
-        ),  # Provide a mock ProcessingService
-        application=mock_application,
-        calendar_config={},  # Default
-        timezone_str="UTC",  # Default
-        embedding_generator=mock_embedding_gen,  # Pass the generator
+        processing_service=MagicMock(spec=ProcessingService),
+        chat_interface=mock_chat_interface,  # Pass mock ChatInterface
+        new_task_event=new_task_event_for_worker,  # Pass the event for task notification
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=mock_embedding_gen,
     )
 
     worker_task_handle = None
     shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
+    # new_task_event is now new_task_event_for_worker, which is passed to worker.run
 
     try:
-        worker_task_handle = asyncio.create_task(worker.run(new_task_event))
+        # The worker.run method now takes the event it should listen on.
+        # This is the same event that tasks will use to notify it.
+        worker_task_handle = asyncio.create_task(worker.run(new_task_event_for_worker))
         logger.info("Started background TaskWorker (fixture).")
         await asyncio.sleep(0.1)  # Give worker time to start
         yield worker, new_task_event, shutdown_event
