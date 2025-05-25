@@ -34,6 +34,8 @@ from family_assistant.storage.tasks import tasks_table
 
 if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService
+# Import test helpers
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.storage.vector import (
     query_vectors,
 )  # Import Document protocol
@@ -48,8 +50,6 @@ from family_assistant.utils.scraping import (  # Assuming MockScraper is here
 from family_assistant.web.app_creator import (
     app as fastapi_app,
 )
-
-# Import test helpers
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (  # Added
     LLMOutput as MockLLMOutputForClient,  # Aliased for clarity
@@ -682,14 +682,14 @@ async def test_document_indexing_with_llm_summary_e2e(
     mock_llm_output = MockLLMOutputForClient(
         content=None,
         tool_calls=[
-            {
-                "id": "call_summary_123",
-                "type": "function",
-                "function": {
-                    "name": "extract_summary",
-                    "arguments": json.dumps({"summary": EXPECTED_LLM_SUMMARY}),
-                },
-            }
+            ToolCallItem(
+                id="call_summary_123",
+                type="function",
+                function=ToolCallFunction(
+                    name="extract_summary",
+                    arguments=json.dumps({"summary": EXPECTED_LLM_SUMMARY}),
+                ),
+            )
         ],
     )
     mock_llm_client = RuleBasedMockLLMClient(rules=[(summary_matcher, mock_llm_output)])
