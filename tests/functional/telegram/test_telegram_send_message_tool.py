@@ -12,6 +12,7 @@ from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 from family_assistant.context_providers import KnownUsersContextProvider
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from tests.mocks.mock_llm import (
     LLMOutput,
     MatcherArgs,
@@ -137,17 +138,17 @@ async def test_send_message_to_user_tool(
     send_message_tool_call = LLMOutput(
         content=llm_intermediate_response_to_alice,
         tool_calls=[
-            {
-                "id": tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": "send_message_to_user",
-                    "arguments": json.dumps({
+            ToolCallItem(
+                id=tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name="send_message_to_user",
+                    arguments=json.dumps({
                         "target_chat_id": bob_chat_id,
                         "message_content": message_for_bob,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     rule_send_message_request: Rule = (send_message_matcher, send_message_tool_call)
