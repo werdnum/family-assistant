@@ -835,6 +835,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
     # --- Error Handling and Registration - Moved back into TelegramUpdateHandler ---
 
+    def _serialize_update_for_error_log(
+        self, update_obj: object
+    ) -> str | dict[str, Any]:
+        """
+        Serializes the update object for error logging.
+        Returns a dict if it's an Update instance, otherwise a string.
+        """
+        if isinstance(update_obj, Update):
+            return update_obj.to_dict()  # pytype: disable=attribute-error
+        return str(update_obj)
+
     async def error_handler(self, update: object, context: CallbackContext) -> None:
         """Log the error, store it in the service, and notify the developer."""
         error = context.error
@@ -854,12 +865,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         else:
             tb_string = "No exception context available."
 
-        update_str = (
-            update.to_dict() if isinstance(update, Update) else str(update)
-        )  # pytype: disable=attribute-error
+        update_repr = self._serialize_update_for_error_log(update)
         message = (
             "An exception was raised while handling an update\n"
-            f"<pre>update = {html.escape(json.dumps(update_str, indent=2, ensure_ascii=False))}</pre>\n\n"
+            f"<pre>update = {html.escape(json.dumps(update_repr, indent=2, ensure_ascii=False))}</pre>\n\n"
             f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
             f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
             f"<pre>{html.escape(tb_string)}</pre>"
