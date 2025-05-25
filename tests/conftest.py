@@ -216,12 +216,12 @@ async def task_worker_manager() -> AsyncGenerator[
         worker_task_handle = asyncio.create_task(worker.run(new_task_event_for_worker))
         logger.info("Started background TaskWorker (fixture).")
         await asyncio.sleep(0.1)  # Give worker time to start
-        yield worker, new_task_event, shutdown_event
+        yield worker, new_task_event_for_worker, shutdown_event
     finally:
         if worker_task_handle:
             logger.info("Stopping background TaskWorker (fixture)...")
             shutdown_event.set()
-            new_task_event.set()  # Wake up worker if it's waiting on this
+            new_task_event_for_worker.set()  # Wake up worker if it's waiting on this
             try:
                 await asyncio.wait_for(worker_task_handle, timeout=5.0)
                 logger.info("Background TaskWorker (fixture) stopped gracefully.")
