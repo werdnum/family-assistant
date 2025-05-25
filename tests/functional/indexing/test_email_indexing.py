@@ -44,6 +44,10 @@ from family_assistant.indexing.processors.network_processors import (
 )  # Added
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
+
+# Import components needed for the E2E test
+# Import test helpers
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService  # Added for spec
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
@@ -60,9 +64,6 @@ from family_assistant.utils.scraping import MockScraper  # Added
 
 # Import the FastAPI app directly for the test client
 from family_assistant.web.app_creator import app as fastapi_app
-
-# Import components needed for the E2E test
-# Import test helpers
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (  # Added
     LLMOutput,
@@ -1427,14 +1428,14 @@ async def test_email_indexing_with_llm_summary_e2e(
     mock_llm_output_email = LLMOutput(
         content=None,
         tool_calls=[
-            {
-                "id": "call_email_summary_123",
-                "type": "function",
-                "function": {
-                    "name": "extract_summary",
-                    "arguments": json.dumps({"summary": EXPECTED_LLM_SUMMARY_EMAIL}),
-                },
-            }
+            ToolCallItem(
+                id="call_email_summary_123",
+                type="function",
+                function=ToolCallFunction(
+                    name="extract_summary",
+                    arguments=json.dumps({"summary": EXPECTED_LLM_SUMMARY_EMAIL}),
+                ),
+            )
         ],
     )
     mock_llm_client_email = RuleBasedMockLLMClient(
@@ -1699,30 +1700,30 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     mock_llm_output_link_positive = LLMOutput(
         content=None,
         tool_calls=[
-            {
-                "id": "call_primary_link_extract_pos",
-                "type": "function",
-                "function": {
-                    "name": "extract_primary_link",
-                    "arguments": json.dumps({
+            ToolCallItem(
+                id="call_primary_link_extract_pos",
+                type="function",
+                function=ToolCallFunction(
+                    name="extract_primary_link",
+                    arguments=json.dumps({
                         "primary_url": EXPECTED_EXTRACTED_URL,
                         "is_primary_link_email": True,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     mock_llm_output_link_negative = LLMOutput(
         content=None,
         tool_calls=[
-            {
-                "id": "call_primary_link_extract_neg",
-                "type": "function",
-                "function": {
-                    "name": "extract_primary_link",
-                    "arguments": json.dumps({"is_primary_link_email": False}),
-                },
-            }
+            ToolCallItem(
+                id="call_primary_link_extract_neg",
+                type="function",
+                function=ToolCallFunction(
+                    name="extract_primary_link",
+                    arguments=json.dumps({"is_primary_link_email": False}),
+                ),
+            )
         ],
     )
 
