@@ -132,7 +132,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # --- Instantiate Mock LLM ---
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[schedule_rule, callback_rule],
-        default_response=LLMOutput(content="Default mock response for callback test."),
+        default_response=MockLLMOutput(content="Default mock response for callback test."),
     )
     logger.info("Using RuleBasedMockLLMClient for callback test.")
 
