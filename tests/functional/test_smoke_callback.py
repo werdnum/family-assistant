@@ -3,12 +3,14 @@ import json
 import logging
 import uuid  # Added for turn_id
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING  # Added TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.llm import LLMInterface  # LLMOutput removed
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMInterface  # LLMOutput removed
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import necessary components from the application
@@ -132,7 +134,9 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # --- Instantiate Mock LLM ---
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[schedule_rule, callback_rule],
-        default_response=MockLLMOutput(content="Default mock response for callback test."),
+        default_response=MockLLMOutput(
+            content="Default mock response for callback test."
+        ),
     )
     logger.info("Using RuleBasedMockLLMClient for callback test.")
 
