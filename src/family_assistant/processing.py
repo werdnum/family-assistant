@@ -15,9 +15,6 @@ from typing import (
 
 import pytz  # Added
 
-# Import Application type hint
-from telegram.ext import Application
-
 # Import storage and calendar integration for context building
 from family_assistant import (
     storage,
@@ -138,7 +135,6 @@ class ProcessingService:
         interface_type: str,
         conversation_id: str,
         turn_id: str,  # Added turn_id
-        application: Application,
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
             Callable[
@@ -159,7 +155,6 @@ class ProcessingService:
             # --- Updated args based on refactoring plan ---
             interface_type: Identifier for the interaction interface (e.g., 'telegram').
             conversation_id: Identifier for the conversation (e.g., chat ID string).
-            application: The Telegram Application instance for context.
             request_confirmation_callback: Function to request user confirmation for tools.
 
         Returns:
@@ -387,7 +382,6 @@ class ProcessingService:
                             conversation_id=conversation_id,
                             turn_id=turn_id,
                             db_context=db_context,
-                            application=application,
                             timezone_str=self.timezone_str,
                             request_confirmation_callback=request_confirmation_callback,
                             processing_service=self,
@@ -552,7 +546,6 @@ class ProcessingService:
     async def generate_llm_response_for_chat(  # Marked line 404
         self,
         db_context: DatabaseContext,  # Added db_context
-        application: Application,
         # --- Refactored Parameters ---
         interface_type: str,
         conversation_id: str,
@@ -574,7 +567,6 @@ class ProcessingService:
 
         Args:
             db_context: The database context to use for storage operations.
-            application: The Telegram application instance.
             interface_type: Identifier for the interaction interface.
             conversation_id: Identifier for the conversation.
             trigger_content_parts: List of content parts for the triggering message.
@@ -814,7 +806,6 @@ class ProcessingService:
                 interface_type=interface_type,  # Pass interface_type
                 conversation_id=conversation_id,  # Pass conversation_id
                 turn_id=turn_id,  # Pass the turn_id
-                application=application,
                 request_confirmation_callback=request_confirmation_callback,
             )
             # Add context info (turn_id, etc.) to each generated message *before* returning # Marked line 641

@@ -14,7 +14,6 @@ from typing import Any
 
 from dateutil import rrule
 from telegram.constants import ParseMode
-from telegram.ext import Application
 from telegram.helpers import escape_markdown
 from telegramify_markdown import markdownify  # type: ignore[import-untyped]
 
@@ -300,14 +299,12 @@ class TaskWorker:
     def __init__(
         self,
         processing_service: ProcessingService,
-        application: Application,  # Add application dependency
         calendar_config: dict[str, Any],  # Add calendar config
         timezone_str: str,  # Add timezone string
         embedding_generator: EmbeddingGenerator,  # Add embedding_generator
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
-        self.application = application  # Store application instance
         self.calendar_config = calendar_config  # Store calendar config
         self.timezone_str = timezone_str  # Store timezone string
         self.embedding_generator = embedding_generator  # Store embedding_generator
@@ -411,7 +408,6 @@ class TaskWorker:
                     uuid.uuid4()
                 ),  # Generate a new turn_id for this task execution
                 db_context=db_context,
-                application=self.application,
                 timezone_str=self.timezone_str,  # Remove processing_service
                 processing_service=self.processing_service,  # Add processing service
                 embedding_generator=self.embedding_generator,  # Use stored generator
