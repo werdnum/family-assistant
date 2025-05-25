@@ -562,7 +562,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # This captures `self` (for `self.confirmation_manager`) and `chat_id` from the outer scope
                     async def confirmation_callback_wrapper(
                         # Update signature to match ConfirmationCallbackSignature Protocol
-                        chat_id: int,  # Match protocol and calling keyword
+                        conversation_id: str,  # Changed from chat_id: int
                         interface_type: str,  # Match protocol and calling keyword
                         turn_id: str | None,  # Match protocol and calling keyword
                         prompt_text: str,  # Match protocol and calling keyword
@@ -570,10 +570,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         tool_args: dict[str, Any],  # Match protocol and calling keyword
                         timeout: float,  # Match protocol and calling keyword
                     ) -> bool:
-                        # The `chat_id` from the outer scope should ideally match the `chat_id` parameter.
+                        # The `conversation_id` from the outer scope should ideally match the `conversation_id` parameter.
                         # We use the parameters passed to the callback by ProcessingService.
                         return await self.confirmation_manager.request_confirmation(
-                            chat_id=chat_id,  # Use the passed parameter
+                            conversation_id=conversation_id,  # Use the passed parameter
                             interface_type=interface_type,  # Use the passed parameter
                             turn_id=turn_id,  # Use the passed parameter
                             prompt_text=prompt_text,  # Use the passed parameter
@@ -986,7 +986,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
 
     async def request_confirmation(
         self,
-        chat_id: int,
+        conversation_id: str,  # Changed from chat_id: int
         # Add interface_type and turn_id to match the Protocol
         # Mark as unused for now if not directly used in this method's logic
         interface_type: str,  # New parameter
@@ -1001,8 +1001,17 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         confirm_uuid = str(uuid.uuid4())
         if not self.application or not self.application.bot:
             raise RuntimeError("Telegram application or bot instance not available.")
+
+        try:
+            chat_id_int = int(conversation_id)
+        except ValueError:
+            logger.error(
+                f"Invalid conversation_id for Telegram confirmation: '{conversation_id}'. Must be integer convertible."
+            )
+            return False  # Cannot send message to non-integer chat_id
+
         logger.info(
-            f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id}"
+            f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id_int}"
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -1018,7 +1027,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
 
         try:
             sent_message = await self.application.bot.send_message(
-                chat_id=chat_id,
+                chat_id=chat_id_int,  # Use integer chat_id
                 text=prompt_text,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=keyboard,
@@ -1028,7 +1037,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             )
         except Exception as send_err:
             logger.error(
-                f"Failed to send confirmation message to chat {chat_id}: {send_err}",
+                f"Failed to send confirmation message to chat {chat_id_int}: {send_err}",
                 exc_info=True,
             )
             # Don't raise here, return False to indicate failure to confirm
@@ -1055,12 +1064,12 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             try:
                 # Edit message on timeout
                 await self.application.bot.edit_message_reply_markup(
-                    chat_id=chat_id,
+                    chat_id=chat_id_int,  # Use integer chat_id
                     message_id=sent_message.message_id,
                     reply_markup=None,
                 )
                 await self.application.bot.edit_message_text(
-                    chat_id=chat_id,
+                    chat_id=chat_id_int,  # Use integer chat_id
                     message_id=sent_message.message_id,
                     text=prompt_text + "\n\n\\(Confirmation timed out\\)",
                     parse_mode=ParseMode.MARKDOWN_V2,
@@ -1264,7 +1273,7 @@ class TelegramService:
     # Add the confirmation request method to the service, delegating to the handler
     async def request_confirmation_from_user(
         self,
-        chat_id: int,
+        conversation_id: str,  # Changed from chat_id: int
         # Add interface_type and turn_id to match the Protocol for consistency,
         # even if they are just passed through.
         interface_type: str,
@@ -1278,7 +1287,7 @@ class TelegramService:
         # Delegate directly to the confirmation manager
         if self.confirmation_manager:
             return await self.confirmation_manager.request_confirmation(
-                chat_id=chat_id,
+                conversation_id=conversation_id,  # Pass string conversation_id
                 interface_type=interface_type,  # Pass new arg
                 turn_id=turn_id,  # Pass new arg
                 prompt_text=prompt_text,
