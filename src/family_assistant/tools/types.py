@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-import asyncio  # Add asyncio for Event type hint
+    import asyncio  # Add asyncio for Event type hint
 
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.interfaces import ChatInterface  # Import the new interface
@@ -66,7 +66,7 @@ class ToolExecutionContext:
     embedding_generator: Optional["EmbeddingGenerator"] = (
         None  # Add embedding_generator
     )
-    new_task_event: Optional[asyncio.Event] = None  # Add new_task_event
+    new_task_event: asyncio.Event | None = None  # Add new_task_event
 
 
 class ToolNotFoundError(LookupError):
