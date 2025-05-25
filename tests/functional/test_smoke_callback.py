@@ -196,7 +196,10 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # Instantiate Task Worker
     # Add a mock embedding generator for the TaskWorker
     mock_embedding_generator = MagicMock()
-    mock_chat_interface_for_worker = MagicMock()  # For TaskWorker
+    # Use AsyncMock for chat_interface as its methods are awaited
+    mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
+    # Set a return value for send_message as it's used by the handler
+    mock_chat_interface_for_worker.send_message.return_value = "mock_message_id_callback_response"
 
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
@@ -258,16 +261,13 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # --- Part 3: Verify Callback Execution ---
     logger.info("--- Part 3: Verifying Callback Execution ---")
 
-    # Assertion 4 (Renumbered to 2): Check if mock bot's send_message was called with the final response
-    logger.info("Checking if mock_bot.send_message was called...")
-    mock_bot.send_message.assert_called_once()
-    call_args, call_kwargs = mock_bot.send_message.call_args
-    # Compare chat_id as string, as conversation_id is stored as string
-    # The test uses interface_type="test", so handle_llm_callback passes the string conversation_id.
-    # Therefore, compare the string value from kwargs with the string representation of TEST_CHAT_ID.
-    assert call_kwargs.get("chat_id") == str(
-        TEST_CHAT_ID
-    )  # Assert string matches string
+    # Assertion 4 (Renumbered to 2): Check if the mock_chat_interface_for_worker's send_message was called
+    logger.info(
+        "Checking if mock_chat_interface_for_worker.send_message was called..."
+    )
+    mock_chat_interface_for_worker.send_message.assert_awaited_once()
+    call_args, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
+    assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
     sent_text = call_kwargs.get("text")
     assert sent_text is not None
     # Check if the *mock's* expected response content is in the sent text
