@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # LLMOutput will come from mocks
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import necessary components from the application
@@ -172,20 +173,20 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
     tool_call_response = LLMOutput(
         content=f"OK, I will convert {SOURCE_TIME} from {SOURCE_TZ} to {TARGET_TZ} using the MCP time tool.",
         tool_calls=[
-            {
-                "id": mcp_tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": MCP_TIME_TOOL_NAME,
-                    "arguments": json.dumps({
+            ToolCallItem(
+                id=mcp_tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name=MCP_TIME_TOOL_NAME,
+                    arguments=json.dumps({
                         "time": (
                             SOURCE_TIME
                         ),  # Argument name from mcp-server-time docs
                         "source_timezone": SOURCE_TZ,
                         "target_timezone": TARGET_TZ,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     tool_call_rule: Rule = (time_conversion_matcher, tool_call_response)
@@ -383,20 +384,20 @@ async def test_mcp_time_conversion_sse(
     tool_call_response = LLMOutput(
         content=f"OK, I will convert {SOURCE_TIME} from {SOURCE_TZ} to {TARGET_TZ} using the MCP time tool (via SSE).",
         tool_calls=[
-            {
-                "id": mcp_tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": MCP_TIME_TOOL_NAME,
-                    "arguments": json.dumps(
+            ToolCallItem(
+                id=mcp_tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name=MCP_TIME_TOOL_NAME,
+                    arguments=json.dumps(
                         {
                             "time": SOURCE_TIME,
                             "source_timezone": SOURCE_TZ,
                             "target_timezone": TARGET_TZ,
                         }  # Use correct arg names
                     ),
-                },
-            }
+                ),
+            )
         ],
     )
     tool_call_rule: Rule = (time_conversion_matcher, tool_call_response)
