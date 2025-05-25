@@ -1348,7 +1348,7 @@ class TelegramChatInterface(ChatInterface):
     Uses an underlying telegram.ext.Application instance to send messages.
     """
 
-    def __init__(self, application: Application):
+    def __init__(self, application: Application) -> None:
         """
         Initializes the TelegramChatInterface.
 
