@@ -45,7 +45,15 @@ class ToolExecutionContext:
     timezone_str: str = "UTC"  # Default, should be overridden
     request_confirmation_callback: (
         Callable[
-            [str, str, str | None, str, str, dict[str, Any], float],  # Changed chat_id to str
+            [
+                str,
+                str,
+                str | None,
+                str,
+                str,
+                dict[str, Any],
+                float,
+            ],  # Changed chat_id to str
             Awaitable[bool],
         ]
         | None
