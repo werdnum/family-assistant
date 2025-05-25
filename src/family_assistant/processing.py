@@ -234,15 +234,65 @@ class ProcessingService:
                         f"LLM provided no text content in iteration {current_iteration}."
                     )
 
+                # --- Serialize tool_calls from LLM output before use ---
+                raw_tool_calls_from_llm = llm_output.tool_calls
+                serialized_tool_calls_for_turn = (
+                    None  # This will be used for the rest of the turn
+                )
+                if raw_tool_calls_from_llm:
+                    serialized_tool_calls_for_turn = []
+                    for tc_data in raw_tool_calls_from_llm:
+                        if not isinstance(tc_data, dict):
+                            logger.error(f"Skipping non-dict tool_call item: {tc_data}")
+                            continue
+
+                        current_tc_id = tc_data.get("id")
+                        current_tc_type = tc_data.get("type")
+
+                        if not current_tc_id or not current_tc_type:
+                            logger.warning(
+                                f"Tool call item missing 'id' or 'type' in raw_tool_calls_from_llm: {tc_data}. Skipping."
+                            )
+                            continue
+
+                        serialized_tc_item = {
+                            "id": current_tc_id,
+                            "type": current_tc_type,
+                        }
+
+                        function_details = tc_data.get("function")
+                        if hasattr(function_details, "name") and hasattr(
+                            function_details, "arguments"
+                        ):
+                            # It's a Function object (or object with similar attributes), extract its properties
+                            serialized_tc_item["function"] = {
+                                "name": function_details.name,
+                                "arguments": function_details.arguments,
+                            }
+                        elif isinstance(function_details, dict):
+                            # It's already a dict, assume it's correctly formatted
+                            serialized_tc_item["function"] = function_details
+                        else:
+                            logger.error(
+                                f"Tool call {current_tc_id} has malformed function details: {function_details}"
+                            )
+                            # Provide a placeholder to avoid downstream errors
+                            serialized_tc_item["function"] = {
+                                "name": "malformed_function_data",
+                                "arguments": "{}",
+                            }
+
+                        serialized_tool_calls_for_turn.append(serialized_tc_item)
+                # --- End of tool_calls serialization ---
+
                 # --- Add Assistant Message to Turn History ---
                 # This includes the LLM's text response AND any tool calls it requested
                 # This message will be saved to the DB by the caller.
-                tool_calls = llm_output.tool_calls
                 assistant_message_for_turn = {
                     # Note: turn_id, interface_type, conversation_id, timestamp, thread_root_id added by caller
                     "role": "assistant",
                     "content": final_content,  # May be None if only tool calls
-                    "tool_calls": tool_calls,  # LLM's requested calls (OpenAI format)
+                    "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
                     "reasoning_info": (
                         final_reasoning_info
                     ),  # Include reasoning for this step
@@ -256,22 +306,29 @@ class ProcessingService:
                 llm_context_assistant_message = {
                     "role": "assistant",
                     "content": final_content,
-                    "tool_calls": tool_calls,
+                    "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
                 }
                 # If content is None, OpenAI API might ignore it or require empty string depending on version/model.
                 # LiteLLM generally handles None content correctly for tool_calls messages.
                 messages.append(llm_context_assistant_message)
 
                 # --- Loop Condition: Break if no tool calls requested ---
-                if not tool_calls:
-                    logger.info("LLM response received with no further tool calls.")
+                if not serialized_tool_calls_for_turn:  # Check the serialized version
+                    logger.info(
+                        "LLM response received with no further tool calls (after serialization)."
+                    )
                     break  # Exit the loop
                 # --- Execute Tool Calls and Prepare Responses ---
                 # --- Execute Tool Calls and Prepare Responses ---
                 tool_response_messages_for_llm = []  # For next LLM call context
-                for tool_call_dict in tool_calls:
-                    call_id = tool_call_dict.get("id")
-                    function_info = tool_call_dict.get("function", {})
+                # Iterate over the serialized version of tool calls
+                for tool_call_dict in serialized_tool_calls_for_turn:
+                    call_id = tool_call_dict.get(
+                        "id"
+                    )  # Already checked for presence above
+                    function_info = tool_call_dict.get(
+                        "function", {}
+                    )  # Should be a dict now
                     function_name = function_info.get("name")
                     function_args_str = function_info.get("arguments", "{}")
 
