@@ -936,6 +936,7 @@ async def main_async(
         developer_chat_id=config["developer_chat_id"],
         processing_service=processing_service,
         get_db_context_func=get_db_context,
+        new_task_event=new_task_event,  # Pass the global event
     )
 
     # Start polling using the service method
@@ -967,7 +968,8 @@ async def main_async(
 
     task_worker_instance = TaskWorker(
         processing_service=processing_service,  # Default profile's processing service
-        chat_interface=telegram_service.chat_interface,  # Pass ChatInterface
+        chat_interface=telegram_service.chat_interface,
+        new_task_event=new_task_event,  # Pass the global event
         calendar_config=default_profile_proc_config[
             "calendar_config"
         ],  # Use profile's config

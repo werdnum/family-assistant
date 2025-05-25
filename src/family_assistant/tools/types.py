@@ -8,10 +8,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from family_assistant.embeddings import EmbeddingGenerator
-    from family_assistant.interfaces import ChatInterface  # Import the new interface
-    from family_assistant.processing import ProcessingService
-    from family_assistant.storage.context import DatabaseContext
+import asyncio  # Add asyncio for Event type hint
+
+from family_assistant.embeddings import EmbeddingGenerator
+from family_assistant.interfaces import ChatInterface  # Import the new interface
+from family_assistant.processing import ProcessingService
+from family_assistant.storage.context import DatabaseContext
 
 
 @dataclass
@@ -34,6 +36,7 @@ class ToolExecutionContext:
             -> Awaitable[bool]
         processing_service: Optional service for core processing logic.
         embedding_generator: Optional generator for creating text embeddings.
+        new_task_event: Optional event to notify the task worker of new tasks.
     """
 
     interface_type: str  # e.g., 'telegram', 'web', 'email'
@@ -63,6 +66,7 @@ class ToolExecutionContext:
     embedding_generator: Optional["EmbeddingGenerator"] = (
         None  # Add embedding_generator
     )
+    new_task_event: Optional[asyncio.Event] = None  # Add new_task_event
 
 
 class ToolNotFoundError(LookupError):

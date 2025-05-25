@@ -247,6 +247,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         confirmation_manager: "TelegramConfirmationUIManager",  # Inject confirmation manager
     ) -> None:
         # Check for debug mode environment variable
+        self.new_task_event = telegram_service.new_task_event  # Get from service
         self.debug_mode = (
             os.environ.get("ASSISTANT_DEBUG_MODE", "false").lower() == "true"
         )
@@ -589,7 +590,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         processing_error_traceback,  # Capture traceback directly
                     ) = await self.processing_service.generate_llm_response_for_chat(
                         db_context=db_context,  # Pass db context
-                        chat_interface=self.telegram_service.chat_interface,  # Pass ChatInterface
+                        chat_interface=self.telegram_service.chat_interface,
+                        new_task_event=self.telegram_service.new_task_event,  # Pass event
                         interface_type=interface_type,  # Pass identifiers
                         conversation_id=conversation_id,  # Pass identifiers
                         trigger_content_parts=trigger_content_parts,
@@ -1202,7 +1204,8 @@ class TelegramService:
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
-        use_batching: bool = True,  # Add flag to control batching
+        new_task_event: asyncio.Event,  # Add new_task_event
+        use_batching: bool = True,
     ) -> None:
         """
         Initializes the Telegram Service.
@@ -1219,9 +1222,8 @@ class TelegramService:
         self.application = ApplicationBuilder().token(telegram_token).build()
         self._was_started: bool = False
         self._last_error: Exception | None = None
-        self.chat_interface = TelegramChatInterface(
-            self.application
-        )  # Create ChatInterface
+        self.chat_interface = TelegramChatInterface(self.application)
+        self.new_task_event = new_task_event  # Store the event
 
         # Store the ProcessingService instance in bot_data for access in handlers
         # Note: This assumes handlers might still need direct access via context.bot_data
