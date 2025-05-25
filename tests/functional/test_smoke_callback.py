@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # LLMOutput removed
+from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
@@ -199,7 +200,9 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # Use AsyncMock for chat_interface as its methods are awaited
     mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
     # Set a return value for send_message as it's used by the handler
-    mock_chat_interface_for_worker.send_message.return_value = "mock_message_id_callback_response"
+    mock_chat_interface_for_worker.send_message.return_value = (
+        "mock_message_id_callback_response"
+    )
 
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
@@ -262,9 +265,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     logger.info("--- Part 3: Verifying Callback Execution ---")
 
     # Assertion 4 (Renumbered to 2): Check if the mock_chat_interface_for_worker's send_message was called
-    logger.info(
-        "Checking if mock_chat_interface_for_worker.send_message was called..."
-    )
+    logger.info("Checking if mock_chat_interface_for_worker.send_message was called...")
     mock_chat_interface_for_worker.send_message.assert_awaited_once()
     call_args, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
     assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
