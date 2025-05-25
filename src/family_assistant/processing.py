@@ -314,46 +314,43 @@ class ProcessingService:
                             logger.error(
                                 f"Skipping invalid tool call object in iteration {current_iteration}: id='{call_id}', name='{function_name}'"
                             )
-                        # Define the error message content for invalid tool call structure
-                        error_content_invalid_struct = (
-                            "Error: Invalid tool call structure."
-                        )
-                        error_traceback_invalid_struct = (
-                            "Invalid tool call structure received from LLM."
-                        )
-                        safe_call_id = call_id or f"missing_id_{uuid.uuid4()}"
-                        safe_function_name = function_name or "unknown_function"
+                            # Define the error message content for invalid tool call structure
+                            error_content_invalid_struct = (
+                                "Error: Invalid tool call structure."
+                            )
+                            error_traceback_invalid_struct = (
+                                "Invalid tool call structure received from LLM."
+                            )
+                            safe_call_id = call_id or f"missing_id_{uuid.uuid4()}" # Use original call_id if available
+                            safe_function_name = function_name or "unknown_function"
 
-                        # Create the error message dictionary for the turn history
-                        tool_response_message_for_turn_invalid_struct = {
-                            "role": "tool",
-                            "tool_call_id": safe_call_id,
-                            "content": error_content_invalid_struct,
-                            "error_traceback": error_traceback_invalid_struct,
-                        }
-                        turn_messages.append(
-                            tool_response_message_for_turn_invalid_struct
-                        )
-                        # Create the error message for the *next* LLM call context
-                        llm_context_error_message_invalid_struct = {
-                            "tool_call_id": safe_call_id,
-                            "role": "tool",
-                            "name": safe_function_name,
-                            "content": error_content_invalid_struct,
-                        }
-                        tool_response_messages_for_llm.append(
-                            llm_context_error_message_invalid_struct
-                        )
-                        continue  # Skip to the next tool_call_item_obj
+                            # Create the error message dictionary for the turn history
+                            tool_response_message_for_turn_invalid_struct = {
+                                "role": "tool",
+                                "tool_call_id": safe_call_id,
+                                "content": error_content_invalid_struct,
+                                "error_traceback": error_traceback_invalid_struct,
+                            }
+                            turn_messages.append(
+                                tool_response_message_for_turn_invalid_struct
+                            )
+                            # Create the error message for the *next* LLM call context
+                            llm_context_error_message_invalid_struct = {
+                                "tool_call_id": safe_call_id,
+                                "role": "tool",
+                                "name": safe_function_name, # LLM expects name for tool role message
+                                "content": error_content_invalid_struct,
+                            }
+                            tool_response_messages_for_llm.append(
+                                llm_context_error_message_invalid_struct
+                            )
+                            continue  # Skip to the next tool_call_item_obj
+                        
+                        # If call_id and function_name are valid, proceed here.
 
-                        # The rest of the loop body should be indented to be part of the 'else'
-                        # or, more clearly, the happy path if call_id and function_name are valid.
-                        # However, the current structure processes one tool call at a time.
-                        # The error handling for parsing and execution should be for *this* tool_call_item_obj.
-
-                    # --- Argument Parsing ---
-                    try:
-                        arguments = json.loads(function_args_str)
+                        # --- Argument Parsing ---
+                        try:
+                            arguments = json.loads(function_args_str)
                     except json.JSONDecodeError:
                         logger.error(
                             f"Failed to parse arguments for tool call {function_name} (call_id: {call_id}, iteration {current_iteration}): {function_args_str}"
