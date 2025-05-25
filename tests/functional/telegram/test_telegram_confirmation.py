@@ -10,13 +10,13 @@ import telegramify_markdown  # type: ignore[import-untyped]
 from assertpy import assert_that, soft_assertions
 from telegram import Message
 
+# Import mock LLM helpers
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.tools import ConfirmingToolsProvider  # Import confirming provider
 from tests.functional.telegram.test_telegram_handler import (
     create_mock_context,
     create_mock_update,
 )
-
-# Import mock LLM helpers
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Use alias for clarity
 )
@@ -72,18 +72,18 @@ async def test_confirmation_accepted(
     request_tool_output = MockLLMOutput(  # Use MockLLMOutput for rule definition
         content=llm_request_tool_text,
         tool_calls=[
-            {
-                "id": tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": TOOL_NAME_SENSITIVE,
+            ToolCallItem(
+                id=tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name=TOOL_NAME_SENSITIVE,
                     # Arguments for add_or_update_note
-                    "arguments": json.dumps({
+                    arguments=json.dumps({
                         "title": test_note_title,
                         "content": test_note_content,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
@@ -256,18 +256,18 @@ async def test_confirmation_rejected(
     request_tool_output = MockLLMOutput(  # Use MockLLMOutput for rule definition
         content=llm_request_tool_text,
         tool_calls=[
-            {
-                "id": tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": TOOL_NAME_SENSITIVE,
+            ToolCallItem(
+                id=tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name=TOOL_NAME_SENSITIVE,
                     # Arguments for add_or_update_note
-                    "arguments": json.dumps({
+                    arguments=json.dumps({
                         "title": test_note_title,
                         "content": test_note_content,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
@@ -394,18 +394,18 @@ async def test_confirmation_timed_out(
     request_tool_output = MockLLMOutput(  # Use MockLLMOutput for rule definition
         content=llm_request_tool_text,
         tool_calls=[
-            {
-                "id": tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": TOOL_NAME_SENSITIVE,
+            ToolCallItem(
+                id=tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name=TOOL_NAME_SENSITIVE,
                     # Arguments for add_or_update_note
-                    "arguments": json.dumps({
+                    arguments=json.dumps({
                         "title": test_note_title,
                         "content": test_note_content,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
