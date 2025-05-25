@@ -321,7 +321,9 @@ class ProcessingService:
                             error_traceback_invalid_struct = (
                                 "Invalid tool call structure received from LLM."
                             )
-                            safe_call_id = call_id or f"missing_id_{uuid.uuid4()}" # Use original call_id if available
+                            safe_call_id = (
+                                call_id or f"missing_id_{uuid.uuid4()}"
+                            )  # Use original call_id if available
                             safe_function_name = function_name or "unknown_function"
 
                             # Create the error message dictionary for the turn history
@@ -338,101 +340,103 @@ class ProcessingService:
                             llm_context_error_message_invalid_struct = {
                                 "tool_call_id": safe_call_id,
                                 "role": "tool",
-                                "name": safe_function_name, # LLM expects name for tool role message
+                                "name": safe_function_name,  # LLM expects name for tool role message
                                 "content": error_content_invalid_struct,
                             }
                             tool_response_messages_for_llm.append(
                                 llm_context_error_message_invalid_struct
                             )
                             continue  # Skip to the next tool_call_item_obj
-                        
+
                         # If call_id and function_name are valid, proceed here.
 
                         # --- Argument Parsing ---
                         try:
                             arguments = json.loads(function_args_str)
-                    except json.JSONDecodeError:
-                        logger.error(
-                            f"Failed to parse arguments for tool call {function_name} (call_id: {call_id}, iteration {current_iteration}): {function_args_str}"
-                        )
-                        # Prepare error response for this specific tool call
-                        error_content_args = (
-                            f"Error: Invalid arguments format for {function_name}."
-                        )
-                        error_traceback_args = f"JSONDecodeError: {function_args_str}"
+                        except json.JSONDecodeError:
+                            logger.error(
+                                f"Failed to parse arguments for tool call {function_name} (call_id: {call_id}, iteration {current_iteration}): {function_args_str}"
+                            )
+                            # Prepare error response for this specific tool call
+                            error_content_args = (
+                                f"Error: Invalid arguments format for {function_name}."
+                            )
+                            error_traceback_args = (
+                                f"JSONDecodeError: {function_args_str}"
+                            )
 
+                            turn_messages.append({
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": error_content_args,
+                                "error_traceback": error_traceback_args,
+                            })
+                            tool_response_messages_for_llm.append({
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": error_content_args,
+                            })
+                            continue  # Skip to the next tool_call_item_obj
+
+                        # --- Tool Execution ---
+                        logger.info(
+                            f"Executing tool '{function_name}' with args: {arguments} (call_id: {call_id}, iteration: {current_iteration})"
+                        )
+                        tool_execution_context = ToolExecutionContext(
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            turn_id=turn_id,
+                            db_context=db_context,
+                            application=application,
+                            timezone_str=self.timezone_str,
+                            request_confirmation_callback=request_confirmation_callback,
+                            processing_service=self,
+                        )
+
+                        tool_response_content_val = None  # Renamed to avoid conflict
+                        tool_error_traceback_val = None  # Renamed to avoid conflict
+
+                        try:
+                            tool_response_content_val = (
+                                await self.tools_provider.execute_tool(
+                                    name=function_name,
+                                    arguments=arguments,
+                                    context=tool_execution_context,
+                                )
+                            )
+                            logger.debug(
+                                f"Tool '{function_name}' (call_id: {call_id}) executed. Result type: {type(tool_response_content_val)}. Result (first 200 chars): {str(tool_response_content_val)[:200]}"
+                            )
+                        except ToolNotFoundError as tnfe:
+                            logger.error(
+                                f"Tool execution failed (iteration {current_iteration}): {tnfe}"
+                            )
+                            tool_response_content_val = f"Error: {tnfe}"
+                            tool_error_traceback_val = str(tnfe)
+                        except Exception as exec_err:
+                            logger.error(
+                                f"Unexpected error executing tool {function_name} (iteration {current_iteration}): {exec_err}",
+                                exc_info=True,
+                            )
+                            tool_response_content_val = (
+                                f"Error: Unexpected error executing {function_name}."
+                            )
+                            tool_error_traceback_val = traceback.format_exc()
+
+                        # Add successful or error tool response to turn history
                         turn_messages.append({
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": error_content_args,
-                            "error_traceback": error_traceback_args,
+                            "content": tool_response_content_val,
+                            "error_traceback": tool_error_traceback_val,
                         })
+                        # Add successful or error tool response to LLM context for next call
                         tool_response_messages_for_llm.append({
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": error_content_args,
+                            "content": tool_response_content_val,
                         })
-                        continue  # Skip to the next tool_call_item_obj
-
-                    # --- Tool Execution ---
-                    logger.info(
-                        f"Executing tool '{function_name}' with args: {arguments} (call_id: {call_id}, iteration: {current_iteration})"
-                    )
-                    tool_execution_context = ToolExecutionContext(
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        turn_id=turn_id,
-                        db_context=db_context,
-                        application=application,
-                        timezone_str=self.timezone_str,
-                        request_confirmation_callback=request_confirmation_callback,
-                        processing_service=self,
-                    )
-
-                    tool_response_content_val = None  # Renamed to avoid conflict
-                    tool_error_traceback_val = None  # Renamed to avoid conflict
-
-                    try:
-                        tool_response_content_val = (
-                            await self.tools_provider.execute_tool(
-                                name=function_name,
-                                arguments=arguments,
-                                context=tool_execution_context,
-                            )
-                        )
-                        logger.debug(
-                            f"Tool '{function_name}' (call_id: {call_id}) executed. Result type: {type(tool_response_content_val)}. Result (first 200 chars): {str(tool_response_content_val)[:200]}"
-                        )
-                    except ToolNotFoundError as tnfe:
-                        logger.error(
-                            f"Tool execution failed (iteration {current_iteration}): {tnfe}"
-                        )
-                        tool_response_content_val = f"Error: {tnfe}"
-                        tool_error_traceback_val = str(tnfe)
-                    except Exception as exec_err:
-                        logger.error(
-                            f"Unexpected error executing tool {function_name} (iteration {current_iteration}): {exec_err}",
-                            exc_info=True,
-                        )
-                        tool_response_content_val = (
-                            f"Error: Unexpected error executing {function_name}."
-                        )
-                        tool_error_traceback_val = traceback.format_exc()
-
-                    # Add successful or error tool response to turn history
-                    turn_messages.append({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": tool_response_content_val,
-                        "error_traceback": tool_error_traceback_val,
-                    })
-                    # Add successful or error tool response to LLM context for next call
-                    tool_response_messages_for_llm.append({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": tool_response_content_val,
-                    })
-                    # End of processing for this specific tool_call_item_obj
+                        # End of processing for this specific tool_call_item_obj
                 # --- End of loop over raw_tool_call_items_from_llm ---
 
                 # --- After processing all tool calls for this iteration (if any) ---

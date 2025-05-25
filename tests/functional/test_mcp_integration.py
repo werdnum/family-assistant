@@ -335,7 +335,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
         f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called and result contained expected fragment."
     )
     logger.info(f"--- MCP Time Conversion Test ({test_run_id}) Passed ---")
-    await processing_service.close()
+    await processing_service.tools_provider.close()
 
 
 @pytest.mark.asyncio
@@ -546,4 +546,4 @@ async def test_mcp_time_conversion_sse(
     logger.info(
         f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and final response contained expected fragment."
     )
-    await processing_service.close()
+    await processing_service.tools_provider.close()
