@@ -706,6 +706,34 @@ class ProcessingService:
         # Use the potentially updated message list
         messages = initial_messages_for_llm
 
+        # --- NEW: Prune leading invalid messages from history ---
+        # This loop ensures that the history (before system prompt and current user message)
+        # doesn't start with an invalid message type that could cause API errors.
+        pruned_messages_count = 0
+        original_length = len(messages)
+        while messages:
+            first_msg_in_history = messages[0]
+            first_msg_role = first_msg_in_history.get("role")
+            # Check if tool_calls is present and non-empty
+            first_msg_has_tool_calls = bool(first_msg_in_history.get("tool_calls"))
+
+            if (
+                first_msg_role == "tool"
+                or first_msg_role == "assistant"
+                and first_msg_has_tool_calls
+            ):
+                messages.pop(0)
+                pruned_messages_count += 1
+            else:
+                # The first message is valid (e.g., user, or assistant without tool_calls)
+                break
+
+        if pruned_messages_count > 0:
+            logger.warning(
+                f"Pruned {pruned_messages_count} leading messages from history (original length {original_length}, new length {len(messages)}) to prevent API errors."
+            )
+        # --- END NEW Pruning ---
+
         # --- Prepare System Prompt Context ---
         system_prompt_template = self.prompts.get(  # Use self.prompts
             "system_prompt",
