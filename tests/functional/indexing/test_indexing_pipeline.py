@@ -123,10 +123,8 @@ async def indexing_task_worker(
     Sets up and tears down a TaskWorker instance configured for indexing tasks.
     Yields the worker, new_task_event, and shutdown_event.
     """
-    mock_application = MagicMock()
-    # Ensure the mock_pipeline_embedding_generator is set on the mock_application's state
-    # so that TaskWorker can pick it up when creating ToolExecutionContext.
-    # mock_application.state.embedding_generator = mock_pipeline_embedding_generator # No longer needed this way
+    # mock_application is no longer needed here as embedding_generator is passed directly to TaskWorker
+    # and ToolExecutionContext.
 
     mock_chat_interface_for_worker = MagicMock()
     new_task_event_for_worker = asyncio.Event()
