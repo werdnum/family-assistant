@@ -137,6 +137,7 @@ class ProcessingService:
         conversation_id: str,
         turn_id: str,  # Added turn_id
         chat_interface: ChatInterface | None,  # Added chat_interface
+        new_task_event: asyncio.Event | None,  # Added new_task_event
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
             Callable[
@@ -563,6 +564,7 @@ class ProcessingService:
         turn_id: str | None = None,  # Made turn_id optional, moved after non-defaults
         replied_to_interface_id: str | None = None,  # Added for reply context
         chat_interface: ChatInterface | None = None,  # Added chat_interface
+        new_task_event: asyncio.Event | None = None,  # Added new_task_event
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
             Callable[
