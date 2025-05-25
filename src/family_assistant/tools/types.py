@@ -3,17 +3,16 @@ Defines common types used by the tool system, like the execution context.
 Moved here to avoid circular imports.
 """
 
+import asyncio  # Add asyncio for Event type hint
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    import asyncio  # Add asyncio for Event type hint
-
-from family_assistant.embeddings import EmbeddingGenerator
-from family_assistant.interfaces import ChatInterface  # Import the new interface
-from family_assistant.processing import ProcessingService
-from family_assistant.storage.context import DatabaseContext
+    from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.interfaces import ChatInterface  # Import the new interface
+    from family_assistant.processing import ProcessingService
+    from family_assistant.storage.context import DatabaseContext
 
 
 @dataclass
