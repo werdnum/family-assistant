@@ -1,3 +1,4 @@
+import asyncio  # Import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Callable
 from typing import NamedTuple, cast
@@ -94,6 +95,9 @@ async def telegram_handler_fixture(
 
     mock_telegram_service = AsyncMock(spec=TelegramService)
     mock_telegram_service.application = mock_application  # Link mock app
+    mock_telegram_service.new_task_event = (
+        asyncio.Event()
+    )  # Add new_task_event attribute
 
     # 2. Instantiate Real Components with Mocks
     # Configure ToolsProvider (using Local for simplicity initially)
