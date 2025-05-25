@@ -289,12 +289,51 @@ class LiteLLMClient:
                     logger.warning(f"Could not serialize response.usage: {usage_err}")  # type: ignore[attr-defined]
 
             tool_calls_list = []
-            if raw_tool_calls:
-                for tc in raw_tool_calls:
-                    # tc should be a dict-like structure (ToolCall)
-                    tool_calls_list.append(
-                        dict(tc)
-                    )  # Ensure it's a plain dict for LLMOutput
+            if raw_tool_calls:  # raw_tool_calls is likely list[litellm.types.ToolCall]
+                for tc_obj in raw_tool_calls:
+                    # tc_obj is a litellm.types.ToolCall object.
+                    # It has attributes: id, type, function.
+                    # tc_obj.function is a litellm.types.Function object with name and arguments.
+
+                    function_dict_for_output: dict[str, str]
+                    if hasattr(tc_obj, "function") and tc_obj.function:
+                        if hasattr(tc_obj.function, "name") and hasattr(
+                            tc_obj.function, "arguments"
+                        ):
+                            function_dict_for_output = {
+                                "name": tc_obj.function.name,
+                                "arguments": tc_obj.function.arguments,  # arguments is already a string
+                            }
+                        else:
+                            logger.warning(
+                                f"ToolCall's function object is missing name/arguments: {tc_obj.function}"
+                            )
+                            function_dict_for_output = {
+                                "name": "malformed_function_in_llm_output",
+                                "arguments": "{}",
+                            }
+                    else:
+                        logger.warning(
+                            f"ToolCall object is missing function attribute or it's None: {tc_obj}"
+                        )
+                        function_dict_for_output = {
+                            "name": "missing_function_in_llm_output",
+                            "arguments": "{}",
+                        }
+
+                    tool_call_item_dict = {
+                        "id": tc_obj.id if hasattr(tc_obj, "id") else None,
+                        "type": tc_obj.type if hasattr(tc_obj, "type") else None,
+                        "function": function_dict_for_output,
+                    }
+
+                    if not tool_call_item_dict["id"] or not tool_call_item_dict["type"]:
+                        logger.error(
+                            f"ToolCall item from LLM missing id or type: {tool_call_item_dict}. Skipping."
+                        )
+                        continue
+
+                    tool_calls_list.append(tool_call_item_dict)
 
             logger.debug(
                 f"LiteLLM response received. Content: {bool(content)}. Tool Calls: {len(tool_calls_list)}. Reasoning: {bool(reasoning_info)}"
