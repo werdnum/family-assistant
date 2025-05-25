@@ -226,20 +226,11 @@ async def schedule_future_callback_tool(
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback.
     """
-    # Get application instance, chat_id, and db_context from the execution context object
-    application = exec_context.application
-    # Use new identifiers from context
+    # Get interface_type, conversation_id, and db_context from the execution context object
+    # application instance is no longer directly needed here.
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
-    db_context = exec_context.db_context  # Get db_context
-
-    if not application:
-        logger.error(
-            "Application context not available in ToolExecutionContext for schedule_future_callback_tool."
-        )
-        # Raise error instead of returning string to allow Composite provider to potentially try others?
-        # Or return error string as before? Let's return error string for now.
-        return "Error: Application context not available."
+    db_context = exec_context.db_context
 
     try:
         # Parse the ISO 8601 string, ensuring it's timezone-aware
@@ -672,35 +663,47 @@ async def send_message_to_user_tool(
     logger.info(
         f"Executing send_message_to_user_tool to chat_id {target_chat_id} with content: '{message_content[:50]}...'"
     )
-    application = exec_context.application
+    chat_interface = exec_context.chat_interface
     db_context = exec_context.db_context
     # The turn_id from the exec_context is the ID of the turn that *requested* this tool call.
     # This is useful for linking the sent message back to the originating interaction.
     requesting_turn_id = exec_context.turn_id
 
-    if not application:
+    if not chat_interface:
         logger.error(
-            "Application context not available in ToolExecutionContext for send_message_to_user_tool."
+            "ChatInterface not available in ToolExecutionContext for send_message_to_user_tool."
         )
-        return "Error: Application context not available."
+        return "Error: Chat interface not available."
 
     try:
-        sent_message = await application.bot.send_message(
-            chat_id=target_chat_id, text=message_content
+        # Use the ChatInterface to send the message.
+        # Assuming the target_chat_id is for the same interface type as the current context.
+        # The TelegramChatInterface will handle converting target_chat_id to int.
+        sent_message_id_str = await chat_interface.send_message(
+            conversation_id=str(target_chat_id),  # Pass as string
+            text=message_content,
+            # parse_mode can be added if needed, default is plain text
         )
+
+        if not sent_message_id_str:
+            logger.error(
+                f"Failed to send message to chat_id {target_chat_id} via ChatInterface."
+            )
+            return f"Error: Could not send message to Chat ID {target_chat_id} (sending failed)."
+
         logger.info(
-            f"Message sent to chat_id {target_chat_id}. Message ID: {sent_message.message_id}"
+            f"Message sent to chat_id {target_chat_id}. Interface Message ID: {sent_message_id_str}"
         )
 
         # Record the sent message in history for the target user's chat
         try:
             await storage.add_message_to_history(
                 db_context=db_context,
-                interface_type="telegram",  # Assuming Telegram interface
+                interface_type="telegram",  # Assuming Telegram interface for now
                 conversation_id=str(
                     target_chat_id
                 ),  # History is for the target user's conversation
-                interface_message_id=str(sent_message.message_id),
+                interface_message_id=sent_message_id_str,
                 turn_id=requesting_turn_id,  # Link to the turn that initiated this action
                 thread_root_id=None,  # This message likely starts a new interaction or is standalone in the target chat
                 timestamp=datetime.now(timezone.utc),
