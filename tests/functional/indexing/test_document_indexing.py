@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncGenerator  # Add missing typing imports
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import MagicMock  # Import MagicMock
 
 import httpx  # Import httpx
 import numpy as np
@@ -247,7 +248,9 @@ async def _helper_handle_embed_and_store_batch(
     db_context = exec_context.db_context
     # Get embedding generator from the execution context directly
     embedding_generator = exec_context.embedding_generator
-    assert embedding_generator is not None, "Embedding generator not found in exec_context"
+    assert embedding_generator is not None, (
+        "Embedding generator not found in exec_context"
+    )
 
     document_id = payload["document_id"]
     texts_to_embed: list[str] = payload["texts_to_embed"]
