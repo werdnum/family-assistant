@@ -81,9 +81,9 @@ dev = [
     "symbex>=2.0",
     "pytest-timeout",
     "ruff",
-    "black",
     "pre-commit>=4.2.0",
     "basedpyright",
+    "pytype"
 ]
 
 [project.scripts]
