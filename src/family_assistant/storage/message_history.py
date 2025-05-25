@@ -2,6 +2,7 @@
 Handles storage and retrieval of message history.
 """
 
+import json  # Added json import
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, cast  # Added Tuple, cast
@@ -95,6 +96,27 @@ async def add_message_to_history(
 ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
     """Adds a message to the history table, including optional fields."""
     # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
+
+    # Pre-serialization check for JSON fields
+    json_fields_to_check = {
+        "tool_calls": tool_calls,
+        "reasoning_info": reasoning_info,
+    }
+    for field_name, field_value in json_fields_to_check.items():
+        if field_value is not None:
+            try:
+                json.dumps(field_value)
+            except TypeError as te:
+                error_message = (
+                    f"Data for field '{field_name}' in add_message_to_history is not JSON serializable. "
+                    f"Value type: {type(field_value)}. Value snippet (first 200 chars): {str(field_value)[:200]}. "
+                    f"Original error: {te}"
+                )
+                logger.error(error_message, exc_info=True)
+                # Raise a new TypeError with detailed info, making it easier to catch upstream if needed,
+                # or to provide a clearer error log.
+                raise TypeError(error_message) from te
+
     try:
         stmt = (  # Start statement assignment
             insert(message_history_table)  # Call insert
