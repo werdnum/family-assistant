@@ -967,7 +967,7 @@ async def main_async(
 
     task_worker_instance = TaskWorker(
         processing_service=processing_service,  # Default profile's processing service
-        application=telegram_service.application,
+        chat_interface=telegram_service.chat_interface,  # Pass ChatInterface
         calendar_config=default_profile_proc_config[
             "calendar_config"
         ],  # Use profile's config

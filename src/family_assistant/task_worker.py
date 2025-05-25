@@ -13,12 +13,10 @@ from datetime import datetime, timedelta, timezone  # Added Union
 from typing import Any
 
 from dateutil import rrule
-from telegram.constants import ParseMode
-from telegram.helpers import escape_markdown
-from telegramify_markdown import markdownify  # type: ignore[import-untyped]
 
 from family_assistant import storage
 from family_assistant.embeddings import EmbeddingGenerator
+from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
@@ -55,30 +53,6 @@ async def handle_log_message(
 # Note: Registration now happens in __main__.py using worker instance
 
 
-# --- Helper Function (remains module-level) ---
-def format_llm_response_for_telegram(response_text: str) -> str:
-    """Converts LLM Markdown to Telegram MarkdownV2, with fallback."""
-    try:
-        # Attempt conversion
-        converted = markdownify(response_text)
-        # Basic check: ensure conversion didn't result in empty/whitespace only
-        if converted and not converted.isspace():
-            return converted
-        else:
-            # Handle case where the turn completed but the final assistant message had no content
-            logger.warning(
-                f"Markdown conversion resulted in empty string for: {response_text[:100]}... Using original."
-            )
-            # Fallback to original text, escaped, if conversion is empty
-            return escape_markdown(response_text, version=2)
-    except Exception as md_err:
-        logger.error(
-            f"Failed to convert markdown: {md_err}. Falling back to escaped text. Original: {response_text[:100]}...",
-        )
-        # Fallback to escaping the original text
-        return escape_markdown(response_text, version=2)
-
-
 async def handle_llm_callback(
     exec_context: ToolExecutionContext,  # Accept execution context
     payload: dict[str, Any],  # Payload from the task queue
@@ -90,8 +64,8 @@ async def handle_llm_callback(
     # Access dependencies from the execution context
     processing_service: ProcessingService | None = (
         exec_context.processing_service  # TaskWorker passes its own instance
-    )  # TaskWorker passes its own instance
-    application = exec_context.application
+    )
+    chat_interface: ChatInterface | None = exec_context.chat_interface
     db_context = exec_context.db_context
     # Get interface identifiers from context
     interface_type = exec_context.interface_type
@@ -103,11 +77,11 @@ async def handle_llm_callback(
             "ProcessingService not found in ToolExecutionContext for handle_llm_callback."
         )
         raise ValueError("Missing ProcessingService dependency in context.")
-    if not application:
+    if not chat_interface:
         logger.error(
-            "Application not found in ToolExecutionContext for handle_llm_callback."
+            "ChatInterface not found in ToolExecutionContext for handle_llm_callback."
         )
-        raise ValueError("Missing Application dependency in context.")
+        raise ValueError("Missing ChatInterface dependency in context.")
     if not db_context:
         logger.error(
             "DatabaseContext not found in ToolExecutionContext for handle_llm_callback."
@@ -170,7 +144,7 @@ async def handle_llm_callback(
             processing_error_traceback,  # Capture error
         ) = await processing_service.generate_llm_response_for_chat(
             db_context=db_context,
-            application=application,
+            chat_interface=chat_interface,  # Pass ChatInterface
             interface_type=interface_type,
             conversation_id=conversation_id,
             turn_id=callback_turn_id,  # Pass the generated turn_id
@@ -197,18 +171,11 @@ async def handle_llm_callback(
             # Determine target chat_id based on interface type
             # The conversation_id is used directly below.
 
-            formatted_response = format_llm_response_for_telegram(
-                final_llm_content_to_send
-            )
-            sent_message = await application.bot.send_message(  # type: ignore
-                chat_id=(
-                    int(conversation_id)
-                    if interface_type == "telegram"
-                    else conversation_id
-                ),  # Assuming TG ID is int convertible
-                text=formatted_response,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                # Note: We don't have an original message ID to reply to here.
+            # TelegramChatInterface will handle MarkdownV2 formatting if specified.
+            sent_message_id_str = await chat_interface.send_message(
+                conversation_id=conversation_id,
+                text=final_llm_content_to_send,
+                parse_mode="MarkdownV2",  # Instruct interface to use Markdown
             )
             logger.info(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
@@ -216,7 +183,7 @@ async def handle_llm_callback(
 
             # The initial system trigger message for the callback was saved above.
             # Now, if the assistant's response was sent, update its interface_message_id.
-            if sent_message:
+            if sent_message_id_str:
                 # Find the corresponding assistant message in generated_messages to update its interface_message_id
                 # This assumes the last 'assistant' message in generated_messages is the one sent.
                 assistant_msg_to_update = next(
@@ -233,12 +200,16 @@ async def handle_llm_callback(
                     await storage.update_message_interface_id(
                         db_context=db_context,
                         internal_id=assistant_msg_to_update["internal_id"],
-                        interface_message_id=str(sent_message.message_id),
+                        interface_message_id=sent_message_id_str,
                     )
                 else:
                     logger.warning(
                         f"Could not find saved assistant message to update interface_id for callback to {interface_type}:{conversation_id}"
                     )
+            else:  # Message sending failed
+                logger.error(
+                    f"Failed to send LLM callback response to {interface_type}:{conversation_id}"
+                )
 
             # Save the *generated* messages (tool calls, assistant responses) from the LLM interaction
             # These messages already have turn_id, interface_type, conversation_id, and timestamp populated by generate_llm_response_for_chat
@@ -261,14 +232,11 @@ async def handle_llm_callback(
                 f"LLM turn completed for callback in {interface_type}:{conversation_id}, but final message had no content."
             )
             # Optionally send a generic failure message to the chat
-            await application.bot.send_message(
-                chat_id=(
-                    int(conversation_id)
-                    if interface_type == "telegram"
-                    else conversation_id
-                ),
+            await chat_interface.send_message(
+                conversation_id=conversation_id,
                 text="Sorry, I couldn't process the scheduled callback.",
             )
+
             # Raise an error to mark the task as failed if no response was generated
             # Check if there was a processing_error_traceback first
             if processing_error_traceback:
@@ -299,15 +267,17 @@ class TaskWorker:
     def __init__(
         self,
         processing_service: ProcessingService,
-        calendar_config: dict[str, Any],  # Add calendar config
-        timezone_str: str,  # Add timezone string
-        embedding_generator: EmbeddingGenerator,  # Add embedding_generator
+        chat_interface: ChatInterface,  # Changed from application
+        calendar_config: dict[str, Any],
+        timezone_str: str,
+        embedding_generator: EmbeddingGenerator,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
-        self.calendar_config = calendar_config  # Store calendar config
-        self.timezone_str = timezone_str  # Store timezone string
-        self.embedding_generator = embedding_generator  # Store embedding_generator
+        self.chat_interface = chat_interface  # Store ChatInterface
+        self.calendar_config = calendar_config
+        self.timezone_str = timezone_str
+        self.embedding_generator = embedding_generator
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
         self.task_handlers: dict[
@@ -408,9 +378,10 @@ class TaskWorker:
                     uuid.uuid4()
                 ),  # Generate a new turn_id for this task execution
                 db_context=db_context,
-                timezone_str=self.timezone_str,  # Remove processing_service
-                processing_service=self.processing_service,  # Add processing service
-                embedding_generator=self.embedding_generator,  # Use stored generator
+                chat_interface=self.chat_interface,  # Pass ChatInterface
+                timezone_str=self.timezone_str,
+                processing_service=self.processing_service,
+                embedding_generator=self.embedding_generator,
             )
             # --- Execute Handler with Context ---
             logger.debug(
