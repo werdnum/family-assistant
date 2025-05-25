@@ -854,9 +854,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         else:
             tb_string = "No exception context available."
 
-        update_str = (
-            update.to_dict() if isinstance(update, Update) else str(update)
-        )  # pytype: disable=attribute-error
+        if isinstance(update, Update):
+            update_str = update.to_dict()  # pytype: disable=attribute-error
+        else:
+            update_str = str(update)
         message = (
             "An exception was raised while handling an update\n"
             f"<pre>update = {html.escape(json.dumps(update_str, indent=2, ensure_ascii=False))}</pre>\n\n"
