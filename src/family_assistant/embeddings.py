@@ -7,7 +7,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from litellm import aembedding
 from litellm.exceptions import (
@@ -19,12 +19,8 @@ from litellm.exceptions import (
 )
 
 # Declare module/class variables that will be conditionally populated
-if TYPE_CHECKING:
-    from sentence_transformers import (  # pyright: ignore[reportMissingTypeStubs]
-        SentenceTransformer,
-    )
 
-_SentenceTransformer_cls: type["SentenceTransformer"] | None = None
+_SentenceTransformer_cls: Any | None = None
 _np_module: Any | None = None
 SENTENCE_TRANSFORMERS_AVAILABLE: bool  # Will be set in the try/except block
 
