@@ -141,14 +141,16 @@ class LLMIntelligenceProcessor(ContentProcessor):
 
                 if llm_response.tool_calls:
                     for tool_call in llm_response.tool_calls:
-                        if tool_call.get("function", {}).get("name") == self.tool_name:
+                        # Direct attribute access for ToolCallItem and ToolCallFunction
+                        if (
+                            tool_call.function
+                            and tool_call.function.name == self.tool_name
+                        ):
                             arguments_str = (
                                 "{}"  # Initialize for safety in error logging
                             )
                             try:
-                                arguments_str = tool_call.get("function", {}).get(
-                                    "arguments", "{}"
-                                )
+                                arguments_str = tool_call.function.arguments
                                 extracted_data = json.loads(arguments_str)
 
                                 new_item_content = json.dumps(extracted_data, indent=2)
@@ -184,7 +186,7 @@ class LLMIntelligenceProcessor(ContentProcessor):
                                 )
                         else:
                             logger.warning(
-                                f"Processor '{self.name}': LLM called unexpected tool: {tool_call.get('function', {}).get('name')}"
+                                f"Processor '{self.name}': LLM called unexpected tool: {tool_call.function.name if tool_call.function else 'None'}"
                             )
                 elif llm_response.content:
                     logger.warning(
@@ -444,14 +446,16 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
 
                 if llm_response.tool_calls:
                     for tool_call in llm_response.tool_calls:
-                        if tool_call.get("function", {}).get("name") == self.tool_name:
+                        # Direct attribute access for ToolCallItem and ToolCallFunction
+                        if (
+                            tool_call.function
+                            and tool_call.function.name == self.tool_name
+                        ):
                             arguments_str = (
                                 "{}"  # Initialize for safety in error logging
                             )
                             try:
-                                arguments_str = tool_call.get("function", {}).get(
-                                    "arguments", "{}"
-                                )
+                                arguments_str = tool_call.function.arguments
                                 extracted_data = json.loads(arguments_str)
 
                                 primary_url = extracted_data.get("primary_url")
@@ -509,7 +513,7 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                                 )
                         else:  # LLM called an unexpected tool
                             logger.warning(
-                                f"Processor '{self.name}': LLM called unexpected tool '{tool_call.get('function', {}).get('name')}' during link extraction."
+                                f"Processor '{self.name}': LLM called unexpected tool '{tool_call.function.name if tool_call.function else 'None'}' during link extraction."
                             )
                 elif llm_response.content:
                     logger.warning(

@@ -17,6 +17,7 @@ from family_assistant.indexing.processors.llm_processors import (
 # Import LLMOutput from the same module as RuleBasedMockLLMClient to ensure type consistency for rules
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface as RealLLMInterface
+from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
@@ -132,14 +133,14 @@ async def test_llm_processor_with_file_input_summarization(
     # 2. Define the LLMOutput the mock should return for generate_response
     mock_llm_tool_call_output = LLMOutput(
         tool_calls=[
-            {
-                "id": "call_123",
-                "type": "function",
-                "function": {
-                    "name": tool_name_for_extraction,
-                    "arguments": json.dumps(expected_extracted_data),
-                },
-            }
+            ToolCallItem(
+                id="call_123",
+                type="function",
+                function=ToolCallFunction(
+                    name=tool_name_for_extraction,
+                    arguments=json.dumps(expected_extracted_data),
+                ),
+            )
         ]
     )
 
