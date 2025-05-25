@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.llm import LLMInterface, LLMOutput
+from family_assistant.llm import LLMInterface  # LLMOutput removed
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import necessary components from the application
@@ -31,6 +31,9 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
+)
 from tests.mocks.mock_llm import (
     MatcherArgs,  # Added import
     Rule,
@@ -86,7 +89,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
             and tools is not None
         )
 
-    schedule_response = LLMOutput(
+    schedule_response = MockLLMOutput(  # Use the mock's LLMOutput
         content=f"OK, I will schedule a callback for {callback_time_iso} with context: '{CALLBACK_CONTEXT}'.",
         tool_calls=[
             {
@@ -120,7 +123,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     callback_final_response_text = (
         f"Rule-based mock: OK, executing callback. Reminder: {CALLBACK_CONTEXT}"
     )
-    callback_response = LLMOutput(
+    callback_response = MockLLMOutput(  # Use the mock's LLMOutput
         content=callback_final_response_text,
         tool_calls=None,  # No tool call expected for the callback response itself
     )
