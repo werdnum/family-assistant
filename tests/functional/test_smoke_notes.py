@@ -20,10 +20,10 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # Keep Interface
 
 # Import necessary classes for instantiation
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-
 # _generate_llm_response_for_chat was moved to ProcessingService
 # Import DatabaseContext and getter
+from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -99,17 +99,17 @@ async def test_add_and_retrieve_note_rule_mock(
     add_note_response = MockLLMOutput(  # Use the mock's LLMOutput
         content="OK, I will add that note via the rule-based mock.",
         tool_calls=[
-            {
-                "id": test_tool_call_id,  # Use pre-generated ID
-                "type": "function",
-                "function": {
-                    "name": "add_or_update_note",
-                    "arguments": json.dumps({  # Arguments must be JSON string
+            ToolCallItem(
+                id=test_tool_call_id,  # Use pre-generated ID
+                type="function",
+                function=ToolCallFunction(
+                    name="add_or_update_note",
+                    arguments=json.dumps({  # Arguments must be JSON string
                         "title": test_note_title,
                         "content": TEST_NOTE_CONTENT,
                     }),
-                },
-            }
+                ),
+            )
         ],
     )
     add_note_rule: Rule = (add_note_matcher, add_note_response)
