@@ -389,6 +389,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         reply_target_message_id = (
             last_update.message.message_id if last_update.message else None
         )
+        user_message_id: int | None = None  # Initialize user_message_id here
         logger.debug(
             f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update."
         )
@@ -652,7 +653,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         # Look for the last message with content, prioritizing assistant role
                         for msg in reversed(generated_turn_messages):
                             if msg.get("content") and msg.get("role") == "assistant":
-                                final_llm_content_to_send = msg["content"]
+                                final_llm_content_to_send = str(msg["content"])
                                 break  # Exit the loop once found
 
                         # If no assistant content was found after the loop,
@@ -660,9 +661,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         if not final_llm_content_to_send and generated_turn_messages[
                             -1
                         ].get("content"):
-                            final_llm_content_to_send = generated_turn_messages[-1][
-                                "content"
-                            ]
+                            final_llm_content_to_send = str(
+                                generated_turn_messages[-1]["content"]
+                            )
 
                 if final_llm_content_to_send:  # Check if there's content to send
                     try:
@@ -853,7 +854,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         else:
             tb_string = "No exception context available."
 
-        update_str = update.to_dict() if isinstance(update, Update) else str(update)
+        update_str = (
+            update.to_dict() if isinstance(update, Update) else str(update)
+        )  # pytype: disable=attribute-error
         message = (
             "An exception was raised while handling an update\n"
             f"<pre>update = {html.escape(json.dumps(update_str, indent=2, ensure_ascii=False))}</pre>\n\n"
