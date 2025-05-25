@@ -589,7 +589,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         processing_error_traceback,  # Capture traceback directly
                     ) = await self.processing_service.generate_llm_response_for_chat(
                         db_context=db_context,  # Pass db context
-                        application=self.telegram_service.application,  # Access via service
+                        chat_interface=self.telegram_service.chat_interface,  # Pass ChatInterface
                         interface_type=interface_type,  # Pass identifiers
                         conversation_id=conversation_id,  # Pass identifiers
                         trigger_content_parts=trigger_content_parts,
@@ -1210,6 +1210,9 @@ class TelegramService:
         self.application = ApplicationBuilder().token(telegram_token).build()
         self._was_started: bool = False
         self._last_error: Exception | None = None
+        self.chat_interface = TelegramChatInterface(
+            self.application
+        )  # Create ChatInterface
 
         # Store the ProcessingService instance in bot_data for access in handlers
         # Note: This assumes handlers might still need direct access via context.bot_data
