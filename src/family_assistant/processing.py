@@ -260,25 +260,31 @@ class ProcessingService:
                             "type": current_tc_type,
                         }
 
-                        function_details = tc_data.get("function")
-                        if hasattr(function_details, "name") and hasattr(
-                            function_details, "arguments"
-                        ):
-                            # It's a Function object (or object with similar attributes), extract its properties
-                            serialized_tc_item["function"] = {
-                                "name": function_details.name,
-                                "arguments": function_details.arguments,
-                            }
-                        elif isinstance(function_details, dict):
-                            # It's already a dict, assume it's correctly formatted
-                            serialized_tc_item["function"] = function_details
+                        # function_details is expected to be a dict from LLMOutput (or None)
+                        function_details_dict = tc_data.get("function")
+
+                        if isinstance(function_details_dict, dict):
+                            # Ensure 'name' and 'arguments' keys exist, even if llm.py should guarantee it.
+                            if (
+                                "name" in function_details_dict
+                                and "arguments" in function_details_dict
+                            ):
+                                serialized_tc_item["function"] = function_details_dict
+                            else:
+                                logger.error(
+                                    f"Tool call {current_tc_id} function details dict is missing 'name' or 'arguments': {function_details_dict}"
+                                )
+                                serialized_tc_item["function"] = {
+                                    "name": "incomplete_function_data_in_processing",
+                                    "arguments": "{}",
+                                }
                         else:
+                            # Handles if function_details_dict is None or not a dict
                             logger.error(
-                                f"Tool call {current_tc_id} has malformed function details: {function_details}"
+                                f"Tool call {current_tc_id} has malformed or missing function details. Expected dict, got {type(function_details_dict)}: {function_details_dict}"
                             )
-                            # Provide a placeholder to avoid downstream errors
                             serialized_tc_item["function"] = {
-                                "name": "malformed_function_data",
+                                "name": "malformed_or_missing_function_data_in_processing",
                                 "arguments": "{}",
                             }
 
