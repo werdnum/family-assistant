@@ -44,6 +44,7 @@ from telegram.ext import (
 )
 
 # Import necessary types for type hinting
+from family_assistant.interfaces import ChatInterface  # Import the new interface
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 
@@ -1339,3 +1340,80 @@ class TelegramService:
                 )
         else:
             logger.info("Telegram application instance not found for shutdown.")
+
+
+class TelegramChatInterface(ChatInterface):
+    """
+    Implementation of ChatInterface for Telegram.
+    Uses an underlying telegram.ext.Application instance to send messages.
+    """
+
+    def __init__(self, application: Application):
+        """
+        Initializes the TelegramChatInterface.
+
+        Args:
+            application: The telegram.ext.Application instance.
+        """
+        self.application = application
+
+    async def send_message(
+        self,
+        conversation_id: str,  # For Telegram, this is the chat_id
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+    ) -> str | None:
+        """
+        Sends a message to the specified Telegram chat.
+
+        Args:
+            conversation_id: The Telegram chat_id (as a string).
+            text: The message text to send.
+            parse_mode: Optional string indicating the formatting mode ("MarkdownV2", "HTML").
+            reply_to_interface_id: Optional Telegram message_id (as a string) to reply to.
+
+        Returns:
+            The Telegram message_id of the sent message as a string, or None if sending failed.
+        """
+        tg_parse_mode: ParseMode | None = None
+        if parse_mode == "MarkdownV2":
+            tg_parse_mode = ParseMode.MARKDOWN_V2
+        elif parse_mode == "HTML":
+            tg_parse_mode = ParseMode.HTML
+        elif parse_mode is not None:
+            logger.warning(
+                f"Unsupported parse_mode '{parse_mode}' for Telegram. Sending as plain text."
+            )
+
+        # The function `format_llm_response_for_telegram` (currently in task_worker.py)
+        # and its `telegramify_markdown` import should ideally be moved here or be a
+        # helper used by this method if complex pre-formatting is needed before this point.
+        # For now, this implementation assumes `text` is either pre-formatted
+        # according to `parse_mode` or is plain text.
+
+        try:
+            # Telegram chat_id is an integer, conversation_id is passed as string.
+            chat_id_int = int(conversation_id)
+            reply_to_msg_id_int = (
+                int(reply_to_interface_id) if reply_to_interface_id else None
+            )
+
+            sent_msg = await self.application.bot.send_message(
+                chat_id=chat_id_int,
+                text=text,
+                parse_mode=tg_parse_mode,
+                reply_to_message_id=reply_to_msg_id_int,
+            )
+            return str(sent_msg.message_id)
+        except ValueError:
+            logger.error(
+                f"Invalid conversation_id '{conversation_id}' or reply_to_interface_id '{reply_to_interface_id}' for Telegram. Must be integer convertible."
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"TelegramChatInterface failed to send message to {conversation_id}: {e}",
+                exc_info=True,
+            )
+            return None
