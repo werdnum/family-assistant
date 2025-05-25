@@ -237,7 +237,7 @@ class ProcessingService:
                 # --- Convert ToolCallItem objects to dicts for storage/LLM API ---
                 # raw_tool_calls_from_llm is now list[ToolCallItem] | None
                 raw_tool_call_items_from_llm = llm_output.tool_calls
-                
+
                 # serialized_tool_calls_for_turn will be list[dict[str, Any]] | None
                 # This is what gets stored in DB and sent to next LLM call.
                 serialized_tool_calls_for_turn = None
@@ -297,7 +297,6 @@ class ProcessingService:
                 # --- Execute Tool Calls and Prepare Responses ---
                 tool_response_messages_for_llm = []  # For next LLM call context
                 # Iterate over the ToolCallItem objects if they exist
-                # raw_tool_call_items_from_llm is list[ToolCallItem] | None
                 if raw_tool_call_items_from_llm:
                     for tool_call_item_obj in raw_tool_call_items_from_llm:
                         call_id = tool_call_item_obj.id
@@ -314,7 +313,7 @@ class ProcessingService:
                         if not call_id or not function_name:
                             logger.error(
                                 f"Skipping invalid tool call object in iteration {current_iteration}: id='{call_id}', name='{function_name}'"
-                        )
+                            )
                         # Define the error message content
                         error_content = "Error: Invalid tool call structure."
                         error_traceback = (

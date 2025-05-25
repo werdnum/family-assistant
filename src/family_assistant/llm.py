@@ -317,13 +317,17 @@ class LiteLLMClient:
                         if hasattr(tc_obj.function, "name"):
                             func_name = tc_obj.function.name
                         if hasattr(tc_obj.function, "arguments"):
-                            func_args = tc_obj.function.arguments  # arguments is already a string
+                            func_args = (
+                                tc_obj.function.arguments
+                            )  # arguments is already a string
                     else:
                         logger.warning(
                             f"ToolCall object is missing function attribute or it's None: {tc_obj}"
                         )
 
-                    if not func_name or func_args is None:  # Arguments can be an empty string
+                    if (
+                        not func_name or func_args is None
+                    ):  # Arguments can be an empty string
                         logger.warning(
                             f"ToolCall's function object is missing name or arguments: name='{func_name}', args_present={func_args is not None}. Full object: {tc_obj.function if hasattr(tc_obj, 'function') else 'N/A'}"
                         )
@@ -820,11 +824,17 @@ class PlaybackLLMClient:
                                     )
                                 )
                             else:
-                                logger.warning(f"Skipping malformed function dict in playback: {func_dict}")
+                                logger.warning(
+                                    f"Skipping malformed function dict in playback: {func_dict}"
+                                )
                         else:
-                            logger.warning(f"Skipping malformed tool_call item in playback: {tc_dict}")
+                            logger.warning(
+                                f"Skipping malformed tool_call item in playback: {tc_dict}"
+                            )
                 elif tool_calls_data is not None:
-                     logger.warning(f"Expected list for tool_calls in playback, got {type(tool_calls_data)}")
+                    logger.warning(
+                        f"Expected list for tool_calls in playback, got {type(tool_calls_data)}"
+                    )
 
                 matched_output = LLMOutput(
                     content=output_data.get("content"),
