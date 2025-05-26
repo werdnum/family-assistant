@@ -208,15 +208,16 @@ async def test_add_and_retrieve_note_rule_mock(
     # Note: test_db_engine fixture comes from the root conftest.py
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance
-        # Unpack the 3 return values correctly
+        # Unpack the 4 return values correctly
         (
-            add_turn_messages,
-            add_reasoning_info,
+            add_final_text_reply,
+            _add_final_assistant_msg_id,  # Not used here
+            _add_reasoning_info,  # Not used here
             add_error,
-        ) = await processing_service.generate_llm_response_for_chat(
-            db_context=db_context,  # Pass the context
-            chat_interface=MagicMock(),  # Add mock ChatInterface
-            new_task_event=asyncio.Event(),  # Add new_task_event
+        ) = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=MagicMock(),
+            new_task_event=asyncio.Event(),
             interface_type="test",  # Added interface type
             conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
             turn_id=str(uuid.uuid4()),  # Added turn_id
@@ -227,34 +228,18 @@ async def test_add_and_retrieve_note_rule_mock(
             user_name=TEST_USER_NAME,
         )
     # Assertions remain outside the context manager
-    assert add_error is None, (
-        f"Error during add note: {add_error}"
-    )  # Use correct error variable
-    assert add_turn_messages, "No messages generated during add note turn"
+    assert add_error is None, f"Error during add note: {add_error}"
+    assert add_final_text_reply is not None, "No final text reply generated during add note turn"
 
     # Assertion 1: Check the database directly to confirm the note was added
-    # Use the test_db_engine yielded by the fixture
+    # The tool call itself is now an internal detail of handle_chat_interaction,
+    # but we still expect the note to be in the DB if the LLM rule for tool call was matched.
+    # We can't directly inspect `add_turn_messages` for the tool call as it's not returned.
+    # We rely on the LLM mock rule being correct and the tool execution succeeding.
+
     note_in_db = None
-    # Find the assistant message requesting the tool call
-    assistant_add_request = next(
-        (
-            msg
-            for msg in add_turn_messages
-            if msg.get("role") == "assistant" and msg.get("tool_calls")
-        ),
-        None,
-    )
-    assert assistant_add_request is not None, "Assistant did not request tool call"
-    assert assistant_add_request["tool_calls"], "Tool calls list is empty"
-    assert assistant_add_request["tool_calls"][0]["id"] == test_tool_call_id
-    assert (
-        assistant_add_request["tool_calls"][0]["function"]["name"]
-        == "add_or_update_note"
-    )
 
-    note_in_db = None  # Correct indentation
-
-    logger.info("Checking database for the new note...")  # Correct indentation
+    logger.info("Checking database for the new note...")
     async with test_db_engine.connect() as connection:  # Correct indentation
         result = await connection.execute(
             text("SELECT title, content FROM notes WHERE title = :title"),
@@ -280,13 +265,14 @@ async def test_add_and_retrieve_note_rule_mock(
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Call the method on the ProcessingService instance again
         (
-            retrieve_turn_messages,
-            _,
+            retrieve_final_text_reply,
+            _retrieve_final_assistant_msg_id,  # Not used
+            _retrieve_final_reasoning_info,  # Not used
             retrieve_error,
-        ) = await processing_service.generate_llm_response_for_chat(
-            db_context=db_context,  # Pass the context
-            chat_interface=MagicMock(),  # Add mock ChatInterface
-            new_task_event=asyncio.Event(),  # Add new_task_event
+        ) = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=MagicMock(),
+            new_task_event=asyncio.Event(),
             interface_type="test",  # Added missing interface type
             conversation_id=str(TEST_CHAT_ID),  # Added missing conversation ID
             turn_id=str(uuid.uuid4()),  # Added turn_id
@@ -298,39 +284,23 @@ async def test_add_and_retrieve_note_rule_mock(
         )
 
         # model_name argument removed
-    assert add_error is None, f"Error during add note: {add_error}"
-    assert add_turn_messages, "No messages generated during add note turn"
-    assert add_error is None, f"Error during add note: {add_error}"
-    assert add_turn_messages, "No messages generated during add note turn"
-    # Find the final assistant message
-    final_assistant_message = next(
-        (
-            msg
-            for msg in reversed(retrieve_turn_messages)
-            if msg.get("role") == "assistant"
-        ),
-        None,
-    )
-    assert final_assistant_message is not None, "No final assistant message found"
-    assert final_assistant_message.get("tool_calls") is None, (
-        "LLM made an unexpected tool call for retrieval"
-    )
-    assert final_assistant_message.get("content") is not None
+    assert retrieve_error is None, f"Error during retrieve note: {retrieve_error}"  # Check retrieve_error
+    assert retrieve_final_text_reply is not None, "No final text reply generated during retrieve note turn"
 
     # Assertion 3: Check the final response content from the mock rule
-    # Use lower() for case-insensitive comparison # Marked line 244
-    assert TEST_NOTE_CONTENT.lower() in final_assistant_message["content"].lower(), (
-        f"Mock LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {final_assistant_message['content']}"
+    # Use lower() for case-insensitive comparison
+    assert TEST_NOTE_CONTENT.lower() in retrieve_final_text_reply.lower(), (
+        f"Mock LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {retrieve_final_text_reply}"
     )
     # Use lower() for case-insensitive comparison
-    assert test_note_title.lower() in final_assistant_message["content"].lower(), (
-        f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {final_assistant_message['content']}"
+    assert test_note_title.lower() in retrieve_final_text_reply.lower(), (
+        f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {retrieve_final_text_reply}"
     )
     assert (
-        "Rule-based mock says:" in final_assistant_message["content"]
+        "Rule-based mock says:" in retrieve_final_text_reply
     )  # Check it used our specific response
 
     logger.info(
-        "Verified rule-based mock response contains note content and no tool was called."
+        "Verified rule-based mock response contains note content."  # Tool call check is implicit now
     )
     logger.info("--- Rule-Based Mock Test Passed ---")
