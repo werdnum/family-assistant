@@ -584,64 +584,139 @@ class ProcessingService:
         )
         return messages
 
-    async def generate_llm_response_for_chat(  # Marked line 404
+    async def handle_chat_interaction(
         self,
-        db_context: DatabaseContext,  # Added db_context
-        # --- Refactored Parameters ---
+        db_context: DatabaseContext,
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: list[dict[str, Any]],
-        trigger_interface_message_id: str | None,  # Added trigger message ID
+        trigger_interface_message_id: str | None,
         user_name: str,
-        turn_id: str | None = None,  # Made turn_id optional, moved after non-defaults
-        replied_to_interface_id: str | None = None,  # Added for reply context
-        chat_interface: ChatInterface | None = None,  # Added chat_interface
-        new_task_event: asyncio.Event | None = None,  # Added new_task_event
-        # Callback signature updated to match ToolExecutionContext's expectation
+        replied_to_interface_id: str | None = None,
+        chat_interface: ChatInterface | None = None,
+        new_task_event: asyncio.Event | None = None,
         request_confirmation_callback: (
             Callable[
                 [str, str, str | None, str, str, dict[str, Any], float],
-                Awaitable[bool],  # Changed int to str
+                Awaitable[bool],
             ]
             | None
         ) = None,
-    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str | None]:
-        """Prepares context, message history, calls the LLM processing logic,
-        and returns the response, tool info, reasoning info, and any processing error traceback.
+    ) -> tuple[str | None, int | None, dict[str, Any] | None, str | None]:
+        """
+        Handles a complete chat interaction turn.
+
+        This method orchestrates:
+        1. Generating a unique turn ID.
+        2. Determining conversation thread context.
+        3. Saving the initial user trigger message.
+        4. Preparing full context for the LLM (history, system prompt, etc.).
+        5. Calling the core LLM processing logic (`self.process_message`).
+        6. Saving all messages generated during the LLM interaction turn.
+        7. Extracting the final textual reply and assistant message ID.
 
         Args:
-            db_context: The database context to use for storage operations.
-            interface_type: Identifier for the interaction interface.
-            conversation_id: Identifier for the conversation.
-            trigger_content_parts: List of content parts for the triggering message.
-            turn_id: The pre-generated ID for this entire interaction turn.
-            trigger_interface_message_id: The interface-specific ID of the triggering message.
-            user_name: The user name to format into the system prompt.
-            replied_to_interface_id: Optional interface-specific ID of the message being replied to.
-            chat_interface: Optional interface for sending messages back to the chat.
-            new_task_event: Optional event to notify task worker.
-            request_confirmation_callback: Optional callback for tool confirmations.
+            db_context: The database context.
+            interface_type: Identifier for the interaction interface (e.g., 'telegram', 'api').
+            conversation_id: Identifier for the conversation (e.g., chat ID string).
+            trigger_content_parts: List of content parts for the triggering message (e.g., text, image).
+            trigger_interface_message_id: The interface-specific ID of the triggering message (if any).
+            user_name: The name of the user initiating the interaction.
+            replied_to_interface_id: Optional interface-specific ID of a message being replied to.
+            chat_interface: Optional interface for sending messages (e.g., for tool confirmations).
+            new_task_event: Optional event to notify the task worker of new tasks.
+            request_confirmation_callback: Optional callback for requesting user confirmation for tools.
 
         Returns:
-            A tuple: (List of generated turn messages, Final reasoning info dict or None, Error traceback string or None).
+            A tuple containing:
+            - final_text_reply (str | None): The textual content of the assistant's final response.
+            - final_assistant_message_internal_id (int | None): The internal DB ID of the assistant's final message.
+            - final_reasoning_info (dict | None): Reasoning/usage info from the final LLM call.
+            - error_traceback (str | None): A string containing the traceback if an error occurred.
         """
-        # If turn_id is not provided, generate one.
-        if turn_id is None:
-            turn_id = str(uuid.uuid4())
-            logger.info(f"turn_id not provided, generated new one: {turn_id}")
-        logger.debug(
-            f"generate_llm_response_for_chat called with max_history_messages={self.max_history_messages}, history_max_age_hours={self.history_max_age_hours}"
+        turn_id = str(uuid.uuid4())
+        logger.info(
+            f"Handling chat interaction for {interface_type}:{conversation_id}, Turn ID: {turn_id}"
         )
+        processing_error_traceback: str | None = None
+        final_text_reply: str | None = None
+        final_assistant_message_internal_id: int | None = None
+        final_reasoning_info: dict[str, Any] | None = None
+
         try:
+            # --- 1. Determine Thread Root ID & Save User Trigger Message ---
+            thread_root_id_for_turn: int | None = None
+            user_message_timestamp = datetime.now(timezone.utc)  # Timestamp for user message
+
+            if replied_to_interface_id:
+                try:
+                    replied_to_db_msg = await storage.get_message_by_interface_id(
+                        db_context=db_context,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        interface_message_id=replied_to_interface_id,
+                    )
+                    if replied_to_db_msg:
+                        thread_root_id_for_turn = replied_to_db_msg.get(
+                            "thread_root_id"
+                        ) or replied_to_db_msg.get("internal_id")
+                        logger.info(
+                            f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not find replied-to message {replied_to_interface_id} in DB to determine thread root."
+                        )
+                except Exception as thread_err:
+                    logger.error(
+                        f"Error determining thread root ID from reply: {thread_err}",
+                        exc_info=True,
+                    )
+            
+            # Prepare user message content for saving (simplified for now, can be expanded)
+            # For simplicity, taking the first text part if available, or a placeholder.
+            user_content_for_history = "[User message content]"
+            if trigger_content_parts:
+                first_text_part = next((part.get("text") for part in trigger_content_parts if part.get("type") == "text"), None)
+                if first_text_part:
+                    user_content_for_history = str(first_text_part)
+                elif trigger_content_parts[0].get("type") == "image_url":
+                    user_content_for_history = "[Image Attached]"
+
+            saved_user_msg_record = await storage.add_message_to_history(
+                db_context=db_context,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=trigger_interface_message_id,
+                turn_id=turn_id,  # User message is part of the turn
+                thread_root_id=thread_root_id_for_turn,  # Use determined root ID
+                timestamp=user_message_timestamp,
+                role="user",
+                content=user_content_for_history,  # Store the textual part or placeholder
+                tool_calls=None,
+                reasoning_info=None,
+                error_traceback=None,
+                tool_call_id=None,
+            )
+
+            if saved_user_msg_record and not thread_root_id_for_turn:
+                # If it was the first message in a thread, its own ID is the root.
+                thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
+                if thread_root_id_for_turn:
+                    logger.info(f"Established new thread_root_id: {thread_root_id_for_turn}")
+                    # Update the user message record itself if its thread_root_id was initially None
+                    # This is usually handled by add_message_to_history if thread_root_id is passed as None initially
+                    # and then set, but double-checking or an explicit update might be needed if that's not the case.
+                    # For now, assuming add_message_to_history handles setting its own ID as root if None is passed.
+
+            # --- 2. Prepare LLM Context (History, System Prompt) ---
             raw_history_messages = (
-                await storage.get_recent_history(  # Use storage directly with context
-                    db_context=db_context,  # Pass context
-                    interface_type=interface_type,  # Pass interface_type
-                    conversation_id=conversation_id,  # Pass conversation_id
-                    limit=self.max_history_messages,  # Use self attribute
-                    max_age=timedelta(
-                        hours=self.history_max_age_hours
-                    ),  # Use self attribute
+                await storage.get_recent_history(
+                    db_context=db_context,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    limit=self.max_history_messages,
+                    max_age=timedelta(hours=self.history_max_age_hours),
                 )
             )
         except Exception as hist_err:
