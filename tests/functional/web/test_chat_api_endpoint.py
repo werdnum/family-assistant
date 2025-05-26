@@ -3,6 +3,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import timedelta  # Added this import
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,7 +12,6 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant import storage
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -24,6 +24,13 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.storage import (  # Refactored storage imports
+    api_tokens,
+    get_note_by_title,
+    get_recent_history,
+    init_db,
+    init_vector_db,
+)
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -133,7 +140,7 @@ def test_processing_service(
     """Creates a ProcessingService instance with mock/test components."""
     # Create mock context providers
     notes_provider = NotesContextProvider(
-        get_db_context_func=lambda: db_context,  # Simplified for test
+        get_db_context_func=lambda: get_db_context(engine=db_context.engine),  # Fixed to return awaitable
         prompts=mock_processing_service_config.prompts,
     )
     calendar_provider = CalendarContextProvider(
@@ -192,8 +199,8 @@ async def app_fixture(
 
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await storage.init_db(engine=db_engine)  # Initialize main schema
-        await storage.init_vector_db(temp_db_ctx)  # Initialize vector schema
+        await init_db(engine=db_engine)  # Initialize main schema
+        await init_vector_db(temp_db_ctx)  # Initialize vector schema
 
     return app
 
@@ -213,7 +220,7 @@ async def api_token_fixture(db_context: DatabaseContext) -> str:
     user_identifier = f"test_api_user_{uuid.uuid4()}@example.com"
     token_name = "Test API Token"
     # This function from storage.api_tokens creates and stores the token, returning the raw token
-    raw_token, _ = await storage.create_and_store_api_token(
+    raw_token, _ = await api_tokens.create_and_store_api_token(  # Fixed call
         db_context=db_context, user_identifier=user_identifier, name=token_name
     )
     return raw_token
@@ -329,19 +336,19 @@ async def test_api_chat_add_note_tool(
     assert len(mock_llm_client.get_calls()) == 2
 
     # Assert Database State (Note created)
-    note = await storage.get_note_by_title(db_context, note_title)
+    note = await get_note_by_title(db_context, note_title)  # Fixed call
     assert note is not None
     assert note["content"] == note_content
     logger.info(f"Note '{note_title}' found in database with correct content.")
 
     # Assert Message History
     # Fetch history for the conversation_id from the response
-    history = await storage.get_recent_history(
+    history = await get_recent_history(  # Fixed call
         db_context,
         interface_type="api",
         conversation_id=response_data.conversation_id,
         limit=10,  # Get enough messages
-        max_age=asyncio.timedelta(minutes=5),  # Recent enough
+        max_age=timedelta(minutes=5),  # Recent enough # Fixed call
     )
     assert (
         len(history) >= 3
