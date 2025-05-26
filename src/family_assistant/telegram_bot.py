@@ -631,13 +631,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             reply_to_message_id=reply_target_message_id,
                             reply_markup=force_reply_markup,
                         )
-                    
-                    if sent_assistant_message and last_assistant_internal_id is not None:
+
+                    if (
+                        sent_assistant_message
+                        and last_assistant_internal_id is not None
+                    ):
                         try:
                             await self.storage.update_message_interface_id(
                                 db_context=db_context,
                                 internal_id=last_assistant_internal_id,
-                                interface_message_id=str(sent_assistant_message.message_id),
+                                interface_message_id=str(
+                                    sent_assistant_message.message_id
+                                ),
                             )
                             logger.info(
                                 f"Updated interface_message_id for internal_id {last_assistant_internal_id} to {sent_assistant_message.message_id}"
