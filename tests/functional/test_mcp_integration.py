@@ -302,11 +302,17 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
 
     # --- Verification (Assert on final response content) ---
     logger.info("--- Verifying final response content (stdio) ---")
-    logger.info(f"Final response content received (stdio): {generated_turn_messages}")
+    logger.info(
+        f"Final response content received (stdio): {final_assistant_message_content}"
+    )
 
     # Verify success and extract final message content
-    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
-    assert final_assistant_message_content is not None, "No final assistant message content found"
+    assert processing_error_traceback is None, (
+        f"Processing error: {processing_error_traceback}"
+    )
+    assert final_assistant_message_content is not None, (
+        "No final assistant message content found"
+    )
 
     # Assertions on the final message content
     assert EXPECTED_CONVERTED_TIME_FRAGMENT in final_assistant_message_content, (
@@ -498,11 +504,17 @@ async def test_mcp_time_conversion_sse(
 
     # --- Verification (Assert on final response content) ---
     logger.info("--- Verifying final response content (SSE) ---")
-    logger.info(f"Final response content received (SSE): {final_assistant_message_content_sse}")
+    logger.info(
+        f"Final response content received (SSE): {final_assistant_message_content_sse}"
+    )
 
     # Verify success and extract final message content
-    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
-    assert final_assistant_message_content_sse is not None, "No final assistant message content found (SSE)"
+    assert processing_error_traceback is None, (
+        f"Processing error: {processing_error_traceback}"
+    )
+    assert final_assistant_message_content_sse is not None, (
+        "No final assistant message content found (SSE)"
+    )
 
     assert EXPECTED_CONVERTED_TIME_FRAGMENT in final_assistant_message_content_sse, (
         f"Final response did not contain the expected converted time (SSE). Sent: '{final_assistant_message_content_sse}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
