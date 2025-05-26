@@ -178,7 +178,7 @@ def test_processing_service(
 
 @pytest_asyncio.fixture(scope="function")
 async def app_fixture(
-    db_engine: AsyncEngine,  # Use the main db_engine fixture
+    test_db_engine: AsyncEngine,  # Use the main test_db_engine fixture
     test_processing_service: ProcessingService,
     test_tools_provider: ToolsProvider,
     mock_llm_client: LLMInterface,
@@ -199,10 +199,10 @@ async def app_fixture(
     # Override dependencies in app.state
     app.state.processing_service = test_processing_service
     app.state.tools_provider = test_tools_provider  # For /api/tools/execute if needed
-    app.state.engine = db_engine  # For get_db dependency
+    app.state.engine = test_db_engine  # For get_db dependency
     app.state.config = {  # Minimal config for dependencies
         "auth_enabled": False,  # Authentication is OFF for tests
-        "database_url": str(db_engine.url),
+        "database_url": str(test_db_engine.url),
         "default_profile_settings": {  # For KnownUsersContextProvider
             "chat_id_to_name_map": {},
             "processing_config": {"prompts": {}},
@@ -211,7 +211,7 @@ async def app_fixture(
     app.state.llm_client = mock_llm_client  # For other parts that might use it
 
     # Ensure database is initialized for this app instance
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
+    async with get_db_context(engine=test_db_engine) as temp_db_ctx:
         await init_db()  # Initialize main schema
         await init_vector_db(temp_db_ctx)  # Initialize vector schema
 
