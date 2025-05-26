@@ -362,8 +362,7 @@ async def test_api_chat_add_note_tool(
     tool_response_msg_found = any(
         h["role"] == "tool"
         and h["tool_call_id"] == tool_call_id
-        # Content of add_or_update_note is usually "Note '...' added/updated."
-        and "Note 'API Test Note' added/updated." in str(h["content"])
+        and str(h["content"]) == f"Note '{note_title}' added successfully."
         for h in history
     )
     assert tool_response_msg_found, "Tool response not found in history"
