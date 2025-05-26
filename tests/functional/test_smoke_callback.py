@@ -114,12 +114,22 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # Rule 2: Match the system trigger from handle_llm_callback
     def callback_trigger_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # The trigger text from handle_llm_callback is sent as the last 'user' role message
-        last_user_content = get_last_message_text(messages)
-        return (
-            "System Callback Trigger:" in last_user_content
-            and CALLBACK_CONTEXT in last_user_content
-        )
+        # Iterate backwards to find the last user message that is the callback trigger
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, str):
+                    # This is expected to be the "System Callback Trigger:..." message
+                    is_trigger = "System Callback Trigger:" in content
+                    has_context = CALLBACK_CONTEXT in content
+                    # logger.debug(f"Callback Matcher: User content='{content[:100]}...', is_trigger={is_trigger}, has_context={has_context}")
+                    if is_trigger and has_context:
+                        return True
+                    # If it's a user message but not the trigger,
+                    # it means we've gone too far back or the trigger wasn't the last user message.
+                    # For this specific test, the trigger *is* the last user message.
+                    break 
+        return False
 
     callback_final_response_text = (
         f"Rule-based mock: OK, executing callback. Reminder: {CALLBACK_CONTEXT}"
