@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock
 
 import pytest
@@ -40,7 +40,7 @@ from family_assistant.tools import (
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.routers.api import ChatMessageResponse
-from tests.mocks.mock_llm import MatcherArgs, Rule, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,9 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={
-            "enable_local_tools": ["add_or_update_note"],  # Ensure our target tool is enabled
+            "enable_local_tools": [
+                "add_or_update_note"
+            ],  # Ensure our target tool is enabled
             "enable_mcp_server_ids": [],
             "confirm_tools": [],  # Ensure add_or_update_note is NOT here for API test
         },
@@ -140,8 +142,7 @@ def test_processing_service(
         prompts=mock_processing_service_config.prompts,
     )
     known_users_provider = KnownUsersContextProvider(
-        chat_id_to_name_map={},
-        prompts=mock_processing_service_config.prompts
+        chat_id_to_name_map={}, prompts=mock_processing_service_config.prompts
     )
     context_providers = [notes_provider, calendar_provider, known_users_provider]
 
@@ -184,8 +185,8 @@ async def app_fixture(
         "database_url": str(db_engine.url),
         "default_profile_settings": {  # For KnownUsersContextProvider
             "chat_id_to_name_map": {},
-            "processing_config": {"prompts": {}}
-        }
+            "processing_config": {"prompts": {}},
+        },
     }
     app.state.llm_client = mock_llm_client  # For other parts that might use it
 
@@ -256,7 +257,9 @@ async def test_api_chat_add_note_tool(
     verifies the tool call, database change, and final response.
     """
     # Arrange
-    user_prompt = "Please add a note. Title: API Test Note. Content: This is a test from the API."
+    user_prompt = (
+        "Please add a note. Title: API Test Note. Content: This is a test from the API."
+    )
     note_title = "API Test Note"
     note_content = "This is a test from the API."
     tool_call_id = f"call_{uuid.uuid4()}"
@@ -268,7 +271,10 @@ async def test_api_chat_add_note_tool(
     def rule1_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         last_msg_content = messages[-1].get("content") if messages else ""
-        return isinstance(last_msg_content, str) and "Please add a note" in last_msg_content
+        return (
+            isinstance(last_msg_content, str)
+            and "Please add a note" in last_msg_content
+        )
 
     rule1_output = LLMOutput(
         content=llm_intermediate_reply,
@@ -278,12 +284,16 @@ async def test_api_chat_add_note_tool(
                 type="function",
                 function=ToolCallFunction(
                     name="add_or_update_note",
-                    arguments=json.dumps({"title": note_title, "content": note_content}),
+                    arguments=json.dumps({
+                        "title": note_title,
+                        "content": note_content,
+                    }),
                 ),
             )
         ],
     )
     # Rule 2: Tool result -> LLM gives final confirmation
+
     def rule2_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
@@ -292,7 +302,10 @@ async def test_api_chat_add_note_tool(
         )
 
     rule2_output = LLMOutput(content=llm_final_reply)
-    mock_llm_client.rules = [(rule1_matcher, rule1_output), (rule2_matcher, rule2_output)]
+    mock_llm_client.rules = [
+        (rule1_matcher, rule1_output),
+        (rule2_matcher, rule2_output),
+    ]
 
     # Ensure 'add_or_update_note' is not in confirm_tools for the test_processing_service
     # This is handled by mock_processing_service_config fixture
@@ -330,10 +343,14 @@ async def test_api_chat_add_note_tool(
         limit=10,  # Get enough messages
         max_age=asyncio.timedelta(minutes=5),  # Recent enough
     )
-    assert len(history) >= 3  # User prompt, Assistant tool request, Tool response, Final Assistant reply
+    assert (
+        len(history) >= 3
+    )  # User prompt, Assistant tool request, Tool response, Final Assistant reply
 
     # Check for user message
-    user_msg_found = any(h["role"] == "user" and h["content"] == user_prompt for h in history)
+    user_msg_found = any(
+        h["role"] == "user" and h["content"] == user_prompt for h in history
+    )
     assert user_msg_found, "User prompt not found in history"
 
     # Check for assistant message with tool call
@@ -344,7 +361,9 @@ async def test_api_chat_add_note_tool(
         and h["tool_calls"][0]["function"]["name"] == "add_or_update_note"
         for h in history
     )
-    assert assistant_tool_call_msg_found, "Assistant tool call request not found in history"
+    assert assistant_tool_call_msg_found, (
+        "Assistant tool call request not found in history"
+    )
 
     # Check for tool response message
     tool_response_msg_found = any(
@@ -358,7 +377,9 @@ async def test_api_chat_add_note_tool(
 
     # Check for final assistant reply
     final_assistant_reply_found = any(
-        h["role"] == "assistant" and h["content"] == llm_final_reply and h.get("tool_calls") is None
+        h["role"] == "assistant"
+        and h["content"] == llm_final_reply
+        and h.get("tool_calls") is None
         for h in history
     )
     assert final_assistant_reply_found, "Final assistant reply not found in history"
