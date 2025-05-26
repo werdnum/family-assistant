@@ -171,6 +171,29 @@ async def update_message_interface_id(
         raise
 
 
+async def update_message_error_traceback(
+    db_context: DatabaseContext, internal_id: int, error_traceback: str
+) -> bool:
+    """
+    Updates the error_traceback field for a specific message by its internal ID.
+
+    Args:
+        db_context: The database context.
+        internal_id: The internal_id of the message to update.
+        error_traceback: The error traceback string to store.
+
+    Returns:
+        True if the update was successful, False otherwise.
+    """
+    stmt = (
+        update(message_history_table)
+        .where(message_history_table.c.internal_id == internal_id)
+        .values(error_traceback=error_traceback)
+    )
+    result = await db_context.execute_with_retry(stmt)
+    return result.rowcount > 0 if result else False
+
+
 async def get_recent_history(
     db_context: DatabaseContext,  # Added context
     # --- New Parameters ---
