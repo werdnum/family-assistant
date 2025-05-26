@@ -212,7 +212,7 @@ async def app_fixture(
 
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(engine=db_engine)  # Initialize main schema
+        await init_db(db_engine)  # Initialize main schema
         await init_vector_db(temp_db_ctx)  # Initialize vector schema
 
     return app
