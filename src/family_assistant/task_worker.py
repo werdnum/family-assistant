@@ -148,9 +148,7 @@ async def handle_llm_callback(
             interface_type=interface_type,
             conversation_id=conversation_id,
             # turn_id is generated within handle_chat_interaction
-            trigger_content_parts=[
-                {"type": "text", "text": trigger_text}
-            ],
+            trigger_content_parts=[{"type": "text", "text": trigger_text}],
             trigger_interface_message_id=None,  # System trigger
             user_name="System",  # Callback initiated by system
             replied_to_interface_id=None,  # Not a reply
@@ -176,9 +174,12 @@ async def handle_llm_callback(
                         interface_message_id=sent_message_id_str,
                     )
                 except Exception as e:
-                    logger.error(f"Failed to update interface_message_id for callback response: {e}", exc_info=True)
+                    logger.error(
+                        f"Failed to update interface_message_id for callback response: {e}",
+                        exc_info=True,
+                    )
             elif sent_message_id_str:  # Message sent but no internal_id to update
-                 logger.warning(
+                logger.warning(
                     f"Sent LLM callback response to {interface_type}:{conversation_id}, but could not find internal_id ({final_assistant_message_internal_id}) to update its interface_message_id."
                 )
             else:  # Message sending failed
