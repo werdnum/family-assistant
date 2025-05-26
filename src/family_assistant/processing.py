@@ -856,29 +856,15 @@ class ProcessingService:
                 new_task_event=new_task_event,  # Pass new_task_event
                 request_confirmation_callback=request_confirmation_callback,
             )
-            # Add context info (turn_id, etc.) to each generated message *before* returning # Marked line 641
-            timestamp_now = datetime.now(timezone.utc)  # Marked line 642
-            for msg_dict in generated_turn_messages:
-                msg_dict["turn_id"] = turn_id
-                msg_dict["interface_type"] = interface_type
-                msg_dict["conversation_id"] = conversation_id
-                msg_dict["timestamp"] = (
-                    timestamp_now  # Approximate timestamp for the whole turn
-                )
-                msg_dict["thread_root_id"] = (
-                    thread_root_id_for_saving  # Use determined root ID
-                )
-                # interface_message_id will be None initially for agent messages
-                msg_dict["interface_message_id"] = None
-
-            # Return the list of fully populated turn messages, reasoning info, and None for error
+            # Return the list of turn messages (assistant requests, tool responses, final answer)
+            # and the reasoning info from the final LLM call.
+            # The caller (e.g., generate_llm_response_for_chat or API endpoint)
+            # is responsible for adding common metadata (turn_id, timestamp, etc.)
+            # and saving these messages.
             return generated_turn_messages, final_reasoning_info, None
-        # Moved exception handling outside the process_message call
-        except Exception:  # Marked line 650
-            # Return None for content/tools/reasoning, but include the traceback
+        except Exception:
             error_traceback = traceback.format_exc()
-            return (
-                [],
-                None,
-                error_traceback,
-            )  # Return empty list, None reasoning, traceback
+            logger.error(
+                f"Exception in generate_llm_response_for_chat for {interface_type}:{conversation_id}, turn {turn_id}: {error_traceback}"
+            )
+            return [], None, error_traceback
