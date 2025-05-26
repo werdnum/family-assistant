@@ -229,15 +229,16 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     schedule_request_trigger = [{"type": "text", "text": schedule_request_text}]
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        # Correct unpacking to 3 values: generated_turn_messages, final_reasoning_info, processing_error_traceback
+        # Correct unpacking to 4 values now
         (
-            schedule_generated_messages,
-            _,
+            schedule_final_text_reply,
+            _schedule_final_assistant_msg_id,  # Not used here
+            _schedule_final_reasoning_info,  # Not used here
             schedule_error,
-        ) = await processing_service.generate_llm_response_for_chat(
-            db_context=db_context,  # Renamed db_context
-            chat_interface=mock_chat_interface_for_worker,  # Pass ChatInterface used by worker
-            new_task_event=test_new_task_event,  # Pass event
+        ) = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=mock_chat_interface_for_worker,
+            new_task_event=test_new_task_event,
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),  # Added conversation ID as string
             turn_id=str(uuid.uuid4()),  # Added turn_id
@@ -249,11 +250,8 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         )
 
     assert schedule_error is None, f"Error during schedule request: {schedule_error}"
-    assistant_schedule_message = next(
-        (m for m in schedule_generated_messages if m.get("role") == "assistant"), None
-    )
     logger.info(
-        f"Schedule Request - Mock LLM Response: {assistant_schedule_message.get('content') if assistant_schedule_message else 'No assistant message found'}"
+        f"Schedule Request - Mock LLM Response: {schedule_final_text_reply if schedule_final_text_reply else 'No assistant message found'}"
     )
 
     # --- Part 2: Run Worker and Wait for Callback ---

@@ -284,13 +284,14 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
         # Call generate_llm_response_for_chat directly
         # Unpack the correct return values: generated_turn_messages, final_reasoning_info, processing_error_traceback
         (
-            generated_turn_messages,
-            final_reasoning_info,
+            final_assistant_message_content,
+            _final_assistant_message_id,  # Not used in this assertion
+            _final_reasoning_info,  # Not used in this assertion
             processing_error_traceback,
-        ) = await processing_service.generate_llm_response_for_chat(
+        ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
-            chat_interface=MagicMock(),  # Add mock ChatInterface
-            new_task_event=asyncio.Event(),  # Add new_task_event
+            chat_interface=MagicMock(),
+            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             turn_id=str(uuid.uuid4()),  # Added turn_id
@@ -304,33 +305,16 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
     logger.info(f"Final response content received (stdio): {generated_turn_messages}")
 
     # Verify success and extract final message content
-    assert processing_error_traceback is None, (
-        f"Processing error: {processing_error_traceback}"
-    )
-    assert generated_turn_messages is not None
-    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
-
-    # Find the last assistant message with content
-    final_assistant_message = next(
-        (
-            msg
-            for msg in reversed(generated_turn_messages)
-            if msg.get("role") == "assistant" and msg.get("content")
-        ),
-        None,
-    )
-    assert final_assistant_message is not None, (
-        "No final assistant message with content found"
-    )
-    sent_text = final_assistant_message["content"]
+    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
+    assert final_assistant_message_content is not None, "No final assistant message content found"
 
     # Assertions on the final message content
-    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, (
-        f"Final response (stdio) did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert EXPECTED_CONVERTED_TIME_FRAGMENT in final_assistant_message_content, (
+        f"Final response (stdio) did not contain the expected converted time. Sent: '{final_assistant_message_content}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
     )
 
-    assert final_response_text in sent_text, (
-        f"Final response did not match the mock LLM's final rule output. Sent: '{sent_text}' Expected: '{final_response_text}'"
+    assert final_response_text in final_assistant_message_content, (
+        f"Final response did not match the mock LLM's final rule output. Sent: '{final_assistant_message_content}' Expected: '{final_response_text}'"
     )
 
     logger.info(
@@ -496,13 +480,14 @@ async def test_mcp_time_conversion_sse(
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Correct unpacking based on function signature
         (
-            generated_turn_messages,
-            final_reasoning_info,
+            final_assistant_message_content_sse,
+            _final_assistant_message_id_sse,  # Not used
+            _final_reasoning_info_sse,  # Not used
             processing_error_traceback,
-        ) = await processing_service.generate_llm_response_for_chat(
+        ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
-            chat_interface=MagicMock(),  # Add mock ChatInterface
-            new_task_event=asyncio.Event(),  # Add new_task_event
+            chat_interface=MagicMock(),
+            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             turn_id=str(uuid.uuid4()),  # Added turn_id
@@ -513,39 +498,22 @@ async def test_mcp_time_conversion_sse(
 
     # --- Verification (Assert on final response content) ---
     logger.info("--- Verifying final response content (SSE) ---")
-    logger.info(f"Final response content received (SSE): {generated_turn_messages}")
+    logger.info(f"Final response content received (SSE): {final_assistant_message_content_sse}")
 
     # Verify success and extract final message content
-    assert processing_error_traceback is None, (
-        f"Processing error: {processing_error_traceback}"
-    )
-    assert generated_turn_messages is not None
-    assert len(generated_turn_messages) > 0, "No messages generated during the turn"
+    assert processing_error_traceback is None, f"Processing error: {processing_error_traceback}"
+    assert final_assistant_message_content_sse is not None, "No final assistant message content found (SSE)"
 
-    # Find the last assistant message with content
-    final_assistant_message = next(
-        (
-            msg
-            for msg in reversed(generated_turn_messages)
-            if msg.get("role") == "assistant" and msg.get("content")
-        ),
-        None,
-    )
-    assert final_assistant_message is not None, (
-        "No final assistant message with content found"
-    )
-    sent_text = final_assistant_message["content"]
-
-    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, (
-        f"Final response did not contain the expected converted time (SSE). Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert EXPECTED_CONVERTED_TIME_FRAGMENT in final_assistant_message_content_sse, (
+        f"Final response did not contain the expected converted time (SSE). Sent: '{final_assistant_message_content_sse}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
     )
     # Assertions on the final message content
-    assert EXPECTED_CONVERTED_TIME_FRAGMENT in sent_text, (
-        f"Final response (SSE) did not contain the expected converted time. Sent: '{sent_text}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+    assert EXPECTED_CONVERTED_TIME_FRAGMENT in final_assistant_message_content_sse, (
+        f"Final response (SSE) did not contain the expected converted time. Sent: '{final_assistant_message_content_sse}' Expected fragment: '{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
     )
 
-    assert final_response_text in sent_text, (
-        f"Final response did not match the mock LLM's final rule output (SSE). Sent: '{sent_text}' Expected: '{final_response_text}'"
+    assert final_response_text in final_assistant_message_content_sse, (
+        f"Final response did not match the mock LLM's final rule output (SSE). Sent: '{final_assistant_message_content_sse}' Expected: '{final_response_text}'"
     )
     logger.info(
         f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and final response contained expected fragment."

@@ -136,95 +136,57 @@ async def handle_llm_callback(
         )
 
         # Call the ProcessingService.
-        # NOTE: process_message returns the LIST of generated messages for the turn,
-        # not just the final content string. We are now calling generate_llm_response_for_chat
+        # NOTE: `handle_chat_interaction` now handles saving of all messages in the turn.
         (
-            generated_messages,  # This is List[Dict[str, Any]]
-            final_reasoning_info,  # Capture reasoning
-            processing_error_traceback,  # Capture error
-        ) = await processing_service.generate_llm_response_for_chat(
+            final_llm_content_to_send,
+            final_assistant_message_internal_id,
+            _final_reasoning_info,  # Not used directly by this handler
+            processing_error_traceback,
+        ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
-            chat_interface=chat_interface,  # Pass ChatInterface
+            chat_interface=chat_interface,
             interface_type=interface_type,
             conversation_id=conversation_id,
-            turn_id=callback_turn_id,  # Pass the generated turn_id
+            # turn_id is generated within handle_chat_interaction
             trigger_content_parts=[
                 {"type": "text", "text": trigger_text}
-            ],  # Pass the trigger text as content part
-            trigger_interface_message_id=None,  # System trigger, no direct interface ID
+            ],
+            trigger_interface_message_id=None,  # System trigger
             user_name="System",  # Callback initiated by system
-            replied_to_interface_id=None,  # Not a reply in this context
-            # No confirmation callback needed for system-triggered callbacks
-            request_confirmation_callback=None,
+            replied_to_interface_id=None,  # Not a reply
+            new_task_event=exec_context.new_task_event,  # Pass event from context
+            request_confirmation_callback=None,  # No confirmation for system callbacks
         )
-        # The generated_messages already have turn_id and other metadata set by generate_llm_response_for_chat
-        # Find the final assistant message to send back to the user
-        final_llm_content_to_send = None
-        if generated_messages:
-            for msg in reversed(generated_messages):
-                if msg.get("content") and msg.get("role") == "assistant":
-                    final_llm_content_to_send = msg["content"]
-                    break
 
         if final_llm_content_to_send:
-            # Send the LLM's response back to the chat
-            # Determine target chat_id based on interface type
-            # The conversation_id is used directly below.
-
-            # TelegramChatInterface will handle MarkdownV2 formatting if specified.
             sent_message_id_str = await chat_interface.send_message(
                 conversation_id=conversation_id,
                 text=final_llm_content_to_send,
-                parse_mode="MarkdownV2",  # Instruct interface to use Markdown
+                parse_mode="MarkdownV2",
             )
             logger.info(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
             )
 
-            # The initial system trigger message for the callback was saved above.
-            # Now, if the assistant's response was sent, update its interface_message_id.
-            if sent_message_id_str:
-                # Find the corresponding assistant message in generated_messages to update its interface_message_id
-                # This assumes the last 'assistant' message in generated_messages is the one sent.
-                assistant_msg_to_update = next(
-                    (
-                        m
-                        for m in reversed(generated_messages)
-                        if m.get("role") == "assistant" and m.get("internal_id")
-                    ),
-                    None,
-                )
-                if assistant_msg_to_update and assistant_msg_to_update.get(
-                    "internal_id"
-                ):
+            if sent_message_id_str and final_assistant_message_internal_id is not None:
+                try:
                     await storage.update_message_interface_id(
                         db_context=db_context,
-                        internal_id=assistant_msg_to_update["internal_id"],
+                        internal_id=final_assistant_message_internal_id,
                         interface_message_id=sent_message_id_str,
                     )
-                else:
-                    logger.warning(
-                        f"Could not find saved assistant message to update interface_id for callback to {interface_type}:{conversation_id}"
-                    )
+                except Exception as e:
+                    logger.error(f"Failed to update interface_message_id for callback response: {e}", exc_info=True)
+            elif sent_message_id_str:  # Message sent but no internal_id to update
+                 logger.warning(
+                    f"Sent LLM callback response to {interface_type}:{conversation_id}, but could not find internal_id ({final_assistant_message_internal_id}) to update its interface_message_id."
+                )
             else:  # Message sending failed
                 logger.error(
                     f"Failed to send LLM callback response to {interface_type}:{conversation_id}"
                 )
-
-            # Save the *generated* messages (tool calls, assistant responses) from the LLM interaction
-            # These messages already have turn_id, interface_type, conversation_id, and timestamp populated by generate_llm_response_for_chat
-            for (
-                msg_dict_to_save
-            ) in generated_messages:  # Iterate over the list of dicts
-                # Ensure all required fields are present or defaulted for add_message_to_history
-                # msg_dict_to_save is already populated by generate_llm_response_for_chat
-                await storage.add_message_to_history(
-                    db_context=db_context,
-                    **msg_dict_to_save,  # Pass directly as it's prepared by generate_llm_response_for_chat
-                )
-
         else:
-            # Case: No final_llm_content_to_send. This could be due to a processing error or empty LLM response.
+            # Case: No final_llm_content_to_send.
             interface_type = exec_context.interface_type
             conversation_id = exec_context.conversation_id
 
