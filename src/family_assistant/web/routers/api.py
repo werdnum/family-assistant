@@ -341,7 +341,7 @@ async def upload_document(
     )
 
 
-@api_router.post("/v1/chat/send_message", response_model=ChatMessageResponse)
+@api_router.post("/v1/chat/send_message")
 async def api_chat_send_message(
     payload: ChatPromptRequest,
     request: Request,  # To access app.state for config if needed by ProcessingService context
