@@ -54,9 +54,11 @@ logger = logging.getLogger(__name__)
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext, None]:
+async def db_context(
+    test_db_engine: AsyncEngine,
+) -> AsyncGenerator[DatabaseContext, None]:
     """Provides a DatabaseContext for a single test function."""
-    async with get_db_context(engine=db_engine) as ctx:
+    async with get_db_context(engine=test_db_engine) as ctx:
         yield ctx
 
 
