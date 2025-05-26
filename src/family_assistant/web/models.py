@@ -50,3 +50,10 @@ class ApiTokenCreateResponse(BaseModel):
     expires_at: datetime | None = None
     is_revoked: bool
     last_used_at: datetime | None = None
+
+
+# --- API Chat Models ---
+class ChatMessageResponse(BaseModel):
+    reply: str
+    conversation_id: str
+    turn_id: str
