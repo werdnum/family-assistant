@@ -34,6 +34,7 @@ from family_assistant.storage.message_history import (
     get_messages_by_turn_id,  # Added
     get_recent_history,
     message_history_table,
+    update_message_error_traceback,  # Added
     update_message_interface_id,  # Added
 )
 
@@ -464,7 +465,8 @@ __all__ = [
     "metadata",
     "DatabaseContext",  # Export the new context manager
     "get_db_context",
-    "get_note_by_title",  # Export convenience function
+    "get_note_by_title",
+    "update_message_error_traceback",  # Export convenience function
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API

@@ -928,9 +928,7 @@ class ProcessingService:
                 and saved_user_msg_record.get("internal_id")
             ):
                 try:
-                    # Assuming storage.update_message_error_traceback exists or will be added.
-                    # If it doesn't exist, this will raise an AttributeError.
-                    await storage.update_message_error_traceback(  # type: ignore[attr-defined] # pylint: disable=no-member
+                    await storage.update_message_error_traceback(
                         db_context=db_context,
                         internal_id=saved_user_msg_record["internal_id"],
                         error_traceback=processing_error_traceback,
