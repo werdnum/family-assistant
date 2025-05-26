@@ -229,7 +229,9 @@ async def test_add_and_retrieve_note_rule_mock(
         )
     # Assertions remain outside the context manager
     assert add_error is None, f"Error during add note: {add_error}"
-    assert add_final_text_reply is not None, "No final text reply generated during add note turn"
+    assert add_final_text_reply is not None, (
+        "No final text reply generated during add note turn"
+    )
 
     # Assertion 1: Check the database directly to confirm the note was added
     # The tool call itself is now an internal detail of handle_chat_interaction,
@@ -284,8 +286,12 @@ async def test_add_and_retrieve_note_rule_mock(
         )
 
         # model_name argument removed
-    assert retrieve_error is None, f"Error during retrieve note: {retrieve_error}"  # Check retrieve_error
-    assert retrieve_final_text_reply is not None, "No final text reply generated during retrieve note turn"
+    assert retrieve_error is None, (
+        f"Error during retrieve note: {retrieve_error}"
+    )  # Check retrieve_error
+    assert retrieve_final_text_reply is not None, (
+        "No final text reply generated during retrieve note turn"
+    )
 
     # Assertion 3: Check the final response content from the mock rule
     # Use lower() for case-insensitive comparison
