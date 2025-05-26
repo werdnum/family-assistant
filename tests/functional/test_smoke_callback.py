@@ -114,20 +114,18 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # Rule 2: Match the system trigger from handle_llm_callback
     def callback_trigger_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # Iterate backwards to find the last user message that is the callback trigger
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                content = msg.get("content")
-                if isinstance(content, str):
-                    # This is expected to be the "System Callback Trigger:..." message
-                    is_trigger = "System Callback Trigger:" in content
-                    has_context = CALLBACK_CONTEXT in content
-                    if is_trigger and has_context:
-                        return True
-                    # If it's a user message but not the trigger,
-                    # it means we've gone too far back or the trigger wasn't the last user message.
-                    # For this specific test, the trigger *is* the last user message.
-                    break
+        if not messages:
+            return False
+
+        # The "System Callback Trigger" is added as the last user message by handle_chat_interaction
+        # when invoked by handle_llm_callback.
+        last_message = messages[-1]
+        if last_message.get("role") == "user":
+            content = last_message.get("content")
+            if isinstance(content, str):
+                is_trigger = "System Callback Trigger:" in content
+                has_context = CALLBACK_CONTEXT in content
+                return is_trigger and has_context
         return False
 
     callback_final_response_text = (
