@@ -69,9 +69,8 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
         prompts={
             "system_prompt": (
                 "You are a test assistant. Current time: {current_time}. "
-                "Notes: {notes_context}. Calendar: {calendar_context}. "
-                "Known Users: {known_users_context}. Server URL: {server_url}. "
-                "Aggregated Context: {aggregated_other_context}"
+                "Server URL: {server_url}. "
+                "Context: {aggregated_other_context}"
             )
         },
         calendar_config={},
@@ -211,6 +210,7 @@ async def app_fixture(
         },
     }
     app.state.llm_client = mock_llm_client  # For other parts that might use it
+    app.state.debug_mode = False  # Explicitly set for tests
 
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=test_db_engine) as temp_db_ctx:
