@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import uuid
@@ -140,7 +139,9 @@ def test_processing_service(
     """Creates a ProcessingService instance with mock/test components."""
     # Create mock context providers
     notes_provider = NotesContextProvider(
-        get_db_context_func=lambda: get_db_context(engine=db_context.engine),  # Fixed to return awaitable
+        get_db_context_func=lambda: get_db_context(
+            engine=db_context.engine
+        ),  # Fixed to return awaitable
         prompts=mock_processing_service_config.prompts,
     )
     calendar_provider = CalendarContextProvider(
