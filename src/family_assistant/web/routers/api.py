@@ -409,14 +409,16 @@ async def api_chat_send_message(
 
     # 2. Save the generated turn messages
     final_reply_content: str | None = None
-    for i, msg_dict in enumerate(processed_turn_messages):
+    for _, msg_dict in enumerate(processed_turn_messages):
         message_to_save = {
             "interface_type": "api",
             "conversation_id": conversation_id,
             "interface_message_id": None,  # Agent messages don't have this from API
             "turn_id": turn_id,
             "thread_root_id": thread_root_id_for_turn,
-            "timestamp": datetime.now(timezone.utc),  # More precise timestamp per message
+            "timestamp": datetime.now(
+                timezone.utc
+            ),  # More precise timestamp per message
             "role": msg_dict.get("role"),
             "content": msg_dict.get("content"),
             "tool_calls": msg_dict.get("tool_calls"),
