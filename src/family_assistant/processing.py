@@ -710,236 +710,142 @@ class ProcessingService:
                     # For now, assuming add_message_to_history handles setting its own ID as root if None is passed.
 
             # --- 2. Prepare LLM Context (History, System Prompt) ---
-            raw_history_messages = (
-                await storage.get_recent_history(
-                    db_context=db_context,
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    limit=self.max_history_messages,
-                    max_age=timedelta(hours=self.history_max_age_hours),
-                )
-            )
-        except Exception as hist_err:
-            logger.error(
-                f"Failed to get message history for {interface_type}:{conversation_id}: {hist_err}",
-                exc_info=True,
-            )
-            raw_history_messages = []  # Continue with empty history on error
-        logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}):")
-        for i, msg in enumerate(raw_history_messages):
-            logger.debug(
-                f"  RawHist[{i}]: internal_id={msg.get('internal_id')}, role={msg.get('role')}, content_snippet='{str(msg.get('content'))[:50]}...', ts={msg.get('timestamp')}"
-            )
-
-        # --- Filter out the triggering message from the fetched history ---
-        filtered_history_messages = []
-        if trigger_interface_message_id:
-            for msg in raw_history_messages:
-                if msg.get("interface_message_id") != trigger_interface_message_id:
-                    filtered_history_messages.append(msg)
-            logger.debug(
-                f"Filtered history: {len(raw_history_messages)} -> {len(filtered_history_messages)} messages after removing trigger ID {trigger_interface_message_id}"
-            )
-        else:
-            filtered_history_messages = (
-                raw_history_messages  # No trigger ID to filter by
-            )
-        logger.debug(f"Filtered history messages ({len(filtered_history_messages)}):")
-        for i, msg in enumerate(filtered_history_messages):
-            logger.debug(
-                f"  FiltHist[{i}]: internal_id={msg.get('internal_id')}, role={msg.get('role')}, content_snippet='{str(msg.get('content'))[:50]}...', ts={msg.get('timestamp')}"
-            )
-
-        # Format the raw history using the new helper method
-        initial_messages_for_llm = self._format_history_for_llm(
-            filtered_history_messages
-        )
-        logger.debug(
-            f"Initial messages for LLM after formatting ({len(initial_messages_for_llm)}): {json.dumps(initial_messages_for_llm, default=str)}"
-        )
-
-        # --- Handle Reply Thread Context ---
-        thread_root_id_for_saving: int | None = (
-            None  # Store the root ID for saving later
-        )
-        if replied_to_interface_id:
             try:
-                replied_to_db_msg = await storage.get_message_by_interface_id(
-                    db_context=db_context,
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    interface_message_id=replied_to_interface_id,
-                )
-                if replied_to_db_msg:
-                    # Determine thread root ID for saving
-                    thread_root_id_for_saving = replied_to_db_msg.get(
-                        "thread_root_id"
-                    ) or replied_to_db_msg.get("internal_id")
-                    logger.info(
-                        f"Determined thread_root_id {thread_root_id_for_saving} from replied-to message {replied_to_interface_id}"
+                raw_history_messages = (
+                    await storage.get_recent_history(
+                        db_context=db_context,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        limit=self.max_history_messages,
+                        max_age=timedelta(hours=self.history_max_age_hours),
                     )
-
-                    # Fetch the full thread history if a root ID exists
-                    if thread_root_id_for_saving:
-                        logger.info(
-                            f"Fetching full thread history for root ID {thread_root_id_for_saving}"
-                        )
-                        full_thread_messages_db = (
-                            await storage.get_messages_by_thread_id(
-                                db_context=db_context,
-                                thread_root_id=thread_root_id_for_saving,
-                            )
-                        )
-                        # Format thread messages and replace the initial limited history
-                        formatted_thread_messages = self._format_history_for_llm(
-                            full_thread_messages_db
-                        )
-                        initial_messages_for_llm = formatted_thread_messages
-                        logger.info(
-                            f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context."
-                        )
-                    else:
-                        # If the replied-to message had no root (was the first), the initial history fetch is sufficient.
-                        logger.info(
-                            f"Replied-to message {replied_to_interface_id} is the start of the thread. Using standard history."
-                        )
-
-                else:
-                    logger.warning(
-                        f"Could not find replied-to message {replied_to_interface_id} in DB to determine thread root or fetch full thread."
-                    )
-                    # Fallback: Use the initially fetched recent history
-
-            except Exception as thread_err:
-                logger.error(
-                    f"Error handling reply context: {thread_err}", exc_info=True
                 )
-                # Fallback: Use the initially fetched recent history
+            except Exception as hist_err:
+                logger.error(f"Failed to get message history for {interface_type}:{conversation_id}: {hist_err}", exc_info=True)
+                raw_history_messages = [] # Continue with empty history on error
 
-        # Use the potentially updated message list
-        messages = initial_messages_for_llm
+            logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}).")
+            # (Detailed logging of raw history messages can be added here if needed for debugging)
 
-        # --- NEW: Prune leading invalid messages from history ---
-        # This loop ensures that the history (before system prompt and current user message)
-        # doesn't start with an invalid message type that could cause API errors.
-        pruned_messages_count = 0
-        original_length = len(messages)
-        while messages:
-            first_msg_in_history = messages[0]
-            first_msg_role = first_msg_in_history.get("role")
-            # Check if tool_calls is present and non-empty
-            first_msg_has_tool_calls = bool(first_msg_in_history.get("tool_calls"))
-
-            if (
-                first_msg_role == "tool"
-                or first_msg_role == "assistant"
-                and first_msg_has_tool_calls
-            ):
-                messages.pop(0)
-                pruned_messages_count += 1
+            # Filter out the *current* user trigger message if it somehow got included in history
+            filtered_history_messages = []
+            if trigger_interface_message_id: # This ID is of the message *being processed*
+                for msg_from_db in raw_history_messages:
+                    if msg_from_db.get("interface_message_id") != trigger_interface_message_id:
+                        filtered_history_messages.append(msg_from_db)
+                if len(raw_history_messages) != len(filtered_history_messages):
+                     logger.debug(
+                        f"Filtered out current trigger message (ID: {trigger_interface_message_id}) from fetched history."
+                    )
             else:
-                # The first message is valid (e.g., user, or assistant without tool_calls)
-                break
+                filtered_history_messages = raw_history_messages
+            
+            initial_messages_for_llm = self._format_history_for_llm(filtered_history_messages)
+            logger.debug(f"Initial messages for LLM after formatting history ({len(initial_messages_for_llm)}).")
 
-        if pruned_messages_count > 0:
-            logger.warning(
-                f"Pruned {pruned_messages_count} leading messages from history (original length {original_length}, new length {len(messages)}) to prevent API errors."
-            )
-        # --- END NEW Pruning ---
+            # Handle reply thread context
+            if replied_to_interface_id and thread_root_id_for_turn:
+                try:
+                    logger.info(f"Fetching full thread history for root ID {thread_root_id_for_turn} due to reply.")
+                    full_thread_messages_db = await storage.get_messages_by_thread_id(
+                        db_context=db_context,
+                        thread_root_id=thread_root_id_for_turn,
+                    )
+                    current_trigger_removed_from_thread = []
+                    if trigger_interface_message_id:
+                        for msg_in_thread in full_thread_messages_db:
+                            if msg_in_thread.get("interface_message_id") != trigger_interface_message_id:
+                                current_trigger_removed_from_thread.append(msg_in_thread)
+                    else:
+                        current_trigger_removed_from_thread = full_thread_messages_db
+                    
+                    initial_messages_for_llm = self._format_history_for_llm(current_trigger_removed_from_thread)
+                    logger.info(f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context.")
+                except Exception as thread_fetch_err:
+                    logger.error(f"Error fetching full thread history: {thread_fetch_err}", exc_info=True)
+                    # Fallback to using the initially fetched recent history if thread fetch fails
 
-        # --- Prepare System Prompt Context ---
-        system_prompt_template = self.prompts.get(  # Use self.prompts
-            "system_prompt",
-            "You are a helpful assistant. Current time is {current_time}.",
-        )
+            messages_for_llm = initial_messages_for_llm
 
-        try:
-            local_tz = pytz.timezone(self.timezone_str)  # Use self.timezone_str
-            current_local_time = datetime.now(local_tz)
-            current_time_str = current_local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
-        except Exception as tz_err:
-            logger.error(
-                f"Error applying timezone {self.timezone_str}: {tz_err}. Defaulting time format."
-            )
-            current_time_str = datetime.now(timezone.utc).strftime(
-                "%Y-%m-%d %H:%M:%S UTC"
-            )
+            # Prune leading invalid messages
+            pruned_count = 0
+            while messages_for_llm:
+                first_msg = messages_for_llm[0]
+                role = first_msg.get("role")
+                has_tool_calls = bool(first_msg.get("tool_calls"))
+                if role == "tool" or (role == "assistant" and has_tool_calls):
+                    messages_for_llm.pop(0)
+                    pruned_count += 1
+                else:
+                    break
+            if pruned_count > 0:
+                logger.warning(f"Pruned {pruned_count} leading messages from LLM history.")
 
-        # --- NEW: Aggregate context from providers --- This replaces the direct fetching of calendar and notes context.
-        aggregated_other_context_str = ""
-        try:
-            aggregated_other_context_str = (
-                await self._aggregate_context_from_providers()
-            )
-        except Exception as agg_err:
-            logger.error(
-                f"Failed to aggregate context from providers: {agg_err}", exc_info=True
-            )
-            aggregated_other_context_str = (
-                "Error retrieving extended context."  # Keep fallback
-            )
+            # Prepare System Prompt
+            system_prompt_template = self.prompts.get("system_prompt", "You are a helpful assistant. Current time is {current_time}.")
+            try:
+                local_tz = pytz.timezone(self.timezone_str)
+                current_time_str = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S %Z")
+            except Exception as tz_err:
+                logger.error(f"Error applying timezone {self.timezone_str}: {tz_err}. Defaulting time format.")
+                current_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            
+            aggregated_other_context_str = await self._aggregate_context_from_providers()
+            
+            final_system_prompt = system_prompt_template.format(
+                user_name=user_name,
+                current_time=current_time_str,
+                aggregated_other_context=aggregated_other_context_str,
+                server_url=self.server_url,
+            ).strip()
 
-        # --- System Prompt and final message preparation happens *before* calling self.process_message ---
-        # This was misplaced in the provided file structure. It should be done on the 'messages' list
-        # that is then passed to self.process_message.
-        # The `messages` list at this point contains the history. Now add system prompt and trigger message.
+            if final_system_prompt:
+                messages_for_llm.insert(0, {"role": "system", "content": final_system_prompt})
+            
+            # Add current user trigger message
+            llm_user_content: str | list[dict[str, Any]]
+            if len(trigger_content_parts) == 1 and trigger_content_parts[0].get("type") == "text":
+                llm_user_content = trigger_content_parts[0]["text"]
+            else:
+                llm_user_content = trigger_content_parts
 
-        final_system_prompt = system_prompt_template.format(
-            user_name=user_name,
-            current_time=current_time_str,
-            aggregated_other_context=aggregated_other_context_str,  # Use new aggregated context
-            server_url=self.server_url,  # Add server URL
-        ).strip()
+            messages_for_llm.append({"role": "user", "content": llm_user_content})
 
-        if final_system_prompt:
-            messages.insert(0, {"role": "system", "content": final_system_prompt})
-            logger.debug("Prepended system prompt to LLM messages.")
-        else:
-            logger.warning("Generated empty system prompt.")
-
-        # --- Add the triggering message content ---
-        trigger_content: str | list[dict[str, Any]]
-        if (
-            isinstance(trigger_content_parts, list)
-            and len(trigger_content_parts) == 1
-            and isinstance(trigger_content_parts[0], dict)
-            and trigger_content_parts[0].get("type") == "text"
-            and "text" in trigger_content_parts[0]
-        ):
-            trigger_content = trigger_content_parts[0]["text"]
-        else:
-            trigger_content = trigger_content_parts
-
-        trigger_message = {
-            "role": "user",
-            "content": trigger_content,
-        }
-        messages.append(trigger_message)
-
-        # --- Now, call the processing logic with the fully prepared messages list ---
-        try:
-            (
-                generated_turn_messages,
-                final_reasoning_info,
-            ) = await self.process_message(  # Call the other method in this class
-                db_context=db_context,  # Pass context
-                messages=messages,
-                interface_type=interface_type,  # Pass interface_type
-                conversation_id=conversation_id,  # Pass conversation_id
-                turn_id=turn_id,  # Pass the turn_id
+            # --- 3. Call Core LLM Processing (self.process_message) ---
+            generated_turn_messages, final_reasoning_info_from_process_msg = await self.process_message(
+                db_context=db_context,
+                messages=messages_for_llm,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                turn_id=turn_id,
                 chat_interface=chat_interface,
-                new_task_event=new_task_event,  # Pass new_task_event
+                new_task_event=new_task_event,
                 request_confirmation_callback=request_confirmation_callback,
             )
-            # Return the list of turn messages (assistant requests, tool responses, final answer)
-            # and the reasoning info from the final LLM call.
-            # The caller (e.g., generate_llm_response_for_chat or API endpoint)
-            # is responsible for adding common metadata (turn_id, timestamp, etc.)
-            # and saving these messages.
-            return generated_turn_messages, final_reasoning_info, None
-        except Exception:
-            error_traceback = traceback.format_exc()
-            logger.error(
-                f"Exception in generate_llm_response_for_chat for {interface_type}:{conversation_id}, turn {turn_id}: {error_traceback}"
-            )
-            return [], None, error_traceback
+            final_reasoning_info = final_reasoning_info_from_process_msg
+
+            # --- 4. Save Generated Turn Messages & Extract Final Reply ---
+            if generated_turn_messages:
+                for msg_dict in generated_turn_messages:
+                    msg_to_save = msg_dict.copy()
+                    msg_to_save["interface_type"] = interface_type
+                    msg_to_save["conversation_id"] = conversation_id
+                    msg_to_save["turn_id"] = turn_id
+                    msg_to_save["thread_root_id"] = thread_root_id_for_turn
+                    msg_to_save["timestamp"] = msg_to_save.get("timestamp", datetime.now(timezone.utc))
+                    msg_to_save.setdefault("interface_message_id", None)
+
+                    saved_turn_msg_record = await storage.add_message_to_history(
+                        db_context=db_context, **msg_to_save
+                    )
+
+                    if msg_dict.get("role") == "assistant" and msg_dict.get("content"):
+                        final_text_reply = str(msg_dict["content"])
+                        if saved_turn_msg_record:
+                             final_assistant_message_internal_id = saved_turn_msg_record.get("internal_id")
+            else:
+                logger.warning(f"No messages generated by self.process_message for turn {turn_id}.")
+
+            return final_text_reply, final_assistant_message_internal_id, final_reasoning_info, None
+        # The main 'except Exception as e:' block is outside this SEARCH/REPLACE, added by the first S/R block.
+        # This SEARCH block ends before that main 'except'.
