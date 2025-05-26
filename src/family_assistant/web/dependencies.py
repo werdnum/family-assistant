@@ -1,7 +1,7 @@
 import logging
 from collections.abc import AsyncGenerator
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, status  # Added status
 
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -42,9 +42,72 @@ async def get_tools_provider_dependency(request: Request) -> ToolsProvider:
     if not provider:
         logger.error("ToolsProvider not found in app state.")
         raise HTTPException(
-            status_code=500, detail="ToolsProvider not configured or available."
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="ToolsProvider not configured or available."
         )
     return provider
+
+
+async def get_processing_service(request: Request) -> "ProcessingService":  # type: ignore
+    """Retrieves the ProcessingService instance from app state."""
+    # Forward reference for ProcessingService, will be resolved at runtime
+    # from family_assistant.processing import ProcessingService # Avoid circular import at top level
+
+    service = getattr(request.app.state, "processing_service", None)
+    if not service:
+        logger.error("ProcessingService not found in app state.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="ProcessingService not configured or available."
+        )
+    # isinstance check would require importing ProcessingService, which can cause circular deps
+    # Rely on correct setup in main.py for now.
+    return service
+
+
+async def get_current_api_user(request: Request) -> dict:
+    """
+    Dependency to get the current user from an API token.
+    Validates the token and fetches user details.
+    """
+    from family_assistant.web.auth import (  # Import locally to avoid top-level circularity if any
+        get_user_from_api_token,
+    )
+
+    token_value: str | None = None
+    auth_header = request.headers.get("Authorization")
+
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token_value = auth_header.split(" ", 1)[1]
+        logger.debug("Attempting API token auth using Authorization Bearer header.")
+    else:
+        # Fallback to X-API-Token if Authorization header is not a Bearer token or not present
+        token_value = request.headers.get("X-API-Token")
+        if token_value:
+            logger.debug("Attempting API token auth using X-API-Token header.")
+
+    if not token_value:
+        logger.warning("API token not provided in Authorization or X-API-Token header.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated: API token required.",
+            headers={"WWW-Authenticate": 'Bearer realm="api", error="missing_token"'},
+        )
+
+    # Construct the header string as expected by get_user_from_api_token
+    # get_user_from_api_token expects the full "Bearer <token>" string.
+    auth_header_for_validation = f"Bearer {token_value}"
+    api_user = await get_user_from_api_token(auth_header_for_validation, request)
+
+    if not api_user:
+        # Log prefix for security, avoid logging full token
+        logger.warning(f"Invalid or expired API token provided. Token prefix: {token_value[:8]}...")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired API token.",
+            headers={"WWW-Authenticate": 'Bearer realm="api", error="invalid_token"'},
+        )
+    
+    logger.info(f"API user authenticated: {api_user.get('sub')}")
+    return api_user
 
 
 async def get_current_active_user(request: Request) -> dict:
