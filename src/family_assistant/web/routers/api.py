@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     ToolExecutionContext,
@@ -28,9 +29,14 @@ from family_assistant.tools import (
 )
 from family_assistant.web.dependencies import (
     get_db,
+    get_processing_service,  # Added
     get_tools_provider_dependency,
 )
-from family_assistant.web.models import DocumentUploadResponse
+from family_assistant.web.models import (  # Updated
+    ChatMessageResponse,
+    ChatPromptRequest,
+    DocumentUploadResponse,
+)
 
 logger = logging.getLogger(__name__)
 api_router = APIRouter()
@@ -332,4 +338,62 @@ async def upload_document(
         message=ingestion_result["message"],
         document_id=ingestion_result["document_id"],
         task_enqueued=ingestion_result["task_enqueued"],
+    )
+
+
+@api_router.post("/v1/chat/send_message", response_model=ChatMessageResponse)
+async def api_chat_send_message(
+    payload: ChatPromptRequest,
+    request: Request,  # To access app.state for config if needed by ProcessingService context
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> ChatMessageResponse:
+    """
+    Receives a user prompt via API, processes it using the ProcessingService,
+    and returns the assistant's reply.
+    """
+    conversation_id = payload.conversation_id or f"api_conv_{uuid.uuid4()}"
+    turn_id = f"api_turn_{uuid.uuid4()}"
+
+    logger.info(
+        f"API chat request received. Conversation ID: {conversation_id}, Turn ID: {turn_id}, Prompt: '{payload.prompt[:100]}...'"
+    )
+
+    # Prepare messages for ProcessingService
+    user_message = {"role": "user", "content": payload.prompt}
+    # For API, each call is typically independent unless conversation_id is managed by client
+    # If conversation_id is provided, history could be fetched, but for now, simple single message processing.
+    messages_to_process = [user_message]
+
+    # Call process_message
+    # The API interface doesn't directly send messages back via a ChatInterface like Telegram.
+    # The final LLM response content is what we need for the API response.
+    llm_output = await processing_service.process_message(
+        db_context=db_context,
+        messages=messages_to_process,
+        interface_type="api",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        chat_interface=None,  # API handles response directly, no callback interface
+        new_task_event=None,  # No task event for synchronous API response
+    )
+
+    if llm_output.content is None:
+        # This case might occur if the LLM only makes tool calls without a textual reply,
+        # or if an error occurred that process_message handled by returning no content.
+        logger.error(
+            f"LLMOutput content is None for API chat. Conversation ID: {conversation_id}, Turn ID: {turn_id}"
+        )
+        # Depending on desired behavior, could return an error or an empty reply.
+        # For tests expecting a reply, this would be an issue.
+        # The test_api_chat_add_note_tool expects a final textual reply.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Assistant did not provide a textual reply.",
+        )
+
+    return ChatMessageResponse(
+        reply=llm_output.content,
+        conversation_id=conversation_id,
+        turn_id=turn_id,
     )

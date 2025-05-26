@@ -53,6 +53,11 @@ class ApiTokenCreateResponse(BaseModel):
 
 
 # --- API Chat Models ---
+class ChatPromptRequest(BaseModel):
+    prompt: str
+    conversation_id: str | None = None
+
+
 class ChatMessageResponse(BaseModel):
     reply: str
     conversation_id: str
