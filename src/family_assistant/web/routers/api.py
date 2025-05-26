@@ -19,6 +19,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from family_assistant import storage  # Added import for storage module
 from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
