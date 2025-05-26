@@ -122,13 +122,12 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
                     # This is expected to be the "System Callback Trigger:..." message
                     is_trigger = "System Callback Trigger:" in content
                     has_context = CALLBACK_CONTEXT in content
-                    # logger.debug(f"Callback Matcher: User content='{content[:100]}...', is_trigger={is_trigger}, has_context={has_context}")
                     if is_trigger and has_context:
                         return True
                     # If it's a user message but not the trigger,
                     # it means we've gone too far back or the trigger wasn't the last user message.
                     # For this specific test, the trigger *is* the last user message.
-                    break 
+                    break
         return False
 
     callback_final_response_text = (
