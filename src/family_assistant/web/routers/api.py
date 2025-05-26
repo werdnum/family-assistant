@@ -4,7 +4,7 @@ import logging
 import pathlib
 import uuid
 from datetime import date, datetime, timezone
-from typing import TYPE_CHECKING, Annotated, Any  # Added TYPE_CHECKING
+from typing import Annotated, Any  # Added TYPE_CHECKING
 
 from fastapi import (
     APIRouter,
@@ -37,10 +37,6 @@ from family_assistant.web.models import (  # Updated
     ChatPromptRequest,
     DocumentUploadResponse,
 )
-
-if TYPE_CHECKING:
-    from family_assistant.llm import LLMOutput
-
 
 logger = logging.getLogger(__name__)
 api_router = APIRouter()
@@ -372,7 +368,7 @@ async def api_chat_send_message(
     # Call process_message
     # The API interface doesn't directly send messages back via a ChatInterface like Telegram.
     # The final LLM response content is what we need for the API response.
-    llm_output: LLMOutput = await processing_service.process_message(
+    turn_messages, _ = await processing_service.process_message(
         db_context=db_context,
         messages=messages_to_process,
         interface_type="api",
@@ -382,14 +378,21 @@ async def api_chat_send_message(
         new_task_event=None,  # No task event for synchronous API response
     )
 
-    if llm_output.content is None:
+    final_reply_content: str | None = None
+    if turn_messages:
+        # Iterate in reverse to find the last assistant message with content
+        for msg in reversed(turn_messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                final_reply_content = msg["content"]
+                break
+
+    if final_reply_content is None:
         # This case might occur if the LLM only makes tool calls without a textual reply,
         # or if an error occurred that process_message handled by returning no content.
         logger.error(
-            f"LLMOutput content is None for API chat. Conversation ID: {conversation_id}, Turn ID: {turn_id}"
+            f"No final assistant reply content found for API chat. Conversation ID: {conversation_id}, Turn ID: {turn_id}"
         )
         # Depending on desired behavior, could return an error or an empty reply.
-        # For tests expecting a reply, this would be an issue.
         # The test_api_chat_add_note_tool expects a final textual reply.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -397,7 +400,7 @@ async def api_chat_send_message(
         )
 
     return ChatMessageResponse(
-        reply=llm_output.content,
+        reply=final_reply_content,
         conversation_id=conversation_id,
         turn_id=turn_id,
     )
