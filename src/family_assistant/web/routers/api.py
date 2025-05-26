@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.llm import LLMOutput  # Added import
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -368,7 +369,7 @@ async def api_chat_send_message(
     # Call process_message
     # The API interface doesn't directly send messages back via a ChatInterface like Telegram.
     # The final LLM response content is what we need for the API response.
-    llm_output = await processing_service.process_message(
+    llm_output: LLMOutput = await processing_service.process_message(
         db_context=db_context,
         messages=messages_to_process,
         interface_type="api",
