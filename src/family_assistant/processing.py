@@ -646,7 +646,9 @@ class ProcessingService:
         try:
             # --- 1. Determine Thread Root ID & Save User Trigger Message ---
             thread_root_id_for_turn: int | None = None
-            user_message_timestamp = datetime.now(timezone.utc)  # Timestamp for user message
+            user_message_timestamp = datetime.now(
+                timezone.utc
+            )  # Timestamp for user message
 
             if replied_to_interface_id:
                 try:
@@ -672,12 +674,19 @@ class ProcessingService:
                         f"Error determining thread root ID from reply: {thread_err}",
                         exc_info=True,
                     )
-            
+
             # Prepare user message content for saving (simplified for now, can be expanded)
             # For simplicity, taking the first text part if available, or a placeholder.
             user_content_for_history = "[User message content]"
             if trigger_content_parts:
-                first_text_part = next((part.get("text") for part in trigger_content_parts if part.get("type") == "text"), None)
+                first_text_part = next(
+                    (
+                        part.get("text")
+                        for part in trigger_content_parts
+                        if part.get("type") == "text"
+                    ),
+                    None,
+                )
                 if first_text_part:
                     user_content_for_history = str(first_text_part)
                 elif trigger_content_parts[0].get("type") == "image_url":
@@ -703,7 +712,9 @@ class ProcessingService:
                 # If it was the first message in a thread, its own ID is the root.
                 thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
                 if thread_root_id_for_turn:
-                    logger.info(f"Established new thread_root_id: {thread_root_id_for_turn}")
+                    logger.info(
+                        f"Established new thread_root_id: {thread_root_id_for_turn}"
+                    )
                     # Update the user message record itself if its thread_root_id was initially None
                     # This is usually handled by add_message_to_history if thread_root_id is passed as None initially
                     # and then set, but double-checking or an explicit update might be needed if that's not the case.
@@ -711,17 +722,18 @@ class ProcessingService:
 
             # --- 2. Prepare LLM Context (History, System Prompt) ---
             try:
-                raw_history_messages = (
-                    await storage.get_recent_history(
-                        db_context=db_context,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        limit=self.max_history_messages,
-                        max_age=timedelta(hours=self.history_max_age_hours),
-                    )
+                raw_history_messages = await storage.get_recent_history(
+                    db_context=db_context,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    limit=self.max_history_messages,
+                    max_age=timedelta(hours=self.history_max_age_hours),
                 )
             except Exception as hist_err:
-                logger.error(f"Failed to get message history for {interface_type}:{conversation_id}: {hist_err}", exc_info=True)
+                logger.error(
+                    f"Failed to get message history for {interface_type}:{conversation_id}: {hist_err}",
+                    exc_info=True,
+                )
                 raw_history_messages = []  # Continue with empty history on error
 
             logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}).")
@@ -729,9 +741,14 @@ class ProcessingService:
 
             # Filter out the *current* user trigger message if it somehow got included in history
             filtered_history_messages = []
-            if trigger_interface_message_id:  # This ID is of the message *being processed*
+            if (
+                trigger_interface_message_id
+            ):  # This ID is of the message *being processed*
                 for msg_from_db in raw_history_messages:
-                    if msg_from_db.get("interface_message_id") != trigger_interface_message_id:
+                    if (
+                        msg_from_db.get("interface_message_id")
+                        != trigger_interface_message_id
+                    ):
                         filtered_history_messages.append(msg_from_db)
                 if len(raw_history_messages) != len(filtered_history_messages):
                     logger.debug(
@@ -739,14 +756,20 @@ class ProcessingService:
                     )
             else:
                 filtered_history_messages = raw_history_messages
-            
-            initial_messages_for_llm = self._format_history_for_llm(filtered_history_messages)
-            logger.debug(f"Initial messages for LLM after formatting history ({len(initial_messages_for_llm)}).")
+
+            initial_messages_for_llm = self._format_history_for_llm(
+                filtered_history_messages
+            )
+            logger.debug(
+                f"Initial messages for LLM after formatting history ({len(initial_messages_for_llm)})."
+            )
 
             # Handle reply thread context
             if replied_to_interface_id and thread_root_id_for_turn:
                 try:
-                    logger.info(f"Fetching full thread history for root ID {thread_root_id_for_turn} due to reply.")
+                    logger.info(
+                        f"Fetching full thread history for root ID {thread_root_id_for_turn} due to reply."
+                    )
                     full_thread_messages_db = await storage.get_messages_by_thread_id(
                         db_context=db_context,
                         thread_root_id=thread_root_id_for_turn,
@@ -754,15 +777,27 @@ class ProcessingService:
                     current_trigger_removed_from_thread = []
                     if trigger_interface_message_id:
                         for msg_in_thread in full_thread_messages_db:
-                            if msg_in_thread.get("interface_message_id") != trigger_interface_message_id:
-                                current_trigger_removed_from_thread.append(msg_in_thread)
+                            if (
+                                msg_in_thread.get("interface_message_id")
+                                != trigger_interface_message_id
+                            ):
+                                current_trigger_removed_from_thread.append(
+                                    msg_in_thread
+                                )
                     else:
                         current_trigger_removed_from_thread = full_thread_messages_db
-                    
-                    initial_messages_for_llm = self._format_history_for_llm(current_trigger_removed_from_thread)
-                    logger.info(f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context.")
+
+                    initial_messages_for_llm = self._format_history_for_llm(
+                        current_trigger_removed_from_thread
+                    )
+                    logger.info(
+                        f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context."
+                    )
                 except Exception as thread_fetch_err:
-                    logger.error(f"Error fetching full thread history: {thread_fetch_err}", exc_info=True)
+                    logger.error(
+                        f"Error fetching full thread history: {thread_fetch_err}",
+                        exc_info=True,
+                    )
                     # Fallback to using the initially fetched recent history if thread fetch fails
 
             messages_for_llm = initial_messages_for_llm
@@ -779,19 +814,32 @@ class ProcessingService:
                 else:
                     break
             if pruned_count > 0:
-                logger.warning(f"Pruned {pruned_count} leading messages from LLM history.")
+                logger.warning(
+                    f"Pruned {pruned_count} leading messages from LLM history."
+                )
 
             # Prepare System Prompt
-            system_prompt_template = self.prompts.get("system_prompt", "You are a helpful assistant. Current time is {current_time}.")
+            system_prompt_template = self.prompts.get(
+                "system_prompt",
+                "You are a helpful assistant. Current time is {current_time}.",
+            )
             try:
                 local_tz = pytz.timezone(self.timezone_str)
-                current_time_str = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S %Z")
+                current_time_str = datetime.now(local_tz).strftime(
+                    "%Y-%m-%d %H:%M:%S %Z"
+                )
             except Exception as tz_err:
-                logger.error(f"Error applying timezone {self.timezone_str}: {tz_err}. Defaulting time format.")
-                current_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-            
-            aggregated_other_context_str = await self._aggregate_context_from_providers()
-            
+                logger.error(
+                    f"Error applying timezone {self.timezone_str}: {tz_err}. Defaulting time format."
+                )
+                current_time_str = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%d %H:%M:%S UTC"
+                )
+
+            aggregated_other_context_str = (
+                await self._aggregate_context_from_providers()
+            )
+
             final_system_prompt = system_prompt_template.format(
                 user_name=user_name,
                 current_time=current_time_str,
@@ -800,11 +848,16 @@ class ProcessingService:
             ).strip()
 
             if final_system_prompt:
-                messages_for_llm.insert(0, {"role": "system", "content": final_system_prompt})
-            
+                messages_for_llm.insert(
+                    0, {"role": "system", "content": final_system_prompt}
+                )
+
             # Add current user trigger message
             llm_user_content: str | list[dict[str, Any]]
-            if len(trigger_content_parts) == 1 and trigger_content_parts[0].get("type") == "text":
+            if (
+                len(trigger_content_parts) == 1
+                and trigger_content_parts[0].get("type") == "text"
+            ):
                 llm_user_content = trigger_content_parts[0]["text"]
             else:
                 llm_user_content = trigger_content_parts
@@ -812,7 +865,10 @@ class ProcessingService:
             messages_for_llm.append({"role": "user", "content": llm_user_content})
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
-            generated_turn_messages, final_reasoning_info_from_process_msg = await self.process_message(
+            (
+                generated_turn_messages,
+                final_reasoning_info_from_process_msg,
+            ) = await self.process_message(
                 db_context=db_context,
                 messages=messages_for_llm,
                 interface_type=interface_type,
@@ -832,7 +888,9 @@ class ProcessingService:
                     msg_to_save["conversation_id"] = conversation_id
                     msg_to_save["turn_id"] = turn_id
                     msg_to_save["thread_root_id"] = thread_root_id_for_turn
-                    msg_to_save["timestamp"] = msg_to_save.get("timestamp", datetime.now(timezone.utc))
+                    msg_to_save["timestamp"] = msg_to_save.get(
+                        "timestamp", datetime.now(timezone.utc)
+                    )
                     msg_to_save.setdefault("interface_message_id", None)
 
                     saved_turn_msg_record = await storage.add_message_to_history(
@@ -842,11 +900,20 @@ class ProcessingService:
                     if msg_dict.get("role") == "assistant" and msg_dict.get("content"):
                         final_text_reply = str(msg_dict["content"])
                         if saved_turn_msg_record:
-                            final_assistant_message_internal_id = saved_turn_msg_record.get("internal_id")
+                            final_assistant_message_internal_id = (
+                                saved_turn_msg_record.get("internal_id")
+                            )
             else:
-                logger.warning(f"No messages generated by self.process_message for turn {turn_id}.")
+                logger.warning(
+                    f"No messages generated by self.process_message for turn {turn_id}."
+                )
 
-            return final_text_reply, final_assistant_message_internal_id, final_reasoning_info, None
+            return (
+                final_text_reply,
+                final_assistant_message_internal_id,
+                final_reasoning_info,
+                None,
+            )
 
         except Exception:
             processing_error_traceback = traceback.format_exc()
@@ -855,7 +922,11 @@ class ProcessingService:
             )
             # Attempt to save the error to the user trigger message if possible
             # Ensure saved_user_msg_record is accessible here; it's defined at the start of the try block.
-            if 'saved_user_msg_record' in locals() and saved_user_msg_record and saved_user_msg_record.get("internal_id"):
+            if (
+                "saved_user_msg_record" in locals()
+                and saved_user_msg_record
+                and saved_user_msg_record.get("internal_id")
+            ):
                 try:
                     # Assuming storage.update_message_error_traceback exists or will be added.
                     # If it doesn't exist, this will raise an AttributeError.
@@ -865,6 +936,8 @@ class ProcessingService:
                         error_traceback=processing_error_traceback,
                     )
                 except Exception as db_err_update:
-                    logger.error(f"Failed to update user message with error traceback: {db_err_update}")
-            
+                    logger.error(
+                        f"Failed to update user message with error traceback: {db_err_update}"
+                    )
+
             return None, None, None, processing_error_traceback
