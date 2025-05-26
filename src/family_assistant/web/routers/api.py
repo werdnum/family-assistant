@@ -387,8 +387,8 @@ async def api_chat_send_message(
     saved_user_msg_record = await storage.add_message_to_history(
         db_context=db_context, **user_message_to_save
     )
-    if saved_user_msg_record and saved_user_msg_record.internal_id:
-        thread_root_id_for_turn = saved_user_msg_record.internal_id
+    if saved_user_msg_record and saved_user_msg_record.get("internal_id") is not None:
+        thread_root_id_for_turn = saved_user_msg_record["internal_id"]
         # If this was the first message, its own ID is the root.
         # No need to update the already saved record's thread_root_id here,
         # as add_message_to_history handles setting it if it was None.
