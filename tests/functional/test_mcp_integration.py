@@ -262,6 +262,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
+        tools_config={},  # Added missing tools_config
     )
 
     processing_service = ProcessingService(
@@ -473,6 +474,7 @@ async def test_mcp_time_conversion_sse(
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
+        tools_config={},  # Added missing tools_config
     )
     processing_service = ProcessingService(
         llm_client=llm_client,

@@ -138,6 +138,7 @@ async def telegram_handler_fixture(
         timezone_str="UTC",
         max_history_messages=10,
         history_max_age_hours=24,
+        tools_config={},  # Added missing tools_config
     )
 
     # Define a separate app_config for the test

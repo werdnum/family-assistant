@@ -59,6 +59,7 @@ def processing_service() -> ProcessingService:
         timezone_str="UTC",  # Not used
         max_history_messages=10,  # Not used
         history_max_age_hours=1,  # Not used
+        tools_config={},  # Added missing tools_config
     )
     return ProcessingService(
         llm_client=MockLLMClient(),
