@@ -114,14 +114,11 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # Rule 2: Match the system trigger from handle_llm_callback
     def callback_trigger_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-
-        # The trigger text from handle_llm_callback is sent as a 'user' role message
-        user_message = next((m for m in messages if m.get("role") == "user"), None)
-
+        # The trigger text from handle_llm_callback is sent as the last 'user' role message
+        last_user_content = get_last_message_text(messages)
         return (
-            user_message is not None
-            and "System Callback Trigger:" in user_message.get("content", "")
-            and CALLBACK_CONTEXT in user_message.get("content", "")
+            "System Callback Trigger:" in last_user_content
+            and CALLBACK_CONTEXT in last_user_content
         )
 
     callback_final_response_text = (
