@@ -886,6 +886,9 @@ async def main_async(
         timezone_str=default_profile_proc_config["timezone"],
         max_history_messages=default_profile_proc_config["max_history_messages"],
         history_max_age_hours=default_profile_proc_config["history_max_age_hours"],
+        tools_config=default_profile_settings.get(
+            "tools_config", {}
+        ),  # Pass the tools_config from the profile settings
     )
 
     processing_service = ProcessingService(
