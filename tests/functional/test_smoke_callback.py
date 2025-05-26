@@ -169,6 +169,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
+        tools_config={},  # Added missing tools_config
     )
 
     processing_service = ProcessingService(
