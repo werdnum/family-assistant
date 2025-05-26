@@ -4,7 +4,7 @@ import logging
 import pathlib
 import uuid
 from datetime import date, datetime, timezone
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any  # Added TYPE_CHECKING
 
 from fastapi import (
     APIRouter,
@@ -20,7 +20,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
-from family_assistant.llm import LLMOutput  # Added import
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -38,6 +37,10 @@ from family_assistant.web.models import (  # Updated
     ChatPromptRequest,
     DocumentUploadResponse,
 )
+
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMOutput
+
 
 logger = logging.getLogger(__name__)
 api_router = APIRouter()
