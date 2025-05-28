@@ -147,7 +147,66 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
             delegate_tool_final_response_callable,
         ))
 
-        # Rule 2: Match initial user query to delegate
+        # Rule 2: Match "delegation cancelled" tool response
+        def cancelled_matcher(kwargs: MatcherArgs) -> bool:
+            messages = kwargs.get("messages", [])
+            logger.debug(f"cancelled_matcher: checking messages: {messages}")
+            if not messages:
+                logger.debug("cancelled_matcher: no messages, returning False")
+                return False
+            last_message = messages[-1]
+            match = last_message.get(
+                "role"
+            ) == "tool" and "cancelled by user" in last_message.get("content", "")
+            logger.debug(
+                f"cancelled_matcher: returning {match} for content: '{last_message.get('content', '')[:100]}...'"
+            )
+            return match
+
+        def cancelled_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
+            messages = kwargs.get("messages", [])
+            content = messages[-1].get(
+                "content", "Error: Could not get cancelled content."
+            )
+            logger.info(
+                f"cancelled_response_callable: Matched! Returning content: {content[:100]}..."
+            )
+            return MockLLMOutput(content=content)
+
+        rules.append((cancelled_matcher, cancelled_response_callable))
+
+        # Rule 3: Match "delegation blocked" tool response
+        def blocked_matcher(kwargs: MatcherArgs) -> bool:
+            messages = kwargs.get("messages", [])
+            logger.debug(f"blocked_matcher: checking messages: {messages}")
+            if not messages:
+                logger.debug("blocked_matcher: no messages, returning False")
+                return False
+            last_message = messages[-1]
+            content_str = last_message.get("content", "")
+            match = (
+                last_message.get("role") == "tool"
+                and "not allowed" in content_str
+                and "delegation to service profile" in content_str
+            )
+            logger.debug(
+                f"blocked_matcher: returning {match} for content: '{content_str[:100]}...'"
+            )
+            return match
+
+        def blocked_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
+            messages = kwargs.get("messages", [])
+            content = messages[-1].get(
+                "content", "Error: Could not get blocked content."
+            )
+            logger.info(
+                f"blocked_response_callable: Matched! Returning content: {content[:100]}..."
+            )
+            return MockLLMOutput(content=content)
+
+        rules.append((blocked_matcher, blocked_response_callable))
+
+        # Rule 4: Match initial user query to delegate
         def delegate_request_matcher(kwargs: MatcherArgs) -> bool:
             messages = kwargs.get("messages", [])
             logger.debug(f"delegate_request_matcher: checking messages: {messages}")
