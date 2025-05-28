@@ -43,6 +43,7 @@ default_profile_settings:
     max_history_messages: 5
     history_max_age_hours: 24
     llm_model: "claude-3-haiku-20240307" # Default LLM model
+    delegation_security_level: "confirm" # Default delegation security level: "blocked", "confirm", "unrestricted"
   tools_config:
     enable_local_tools: # Default set of local tools
       - "add_or_update_note"
