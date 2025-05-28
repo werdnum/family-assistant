@@ -696,9 +696,10 @@ async def delegate_to_service_tool(
 
     if actual_confirm_delegation:
         if not exec_context.request_confirmation_callback:
-            logger.warning(
-                f"Confirmation required for delegating to '{target_service_id}' (policy: {target_security_level}, arg: {confirm_delegation}), but no confirmation callback is available. Proceeding without explicit user confirmation for this delegation step."
+            logger.error(
+                f"Confirmation required for delegating to '{target_service_id}' (policy: {target_security_level}, arg: {confirm_delegation}), but no confirmation callback is available. Aborting delegation."
             )
+            return f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available."
         else:
             # Attempt to get a description from the target service's config
             if (
