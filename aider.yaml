@@ -31,3 +31,4 @@ lint-cmd:
 read:
   - docs/SPECIFICATION.md
   - docs/STYLE_GUIDE.md
+  - docs/CODE_REFERENCE.md
