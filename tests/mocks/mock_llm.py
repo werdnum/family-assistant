@@ -102,6 +102,11 @@ class RuleBasedMockLLMClient(LLMInterface):
             try:
                 # Matcher function now only expects actual_kwargs
                 if matcher(actual_kwargs):
+                    # Log type of response before accessing attributes
+                    logger.debug(
+                        f"Rule {i + 1} matched. Response object type: {type(response)}"
+                    )
+
                     logger.info(
                         f"Rule {i + 1} matched for 'generate_response'. Returning predefined response."
                     )
@@ -110,10 +115,13 @@ class RuleBasedMockLLMClient(LLMInterface):
                     )
                     return response
             except Exception as e:
+                # Clarify if error was in matcher or response processing if possible,
+                # but exc_info=True will give the most direct traceback.
                 logger.error(
-                    f"Error executing matcher for rule {i + 1} (generate_response): {e}",
+                    f"Error processing rule {i + 1} (matcher or response callable) for 'generate_response': {e}",
                     exc_info=True,
                 )
+                # Continue to next rule or default if matcher/response itself fails
                 continue
 
         logger.warning(
