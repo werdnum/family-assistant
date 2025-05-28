@@ -646,6 +646,7 @@ def _scan_user_docs() -> list[str]:
 
 # --- User Documentation Tool Implementation ---
 
+
 # --- Delegate to Service Tool Implementation ---
 async def delegate_to_service_tool(
     exec_context: ToolExecutionContext,
@@ -660,7 +661,10 @@ async def delegate_to_service_tool(
         f"Executing delegate_to_service_tool: target='{target_service_id}', request='{user_request[:50]}...', confirm={confirm_delegation}"
     )
 
-    if not exec_context.processing_service or not exec_context.processing_service.processing_services_registry:
+    if (
+        not exec_context.processing_service
+        or not exec_context.processing_service.processing_services_registry
+    ):
         logger.error(
             "Processing services registry not available in the current execution context."
         )
@@ -695,23 +699,27 @@ async def delegate_to_service_tool(
             logger.warning(
                 f"Confirmation required for delegating to '{target_service_id}' (policy: {target_security_level}, arg: {confirm_delegation}), but no confirmation callback is available. Proceeding without explicit user confirmation for this delegation step."
             )
-            # If strict confirmation is desired when callback is missing, uncomment the following:
-            # return f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available."
         else:
             # Attempt to get a description from the target service's config
-            # target_description = "Specialized Assistant"  # Default description # Unused variable
-            if hasattr(target_service, "service_config") and target_service.service_config:
+            if (
+                hasattr(target_service, "service_config")
+                and target_service.service_config
+            ):
                 # Check if service_config has a description attribute or similar
                 # This part is speculative as ProcessingServiceConfig doesn't directly hold 'description'
                 # but the profile definition in config.yaml does.
                 # For now, we'll use a generic description or the profile ID.
                 # A more robust way would be to ensure profile description is accessible via ProcessingService.
                 pass  # Placeholder for actual description retrieval if different
-            
+
             # Use profile ID as part of the description if a more specific one isn't easily available
             profile_id_for_prompt = target_service_id
-            if hasattr(target_service, "service_config") and hasattr(target_service.service_config, "id"):  # Assuming service_config might have an id
-                profile_id_for_prompt = getattr(target_service.service_config, "id", target_service_id)
+            if hasattr(target_service, "service_config") and hasattr(
+                target_service.service_config, "id"
+            ):  # Assuming service_config might have an id
+                profile_id_for_prompt = getattr(
+                    target_service.service_config, "id", target_service_id
+                )
 
             prompt_text = (
                 f"Do you want to delegate the task: '{telegramify_markdown.escape_markdown(user_request[:100])}...' "
