@@ -275,7 +275,7 @@ class MCPToolsProvider:
 
         self._initialized = True
         logger.info(
-            f"MCPToolsProvider initialization complete. Active sessions: {len(self._sessions)}. Mapped {len(self._tool_map)} unique tools from {len(self._definitions)} total definitions."
+            f"MCPToolsProvider finished processing all {len(self._mcp_server_configs)} configured MCP server(s). Active sessions: {len(self._sessions)}. Mapped {len(self._tool_map)} unique tools from {len(self._definitions)} total definitions."
         )
 
     def _format_mcp_definitions_to_dicts(
