@@ -88,6 +88,7 @@ default_profile_settings:
     timezone: "UTC"
     max_history_messages: 5
     history_max_age_hours: 24
+    delegation_security_level: "confirm" # Default: "blocked", "confirm", or "unrestricted"
 
   tools_config:
     # `enable_local_tools` are not explicitly listed here for the default profile.
@@ -141,6 +142,7 @@ service_profiles:
       # llm_model: "claude-3-sonnet-20240229"
       prompts: # MERGES with default_profile_settings.processing_config.prompts
         system_prompt: "You are an assistant with web browsing capabilities. Current time is {current_time}."
+      delegation_security_level: "unrestricted" # This profile can be delegated to without forced confirmation
     tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
       # enable_local_tools: [] # Example: if you want NO local tools for this profile
       enable_mcp_server_ids:

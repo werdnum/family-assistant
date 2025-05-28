@@ -530,6 +530,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "timezone",
                 "max_history_messages",
                 "history_max_age_hours",
+                "delegation_security_level",  # Add delegation_security_level here
             ]:
                 if scalar_key in profile_def["processing_config"]:
                     resolved_profile_config["processing_config"][scalar_key] = (
@@ -1078,6 +1079,9 @@ async def main_async(
             max_history_messages=profile_proc_conf_dict["max_history_messages"],
             history_max_age_hours=profile_proc_conf_dict["history_max_age_hours"],
             tools_config=profile_tools_conf_dict,  # Pass the whole tools_config for this profile
+            delegation_security_level=profile_proc_conf_dict.get(
+                "delegation_security_level", "confirm"
+            ),  # Get with a default
         )
 
         # ProcessingService instance for this profile

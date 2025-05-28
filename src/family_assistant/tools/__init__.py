@@ -845,10 +845,25 @@ async def delegate_to_service_tool(
         )
         return f"Error: Target service profile '{target_service_id}' not found."
 
-    if confirm_delegation:
+    # Check target service's delegation security level
+    target_security_level = getattr(
+        target_service.service_config, "delegation_security_level", "confirm"
+    )  # Default to 'confirm' if not set
+
+    if target_security_level == "blocked":
+        logger.warning(
+            f"Delegation to service '{target_service_id}' is blocked by its security policy."
+        )
+        return f"Error: Delegation to service profile '{target_service_id}' is not allowed."
+
+    # Determine if confirmation is needed based on target's policy and tool's argument
+    needs_confirmation_due_to_policy = target_security_level == "confirm"
+    actual_confirm_delegation = confirm_delegation or needs_confirmation_due_to_policy
+
+    if actual_confirm_delegation:
         if not exec_context.request_confirmation_callback:
             logger.warning(
-                f"Confirmation requested for delegating to '{target_service_id}', but no confirmation callback is available. Proceeding without explicit user confirmation for this delegation step."
+                f"Confirmation required for delegating to '{target_service_id}' (policy: {target_security_level}, arg: {confirm_delegation}), but no confirmation callback is available. Proceeding without explicit user confirmation for this delegation step."
             )
             # Or, could return an error:
             # return f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available."
@@ -1083,7 +1098,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "delegate_to_service",
-            "description": "Delegates a specific user request to another specialized assistant profile (service) that might have different tools or capabilities. Use this if the main assistant cannot handle a request directly or if a specialized profile is more appropriate for the task (e.g., a profile with web browsing tools for web-related queries).",
+            "description": "Delegates a specific user request to another specialized assistant profile (service) that might have different tools or capabilities. Use this if the main assistant cannot handle a request directly or if a specialized profile is more appropriate for the task (e.g., a profile with web browsing tools for web-related queries). The target profile's 'delegation_security_level' (blocked, confirm, unrestricted) can override the 'confirm_delegation' parameter.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1097,7 +1112,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "confirm_delegation": {
                         "type": "boolean",
-                        "description": "Optional. If true, explicitly ask the user for confirmation before delegating the task. Defaults to false. If the 'delegate_to_service' tool itself is configured to require confirmation for the current profile, user confirmation will be sought regardless of this parameter.",
+                        "description": "Optional. If true, explicitly ask the user for confirmation before delegating the task. Defaults to false. This may be overridden if the target profile's security level is 'confirm' (always confirm) or 'blocked' (never delegate). If the 'delegate_to_service' tool itself is configured to require confirmation for the current profile, user confirmation will also be sought.",
                         "default": False,
                     },
                 },

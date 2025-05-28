@@ -62,9 +62,19 @@ A top-level list `service_profiles` will define individual profiles. Each profil
 
 *   `id` (string): A unique identifier for the profile.
 *   `description` (string, optional): A human-readable description.
-*   `processing_config` (object, optional): Overrides for `ProcessingServiceConfig` settings.
+*   `processing_config` (object, optional): Overrides for `ProcessingServiceConfig` settings. This includes `delegation_security_level`.
 *   `tools_config` (object, optional): Configuration for the toolset available to this profile.
 
+
+### 3.2.1. `delegation_security_level`
+
+Each profile's `processing_config` can specify a `delegation_security_level` with one of three values:
+
+*   `"blocked"`: This profile cannot be targeted by the `delegate_to_service` tool. Any attempt to delegate to it will be rejected.
+*   `"confirm"`: Delegation to this profile *always* requires user confirmation. This overrides the `confirm_delegation: false` argument if passed to the `delegate_to_service` tool.
+*   `"unrestricted"`: Delegation to this profile is allowed. The `confirm_delegation` argument of the `delegate_to_service` tool will be respected.
+
+If not specified for a profile, it inherits from `default_profile_settings.processing_config.delegation_security_level`.
 
 ```yaml
 # --- Service Profiles ---
@@ -81,6 +91,7 @@ service_profiles:
         system_prompt: "You are a focused assistant. Current time is {current_time}."
       max_history_messages: 3 # REPLACES default
       llm_model: "gpt-4-turbo" # REPLACES default, uses a more powerful model
+      delegation_security_level: "unrestricted" # This profile allows unrestricted delegation
     tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
       enable_local_tools:
         - "add_or_update_note"
@@ -135,13 +146,17 @@ The main application startup logic (`src/family_assistant/__main__.py`) will be 
 *   **Schema**:
     *   `target_service_id` (string): The ID of the specialized service profile to delegate to.
     *   `user_request` (string): The specific request or prompt for the target service.
-    *   `confirm_delegation` (boolean, optional): If true, user confirmation will be sought before delegating.
+    *   `confirm_delegation` (boolean, optional): If true, user confirmation will be sought before delegating. This parameter may be overridden by the target profile's `delegation_security_level`.
 
 *   **Execution**:
-    1.  The tool retrieves the target `ProcessingService` instance from the registry.
-    2.  If `confirm_delegation` is true (or if the `delegate_to_service` tool itself is marked for confirmation when targeting certain profiles), it requests user confirmation. The confirmation prompt should clearly state the target service and the nature of the request.
-    3.  If confirmed (or if no confirmation is needed), it prepares the necessary input for the target service's `process_message` method (e.g., `user_request` as a new message, relevant conversation history, interface/conversation IDs).
-    4.  It calls `process_message` on the target service.
+    1.  The tool retrieves the target `ProcessingService` instance and its `delegation_security_level` from the registry.
+    2.  If the target's level is `"blocked"`, the tool returns an error.
+    3.  A decision to request user confirmation is made:
+        *   If target's level is `"confirm"`, confirmation is *always* requested.
+        *   If target's level is `"unrestricted"`, confirmation is requested if the tool's `confirm_delegation` argument is `true`.
+        *   If target's level is `"blocked"`, this step is skipped as delegation is denied.
+    4.  If confirmation is required and obtained (or not required), it prepares the necessary input for the target service's `handle_chat_interaction` method.
+    5.  It calls `handle_chat_interaction` on the target service.
     5.  The textual response from the target service is returned as the result of the `delegate_to_service` tool.
 
 *   **Security**: This mechanism allows the main LLM to operate with a limited toolset and delegate sensitive/complex tasks to specialized, potentially more restricted or monitored, environments. Confirmation for *entering* this delegated environment with a specific task is a key security control point.

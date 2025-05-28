@@ -50,6 +50,7 @@ class ProcessingServiceConfig:
     tools_config: dict[
         str, Any
     ]  # Added to hold tool configurations like 'confirm_tools'
+    delegation_security_level: str  # "blocked", "confirm", "unrestricted"
 
 
 # --- Processing Service Class ---
