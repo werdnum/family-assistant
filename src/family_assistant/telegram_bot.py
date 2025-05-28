@@ -839,16 +839,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self.message_handler
             )
         )
-        
+
         # Register CommandHandlers for profile-specific slash commands
         if self.telegram_service.slash_command_to_profile_id_map:
-            for command_str in self.telegram_service.slash_command_to_profile_id_map.keys():
-                command_name = command_str.lstrip('/')  # CommandHandler expects name without slash
-                application.add_handler(CommandHandler(command_name, self.handle_generic_slash_command))
+            for command_str in self.telegram_service.slash_command_to_profile_id_map:
+                command_name = command_str.lstrip(
+                    "/"
+                )  # CommandHandler expects name without slash
+                application.add_handler(
+                    CommandHandler(command_name, self.handle_generic_slash_command)
+                )
                 logger.info(f"Registered CommandHandler for /{command_name}")
 
         application.add_error_handler(self.error_handler)
-        logger.info("Telegram handlers registered (start, generic commands, message, error).")
+        logger.info(
+            "Telegram handlers registered (start, generic commands, message, error)."
+        )
 
     async def handle_generic_slash_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -879,16 +885,28 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         command_with_slash = message_text.split(maxsplit=1)[0]
         user_input_for_profile = " ".join(context.args)  # Get arguments after command
 
-        profile_id = self.telegram_service.slash_command_to_profile_id_map.get(command_with_slash)
+        profile_id = self.telegram_service.slash_command_to_profile_id_map.get(
+            command_with_slash
+        )
         if not profile_id:
-            logger.error(f"No profile_id found for command '{command_with_slash}'. This shouldn't happen if CommandHandler is correctly set up.")
-            await update.message.reply_text(f"Error: Command '{command_with_slash}' is not configured correctly.")
+            logger.error(
+                f"No profile_id found for command '{command_with_slash}'. This shouldn't happen if CommandHandler is correctly set up."
+            )
+            await update.message.reply_text(
+                f"Error: Command '{command_with_slash}' is not configured correctly."
+            )
             return
 
-        targeted_processing_service = self.telegram_service.processing_services_registry.get(profile_id)
+        targeted_processing_service = (
+            self.telegram_service.processing_services_registry.get(profile_id)
+        )
         if not targeted_processing_service:
-            logger.error(f"ProcessingService for profile_id '{profile_id}' (command '{command_with_slash}') not found in registry.")
-            await update.message.reply_text(f"Error: Service for command '{command_with_slash}' is unavailable.")
+            logger.error(
+                f"ProcessingService for profile_id '{profile_id}' (command '{command_with_slash}') not found in registry."
+            )
+            await update.message.reply_text(
+                f"Error: Service for command '{command_with_slash}' is unavailable."
+            )
             return
 
         logger.info(
@@ -897,7 +915,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         photo_bytes = None
         if update.message.photo:
-            logger.info(f"Slash command message {update.message.message_id} from chat {chat_id} contains photo.")
+            logger.info(
+                f"Slash command message {update.message.message_id} from chat {chat_id} contains photo."
+            )
             try:
                 photo_size = update.message.photo[-1]
                 photo_file = await photo_size.get_file()
@@ -905,10 +925,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     await photo_file.download_to_memory(out=buf)
                     buf.seek(0)
                     photo_bytes = buf.read()
-                logger.debug(f"Photo from slash command message {update.message.message_id} loaded.")
+                logger.debug(
+                    f"Photo from slash command message {update.message.message_id} loaded."
+                )
             except Exception as img_err:
-                logger.error(f"Failed to process photo for slash command {update.message.message_id}: {img_err}", exc_info=True)
-                await update.message.reply_text("Sorry, error processing attached image with command.")
+                logger.error(
+                    f"Failed to process photo for slash command {update.message.message_id}: {img_err}",
+                    exc_info=True,
+                )
+                await update.message.reply_text(
+                    "Sorry, error processing attached image with command."
+                )
                 return  # Or proceed without photo? For now, return.
 
         text_part = {"type": "text", "text": user_input_for_profile}
@@ -922,20 +949,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
                 })
             except Exception as img_err_direct:
-                logger.error(f"Error encoding photo for slash command direct profile call: {img_err_direct}")
+                logger.error(
+                    f"Error encoding photo for slash command direct profile call: {img_err_direct}"
+                )
                 trigger_content_parts_for_profile = [text_part]  # Revert to text only
 
-        current_turn_id = str(uuid.uuid4())
-        reply_to_interface_id_str = str(update.message.reply_to_message.message_id) if update.message.reply_to_message else None
-            
+        reply_to_interface_id_str = (
+            str(update.message.reply_to_message.message_id)
+            if update.message.reply_to_message
+            else None
+        )
+
         async with self.get_db_context() as db_ctx:
+
             async def confirmation_callback_wrapper(
-                conversation_id_cb: str, 
-                interface_type_cb: str, 
-                turn_id_cb: str | None, 
-                prompt_text_cb: str, 
-                tool_name_cb: str, 
-                tool_args_cb: dict[str, Any], 
+                conversation_id_cb: str,
+                interface_type_cb: str,
+                turn_id_cb: str | None,
+                prompt_text_cb: str,
+                tool_name_cb: str,
+                tool_args_cb: dict[str, Any],
                 timeout_cb: float,
             ) -> bool:
                 return await self.confirmation_manager.request_confirmation(
@@ -955,7 +988,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 conversation_id=str(chat_id),
                 trigger_content_parts=trigger_content_parts_for_profile,
                 trigger_interface_message_id=str(update.message.message_id),
-                user_name=update.effective_user.full_name if update.effective_user else "Unknown User",
+                user_name=update.effective_user.full_name
+                if update.effective_user
+                else "Unknown User",
                 replied_to_interface_id=reply_to_interface_id_str,
                 chat_interface=self.telegram_service.chat_interface,
                 new_task_event=self.new_task_event,
@@ -979,7 +1014,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         if not update.message:
             logger.warning("Message handler: Update has no message.")
             return
-        
+
         # This handler now only processes non-command text and photo messages.
         # Slash commands are handled by CommandHandlers.
         photo_bytes = None
@@ -1011,7 +1046,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     "Sorry, error processing attached image."
                 )
                 return
-        
+
         # Delegate to the message batcher
         if self.message_batcher is None:
             logger.critical(
@@ -1255,7 +1290,9 @@ class TelegramService:
         allowed_user_ids: list[int],
         developer_chat_id: int | None,
         processing_service: ProcessingService,  # Default processing service
-        processing_services_registry: dict[str, ProcessingService],  # Registry of all services
+        processing_services_registry: dict[
+            str, ProcessingService
+        ],  # Registry of all services
         app_config: dict[str, Any],  # Main application config
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
@@ -1285,13 +1322,17 @@ class TelegramService:
         self.new_task_event = new_task_event
 
         self.processing_service = processing_service  # Store default service
-        self.processing_services_registry = processing_services_registry  # Store registry
+        self.processing_services_registry = (
+            processing_services_registry  # Store registry
+        )
         self.app_config = app_config  # Store app_config
 
         # Store the Default ProcessingService instance in bot_data for access in handlers
         # This is for the default service used by the batcher.
         self.application.bot_data["processing_service"] = processing_service
-        logger.info("Stored Default ProcessingService instance in application.bot_data.")
+        logger.info(
+            "Stored Default ProcessingService instance in application.bot_data."
+        )
 
         # Build slash command to profile ID map
         self.slash_command_to_profile_id_map: dict[str, str] = {}
@@ -1388,23 +1429,25 @@ class TelegramService:
         bot_commands_to_set = [
             BotCommand("start", "Start the bot and get a welcome message")
         ]
-        
+
         # Add commands from service profiles
         # Ensure slash_command_to_profile_id_map keys include the leading slash
         # BotCommand expects command name without slash
-        
+
         processed_command_names = set()  # To avoid duplicates if a command maps to multiple profiles (though map prevents this)
 
         for profile_config in self.app_config.get("service_profiles", []):
             profile_id = profile_config.get("id")
-            profile_name = profile_config.get("name", profile_id)  # Use profile name or ID for description
-            
+            profile_name = profile_config.get(
+                "name", profile_id
+            )  # Use profile name or ID for description
+
             for slash_command_str in profile_config.get("slash_commands", []):
-                command_name = slash_command_str.lstrip('/')
+                command_name = slash_command_str.lstrip("/")
                 if command_name not in processed_command_names:
                     description = profile_config.get(
                         "description",  # Check for a general profile description
-                        f"Activate {profile_name} mode"  # Fallback description
+                        f"Activate {profile_name} mode",  # Fallback description
                     )
                     # More specific description if available per command in future
                     # For now, use profile's name/description.
@@ -1414,11 +1457,12 @@ class TelegramService:
         try:
             await self.application.bot.set_my_commands(
                 commands=bot_commands_to_set,
-                scope=BotCommandScopeAllPrivateChats()  # Commands primarily for private chats
+                scope=BotCommandScopeAllPrivateChats(),  # Commands primarily for private chats
             )
-            logger.info(f"Set bot commands for private chats: {[cmd.command for cmd in bot_commands_to_set]}")
+            logger.info(
+                f"Set bot commands for private chats: {[cmd.command for cmd in bot_commands_to_set]}"
+            )
             # Optionally set global commands or other scopes if needed
-            # await self.application.bot.set_my_commands(commands=global_commands) # For default scope
         except Exception as e:
             logger.error(f"Failed to set bot commands: {e}", exc_info=True)
 
