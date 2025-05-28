@@ -941,7 +941,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 return  # Or proceed without photo? For now, return.
 
         text_part = {"type": "text", "text": user_input_for_profile}
-        trigger_content_parts_for_profile = [text_part]
+        trigger_content_parts_for_profile: list[dict[str, Any]] = [text_part]
         if photo_bytes:
             try:
                 base64_image = base64.b64encode(photo_bytes).decode("utf-8")
