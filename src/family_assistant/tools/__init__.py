@@ -807,12 +807,150 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "get_user_documentation_content": get_user_documentation_content_tool,
     "ingest_document_from_url": ingest_document_from_url_tool,
     "send_message_to_user": send_message_to_user_tool,  # Added
+    "delegate_to_service": delegate_to_service_tool,  # Added delegate tool
     # Calendar tools now imported from calendar_integration module
     "add_calendar_event": calendar_integration.add_calendar_event_tool,
     "search_calendar_events": calendar_integration.search_calendar_events_tool,
     "modify_calendar_event": calendar_integration.modify_calendar_event_tool,
     "delete_calendar_event": calendar_integration.delete_calendar_event_tool,
 }
+
+
+# --- Delegate to Service Tool Implementation ---
+async def delegate_to_service_tool(
+    exec_context: ToolExecutionContext,
+    target_service_id: str,
+    user_request: str,
+    confirm_delegation: bool = False,
+) -> str:
+    """
+    Delegates a user request to another specialized assistant profile (service).
+    """
+    logger.info(
+        f"Executing delegate_to_service_tool: target='{target_service_id}', request='{user_request[:50]}...', confirm={confirm_delegation}"
+    )
+
+    if not exec_context.processing_service or not exec_context.processing_service.processing_services_registry:
+        logger.error(
+            "Processing services registry not available in the current execution context."
+        )
+        return "Error: Service registry is not available to delegate the task."
+
+    registry = exec_context.processing_service.processing_services_registry
+    target_service = registry.get(target_service_id)
+
+    if not target_service:
+        logger.error(
+            f"Target service profile ID '{target_service_id}' not found in the registry."
+        )
+        return f"Error: Target service profile '{target_service_id}' not found."
+
+    if confirm_delegation:
+        if not exec_context.request_confirmation_callback:
+            logger.warning(
+                f"Confirmation requested for delegating to '{target_service_id}', but no confirmation callback is available. Proceeding without explicit user confirmation for this delegation step."
+            )
+            # Or, could return an error:
+            # return f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available."
+        else:
+            # Attempt to get a description from the target service's config
+            target_description = "Specialized Assistant"  # Default description
+            if hasattr(target_service, "service_config") and target_service.service_config:
+                 # Check if service_config has a description attribute or similar
+                 # This part is speculative as ProcessingServiceConfig doesn't directly hold 'description'
+                 # but the profile definition in config.yaml does.
+                 # For now, we'll use a generic description or the profile ID.
+                 # A more robust way would be to ensure profile description is accessible via ProcessingService.
+                pass  # Placeholder for actual description retrieval if different
+            
+            # Use profile ID as part of the description if a more specific one isn't easily available
+            profile_id_for_prompt = target_service_id
+            if hasattr(target_service, "service_config") and hasattr(target_service.service_config, "id"):  # Assuming service_config might have an id
+                profile_id_for_prompt = getattr(target_service.service_config, "id", target_service_id)
+
+            prompt_text = (
+                f"Do you want to delegate the task: '{telegramify_markdown.escape_markdown(user_request[:100])}...' "
+                f"to the '{telegramify_markdown.escape_markdown(profile_id_for_prompt)}' profile?"
+            )
+            try:
+                # Ensure the callback is correctly typed/cast if necessary
+                typed_callback = cast(
+                    "ConfirmationCallbackSignature",
+                    exec_context.request_confirmation_callback,
+                )
+                user_confirmed = await typed_callback(
+                    conversation_id=exec_context.conversation_id,
+                    interface_type=exec_context.interface_type,
+                    turn_id=exec_context.turn_id,
+                    prompt_text=prompt_text,
+                    tool_name="delegate_to_service",  # Name of this tool for logging/UI
+                    tool_args={  # Args that led to this confirmation
+                        "target_service_id": target_service_id,
+                        "user_request": user_request,
+                        "confirm_delegation": True,  # Record that confirmation was attempted
+                    },
+                    timeout=ConfirmingToolsProvider.DEFAULT_CONFIRMATION_TIMEOUT,  # Use a reasonable timeout
+                )
+                if not user_confirmed:
+                    logger.info(
+                        f"User cancelled delegation to service '{target_service_id}'."
+                    )
+                    return f"OK. Delegation to service '{target_service_id}' cancelled by user."
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Confirmation for delegating to '{target_service_id}' timed out."
+                )
+                return f"Error: Confirmation timed out for delegating to '{target_service_id}'."
+            except Exception as e:
+                logger.error(
+                    f"Error during confirmation for delegating to '{target_service_id}': {e}",
+                    exc_info=True,
+                )
+                return f"Error during confirmation for delegating to '{target_service_id}': {e}"
+
+    logger.info(f"Delegating request to service profile: '{target_service_id}'")
+    try:
+        (
+            final_text_reply,
+            _final_assistant_message_id,  # Ignored
+            _final_reasoning_info,  # Ignored
+            error_traceback,
+        ) = await target_service.handle_chat_interaction(
+            db_context=exec_context.db_context,
+            interface_type=exec_context.interface_type,  # Use current interface type
+            conversation_id=exec_context.conversation_id,  # Use current conversation ID
+            trigger_content_parts=[{"type": "text", "text": user_request}],
+            trigger_interface_message_id=None,  # This is an internal trigger
+            user_name=exec_context.user_name,  # Pass original user's name
+            replied_to_interface_id=None,
+            chat_interface=exec_context.chat_interface,  # Pass through for nested actions
+            new_task_event=exec_context.new_task_event,  # Pass through
+            request_confirmation_callback=exec_context.request_confirmation_callback,  # Pass through
+        )
+
+        if error_traceback:
+            logger.error(
+                f"Delegated service '{target_service_id}' returned an error: {error_traceback}"
+            )
+            return f"Error from '{target_service_id}' service: An error occurred during processing."
+        if final_text_reply is None:
+            logger.info(
+                f"Delegated service '{target_service_id}' returned no textual reply."
+            )
+            return f"Service '{target_service_id}' processed the request but provided no textual response."
+
+        logger.info(
+            f"Received reply from delegated service '{target_service_id}': '{final_text_reply[:100]}...'"
+        )
+        return final_text_reply
+
+    except Exception as e:
+        logger.error(
+            f"Failed to delegate request to service '{target_service_id}': {e}",
+            exc_info=True,
+        )
+        return f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}"
+
 
 # --- Tool Confirmation Renderers ---
 
@@ -938,6 +1076,32 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["title", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_to_service",
+            "description": "Delegates a specific user request to another specialized assistant profile (service) that might have different tools or capabilities. Use this if the main assistant cannot handle a request directly or if a specialized profile is more appropriate for the task (e.g., a profile with web browsing tools for web-related queries).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_service_id": {
+                        "type": "string",
+                        "description": "The unique ID of the target service profile to delegate the request to (e.g., 'browser_profile').",
+                    },
+                    "user_request": {
+                        "type": "string",
+                        "description": "The specific request, question, or prompt to be processed by the target service.",
+                    },
+                    "confirm_delegation": {
+                        "type": "boolean",
+                        "description": "Optional. If true, explicitly ask the user for confirmation before delegating the task. Defaults to false. If the 'delegate_to_service' tool itself is configured to require confirmation for the current profile, user confirmation will be sought regardless of this parameter.",
+                        "default": False,
+                    },
+                },
+                "required": ["target_service_id", "user_request"],
             },
         },
     },

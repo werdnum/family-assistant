@@ -90,7 +90,14 @@ class ProcessingService:
             server_url or "http://localhost:8000"
         )  # Default if not provided
         self.app_config = app_config  # Store app_config
+        self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
+
+    def set_processing_services_registry(
+        self, registry: dict[str, "ProcessingService"]
+    ) -> None:
+        """Sets the registry of all processing services."""
+        self.processing_services_registry = registry
 
     # --- Expose relevant parts of service_config as properties for convenience ---
     # This maintains current internal access patterns while centralizing config.
@@ -139,6 +146,7 @@ class ProcessingService:
         # --- Updated Signature ---
         interface_type: str,
         conversation_id: str,
+        user_name: str,  # Added user_name
         turn_id: str,  # Added turn_id
         chat_interface: ChatInterface | None,  # Added chat_interface
         new_task_event: asyncio.Event | None,  # Added new_task_event
@@ -163,6 +171,7 @@ class ProcessingService:
             # --- Updated args based on refactoring plan ---
             interface_type: Identifier for the interaction interface (e.g., 'telegram').
             conversation_id: Identifier for the conversation (e.g., chat ID string).
+            user_name: The name of the user for context.
             turn_id: The ID for the current processing turn.
             chat_interface: The interface for sending messages back to the chat.
             new_task_event: Event to notify task worker.
@@ -419,6 +428,7 @@ class ProcessingService:
                         tool_execution_context = ToolExecutionContext(
                             interface_type=interface_type,
                             conversation_id=conversation_id,
+                            user_name=user_name,  # Pass user_name
                             turn_id=turn_id,
                             db_context=db_context,
                             chat_interface=chat_interface,
@@ -873,6 +883,7 @@ class ProcessingService:
                 messages=messages_for_llm,
                 interface_type=interface_type,
                 conversation_id=conversation_id,
+                user_name=user_name,  # Pass user_name
                 turn_id=turn_id,
                 chat_interface=chat_interface,
                 new_task_event=new_task_event,
