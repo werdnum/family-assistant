@@ -963,41 +963,180 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )
 
         async with self.get_db_context() as db_ctx:
+            processing_error_traceback: str | None = None
+            final_llm_content_to_send: str | None = None
+            last_assistant_internal_id: int | None = None
 
-            async def confirmation_callback_wrapper(
-                conversation_id_cb: str,
-                interface_type_cb: str,
-                turn_id_cb: str | None,
-                prompt_text_cb: str,
-                tool_name_cb: str,
-                tool_args_cb: dict[str, Any],
-                timeout_cb: float,
-            ) -> bool:
-                return await self.confirmation_manager.request_confirmation(
-                    conversation_id=conversation_id_cb,
-                    interface_type=interface_type_cb,
-                    turn_id=turn_id_cb,
-                    prompt_text=prompt_text_cb,
-                    tool_name=tool_name_cb,
-                    tool_args=tool_args_cb,
-                    timeout=timeout_cb,
+            try:
+
+                async def confirmation_callback_wrapper(
+                    conversation_id_cb: str,
+                    interface_type_cb: str,
+                    turn_id_cb: str | None,
+                    prompt_text_cb: str,
+                    tool_name_cb: str,
+                    tool_args_cb: dict[str, Any],
+                    timeout_cb: float,
+                ) -> bool:
+                    return await self.confirmation_manager.request_confirmation(
+                        conversation_id=conversation_id_cb,
+                        interface_type=interface_type_cb,
+                        turn_id=turn_id_cb,
+                        prompt_text=prompt_text_cb,
+                        tool_name=tool_name_cb,
+                        tool_args=tool_args_cb,
+                        timeout=timeout_cb,
+                    )
+
+                async with self._typing_notifications(context, chat_id):
+                    (
+                        final_llm_content_to_send,
+                        last_assistant_internal_id,
+                        _final_reasoning_info,  # Not directly used here
+                        processing_error_traceback,
+                    ) = await targeted_processing_service.handle_chat_interaction(
+                        db_context=db_ctx,
+                        interface_type="telegram",
+                        conversation_id=str(chat_id),
+                        trigger_content_parts=trigger_content_parts_for_profile,
+                        trigger_interface_message_id=str(update.message.message_id),
+                        user_name=update.effective_user.full_name
+                        if update.effective_user
+                        else "Unknown User",
+                        replied_to_interface_id=reply_to_interface_id_str,
+                        chat_interface=self.telegram_service.chat_interface,
+                        new_task_event=self.new_task_event,
+                        request_confirmation_callback=confirmation_callback_wrapper,
+                    )
+
+                # --- Sending and Updating Logic ---
+                force_reply_markup = ForceReply(selective=False)
+                reply_target_message_id_for_bot = (
+                    update.message.message_id
+                )  # Reply to the command
+
+                if final_llm_content_to_send:
+                    sent_assistant_message = None
+                    try:
+                        converted_markdown = telegramify_markdown.markdownify(
+                            final_llm_content_to_send
+                        )
+                        sent_assistant_message = await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=converted_markdown,
+                            parse_mode=ParseMode.MARKDOWN_V2,
+                            reply_to_message_id=reply_target_message_id_for_bot,
+                            reply_markup=force_reply_markup,
+                        )
+                    except Exception as md_err:
+                        logger.error(
+                            f"Failed to convert markdown for slash command response: {md_err}. Sending plain text.",
+                            exc_info=True,
+                        )
+                        sent_assistant_message = await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=final_llm_content_to_send,
+                            reply_to_message_id=reply_target_message_id_for_bot,
+                            reply_markup=force_reply_markup,
+                        )
+
+                    if (
+                        sent_assistant_message
+                        and last_assistant_internal_id is not None
+                    ):
+                        await self.storage.update_message_interface_id(
+                            db_context=db_ctx,
+                            internal_id=last_assistant_internal_id,
+                            interface_message_id=str(sent_assistant_message.message_id),
+                        )
+                        logger.info(
+                            f"Updated interface_message_id for internal_id {last_assistant_internal_id} to {sent_assistant_message.message_id} (slash command)"
+                        )
+                    elif sent_assistant_message:
+                        logger.warning(
+                            f"Sent assistant message {sent_assistant_message.message_id} (slash command) but couldn't find its internal_id ({last_assistant_internal_id}) to update."
+                        )
+                elif processing_error_traceback:
+                    error_message_to_send = (
+                        "Sorry, something went wrong while processing your command."
+                    )
+                    if self.debug_mode:
+                        error_message_to_send = (
+                            "Encountered error during slash command processing (debug mode):\n"
+                            f"<pre>{html.escape(processing_error_traceback)}</pre>"
+                        )
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=error_message_to_send,
+                        parse_mode=(ParseMode.HTML if self.debug_mode else None),
+                        reply_to_message_id=reply_target_message_id_for_bot,
+                        reply_markup=force_reply_markup,
+                    )
+                else:
+                    logger.warning(
+                        "Slash command resulted in empty response and no processing error."
+                    )
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="Sorry, I couldn't process that command.",
+                        reply_to_message_id=reply_target_message_id_for_bot,
+                        reply_markup=force_reply_markup,
+                    )
+            except Exception as e:
+                logger.exception(
+                    f"Unhandled error in handle_generic_slash_command for chat {chat_id}: {e}",
+                    exc_info=True,
                 )
+                if not processing_error_traceback:
+                    processing_error_traceback = traceback.format_exc()
 
-            # Note: handle_chat_interaction will send the reply.
-            await targeted_processing_service.handle_chat_interaction(
-                db_context=db_ctx,
-                interface_type="telegram",
-                conversation_id=str(chat_id),
-                trigger_content_parts=trigger_content_parts_for_profile,
-                trigger_interface_message_id=str(update.message.message_id),
-                user_name=update.effective_user.full_name
-                if update.effective_user
-                else "Unknown User",
-                replied_to_interface_id=reply_to_interface_id_str,
-                chat_interface=self.telegram_service.chat_interface,
-                new_task_event=self.new_task_event,
-                request_confirmation_callback=confirmation_callback_wrapper,
-            )
+                with contextlib.suppress(Exception):
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"An unexpected error occurred with your command (debug mode):\n<pre>{html.escape(processing_error_traceback)}</pre>"
+                            if self.debug_mode and processing_error_traceback
+                            else "Sorry, an unexpected error occurred with your command."
+                        ),
+                        parse_mode=(
+                            ParseMode.HTML
+                            if self.debug_mode and processing_error_traceback
+                            else None
+                        ),
+                        reply_to_message_id=update.message.message_id,
+                    )
+                # Save error traceback if possible (similar to process_batch)
+                if (
+                    processing_error_traceback
+                    and update.message
+                    and update.message.message_id
+                ):
+                    try:
+                        user_msg_record = await self.storage.get_message_by_interface_id(
+                            db_context=db_ctx,  # db_ctx is still in scope from outer try
+                            interface_type="telegram",
+                            conversation_id=str(chat_id),
+                            interface_message_id=str(update.message.message_id),
+                        )
+                        if user_msg_record and user_msg_record.get("internal_id"):
+                            stmt = (
+                                update(self.storage.message_history_table)
+                                .where(
+                                    self.storage.message_history_table.c.internal_id
+                                    == user_msg_record["internal_id"]
+                                )
+                                .values(error_traceback=processing_error_traceback)
+                            )
+                            await db_ctx.execute_with_retry(stmt)
+                            logger.info(
+                                f"Saved error traceback to user message (slash command) internal_id {user_msg_record['internal_id']}"
+                            )
+                    except Exception as db_err_save:
+                        logger.error(
+                            f"Failed to save error traceback to DB for slash command in chat {chat_id}: {db_err_save}",
+                            exc_info=True,
+                        )
+                raise  # Re-raise for the main error handler
 
     async def message_handler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
