@@ -1082,6 +1082,7 @@ async def main_async(
             delegation_security_level=profile_proc_conf_dict.get(
                 "delegation_security_level", "confirm"
             ),  # Get with a default
+            id=profile_id,  # Pass the profile_id
         )
 
         # ProcessingService instance for this profile

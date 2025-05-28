@@ -74,6 +74,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
             "confirm_tools": [],
         },
         delegation_security_level="unrestricted",  # Primary can delegate freely
+        id=PRIMARY_PROFILE_ID,
     )
 
 
@@ -93,6 +94,7 @@ def specialized_service_config_factory(
                 "confirm_tools": [],
             },
             delegation_security_level=delegation_security_level,
+            id=SPECIALIZED_PROFILE_ID,  # Add id for specialized profile
         )
 
     return _factory

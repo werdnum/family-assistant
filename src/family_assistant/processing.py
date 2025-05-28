@@ -51,6 +51,7 @@ class ProcessingServiceConfig:
         str, Any
     ]  # Added to hold tool configurations like 'confirm_tools'
     delegation_security_level: str  # "blocked", "confirm", "unrestricted"
+    id: str  # Unique identifier for this service profile
 
 
 # --- Processing Service Class ---
@@ -856,6 +857,7 @@ class ProcessingService:
                 current_time=current_time_str,
                 aggregated_other_context=aggregated_other_context_str,
                 server_url=self.server_url,
+                profile_id=self.service_config.id,  # Add profile_id here
             ).strip()
 
             if final_system_prompt:
