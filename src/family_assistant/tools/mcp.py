@@ -17,6 +17,13 @@ from .types import ToolExecutionContext, ToolNotFoundError
 
 logger = logging.getLogger(__name__)
 
+# MCP Server Status Constants
+MCP_SERVER_STATUS_PENDING = "pending"
+MCP_SERVER_STATUS_CONNECTING = "connecting"
+MCP_SERVER_STATUS_CONNECTED = "connected"
+MCP_SERVER_STATUS_FAILED = "failed"
+MCP_SERVER_STATUS_CANCELLED = "cancelled"
+
 
 class MCPToolsProvider:
     """
@@ -36,6 +43,10 @@ class MCPToolsProvider:
         self._definitions: list[dict[str, Any]] = []
         self._initialized = False
         self._exit_stack = AsyncExitStack()  # Manage stdio process lifecycles
+        self._server_statuses: dict[str, str] = {
+            server_id: MCP_SERVER_STATUS_PENDING
+            for server_id in self._mcp_server_configs
+        }
         logger.info(
             f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. Initialization timeout: {self._initialization_timeout_seconds}s. Initialization pending."
         )
@@ -58,9 +69,15 @@ class MCPToolsProvider:
                         remaining_time = (
                             self._initialization_timeout_seconds - elapsed_time
                         )
+                        pending_servers = [
+                            sid
+                            for sid, status in self._server_statuses.items()
+                            if status
+                            in [MCP_SERVER_STATUS_PENDING, MCP_SERVER_STATUS_CONNECTING]
+                        ]
                         logger.info(
                             f"Still initializing MCP tools... "
-                            f"Waiting for {len(self._mcp_server_configs)} server(s) to respond. "
+                            f"Waiting for {len(pending_servers)} of {len(self._mcp_server_configs)} server(s): {', '.join(pending_servers) if pending_servers else 'None'}. "
                             f"Elapsed: {elapsed_time:.0f}s. "
                             f"Timeout in approx {max(0, remaining_time):.0f}s (total {self._initialization_timeout_seconds}s)."
                         )
@@ -87,12 +104,17 @@ class MCPToolsProvider:
         self._sessions = {}
         self._tool_map = {}
         self._definitions = []
+        # Reset server statuses to PENDING if re-initializing
+        self._server_statuses = {
+            sid: MCP_SERVER_STATUS_PENDING for sid in self._mcp_server_configs
+        }
         all_tool_names = set()  # To detect duplicates across servers
 
         async def _connect_and_discover_mcp(
             server_id: str, server_conf: dict[str, Any]
         ) -> tuple["ClientSession | None", list[dict[str, Any]], dict[str, str]]:
             """Connects to a single MCP server, discovers tools, and returns results."""
+            self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTING
             discovered_tools = []
             tool_map = {}
             session = None
@@ -168,6 +190,7 @@ class MCPToolsProvider:
                         logger.error(
                             f"MCP server '{server_id}' (stdio): 'command' is missing."
                         )
+                        self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
                         return None, [], {}
                     server_params = StdioServerParameters(
                         command=command,
@@ -190,6 +213,7 @@ class MCPToolsProvider:
                         logger.error(
                             f"MCP server '{server_id}' (sse): 'url' is missing."
                         )
+                        self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
                         return None, [], {}
 
                     # Construct headers using the resolved token
@@ -222,12 +246,14 @@ class MCPToolsProvider:
                     logger.error(
                         f"Unsupported transport type '{transport_type}' for MCP server '{server_id}'."
                     )
+                    self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
                     return None, [], {}
 
                 # --- Initialize Session and Discover Tools (Common Logic) ---
                 await session.initialize()
+                self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
                 logger.info(
-                    f"Initialized session with MCP server '{server_id}' ({transport_type})."
+                    f"Initialized session with MCP server '{server_id}' ({transport_type}). Status: {self._server_statuses[server_id]}."
                 )
 
                 response = await session.list_tools()
@@ -265,6 +291,7 @@ class MCPToolsProvider:
                     f"Failed connection/discovery for MCP server '{server_id}': {e}",
                     exc_info=True,
                 )
+                self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
                 return None, [], {}  # Return empty on failure
 
         # --- Create connection tasks ---
@@ -359,17 +386,26 @@ class MCPToolsProvider:
                     logger.warning(
                         f"Connection/discovery for MCP server '{server_id}' was cancelled (likely due to timeout)."
                     )
+                    self._server_statuses[server_id] = MCP_SERVER_STATUS_CANCELLED
                 else:
                     logger.error(
                         f"Gather caught exception for server '{server_id}': {res_item}"
                     )
+                    # Status should have been set to FAILED by _connect_and_discover_mcp
+                    if self._server_statuses[server_id] not in [
+                        MCP_SERVER_STATUS_FAILED,
+                        MCP_SERVER_STATUS_CANCELLED,
+                    ]:
+                        self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             elif res_item is None:
                 logger.warning(
                     f"Received None result for server '{server_id}' from task (should be tuple)."
                 )
+                self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             else:
                 session, discovered_tools, tool_map_for_server = res_item
                 if session:
+                    # Status should be CONNECTED from _connect_and_discover_mcp
                     self._sessions[server_id] = session
                     self._definitions.extend(discovered_tools)
                     self._tool_map.update(tool_map_for_server)
@@ -377,10 +413,31 @@ class MCPToolsProvider:
                     logger.warning(
                         f"Connection/discovery for MCP server '{server_id}' completed but yielded no active session. Result: {res_item}"
                     )
+                    if self._server_statuses[server_id] == MCP_SERVER_STATUS_CONNECTING:
+                        # If it was connecting but no session, mark failed
+                        self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
 
         self._initialized = True
+        # Summarize outcomes based on statuses
+        connected_count = sum(
+            1
+            for status in self._server_statuses.values()
+            if status == MCP_SERVER_STATUS_CONNECTED
+        )
+        failed_count = sum(
+            1
+            for status in self._server_statuses.values()
+            if status == MCP_SERVER_STATUS_FAILED
+        )
+        cancelled_count = sum(
+            1
+            for status in self._server_statuses.values()
+            if status == MCP_SERVER_STATUS_CANCELLED
+        )
         logger.info(
-            f"MCPToolsProvider finished processing all {len(self._mcp_server_configs)} configured MCP server(s). Active sessions: {len(self._sessions)}. Mapped {len(self._tool_map)} unique tools from {len(self._definitions)} total definitions."
+            f"MCPToolsProvider finished processing all {len(self._mcp_server_configs)} configured MCP server(s). "
+            f"Summary: {connected_count} connected, {failed_count} failed, {cancelled_count} cancelled. "
+            f"Active sessions: {len(self._sessions)}. Mapped {len(self._tool_map)} unique tools from {len(self._definitions)} total definitions."
         )
 
     def _format_mcp_definitions_to_dicts(
