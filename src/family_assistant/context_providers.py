@@ -190,7 +190,7 @@ class WeatherContextProvider(ContextProvider):
             "forecastGraphs": "temperature,rainfallprobability,precis",
             "observational": "true",
             "days": "7",  # For a 7-day outlook (today + 6 more days)
-            "units": "temperature:c,speed:kmh,amount:mm,pressure:hpa",
+            "units": "temperature:c,speed:km/h,amount:mm,pressure:hpa",
         }
         try:
             logger.info(
