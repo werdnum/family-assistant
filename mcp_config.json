@@ -49,6 +49,10 @@
       "env": {
         "GOOGLE_MAPS_API_KEY": "$GOOGLE_MAPS_API_KEY"
       }
+    },
+    "kubernetes": {
+      "command": "deno",
+      "args": ["run", "-A", "npm:mcp-server-kubernetes"]
     }
   }
 }
