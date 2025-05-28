@@ -49,7 +49,7 @@ SPECIALIZED_PROFILE_ID = "specialized_target"
 DELEGATED_TASK_DESCRIPTION = "Solve this complex problem for me."
 USER_QUERY_TEMPLATE = "Please delegate this task: {task_description}"
 
-TEST_CHAT_ID = "test_chat_123"  # String, as per schema
+TEST_CHAT_ID = 123456789  # Changed to an integer
 TEST_INTERFACE_TYPE = "test_interface"
 TEST_USER_NAME = "DelegationTester"
 
@@ -216,7 +216,7 @@ async def primary_processing_service(
     await tools_provider.get_tool_definitions()  # Initialize
 
     known_users_provider = KnownUsersContextProvider(
-        chat_id_to_name_map={int(TEST_CHAT_ID): TEST_USER_NAME}, prompts=dummy_prompts
+        chat_id_to_name_map={TEST_CHAT_ID: TEST_USER_NAME}, prompts=dummy_prompts
     )
 
     return ProcessingService(
@@ -241,7 +241,7 @@ async def specialized_processing_service(
         await tools_provider.get_tool_definitions()  # Initialize
 
         known_users_provider = KnownUsersContextProvider(
-            chat_id_to_name_map={int(TEST_CHAT_ID): TEST_USER_NAME},
+            chat_id_to_name_map={TEST_CHAT_ID: TEST_USER_NAME},
             prompts=dummy_prompts,
         )
 
@@ -359,7 +359,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
         ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
+            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
             trigger_content_parts=[{"type": "text", "text": user_query}],
             trigger_interface_message_id="msg1",
             user_name=TEST_USER_NAME,
@@ -377,16 +377,16 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     # DB Assertions
     async with DatabaseContext(engine=test_db_engine) as db_context:
         await assert_message_history_contains(
-            db_context, TEST_CHAT_ID, "user", user_query
+            db_context, str(TEST_CHAT_ID), "user", user_query
         )
         await assert_message_history_contains(
-            db_context, TEST_CHAT_ID, "assistant", None, "delegate_to_service"
+            db_context, str(TEST_CHAT_ID), "assistant", None, "delegate_to_service"
         )
         # Check for the specialized service's response being part of the tool result for delegate_to_service
         # This is a bit indirect. The final assistant message from primary should contain it.
         await assert_message_history_contains(
             db_context,
-            TEST_CHAT_ID,
+            str(TEST_CHAT_ID),
             "assistant",
             f"Response from {SPECIALIZED_PROFILE_ID}",
         )
@@ -439,7 +439,7 @@ async def test_delegation_confirm_target_granted(
         ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
+            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
             trigger_content_parts=[{"type": "text", "text": user_query}],
             trigger_interface_message_id="msg2",
             user_name=TEST_USER_NAME,
@@ -502,7 +502,7 @@ async def test_delegation_confirm_target_denied(
         ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
+            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
             trigger_content_parts=[{"type": "text", "text": user_query}],
             trigger_interface_message_id="msg3",
             user_name=TEST_USER_NAME,
@@ -561,7 +561,7 @@ async def test_delegation_blocked_target(
         ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
+            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
             trigger_content_parts=[{"type": "text", "text": user_query}],
             trigger_interface_message_id="msg4",
             user_name=TEST_USER_NAME,
@@ -627,7 +627,7 @@ async def test_delegation_unrestricted_confirm_arg_granted(
         ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
+            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
             trigger_content_parts=[{"type": "text", "text": user_query}],
             trigger_interface_message_id="msg5",
             user_name=TEST_USER_NAME,
