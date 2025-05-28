@@ -10,6 +10,7 @@ import types  # Add import for types
 import zoneinfo
 from typing import Any
 
+import httpx  # Import httpx
 import uvicorn
 import yaml
 from dotenv import load_dotenv
@@ -25,6 +26,7 @@ from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,  # Added
     NotesContextProvider,
+    WeatherContextProvider,  # Added WeatherContextProvider
 )
 from family_assistant.embeddings import (
     # --- Embedding Imports ---
@@ -165,6 +167,8 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "server_url": "http://localhost:8000",
         "document_storage_path": "/mnt/data/files",
         "attachment_storage_path": "/mnt/data/mailbox/attachments",
+        "willyweather_api_key": None,  # Added for Weather Provider
+        "willyweather_location_id": None,  # Added for Weather Provider
         "llm_parameters": {},  # Global LLM parameters
         "mcp_config": {"mcpServers": {}},  # Global MCP server definitions
         "default_service_profile_id": "default_assistant",  # Default profile ID
@@ -333,6 +337,19 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     config_data["gemini_api_key"] = os.getenv(
         "GEMINI_API_KEY", config_data.get("gemini_api_key")
     )
+    config_data["willyweather_api_key"] = os.getenv(  # Load WillyWeather API Key
+        "WILLYWEATHER_API_KEY", config_data.get("willyweather_api_key")
+    )
+    willyweather_loc_id_env = os.getenv("WILLYWEATHER_LOCATION_ID")
+    if willyweather_loc_id_env:
+        try:
+            config_data["willyweather_location_id"] = int(willyweather_loc_id_env)
+        except ValueError:
+            logger.error(
+                f"Invalid WILLYWEATHER_LOCATION_ID: '{willyweather_loc_id_env}'. Must be an integer. Using previous value: {config_data.get('willyweather_location_id')}"
+            )
+    # If not set or invalid, it remains None or its previous value from YAML/defaults.
+
     config_data["database_url"] = os.getenv("DATABASE_URL", config_data["database_url"])
 
     # Other Env Vars
@@ -630,6 +647,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             "telegram_token",
             "openrouter_api_key",
             "gemini_api_key",
+            "willyweather_api_key",  # Exclude weather API key
             "database_url",
         ]  # Exclude top-level secrets
     })
@@ -713,6 +731,7 @@ async def shutdown_handler(
     signal_name: str,
     telegram_service: TelegramService | None,
     tools_provider: ToolsProvider | None,  # Use generic ToolsProvider and correct name
+    httpx_client: httpx.AsyncClient | None,  # Add httpx_client
 ) -> None:
     """Initiates graceful shutdown."""
     logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
@@ -786,6 +805,14 @@ async def shutdown_handler(
     else:
         logger.warning("No ToolProviders found to close during shutdown.")
 
+    # Close httpx client
+    if httpx_client:
+        logger.info("Closing httpx client...")
+        await httpx_client.aclose()
+        logger.info("Httpx client closed.")
+    else:
+        logger.warning("No httpx client instance to close during shutdown.")
+
     # Telegram application shutdown is now handled within telegram_service.stop_polling()
 
 
@@ -823,10 +850,17 @@ async def task_wrapper_handle_log_message(
 async def main_async(
     config: dict[str, Any],  # Accept the resolved config dictionary
 ) -> tuple[
-    TelegramService | None, ToolsProvider | None
-]:  # Return generic ToolsProvider
+    TelegramService | None, ToolsProvider | None, httpx.AsyncClient | None
+]:  # Update return signature
     """Initializes and runs the bot application using the provided configuration."""
     logger.info(f"Using model: {config['model']}")
+
+    # --- Create shared httpx client ---
+    # This client will be used by providers that need to make HTTP requests (e.g., Weather)
+    # and closed gracefully on shutdown.
+    shared_httpx_client = httpx.AsyncClient()
+    logger.info("Shared httpx.AsyncClient created.")
+
     # --- Validate Essential Config ---
     if not config.get("telegram_token"):
         raise ValueError(
@@ -1071,6 +1105,26 @@ async def main_async(
             known_users_provider_for_profile,
         ]
 
+        # Weather Context Provider for this profile (if configured)
+        willyweather_api_key = config.get("willyweather_api_key")
+        willyweather_location_id = config.get("willyweather_location_id")
+        if willyweather_api_key and willyweather_location_id:
+            weather_provider_for_profile = WeatherContextProvider(
+                location_id=willyweather_location_id,
+                api_key=willyweather_api_key,
+                prompts=profile_proc_conf_dict["prompts"],
+                timezone_str=profile_proc_conf_dict["timezone"],
+                httpx_client=shared_httpx_client,  # Use shared client
+            )
+            context_providers_for_profile.append(weather_provider_for_profile)
+            logger.info(
+                f"WeatherContextProvider added for profile '{profile_id}' (Location: {willyweather_location_id})."
+            )
+        else:
+            logger.info(
+                f"WeatherContextProvider not added for profile '{profile_id}' due to missing API key or location ID in global config."
+            )
+
         # ProcessingServiceConfig for this profile
         service_config_for_profile = ProcessingServiceConfig(
             prompts=profile_proc_conf_dict["prompts"],
@@ -1289,8 +1343,12 @@ async def main_async(
     # Telegram application shutdown is handled by telegram_service.stop_polling() called from shutdown_handler
     # MCP provider cleanup is handled by shutdown_handler calling tools_provider.close()
 
-    # Return the telegram service and the ToolsProvider of the default service
-    return telegram_service, default_processing_service.tools_provider
+    # Return the telegram service, ToolsProvider of the default service, and the httpx client
+    return (
+        telegram_service,
+        default_processing_service.tools_provider,
+        shared_httpx_client,
+    )
 
 
 def main() -> int:  # Return an exit code
@@ -1342,17 +1400,20 @@ def main() -> int:  # Return an exit code
     loop = asyncio.get_event_loop()
     telegram_service_instance = None  # Initialize
     tools_provider_instance = None  # Use generic name
+    httpx_client_instance = None  # Initialize httpx_client
 
     try:
         logger.info("Starting application...")
         # Pass the final resolved config dictionary to main_async
-        # Capture both returned instances
-        telegram_service_instance, tools_provider_instance = loop.run_until_complete(
-            main_async(config_data)
-        )  # Assign to generic name
+        # Capture all returned instances
+        (
+            telegram_service_instance,
+            tools_provider_instance,
+            httpx_client_instance,
+        ) = loop.run_until_complete(main_async(config_data))  # Assign to generic name
 
         # --- Setup Signal Handlers *after* service creation ---
-        # Pass the service instance to the shutdown handler lambda
+        # Pass the service and client instances to the shutdown handler lambda
         # Always set up signal handlers, but pass None for instances if creation failed
         signal_map = {
             signal.SIGINT: "SIGINT",
@@ -1371,10 +1432,9 @@ def main() -> int:  # Return an exit code
                 sig_num,
                 lambda name=sig_name,
                 service=telegram_service_instance,
-                tools=tools_provider_instance: asyncio.create_task(
-                    shutdown_handler(
-                        name, service, tools
-                    )  # Pass potentially None instances
+                tools=tools_provider_instance,
+                client=httpx_client_instance: asyncio.create_task(
+                    shutdown_handler(name, service, tools, client)  # Pass client
                 ),
             )
         if not telegram_service_instance:
@@ -1385,6 +1445,10 @@ def main() -> int:  # Return an exit code
             logger.warning(
                 "ToolsProvider instance creation failed or not configured."
             )  # Warning if top-level provider is None
+        if not httpx_client_instance:  # Check httpx client
+            logger.warning(
+                "Httpx client instance creation failed or not returned from main_async."
+            )
 
         # --- Setup SIGHUP Handler (Inside the main try block, after other signals) ---
         if hasattr(signal, "SIGHUP"):
@@ -1412,7 +1476,8 @@ def main() -> int:  # Return an exit code
                     type(ex).__name__,
                     telegram_service_instance,
                     tools_provider_instance,
-                )  # Pass generic provider
+                    httpx_client_instance,  # Pass httpx_client
+                )
             )
     finally:
         # Task cleanup is handled within shutdown_handler
