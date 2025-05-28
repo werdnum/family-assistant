@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import telegramify_markdown
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -185,9 +186,7 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
             last_message = messages[-1]
             content_str = last_message.get("content", "")
             # Make the match more specific to the exact error message
-            expected_error_message = (
-                f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
-            )
+            expected_error_message = f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
             match = (
                 last_message.get("role") == "tool"
                 and content_str == expected_error_message
@@ -200,7 +199,9 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
         def blocked_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
             messages = kwargs.get("messages", [])
             # Ensure we return the exact content that was matched
-            content = messages[-1].get(
+            content = messages[
+                -1
+            ].get(
                 "content",
                 f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed.",  # Default to expected if somehow missing
             )
