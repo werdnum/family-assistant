@@ -98,22 +98,33 @@ class RuleBasedMockLLMClient(LLMInterface):
             f"RuleBasedMockLLM (generate_response) evaluating {len(self.rules)} rules..."
         )
         # The matcher directly receives the kwargs for generate_response.
-        for i, (matcher, response) in enumerate(self.rules):
+        for i, (matcher, response_generator) in enumerate(self.rules):
             try:
                 # Matcher function now only expects actual_kwargs
                 if matcher(actual_kwargs):
-                    # Log type of response before accessing attributes
+                    actual_response_output: LLMOutput
+                    if callable(response_generator):
+                        logger.debug(
+                            f"Rule {i + 1} matched. Response generator is callable ({type(response_generator).__name__}). Calling it."
+                        )
+                        # If the response_generator is a callable, call it to get the LLMOutput
+                        actual_response_output = response_generator(actual_kwargs)
+                    else:
+                        # If it's not callable, assume it's already an LLMOutput instance
+                        actual_response_output = response_generator
+
+                    # Log type of actual_response_output before accessing attributes
                     logger.debug(
-                        f"Rule {i + 1} matched. Response object type: {type(response)}"
+                        f"Rule {i + 1} matched. Actual response output type: {type(actual_response_output)}"
                     )
 
                     logger.info(
                         f"Rule {i + 1} matched for 'generate_response'. Returning predefined response."
                     )
                     logger.debug(
-                        f" -> Response Content: {bool(response.content)}, Tool Calls: {len(response.tool_calls) if response.tool_calls else 0}"
+                        f" -> Response Content: {bool(actual_response_output.content)}, Tool Calls: {len(actual_response_output.tool_calls) if actual_response_output.tool_calls else 0}"
                     )
-                    return response
+                    return actual_response_output
             except Exception as e:
                 # Clarify if error was in matcher or response processing if possible,
                 # but exc_info=True will give the most direct traceback.
