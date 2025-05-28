@@ -127,6 +127,8 @@ async def test_slash_command_routes_to_specific_profile(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={},  # Added missing tools_config
+        delegation_security_level="confirm",  # Added
+        id=focused_profile_id,  # Added
         # llm_model_name, llm_temperature, llm_max_tokens can be added if needed
     )
 

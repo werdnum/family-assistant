@@ -142,6 +142,8 @@ async def telegram_handler_fixture(
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={},  # Added missing tools_config
+        delegation_security_level="confirm",  # Added
+        id="telegram_conftest_profile",  # Added
     )
 
     # Define a separate app_config for the test

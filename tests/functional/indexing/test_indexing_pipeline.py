@@ -215,6 +215,7 @@ async def test_indexing_pipeline_e2e(
             tool_exec_context = ToolExecutionContext(
                 interface_type="test",
                 conversation_id="test-indexing-conv",
+                user_name="IndexingTestUser",  # Added
                 turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
@@ -423,6 +424,7 @@ async def test_indexing_pipeline_pdf_processing(
             tool_exec_context = ToolExecutionContext(
                 interface_type="test",
                 conversation_id="test-pdf-pipeline-conv",
+                user_name="PDFIndexingTestUser",  # Added
                 turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface

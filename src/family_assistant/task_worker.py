@@ -339,6 +339,7 @@ class TaskWorker:
                 # Pass new identifiers
                 interface_type=final_interface_type,
                 conversation_id=final_conversation_id,
+                user_name="TaskWorkerUser",  # Added
                 turn_id=str(
                     uuid.uuid4()
                 ),  # Generate a new turn_id for this task execution

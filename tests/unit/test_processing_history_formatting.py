@@ -60,6 +60,8 @@ def processing_service() -> ProcessingService:
         max_history_messages=10,  # Not used
         history_max_age_hours=1,  # Not used
         tools_config={},  # Added missing tools_config
+        delegation_security_level="confirm",  # Added
+        id="history_formatting_test_profile",  # Added
     )
     return ProcessingService(
         llm_client=MockLLMClient(),

@@ -61,6 +61,7 @@ async def execute_tool_api(
     execution_context = ToolExecutionContext(
         interface_type="api",  # Identify interface
         conversation_id=f"api_call_{uuid.uuid4()}",
+        user_name="APIUser",  # Added
         turn_id=f"api_turn_{uuid.uuid4()}",
         db_context=db_context,
         chat_interface=None,  # No direct chat interface for API calls
