@@ -71,6 +71,9 @@ message_history_table = Table(
     Column(
         "error_traceback", Text, nullable=True
     ),  # For error messages or messages causing errors
+    Column(
+        "processing_profile_id", String(255), nullable=True, index=True
+    ),  # ID of the processing profile used
 )
 
 
@@ -93,6 +96,7 @@ async def add_message_to_history(
     tool_call_id: (
         str | None
     ) = None,  # Added: ID linking tool response to assistant request
+    processing_profile_id: str | None = None,  # Added: Profile ID
 ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
     """Adds a message to the history table, including optional fields."""
     # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
@@ -134,6 +138,7 @@ async def add_message_to_history(
                 reasoning_info=reasoning_info,
                 error_traceback=error_traceback,
                 tool_call_id=tool_call_id,
+                processing_profile_id=processing_profile_id,  # Store profile ID
             )  # Close .values()
             .returning(message_history_table.c.internal_id)  # Specify returning clause
         )  # Close statement assignment parenthesis
@@ -224,6 +229,7 @@ async def get_recent_history(
             message_history_table.c.reasoning_info,
             message_history_table.c.error_traceback,
             message_history_table.c.tool_call_id,
+            message_history_table.c.processing_profile_id,  # Added profile ID
         ]
 
         # Step 1: Initial fetch of candidate messages based on limit and max_age
@@ -303,8 +309,10 @@ async def get_message_by_interface_id(
 ) -> dict[str, Any] | None:
     """Retrieves a specific message by its chat and message ID, including all fields."""
     try:
+        # Select all columns explicitly to include the new one if table object isn't updated dynamically in all contexts
+        selected_columns = [col for col in message_history_table.c]
         stmt = (
-            select(message_history_table)  # Select all columns
+            select(*selected_columns)  # Select all columns
             # Filter by new identifiers
             .where(message_history_table.c.interface_type == interface_type)
             .where(message_history_table.c.conversation_id == conversation_id)
@@ -328,8 +336,9 @@ async def get_messages_by_turn_id(
 ) -> list[dict[str, Any]]:
     """Retrieves all messages associated with a specific turn ID."""
     try:
+        selected_columns = [col for col in message_history_table.c]
         stmt = (
-            select(message_history_table)
+            select(*selected_columns)  # Select all columns
             .where(message_history_table.c.turn_id == turn_id)
             .order_by(
                 message_history_table.c.internal_id
@@ -357,9 +366,10 @@ async def get_messages_by_thread_id(
     try:
         # although the first message itself has `thread_root_id` as NULL).
         # Corrected query to include the root message itself
+        selected_columns = [col for col in message_history_table.c]
         stmt = (
             select(
-                message_history_table
+                *selected_columns
             )  # Filter by thread root ID or the root message itself
             .where(
                 (message_history_table.c.thread_root_id == thread_root_id)
@@ -386,7 +396,8 @@ async def get_grouped_message_history(
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
     """Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp."""
     try:
-        stmt = select(message_history_table).order_by(  # Select all columns
+        selected_columns = [col for col in message_history_table.c]
+        stmt = select(*selected_columns).order_by(  # Select all columns
             message_history_table.c.interface_type,
             # Group by (interface_type, conversation_id) tuple
             message_history_table.c.conversation_id,

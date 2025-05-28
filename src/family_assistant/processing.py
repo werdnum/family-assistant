@@ -718,6 +718,7 @@ class ProcessingService:
                 reasoning_info=None,
                 error_traceback=None,
                 tool_call_id=None,
+                processing_profile_id=self.service_config.id,  # Record profile ID
             )
 
             if saved_user_msg_record and not thread_root_id_for_turn:
@@ -906,6 +907,8 @@ class ProcessingService:
                         "timestamp", datetime.now(timezone.utc)
                     )
                     msg_to_save.setdefault("interface_message_id", None)
+                    # Add processing_profile_id for turn messages
+                    msg_to_save["processing_profile_id"] = self.service_config.id
 
                     saved_turn_msg_record = await storage.add_message_to_history(
                         db_context=db_context, **msg_to_save
