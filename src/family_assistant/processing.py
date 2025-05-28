@@ -741,6 +741,7 @@ class ProcessingService:
                     conversation_id=conversation_id,
                     limit=self.max_history_messages,
                     max_age=timedelta(hours=self.history_max_age_hours),
+                    processing_profile_id=self.service_config.id,  # Filter by profile
                 )
             except Exception as hist_err:
                 logger.error(
@@ -786,6 +787,7 @@ class ProcessingService:
                     full_thread_messages_db = await storage.get_messages_by_thread_id(
                         db_context=db_context,
                         thread_root_id=thread_root_id_for_turn,
+                        processing_profile_id=self.service_config.id,  # Filter by profile
                     )
                     current_trigger_removed_from_thread = []
                     if trigger_interface_message_id:
