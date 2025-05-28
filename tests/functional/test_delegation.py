@@ -322,13 +322,18 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
 ) -> None:
     """Target is 'unrestricted', tool call confirm_delegation is False or omitted. Expect no confirmation."""
     logger.info("--- Test: Unrestricted Target, No Forced Confirmation ---")
+
+    # Await fixtures to get their resolved values
+    awaited_primary_service = await primary_processing_service
+    awaited_mock_confirmation_callback = await mock_confirmation_callback
+
     # Reconfigure primary LLM mock for this specific tool argument
-    primary_processing_service.llm_client = primary_llm_mock_factory(confirm_tool_arg)
+    awaited_primary_service.llm_client = primary_llm_mock_factory(confirm_tool_arg)
 
     target_service = await specialized_processing_service("unrestricted")
 
     registry = {
-        PRIMARY_PROFILE_ID: primary_processing_service,
+        PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
     primary_processing_service.set_processing_services_registry(registry)
@@ -342,7 +347,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
             _,
             _,
             error,
-        ) = await primary_processing_service.handle_chat_interaction(
+        ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -351,14 +356,14 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
             new_task_event=asyncio.Event(),
-            request_confirmation_callback=mock_confirmation_callback,
+            request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
     assert DELEGATED_TASK_DESCRIPTION in final_reply
-    mock_confirmation_callback.assert_not_called()
+    awaited_mock_confirmation_callback.assert_not_called()
 
     # DB Assertions
     async with DatabaseContext(engine=test_db_engine) as db_context:
@@ -388,15 +393,20 @@ async def test_delegation_confirm_target_granted(
 ) -> None:
     """Target is 'confirm', tool confirm_delegation=False. Expect confirmation, user grants it."""
     logger.info("--- Test: Confirm Target, Confirmation Granted ---")
-    primary_processing_service.llm_client = primary_llm_mock_factory(
+
+    # Await fixtures
+    awaited_primary_service = await primary_processing_service
+    awaited_mock_confirmation_callback = await mock_confirmation_callback
+
+    awaited_primary_service.llm_client = primary_llm_mock_factory(
         False
     )  # Explicitly set confirm_delegation=False
-    mock_confirmation_callback.return_value = True  # User confirms
+    awaited_mock_confirmation_callback.return_value = True  # User confirms
 
     target_service = await specialized_processing_service("confirm")
 
     registry = {
-        PRIMARY_PROFILE_ID: primary_processing_service,
+        PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
     primary_processing_service.set_processing_services_registry(registry)
@@ -410,7 +420,7 @@ async def test_delegation_confirm_target_granted(
             _,
             _,
             error,
-        ) = await primary_processing_service.handle_chat_interaction(
+        ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -419,15 +429,15 @@ async def test_delegation_confirm_target_granted(
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
             new_task_event=asyncio.Event(),
-            request_confirmation_callback=mock_confirmation_callback,
+            request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
-    mock_confirmation_callback.assert_called_once()
+    awaited_mock_confirmation_callback.assert_called_once()
     # Assert call args for confirmation if needed (tool_name, specific prompt text)
-    call_args = mock_confirmation_callback.call_args[1]  # kwargs of the call
+    call_args = awaited_mock_confirmation_callback.call_args[1]  # kwargs of the call
     assert call_args["tool_name"] == "delegate_to_service"
     assert DELEGATED_TASK_DESCRIPTION.lower() in call_args["prompt_text"].lower()
     assert SPECIALIZED_PROFILE_ID.lower() in call_args["prompt_text"].lower()
@@ -443,13 +453,18 @@ async def test_delegation_confirm_target_denied(
 ) -> None:
     """Target is 'confirm', user denies confirmation."""
     logger.info("--- Test: Confirm Target, Confirmation Denied ---")
-    primary_processing_service.llm_client = primary_llm_mock_factory(False)
-    mock_confirmation_callback.return_value = False  # User denies
+
+    # Await fixtures
+    awaited_primary_service = await primary_processing_service
+    awaited_mock_confirmation_callback = await mock_confirmation_callback
+
+    awaited_primary_service.llm_client = primary_llm_mock_factory(False)
+    awaited_mock_confirmation_callback.return_value = False  # User denies
 
     target_service = await specialized_processing_service("confirm")
 
     registry = {
-        PRIMARY_PROFILE_ID: primary_processing_service,
+        PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
     primary_processing_service.set_processing_services_registry(registry)
@@ -463,7 +478,7 @@ async def test_delegation_confirm_target_denied(
             _,
             _,
             error,
-        ) = await primary_processing_service.handle_chat_interaction(
+        ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -472,7 +487,7 @@ async def test_delegation_confirm_target_denied(
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
             new_task_event=asyncio.Event(),
-            request_confirmation_callback=mock_confirmation_callback,
+            request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
     assert error is None, f"Error during interaction: {error}"
@@ -482,7 +497,7 @@ async def test_delegation_confirm_target_denied(
     assert (
         f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
     )  # Specialized service should not be called
-    mock_confirmation_callback.assert_called_once()
+    awaited_mock_confirmation_callback.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -494,12 +509,16 @@ async def test_delegation_blocked_target(
 ) -> None:
     """Target is 'blocked'. Expect delegation to fail."""
     logger.info("--- Test: Blocked Target ---")
+
+    # Await fixtures
+    awaited_primary_service = await primary_processing_service
+    awaited_mock_confirmation_callback = await mock_confirmation_callback
     # Primary LLM mock will attempt to delegate (confirm_delegation arg doesn't matter here)
 
     target_service = await specialized_processing_service("blocked")
 
     registry = {
-        PRIMARY_PROFILE_ID: primary_processing_service,
+        PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
     primary_processing_service.set_processing_services_registry(registry)
@@ -513,7 +532,7 @@ async def test_delegation_blocked_target(
             _,
             _,
             error,
-        ) = await primary_processing_service.handle_chat_interaction(
+        ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -522,7 +541,7 @@ async def test_delegation_blocked_target(
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
             new_task_event=asyncio.Event(),
-            request_confirmation_callback=mock_confirmation_callback,
+            request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
     assert error is None, f"Error during interaction: {error}"
@@ -530,7 +549,7 @@ async def test_delegation_blocked_target(
     assert "error: delegation to service profile" in final_reply.lower()
     assert "not allowed" in final_reply.lower()
     assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
-    mock_confirmation_callback.assert_not_called()  # Confirmation should not even be attempted
+    awaited_mock_confirmation_callback.assert_not_called()  # Confirmation should not even be attempted
 
 
 @pytest.mark.asyncio
@@ -543,15 +562,20 @@ async def test_delegation_unrestricted_confirm_arg_granted(
 ) -> None:
     """Target is 'unrestricted', tool call confirm_delegation=True. Expect confirmation, user grants."""
     logger.info("--- Test: Unrestricted Target, Confirm Argument True, Granted ---")
-    primary_processing_service.llm_client = primary_llm_mock_factory(
+
+    # Await fixtures
+    awaited_primary_service = await primary_processing_service
+    awaited_mock_confirmation_callback = await mock_confirmation_callback
+
+    awaited_primary_service.llm_client = primary_llm_mock_factory(
         True
     )  # confirm_delegation=True in tool call
-    mock_confirmation_callback.return_value = True  # User confirms
+    awaited_mock_confirmation_callback.return_value = True  # User confirms
 
     target_service = await specialized_processing_service("unrestricted")
 
     registry = {
-        PRIMARY_PROFILE_ID: primary_processing_service,
+        PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
     primary_processing_service.set_processing_services_registry(registry)
@@ -565,7 +589,7 @@ async def test_delegation_unrestricted_confirm_arg_granted(
             _,
             _,
             error,
-        ) = await primary_processing_service.handle_chat_interaction(
+        ) = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -574,13 +598,13 @@ async def test_delegation_unrestricted_confirm_arg_granted(
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
             new_task_event=asyncio.Event(),
-            request_confirmation_callback=mock_confirmation_callback,
+            request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
-    mock_confirmation_callback.assert_called_once()
+    awaited_mock_confirmation_callback.assert_called_once()
     # Assert that the tool_args in the confirmation call reflect confirm_delegation=True
-    confirmed_tool_args = mock_confirmation_callback.call_args[1]["tool_args"]
+    confirmed_tool_args = awaited_mock_confirmation_callback.call_args[1]["tool_args"]
     assert confirmed_tool_args.get("confirm_delegation") is True
