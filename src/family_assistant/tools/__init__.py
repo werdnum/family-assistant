@@ -695,17 +695,17 @@ async def delegate_to_service_tool(
             logger.warning(
                 f"Confirmation required for delegating to '{target_service_id}' (policy: {target_security_level}, arg: {confirm_delegation}), but no confirmation callback is available. Proceeding without explicit user confirmation for this delegation step."
             )
-            # Or, could return an error:
+            # If strict confirmation is desired when callback is missing, uncomment the following:
             # return f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available."
         else:
             # Attempt to get a description from the target service's config
-            target_description = "Specialized Assistant"  # Default description
+            # target_description = "Specialized Assistant"  # Default description # Unused variable
             if hasattr(target_service, "service_config") and target_service.service_config:
-                 # Check if service_config has a description attribute or similar
-                 # This part is speculative as ProcessingServiceConfig doesn't directly hold 'description'
-                 # but the profile definition in config.yaml does.
-                 # For now, we'll use a generic description or the profile ID.
-                 # A more robust way would be to ensure profile description is accessible via ProcessingService.
+                # Check if service_config has a description attribute or similar
+                # This part is speculative as ProcessingServiceConfig doesn't directly hold 'description'
+                # but the profile definition in config.yaml does.
+                # For now, we'll use a generic description or the profile ID.
+                # A more robust way would be to ensure profile description is accessible via ProcessingService.
                 pass  # Placeholder for actual description retrieval if different
             
             # Use profile ID as part of the description if a more specific one isn't easily available
