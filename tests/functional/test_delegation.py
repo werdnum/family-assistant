@@ -314,9 +314,13 @@ async def assert_message_history_contains(
 )  # Test with confirm_delegation=False and when arg is omitted
 async def test_delegation_unrestricted_target_no_forced_confirm(
     test_db_engine: AsyncEngine,
-    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
-    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
-    mock_confirmation_callback: AsyncMock,
+    primary_processing_service: Awaitable[
+        ProcessingService
+    ],  # Uses primary_llm_mock_factory(None) by default
+    specialized_processing_service: Awaitable[
+        Callable[[str], Awaitable[ProcessingService]]
+    ],
+    mock_confirmation_callback: Awaitable[AsyncMock],
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
     confirm_tool_arg: bool | None,
 ) -> None:
@@ -326,11 +330,16 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     # Await fixtures to get their resolved values
     awaited_primary_service = await primary_processing_service
     awaited_mock_confirmation_callback = await mock_confirmation_callback
+    awaited_specialized_processing_service_factory = (
+        await specialized_processing_service
+    )
 
     # Reconfigure primary LLM mock for this specific tool argument
     awaited_primary_service.llm_client = primary_llm_mock_factory(confirm_tool_arg)
 
-    target_service = await specialized_processing_service("unrestricted")
+    target_service = await awaited_specialized_processing_service_factory(
+        "unrestricted"
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -386,9 +395,13 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
 @pytest.mark.asyncio
 async def test_delegation_confirm_target_granted(
     test_db_engine: AsyncEngine,
-    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
-    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
-    mock_confirmation_callback: AsyncMock,
+    primary_processing_service: Awaitable[
+        ProcessingService
+    ],  # Uses primary_llm_mock_factory(None) by default
+    specialized_processing_service: Awaitable[
+        Callable[[str], Awaitable[ProcessingService]]
+    ],
+    mock_confirmation_callback: Awaitable[AsyncMock],
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
 ) -> None:
     """Target is 'confirm', tool confirm_delegation=False. Expect confirmation, user grants it."""
@@ -397,13 +410,16 @@ async def test_delegation_confirm_target_granted(
     # Await fixtures
     awaited_primary_service = await primary_processing_service
     awaited_mock_confirmation_callback = await mock_confirmation_callback
+    awaited_specialized_processing_service_factory = (
+        await specialized_processing_service
+    )
 
     awaited_primary_service.llm_client = primary_llm_mock_factory(
         False
     )  # Explicitly set confirm_delegation=False
     awaited_mock_confirmation_callback.return_value = True  # User confirms
 
-    target_service = await specialized_processing_service("confirm")
+    target_service = await awaited_specialized_processing_service_factory("confirm")
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -446,9 +462,11 @@ async def test_delegation_confirm_target_granted(
 @pytest.mark.asyncio
 async def test_delegation_confirm_target_denied(
     test_db_engine: AsyncEngine,
-    primary_processing_service: ProcessingService,
-    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
-    mock_confirmation_callback: AsyncMock,
+    primary_processing_service: Awaitable[ProcessingService],
+    specialized_processing_service: Awaitable[
+        Callable[[str], Awaitable[ProcessingService]]
+    ],
+    mock_confirmation_callback: Awaitable[AsyncMock],
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
 ) -> None:
     """Target is 'confirm', user denies confirmation."""
@@ -457,11 +475,14 @@ async def test_delegation_confirm_target_denied(
     # Await fixtures
     awaited_primary_service = await primary_processing_service
     awaited_mock_confirmation_callback = await mock_confirmation_callback
+    awaited_specialized_processing_service_factory = (
+        await specialized_processing_service
+    )
 
     awaited_primary_service.llm_client = primary_llm_mock_factory(False)
     awaited_mock_confirmation_callback.return_value = False  # User denies
 
-    target_service = await specialized_processing_service("confirm")
+    target_service = await awaited_specialized_processing_service_factory("confirm")
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -503,9 +524,11 @@ async def test_delegation_confirm_target_denied(
 @pytest.mark.asyncio
 async def test_delegation_blocked_target(
     test_db_engine: AsyncEngine,
-    primary_processing_service: ProcessingService,
-    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
-    mock_confirmation_callback: AsyncMock,
+    primary_processing_service: Awaitable[ProcessingService],
+    specialized_processing_service: Awaitable[
+        Callable[[str], Awaitable[ProcessingService]]
+    ],
+    mock_confirmation_callback: Awaitable[AsyncMock],
 ) -> None:
     """Target is 'blocked'. Expect delegation to fail."""
     logger.info("--- Test: Blocked Target ---")
@@ -513,9 +536,12 @@ async def test_delegation_blocked_target(
     # Await fixtures
     awaited_primary_service = await primary_processing_service
     awaited_mock_confirmation_callback = await mock_confirmation_callback
+    awaited_specialized_processing_service_factory = (
+        await specialized_processing_service
+    )
     # Primary LLM mock will attempt to delegate (confirm_delegation arg doesn't matter here)
 
-    target_service = await specialized_processing_service("blocked")
+    target_service = await awaited_specialized_processing_service_factory("blocked")
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -555,9 +581,13 @@ async def test_delegation_blocked_target(
 @pytest.mark.asyncio
 async def test_delegation_unrestricted_confirm_arg_granted(
     test_db_engine: AsyncEngine,
-    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
-    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
-    mock_confirmation_callback: AsyncMock,
+    primary_processing_service: Awaitable[
+        ProcessingService
+    ],  # Uses primary_llm_mock_factory(None) by default
+    specialized_processing_service: Awaitable[
+        Callable[[str], Awaitable[ProcessingService]]
+    ],
+    mock_confirmation_callback: Awaitable[AsyncMock],
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
 ) -> None:
     """Target is 'unrestricted', tool call confirm_delegation=True. Expect confirmation, user grants."""
@@ -566,13 +596,18 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     # Await fixtures
     awaited_primary_service = await primary_processing_service
     awaited_mock_confirmation_callback = await mock_confirmation_callback
+    awaited_specialized_processing_service_factory = (
+        await specialized_processing_service
+    )
 
     awaited_primary_service.llm_client = primary_llm_mock_factory(
         True
     )  # confirm_delegation=True in tool call
     awaited_mock_confirmation_callback.return_value = True  # User confirms
 
-    target_service = await specialized_processing_service("unrestricted")
+    target_service = await awaited_specialized_processing_service_factory(
+        "unrestricted"
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
