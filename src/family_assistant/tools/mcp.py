@@ -40,7 +40,9 @@ class MCPToolsProvider:
             f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. Initialization timeout: {self._initialization_timeout_seconds}s. Initialization pending."
         )
 
-    async def _log_mcp_initialization_progress(self, stop_event: asyncio.Event) -> None:
+    async def _log_mcp_initialization_progress(
+        self, stop_event: asyncio.Event, start_time: float
+    ) -> None:
         """Logs progress during MCP tool initialization."""
         logger.debug("MCP initialization logging task started.")
         try:
@@ -51,10 +53,16 @@ class MCPToolsProvider:
                 except asyncio.TimeoutError:
                     # Timeout occurred, meaning 10 seconds passed and stop_event is not set
                     if not stop_event.is_set():  # Double check
+                        current_time = asyncio.get_running_loop().time()
+                        elapsed_time = current_time - start_time
+                        remaining_time = (
+                            self._initialization_timeout_seconds - elapsed_time
+                        )
                         logger.info(
-                            f"Still initializing MCP tools... {len(self._sessions)} sessions active, "
-                            f"{len(self._definitions)} tools discovered so far. "
-                            f"Waiting up to {self._initialization_timeout_seconds}s total."
+                            f"Still initializing MCP tools... "
+                            f"Waiting for {len(self._mcp_server_configs)} server(s) to respond. "
+                            f"Elapsed: {elapsed_time:.0f}s. "
+                            f"Timeout in approx {max(0, remaining_time):.0f}s (total {self._initialization_timeout_seconds}s)."
                         )
                 except asyncio.CancelledError:  # If logging_task itself is cancelled
                     raise
@@ -267,8 +275,11 @@ class MCPToolsProvider:
 
         # --- Run tasks concurrently with logging and timeout ---
         stop_logging_event = asyncio.Event()
+        initialization_start_time = asyncio.get_running_loop().time()
         logging_task = asyncio.create_task(
-            self._log_mcp_initialization_progress(stop_logging_event)
+            self._log_mcp_initialization_progress(
+                stop_logging_event, initialization_start_time
+            )
         )
 
         connection_tasks_future = asyncio.gather(
