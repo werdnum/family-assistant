@@ -188,6 +188,17 @@ def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider
         if name in enabled_local_tool_names
     }
 
+    logger.info(f"create_tools_provider: profile_tools_config={profile_tools_config}")
+    logger.info(
+        f"create_tools_provider: enabled_local_tool_names={enabled_local_tool_names}"
+    )
+    logger.info(
+        f"create_tools_provider: profile_local_definitions names={[d.get('function', {}).get('name') for d in profile_local_definitions]}"
+    )
+    logger.info(
+        f"create_tools_provider: profile_local_implementations keys={list(profile_local_implementations.keys())}"
+    )
+
     local_provider = LocalToolsProvider(
         definitions=profile_local_definitions,
         implementations=profile_local_implementations,
