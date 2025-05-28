@@ -1,4 +1,5 @@
 import asyncio
+import contextlib  # Added contextlib
 import logging
 import os  # Import os for environment variable resolution
 from contextlib import AsyncExitStack  # Import AsyncExitStack
@@ -39,9 +40,7 @@ class MCPToolsProvider:
             f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. Initialization timeout: {self._initialization_timeout_seconds}s. Initialization pending."
         )
 
-    async def _log_mcp_initialization_progress(
-        self, stop_event: asyncio.Event
-    ) -> None:
+    async def _log_mcp_initialization_progress(self, stop_event: asyncio.Event) -> None:
         """Logs progress during MCP tool initialization."""
         logger.debug("MCP initialization logging task started.")
         try:
@@ -305,9 +304,14 @@ class MCPToolsProvider:
                     # or its initial empty list. This is handled by the processing loop below.
             # If not done, results remains empty, which is also handled.
         except Exception as e:
-            logger.error(f"Unexpected error during MCP connection gathering: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error during MCP connection gathering: {e}", exc_info=True
+            )
             # Try to get results if possible
-            if connection_tasks_future.done() and not connection_tasks_future.cancelled():
+            if (
+                connection_tasks_future.done()
+                and not connection_tasks_future.cancelled()
+            ):
                 results = connection_tasks_future.result()
         finally:
             stop_logging_event.set()
@@ -316,15 +320,13 @@ class MCPToolsProvider:
                     await asyncio.wait_for(logging_task, timeout=1.0)
                 except asyncio.TimeoutError:
                     logging_task.cancel()
-                    try:
+                    with contextlib.suppress(asyncio.CancelledError):
                         await logging_task
-                    except asyncio.CancelledError:
-                        pass  # Expected
-                except asyncio.CancelledError:  # If logging_task itself was cancelled externally
-                    try:
+                except (
+                    asyncio.CancelledError
+                ):  # If logging_task itself was cancelled externally
+                    with contextlib.suppress(asyncio.CancelledError):
                         await logging_task
-                    except asyncio.CancelledError:
-                        pass  # Expected
             # If logging_task was already done (e.g. error), no need to await/cancel.
 
         # --- Process results ---
@@ -335,7 +337,9 @@ class MCPToolsProvider:
             if i < len(self._mcp_server_configs):
                 server_id = list(self._mcp_server_configs.keys())[i]
             else:
-                logger.warning(f"Result item at index {i} has no corresponding server_id due to partial results. Item: {res_item}")
+                logger.warning(
+                    f"Result item at index {i} has no corresponding server_id due to partial results. Item: {res_item}"
+                )
                 continue  # Skip processing this anomalous result item
 
             if isinstance(res_item, BaseException):
