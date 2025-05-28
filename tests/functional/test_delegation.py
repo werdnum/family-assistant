@@ -17,8 +17,8 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.storage import message_history_table  # Updated import
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.schema import message_history_table
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations_map,
 )
@@ -110,7 +110,7 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 and "delegate this task" in last_text
             )
 
-        tool_call_args = {
+        tool_call_args: dict[str, Any] = {  # Explicitly type tool_call_args
             "target_service_id": SPECIALIZED_PROFILE_ID,
             "user_request": DELEGATED_TASK_DESCRIPTION,
         }
@@ -276,17 +276,17 @@ async def assert_message_history_contains(
 
     found_match = False
     for msg in history:
-        role_match = msg.role == expected_role
+        role_match = msg["role"] == expected_role  # Use dictionary access
         content_match = True
         if expected_content_substring:
             content_match = (
-                msg.content
-                and expected_content_substring.lower() in msg.content.lower()
+                msg["content"]  # Use dictionary access
+                and expected_content_substring.lower() in msg["content"].lower()  # Use dictionary access
             )
 
         tool_call_match = True
         if expected_tool_call_name:
-            tool_calls = msg.tool_calls
+            tool_calls = msg["tool_calls"]  # Use dictionary access
             if isinstance(tool_calls, list) and tool_calls:
                 tool_call_match = any(
                     tc.get("function", {}).get("name") == expected_tool_call_name
