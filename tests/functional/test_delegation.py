@@ -1,0 +1,514 @@
+import asyncio
+import json
+import logging
+import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from family_assistant.context_providers import KnownUsersContextProvider
+from family_assistant.interfaces import ChatInterface
+from family_assistant.llm import (
+    ToolCallFunction,
+    ToolCallItem,
+)
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.schema import message_history_table
+from family_assistant.tools import (
+    AVAILABLE_FUNCTIONS as local_tool_implementations_map,
+)
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition_list,
+)
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    ConfirmingToolsProvider,
+    LocalToolsProvider,
+    MCPToolsProvider,
+    ToolsProvider,
+)
+from tests.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,
+)
+from tests.mocks.mock_llm import (
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
+
+logger = logging.getLogger(__name__)
+
+# --- Test Constants ---
+PRIMARY_PROFILE_ID = "primary_delegator"
+SPECIALIZED_PROFILE_ID = "specialized_target"
+DELEGATED_TASK_DESCRIPTION = "Solve this complex problem for me."
+USER_QUERY_TEMPLATE = "Please delegate this task: {task_description}"
+
+TEST_CHAT_ID = "test_chat_123"  # String, as per schema
+TEST_INTERFACE_TYPE = "test_interface"
+TEST_USER_NAME = "DelegationTester"
+
+# --- Fixtures ---
+
+
+@pytest.fixture
+def dummy_prompts() -> dict[str, str]:
+    return {"system_prompt": "You are a {profile_id} assistant."}
+
+
+@pytest.fixture
+def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceConfig:
+    return ProcessingServiceConfig(
+        prompts=dummy_prompts,
+        calendar_config={},
+        timezone_str="UTC",
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={
+            "enable_local_tools": ["delegate_to_service"],  # Crucial for this test
+            "confirm_tools": [],
+        },
+        delegation_security_level="unrestricted",  # Primary can delegate freely
+    )
+
+
+@pytest.fixture
+def specialized_service_config_factory(dummy_prompts: dict[str, str]) -> Callable[[str], ProcessingServiceConfig]:
+    def _factory(delegation_security_level: str) -> ProcessingServiceConfig:
+        return ProcessingServiceConfig(
+            prompts=dummy_prompts,
+            calendar_config={},
+            timezone_str="UTC",
+            max_history_messages=5,
+            history_max_age_hours=24,
+            tools_config={  # Target profile might have its own tools or none
+                "enable_local_tools": [],
+                "confirm_tools": [],
+            },
+            delegation_security_level=delegation_security_level,
+        )
+    return _factory
+
+
+@pytest.fixture
+def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient]:
+    def _factory(confirm_delegation_arg: bool | None) -> RuleBasedMockLLMClient:
+        # Rule: Match delegate task query and call delegate_to_service tool
+        def delegate_matcher(kwargs: MatcherArgs) -> bool:
+            messages = kwargs.get("messages", [])
+            last_text = get_last_message_text(messages).lower()
+            return DELEGATED_TASK_DESCRIPTION.lower() in last_text and "delegate this task" in last_text
+
+        tool_call_args = {
+            "target_service_id": SPECIALIZED_PROFILE_ID,
+            "user_request": DELEGATED_TASK_DESCRIPTION,
+        }
+        if confirm_delegation_arg is not None:
+            tool_call_args["confirm_delegation"] = confirm_delegation_arg
+
+        delegate_response = MockLLMOutput(
+            content=f"Okay, I will delegate '{DELEGATED_TASK_DESCRIPTION}' to {SPECIALIZED_PROFILE_ID}.",
+            tool_calls=[
+                ToolCallItem(
+                    id=f"call_{uuid.uuid4()}",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="delegate_to_service",
+                        arguments=json.dumps(tool_call_args),
+                    ),
+                )
+            ],
+        )
+        return RuleBasedMockLLMClient(rules=[(delegate_matcher, delegate_response)])
+    return _factory
+
+
+@pytest.fixture
+def specialized_llm_mock() -> RuleBasedMockLLMClient:
+    # Rule: Match the delegated task description and provide a specific response
+    def specialized_task_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        last_text = get_last_message_text(messages).lower()
+        # This matcher expects the system prompt of the specialized agent to be prepended
+        # or for the user_request to be directly in the last message.
+        return DELEGATED_TASK_DESCRIPTION.lower() in last_text
+
+    specialized_response = MockLLMOutput(
+        content=f"Response from {SPECIALIZED_PROFILE_ID}: Task '{DELEGATED_TASK_DESCRIPTION}' processed.",
+        tool_calls=None,
+    )
+    return RuleBasedMockLLMClient(rules=[(specialized_task_matcher, specialized_response)])
+
+
+@pytest.fixture
+async def mock_confirmation_callback() -> AsyncMock:
+    return AsyncMock(spec=Callable[..., Awaitable[bool]])
+
+
+def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider:
+    """Helper to create a ToolsProvider stack for a profile."""
+    enabled_local_tool_names = set(profile_tools_config.get("enable_local_tools", []))
+    
+    # If empty, enable all known local tools for simplicity in test setup,
+    # or be specific if the test requires it. For delegation, primary needs delegate_to_service.
+    if not enabled_local_tool_names and "delegate_to_service" in profile_tools_config.get("enable_local_tools", []):
+         enabled_local_tool_names = {"delegate_to_service"}  # Ensure primary has it
+    elif not enabled_local_tool_names:  # For specialized, if empty, means no local tools
+        pass
+
+    profile_local_definitions = [
+        td for td in local_tools_definition_list 
+        if td.get("function", {}).get("name") in enabled_local_tool_names
+    ]
+    profile_local_implementations = {
+        name: func for name, func in local_tool_implementations_map.items() 
+        if name in enabled_local_tool_names
+    }
+
+    local_provider = LocalToolsProvider(
+        definitions=profile_local_definitions,
+        implementations=profile_local_implementations,
+    )
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})  # Mocked
+    
+    composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
+    
+    confirm_tools_set = set(profile_tools_config.get("confirm_tools", []))
+    confirming_provider = ConfirmingToolsProvider(
+        wrapped_provider=composite_provider,
+        tools_requiring_confirmation=confirm_tools_set,
+    )
+    return confirming_provider
+
+
+@pytest.fixture
+async def primary_processing_service(
+    primary_service_config: ProcessingServiceConfig,
+    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
+    dummy_prompts: dict[str, str],
+) -> ProcessingService:
+    # Default to no confirm_delegation argument for the primary LLM's tool call
+    llm_mock = primary_llm_mock_factory(None) 
+    tools_provider = create_tools_provider(primary_service_config.tools_config)
+    await tools_provider.get_tool_definitions()  # Initialize
+
+    known_users_provider = KnownUsersContextProvider(
+        chat_id_to_name_map={int(TEST_CHAT_ID): TEST_USER_NAME}, prompts=dummy_prompts
+    )
+
+    return ProcessingService(
+        llm_client=llm_mock,
+        tools_provider=tools_provider,
+        service_config=primary_service_config,
+        context_providers=[known_users_provider],
+        server_url="http://test.server",
+        app_config={},
+    )
+
+
+@pytest.fixture
+async def specialized_processing_service(
+    specialized_service_config_factory: Callable[[str], ProcessingServiceConfig],
+    specialized_llm_mock: RuleBasedMockLLMClient,
+    dummy_prompts: dict[str, str],
+) -> Callable[[str], Awaitable[ProcessingService]]:
+    async def _factory(delegation_security_level: str) -> ProcessingService:
+        config = specialized_service_config_factory(delegation_security_level)
+        tools_provider = create_tools_provider(config.tools_config)
+        await tools_provider.get_tool_definitions()  # Initialize
+
+        known_users_provider = KnownUsersContextProvider(
+             chat_id_to_name_map={int(TEST_CHAT_ID): TEST_USER_NAME}, prompts=dummy_prompts
+        )
+
+        return ProcessingService(
+            llm_client=specialized_llm_mock,
+            tools_provider=tools_provider,
+            service_config=config,
+            context_providers=[known_users_provider],
+            server_url="http://test.server",
+            app_config={},
+        )
+    return _factory
+
+
+async def assert_message_history_contains(
+    db_context: DatabaseContext,
+    conversation_id: str,
+    expected_role: str,
+    expected_content_substring: str | None = None,
+    expected_tool_call_name: str | None = None,
+    min_messages: int = 1,
+):
+    history = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == conversation_id)
+        .order_by(message_history_table.c.timestamp.asc())
+    )
+    assert len(history) >= min_messages, f"Expected at least {min_messages} messages, found {len(history)}"
+
+    found_match = False
+    for msg in history:
+        role_match = msg.role == expected_role
+        content_match = True
+        if expected_content_substring:
+            content_match = msg.content and expected_content_substring.lower() in msg.content.lower()
+        
+        tool_call_match = True
+        if expected_tool_call_name:
+            tool_calls = msg.tool_calls
+            if isinstance(tool_calls, list) and tool_calls:
+                tool_call_match = any(
+                    tc.get("function", {}).get("name") == expected_tool_call_name for tc in tool_calls
+                )
+            else:
+                tool_call_match = False
+        
+        if role_match and content_match and tool_call_match:
+            found_match = True
+            break
+    
+    assert found_match, f"Message with role '{expected_role}', content containing '{expected_content_substring}', and tool call '{expected_tool_call_name}' not found."
+
+
+# --- Test Cases ---
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirm_tool_arg", [False, None])  # Test with confirm_delegation=False and when arg is omitted
+async def test_delegation_unrestricted_target_no_forced_confirm(
+    test_db_engine: AsyncEngine,
+    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
+    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
+    mock_confirmation_callback: AsyncMock,
+    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
+    confirm_tool_arg: bool | None,
+):
+    """Target is 'unrestricted', tool call confirm_delegation is False or omitted. Expect no confirmation."""
+    logger.info("--- Test: Unrestricted Target, No Forced Confirmation ---")
+    # Reconfigure primary LLM mock for this specific tool argument
+    primary_processing_service.llm_client = primary_llm_mock_factory(confirm_tool_arg)
+
+    target_service = await specialized_processing_service("unrestricted")
+    
+    registry = {
+        PRIMARY_PROFILE_ID: primary_processing_service,
+        SPECIALIZED_PROFILE_ID: target_service,
+    }
+    primary_processing_service.set_processing_services_registry(registry)
+    target_service.set_processing_services_registry(registry)
+
+    user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
+    
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=TEST_CHAT_ID,
+            trigger_content_parts=[{"type": "text", "text": user_query}],
+            trigger_interface_message_id="msg1",
+            user_name=TEST_USER_NAME,
+            chat_interface=MagicMock(spec=ChatInterface),
+            new_task_event=asyncio.Event(),
+            request_confirmation_callback=mock_confirmation_callback,
+        )
+
+    assert error is None, f"Error during interaction: {error}"
+    assert final_reply is not None
+    assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
+    assert DELEGATED_TASK_DESCRIPTION in final_reply
+    mock_confirmation_callback.assert_not_called()
+
+    # DB Assertions
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        await assert_message_history_contains(db_context, TEST_CHAT_ID, "user", user_query)
+        await assert_message_history_contains(db_context, TEST_CHAT_ID, "assistant", None, "delegate_to_service")
+        # Check for the specialized service's response being part of the tool result for delegate_to_service
+        # This is a bit indirect. The final assistant message from primary should contain it.
+        await assert_message_history_contains(db_context, TEST_CHAT_ID, "assistant", f"Response from {SPECIALIZED_PROFILE_ID}")
+
+
+@pytest.mark.asyncio
+async def test_delegation_confirm_target_granted(
+    test_db_engine: AsyncEngine,
+    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
+    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
+    mock_confirmation_callback: AsyncMock,
+    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
+):
+    """Target is 'confirm', tool confirm_delegation=False. Expect confirmation, user grants it."""
+    logger.info("--- Test: Confirm Target, Confirmation Granted ---")
+    primary_processing_service.llm_client = primary_llm_mock_factory(False)  # Explicitly set confirm_delegation=False
+    mock_confirmation_callback.return_value = True  # User confirms
+
+    target_service = await specialized_processing_service("confirm")
+    
+    registry = {
+        PRIMARY_PROFILE_ID: primary_processing_service,
+        SPECIALIZED_PROFILE_ID: target_service,
+    }
+    primary_processing_service.set_processing_services_registry(registry)
+    target_service.set_processing_services_registry(registry)
+
+    user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
+    
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=TEST_CHAT_ID,
+            trigger_content_parts=[{"type": "text", "text": user_query}],
+            trigger_interface_message_id="msg2",
+            user_name=TEST_USER_NAME,
+            chat_interface=MagicMock(spec=ChatInterface),
+            new_task_event=asyncio.Event(),
+            request_confirmation_callback=mock_confirmation_callback,
+        )
+
+    assert error is None, f"Error during interaction: {error}"
+    assert final_reply is not None
+    assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
+    mock_confirmation_callback.assert_called_once()
+    # Assert call args for confirmation if needed (tool_name, specific prompt text)
+    call_args = mock_confirmation_callback.call_args[1]  # kwargs of the call
+    assert call_args['tool_name'] == 'delegate_to_service'
+    assert DELEGATED_TASK_DESCRIPTION.lower() in call_args['prompt_text'].lower()
+    assert SPECIALIZED_PROFILE_ID.lower() in call_args['prompt_text'].lower()
+
+
+@pytest.mark.asyncio
+async def test_delegation_confirm_target_denied(
+    test_db_engine: AsyncEngine,
+    primary_processing_service: ProcessingService,
+    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
+    mock_confirmation_callback: AsyncMock,
+    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
+):
+    """Target is 'confirm', user denies confirmation."""
+    logger.info("--- Test: Confirm Target, Confirmation Denied ---")
+    primary_processing_service.llm_client = primary_llm_mock_factory(False)
+    mock_confirmation_callback.return_value = False  # User denies
+
+    target_service = await specialized_processing_service("confirm")
+    
+    registry = {
+        PRIMARY_PROFILE_ID: primary_processing_service,
+        SPECIALIZED_PROFILE_ID: target_service,
+    }
+    primary_processing_service.set_processing_services_registry(registry)
+    target_service.set_processing_services_registry(registry)
+
+    user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
+    
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=TEST_CHAT_ID,
+            trigger_content_parts=[{"type": "text", "text": user_query}],
+            trigger_interface_message_id="msg3",
+            user_name=TEST_USER_NAME,
+            chat_interface=MagicMock(spec=ChatInterface),
+            new_task_event=asyncio.Event(),
+            request_confirmation_callback=mock_confirmation_callback,
+        )
+
+    assert error is None, f"Error during interaction: {error}"
+    assert final_reply is not None
+    assert "delegation to service" in final_reply.lower()
+    assert "cancelled by user" in final_reply.lower()
+    assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply  # Specialized service should not be called
+    mock_confirmation_callback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_delegation_blocked_target(
+    test_db_engine: AsyncEngine,
+    primary_processing_service: ProcessingService,
+    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
+    mock_confirmation_callback: AsyncMock,
+):
+    """Target is 'blocked'. Expect delegation to fail."""
+    logger.info("--- Test: Blocked Target ---")
+    # Primary LLM mock will attempt to delegate (confirm_delegation arg doesn't matter here)
+    
+    target_service = await specialized_processing_service("blocked")
+    
+    registry = {
+        PRIMARY_PROFILE_ID: primary_processing_service,
+        SPECIALIZED_PROFILE_ID: target_service,
+    }
+    primary_processing_service.set_processing_services_registry(registry)
+    target_service.set_processing_services_registry(registry)
+
+    user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
+    
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=TEST_CHAT_ID,
+            trigger_content_parts=[{"type": "text", "text": user_query}],
+            trigger_interface_message_id="msg4",
+            user_name=TEST_USER_NAME,
+            chat_interface=MagicMock(spec=ChatInterface),
+            new_task_event=asyncio.Event(),
+            request_confirmation_callback=mock_confirmation_callback,
+        )
+
+    assert error is None, f"Error during interaction: {error}"
+    assert final_reply is not None
+    assert "error: delegation to service profile" in final_reply.lower()
+    assert "not allowed" in final_reply.lower()
+    assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
+    mock_confirmation_callback.assert_not_called()  # Confirmation should not even be attempted
+
+
+@pytest.mark.asyncio
+async def test_delegation_unrestricted_confirm_arg_granted(
+    test_db_engine: AsyncEngine,
+    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
+    specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
+    mock_confirmation_callback: AsyncMock,
+    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
+):
+    """Target is 'unrestricted', tool call confirm_delegation=True. Expect confirmation, user grants."""
+    logger.info("--- Test: Unrestricted Target, Confirm Argument True, Granted ---")
+    primary_processing_service.llm_client = primary_llm_mock_factory(True)  # confirm_delegation=True in tool call
+    mock_confirmation_callback.return_value = True  # User confirms
+
+    target_service = await specialized_processing_service("unrestricted")
+    
+    registry = {
+        PRIMARY_PROFILE_ID: primary_processing_service,
+        SPECIALIZED_PROFILE_ID: target_service,
+    }
+    primary_processing_service.set_processing_services_registry(registry)
+    target_service.set_processing_services_registry(registry)
+
+    user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
+    
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=TEST_CHAT_ID,
+            trigger_content_parts=[{"type": "text", "text": user_query}],
+            trigger_interface_message_id="msg5",
+            user_name=TEST_USER_NAME,
+            chat_interface=MagicMock(spec=ChatInterface),
+            new_task_event=asyncio.Event(),
+            request_confirmation_callback=mock_confirmation_callback,
+        )
+
+    assert error is None, f"Error during interaction: {error}"
+    assert final_reply is not None
+    assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
+    mock_confirmation_callback.assert_called_once()
+    # Assert that the tool_args in the confirmation call reflect confirm_delegation=True
+    confirmed_tool_args = mock_confirmation_callback.call_args[1]['tool_args']
+    assert confirmed_tool_args.get('confirm_delegation') is True
