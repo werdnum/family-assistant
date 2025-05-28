@@ -1,6 +1,10 @@
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import date, datetime, timedelta
 from typing import Any, Protocol
+
+import httpx
+import pytz
 
 from family_assistant import (
     calendar_integration,  # For calendar functions
@@ -112,10 +116,6 @@ class NotesContextProvider(ContextProvider):
 
 # --- BEGIN WeatherContextProvider ---
 # Add necessary imports for WeatherContextProvider
-from datetime import date, datetime, timedelta
-
-import httpx
-import pytz
 
 
 class WeatherContextProvider(ContextProvider):
@@ -148,7 +148,9 @@ class WeatherContextProvider(ContextProvider):
         try:
             self._display_pytz_tz = pytz.timezone(timezone_str)
         except pytz.exceptions.UnknownTimeZoneError:
-            logger.error(f"Unknown display timezone: {timezone_str}. Defaulting to UTC.")
+            logger.error(
+                f"Unknown display timezone: {timezone_str}. Defaulting to UTC."
+            )
             self._display_pytz_tz = pytz.utc
             self._display_tz_str = "UTC"
 
@@ -247,15 +249,11 @@ class WeatherContextProvider(ContextProvider):
             return "N/A"
         return dt_obj.astimezone(self._display_pytz_tz).strftime("%H:%M")
 
-    def _format_uv_alert(
-        self, uv_day_data: dict[str, Any], api_tz_str: str
-    ) -> str:
+    def _format_uv_alert(self, uv_day_data: dict[str, Any], api_tz_str: str) -> str:
         """Formats UV information for a day."""
         alert = uv_day_data.get("alert")
         if alert and alert.get("maxIndex", 0) >= 3:
-            start_dt = self._parse_api_datetime(
-                alert.get("startDateTime"), api_tz_str
-            )
+            start_dt = self._parse_api_datetime(alert.get("startDateTime"), api_tz_str)
             end_dt = self._parse_api_datetime(alert.get("endDateTime"), api_tz_str)
             return self._prompts.get(
                 "weather_uv_alert_format",
@@ -274,9 +272,7 @@ class WeatherContextProvider(ContextProvider):
             ).format(index=first_entry.get("index"), scale=first_entry.get("scale"))
         return self._prompts.get("weather_no_uv_alert", "Low")
 
-    def _format_rainfall_summary(
-        self, rainfall_day_entry: dict[str, Any]
-    ) -> str:
+    def _format_rainfall_summary(self, rainfall_day_entry: dict[str, Any]) -> str:
         """Formats rainfall summary for a day."""
         prob = rainfall_day_entry.get("probability", 0)
         start_range = rainfall_day_entry.get("startRange")
@@ -289,8 +285,8 @@ class WeatherContextProvider(ContextProvider):
                 "{amount_range}mm, {probability}% chance",
             ).format(amount_range=amount_range, probability=prob)
         elif end_range is not None:  # e.g. <1mm
-             amount_range = f"<{end_range}"
-             return self._prompts.get(
+            amount_range = f"<{end_range}"
+            return self._prompts.get(
                 "weather_rain_amount_probability",
                 "{amount_range}mm, {probability}% chance",
             ).format(amount_range=amount_range, probability=prob)
@@ -324,7 +320,7 @@ class WeatherContextProvider(ContextProvider):
         sunset_time = self._format_time(sunset_dt)
 
         uv_info = self._format_uv_alert(day_sun_uv_data.get("uv", {}), api_tz_str)
-        
+
         day_name = day_date_obj.strftime("%A")
         date_str = day_date_obj.strftime("%b %d")
 
@@ -356,8 +352,13 @@ class WeatherContextProvider(ContextProvider):
         # Current Conditions
         current_temp = obs.get("temperature", {}).get("temperature", "N/A")
         apparent_temp = obs.get("temperature", {}).get("apparentTemperature", "N/A")
-        current_precis = forecasts.get("weather", {}).get("days", [{}])[0].get("entries", [{}])[0].get("precis", "N/A")  # Fallback to forecast precis
-        
+        current_precis = (
+            forecasts.get("weather", {})
+            .get("days", [{}])[0]
+            .get("entries", [{}])[0]
+            .get("precis", "N/A")
+        )  # Fallback to forecast precis
+
         wind_obs = obs.get("wind", {})
         wind_speed = wind_obs.get("speed", "N/A")
         wind_dir = wind_obs.get("directionText", "N/A")
@@ -373,14 +374,14 @@ class WeatherContextProvider(ContextProvider):
             wind_dir=wind_dir,
         )
         fragments.append(current_conditions_str)
-        
+
         # Today's Summary (using the daily formatter)
         today_weather_day = forecasts.get("weather", {}).get("days", [{}])[0]
         today_rainfall_day = forecasts.get("rainfall", {}).get("days", [{}])[0]
         # For sun_uv_data, we need to combine relevant parts for the daily formatter
         today_sun_uv_data = {
             "sunrisesunset": forecasts.get("sunrisesunset", {}).get("days", [{}])[0],
-            "uv": forecasts.get("uv", {}).get("days", [{}])[0]
+            "uv": forecasts.get("uv", {}).get("days", [{}])[0],
         }
 
         today_summary_str = self._format_daily_weather_summary(
@@ -391,19 +392,31 @@ class WeatherContextProvider(ContextProvider):
             api_tz_str,
         )
         # Prepend "Today:" or similar to the summary
-        today_intro_format = self._prompts.get("weather_today_intro", "Today ({date_str}, {day_name}):")
-        fragments.append(f"{today_intro_format.format(date_str=today_date_obj.strftime('%b %d'), day_name=today_date_obj.strftime('%A'))} {today_summary_str.split(': ', 1)[1]}")
+        today_intro_format = self._prompts.get(
+            "weather_today_intro", "Today ({date_str}, {day_name}):"
+        )
+        fragments.append(
+            f"{today_intro_format.format(date_str=today_date_obj.strftime('%b %d'), day_name=today_date_obj.strftime('%A'))} {today_summary_str.split(': ', 1)[1]}"
+        )
 
         # Rain Timing
-        rain_prob_graph = graphs.get("rainfallprobability", {}).get("dataConfig", {}).get("series", {})
+        rain_prob_graph = (
+            graphs.get("rainfallprobability", {})
+            .get("dataConfig", {})
+            .get("series", {})
+        )
         if rain_prob_graph.get("groups"):
             rain_periods = []
             # Assuming groups are for today
             for point in rain_prob_graph["groups"][0].get("points", []):
                 point_time_unix = point.get("x")
                 point_prob = point.get("y")
-                if point_time_unix and point_prob is not None and point_prob > 20:  # Threshold for "significant"
-                    dt_obj = datetime.fromtimestamp(point_time_unix, tz=pytz.timezone(api_tz_str))
+                if (
+                    point_time_unix and point_prob is not None and point_prob > 20
+                ):  # Threshold for "significant"
+                    dt_obj = datetime.fromtimestamp(
+                        point_time_unix, tz=pytz.timezone(api_tz_str)
+                    )
                     rain_periods.append(f"{self._format_time(dt_obj)} ({point_prob}%)")
             if rain_periods:
                 fragments.append(
@@ -413,7 +426,9 @@ class WeatherContextProvider(ContextProvider):
                 )
 
         # Temperature Curve (Simplified)
-        temp_graph = graphs.get("temperature", {}).get("dataConfig", {}).get("series", {})
+        temp_graph = (
+            graphs.get("temperature", {}).get("dataConfig", {}).get("series", {})
+        )
         if temp_graph.get("groups"):
             # Assuming groups are for today
             points = temp_graph["groups"][0].get("points", [])
@@ -422,16 +437,31 @@ class WeatherContextProvider(ContextProvider):
                 # This needs more robust logic to find actual min/max or specific times
                 morning_temp, afternoon_temp, evening_temp = "N/A", "N/A", "N/A"
                 for p in points:
-                    dt = datetime.fromtimestamp(p['x'], tz=pytz.timezone(api_tz_str)).astimezone(self._display_pytz_tz)
-                    if dt.hour >= 8 and dt.hour <= 10: morning_temp = p['y']
-                    if dt.hour >= 13 and dt.hour <= 15: afternoon_temp = p['y']
-                    if dt.hour >= 18 and dt.hour <= 20: evening_temp = p['y']
-                if morning_temp != "N/A" or afternoon_temp != "N/A" or evening_temp != "N/A":
+                    dt = datetime.fromtimestamp(
+                        p["x"], tz=pytz.timezone(api_tz_str)
+                    ).astimezone(self._display_pytz_tz)
+                    if dt.hour >= 8 and dt.hour <= 10:
+                        morning_temp = p["y"]
+                    if dt.hour >= 13 and dt.hour <= 15:
+                        afternoon_temp = p["y"]
+                    if dt.hour >= 18 and dt.hour <= 20:
+                        evening_temp = p["y"]
+                if (
+                    morning_temp != "N/A"
+                    or afternoon_temp != "N/A"
+                    or evening_temp != "N/A"
+                ):
                     fragments.append(
-                        self._prompts.get("weather_today_temp_curve", "Temps: Morning {morning_temp}°C, Afternoon {afternoon_temp}°C, Evening {evening_temp}°C.")
-                        .format(morning_temp=morning_temp, afternoon_temp=afternoon_temp, evening_temp=evening_temp)
+                        self._prompts.get(
+                            "weather_today_temp_curve",
+                            "Temps: Morning {morning_temp}°C, Afternoon {afternoon_temp}°C, Evening {evening_temp}°C.",
+                        ).format(
+                            morning_temp=morning_temp,
+                            afternoon_temp=afternoon_temp,
+                            evening_temp=evening_temp,
+                        )
                     )
-        
+
         # Condition Changes
         precis_graph = graphs.get("precis", {}).get("dataConfig", {}).get("series", {})
         if precis_graph.get("groups"):
@@ -439,15 +469,25 @@ class WeatherContextProvider(ContextProvider):
             condition_changes = []
             last_precis = None
             for point in precis_graph["groups"][0].get("points", []):
-                dt_obj = datetime.fromtimestamp(point.get("x"), tz=pytz.timezone(api_tz_str))
-                precis_code = point.get("precisCode")  # You might need a mapping from precisCode to readable text
+                dt_obj = datetime.fromtimestamp(
+                    point.get("x"), tz=pytz.timezone(api_tz_str)
+                )
+                precis_code = point.get(
+                    "precisCode"
+                )  # You might need a mapping from precisCode to readable text
                 if precis_code != last_precis:
-                    condition_changes.append(f"{self._format_time(dt_obj)}: {precis_code.replace('-', ' ')}")
+                    condition_changes.append(
+                        f"{self._format_time(dt_obj)}: {precis_code.replace('-', ' ')}"
+                    )
                     last_precis = precis_code
             if condition_changes:
-                 fragments.append(
-                    self._prompts.get("weather_today_condition_changes", "Conditions: {changes_summary}.")
-                    .format(changes_summary=" -> ".join(condition_changes[:3]))  # Limit for brevity
+                fragments.append(
+                    self._prompts.get(
+                        "weather_today_condition_changes",
+                        "Conditions: {changes_summary}.",
+                    ).format(
+                        changes_summary=" -> ".join(condition_changes[:3])
+                    )  # Limit for brevity
                 )
         return fragments
 
@@ -463,19 +503,18 @@ class WeatherContextProvider(ContextProvider):
         uv_days = forecasts.get("uv", {}).get("days", [])
 
         # Ensure all forecast types have enough data
-        min_len = min(len(weather_days), len(rainfall_days), len(sunrisesunset_days), len(uv_days))
+        min_len = min(
+            len(weather_days), len(rainfall_days), len(sunrisesunset_days), len(uv_days)
+        )
 
         for i in range(1, min(7, min_len)):  # Iterate from tomorrow up to 6 more days
             day_date_obj = today_date_obj + timedelta(days=i)
-            
+
             weather_day_entry = weather_days[i].get("entries", [{}])[0]
             rainfall_day_entry = rainfall_days[i].get("entries", [{}])[0]
-            
+
             # Combine sun and uv data for the day
-            sun_uv_day_data = {
-                "sunrisesunset": sunrisesunset_days[i],
-                "uv": uv_days[i]
-            }
+            sun_uv_day_data = {"sunrisesunset": sunrisesunset_days[i], "uv": uv_days[i]}
 
             day_summary = self._format_daily_weather_summary(
                 weather_day_entry,
@@ -521,8 +560,9 @@ class WeatherContextProvider(ContextProvider):
             outlook_header = self._prompts.get(
                 "weather_outlook_header", "\nOutlook for the week:"
             )
-            if outlook_header: fragments.append(outlook_header)
-            
+            if outlook_header:
+                fragments.append(outlook_header)
+
             weekly_outlook = self._format_weekly_outlook(
                 weather_data, today_date_obj, api_tz_str
             )
