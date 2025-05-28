@@ -281,7 +281,8 @@ async def assert_message_history_contains(
         if expected_content_substring:
             content_match = (
                 msg["content"]  # Use dictionary access
-                and expected_content_substring.lower() in msg["content"].lower()  # Use dictionary access
+                and expected_content_substring.lower()
+                in msg["content"].lower()  # Use dictionary access
             )
 
         tool_call_match = True
