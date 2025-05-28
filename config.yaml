@@ -90,11 +90,15 @@ default_profile_settings:
     history_max_age_hours: 24
 
   tools_config:
-    # `enable_local_tools` and `enable_mcp_server_ids` are not explicitly listed here for the default profile.
-    # The application currently enables all available local tools and all tools from configured MCP servers
-    # for the default processing service. This structure allows for future explicit definition.
+    # `enable_local_tools` are not explicitly listed here for the default profile.
+    # The application currently enables all available local tools.
     # enable_local_tools: ["tool1", "tool2"]
-    # enable_mcp_server_ids: ["mcp_server_id_1"]
+    enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
+      - "time"
+      - "brave"
+      - "python"
+      - "homeassistant"
+      # The "browser" mcp server is intentionally excluded here.
 
     # Tools requiring explicit user confirmation before execution for this default profile.
     # This list is overridden by the TOOLS_REQUIRING_CONFIRMATION environment variable if set.
@@ -106,6 +110,33 @@ default_profile_settings:
   # Default list of slash commands that trigger this profile.
   # Can be overridden by individual service_profiles.
   slash_commands: []
+
+# --- Service Profiles ---
+# Defines specific assistant profiles with potentially different configurations.
+service_profiles:
+  - id: "default_assistant"
+    description: "Main assistant using default settings, without browser tools."
+    # This profile implicitly uses all settings from 'default_profile_settings'
+    # as no specific 'processing_config' or 'tools_config' is defined here,
+    # thus inheriting the tools_config that excludes the browser.
+
+  - id: "browser_profile"
+    description: "Assistant profile with web browsing capabilities."
+    processing_config:
+      # Optionally, use a different LLM model optimized for browsing or summarization
+      # llm_model: "claude-3-sonnet-20240229"
+      prompts: # MERGES with default_profile_settings.processing_config.prompts
+        system_prompt: "You are an assistant with web browsing capabilities. Current time is {current_time}."
+    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
+      # enable_local_tools: [] # Example: if you want NO local tools for this profile
+      enable_mcp_server_ids:
+        - "browser" # Only enable the browser MCP server
+      confirm_tools: # Define tools requiring confirmation specifically for this profile
+        - "browse_url" # Assuming 'browse_url' is a tool from the browser MCP server
+    slash_commands:
+      - "/browse"
+      - "/web"
+      - "/ask_web"
 
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
