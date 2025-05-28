@@ -103,36 +103,105 @@ def specialized_service_config_factory(
 @pytest.fixture
 def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient]:
     def _factory(confirm_delegation_arg: bool | None) -> RuleBasedMockLLMClient:
-        # Rule: Match delegate task query and call delegate_to_service tool
-        def delegate_matcher(kwargs: MatcherArgs) -> bool:
+        rules = []
+
+        # Rule 1: Match the tool response from delegate_to_service
+        def delegate_tool_response_matcher(kwargs: MatcherArgs) -> bool:
             messages = kwargs.get("messages", [])
+            logger.debug(
+                f"delegate_tool_response_matcher: checking messages: {messages}"
+            )
+            if not messages:
+                logger.debug(
+                    "delegate_tool_response_matcher: no messages, returning False"
+                )
+                return False
+            last_message = messages[-1]
+            is_tool_role = last_message.get("role") == "tool"
+            content = last_message.get("content", "")
+            expected_prefix = f"Response from {SPECIALIZED_PROFILE_ID}"
+            starts_with_prefix = content.startswith(expected_prefix)
+
+            match_result = is_tool_role and starts_with_prefix
+            logger.debug(
+                f"delegate_tool_response_matcher: last_message_role='{last_message.get('role')}', is_tool_role={is_tool_role}"
+            )
+            logger.debug(
+                f"delegate_tool_response_matcher: content='{content[:100]}...', expected_prefix='{expected_prefix}', starts_with_prefix={starts_with_prefix}"
+            )
+            logger.debug(f"delegate_tool_response_matcher: returning {match_result}")
+            return match_result
+
+        def delegate_tool_final_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
+            messages = kwargs.get("messages", [])
+            tool_response_content = messages[-1].get(
+                "content", "Error: Could not extract tool response."
+            )
+            logger.info(
+                f"delegate_tool_final_response_callable: Matched! Returning content: {tool_response_content[:100]}..."
+            )
+            return MockLLMOutput(content=tool_response_content, tool_calls=None)
+
+        rules.append((
+            delegate_tool_response_matcher,
+            delegate_tool_final_response_callable,
+        ))
+
+        # Rule 2: Match initial user query to delegate
+        def delegate_request_matcher(kwargs: MatcherArgs) -> bool:
+            messages = kwargs.get("messages", [])
+            logger.debug(f"delegate_request_matcher: checking messages: {messages}")
+            if not messages:
+                logger.debug("delegate_request_matcher: no messages, returning False")
+                return False
+
+            last_message_role = messages[-1].get("role")
+            if last_message_role != "user":
+                logger.debug(
+                    f"delegate_request_matcher: last message role is '{last_message_role}', not 'user'. Returning False."
+                )
+                return False
+
             last_text = get_last_message_text(messages).lower()
-            return (
-                DELEGATED_TASK_DESCRIPTION.lower() in last_text
-                and "delegate this task" in last_text
+            desc_in_text = DELEGATED_TASK_DESCRIPTION.lower() in last_text
+            delegate_task_in_text = "delegate this task" in last_text
+
+            match_result = desc_in_text and delegate_task_in_text
+            logger.debug(
+                f"delegate_request_matcher: last_text='{last_text[:100]}...', desc_in_text={desc_in_text}, delegate_task_in_text={delegate_task_in_text}"
+            )
+            logger.debug(f"delegate_request_matcher: returning {match_result}")
+            return match_result
+
+        # Using a callable for the response to make call_id dynamic and log match
+        def delegate_request_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
+            logger.info(
+                "delegate_request_response_callable: Matched! Returning delegate tool call."
+            )
+            current_tool_call_args: dict[str, Any] = {
+                "target_service_id": SPECIALIZED_PROFILE_ID,
+                "user_request": DELEGATED_TASK_DESCRIPTION,
+            }
+            if confirm_delegation_arg is not None:
+                current_tool_call_args["confirm_delegation"] = confirm_delegation_arg
+
+            return MockLLMOutput(
+                content=f"Okay, I will delegate '{DELEGATED_TASK_DESCRIPTION}' to {SPECIALIZED_PROFILE_ID}.",
+                tool_calls=[
+                    ToolCallItem(
+                        id=f"call_dyn_{uuid.uuid4()}",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="delegate_to_service",
+                            arguments=json.dumps(current_tool_call_args),
+                        ),
+                    )
+                ],
             )
 
-        tool_call_args: dict[str, Any] = {  # Explicitly type tool_call_args
-            "target_service_id": SPECIALIZED_PROFILE_ID,
-            "user_request": DELEGATED_TASK_DESCRIPTION,
-        }
-        if confirm_delegation_arg is not None:
-            tool_call_args["confirm_delegation"] = confirm_delegation_arg
+        rules.append((delegate_request_matcher, delegate_request_response_callable))
 
-        delegate_response = MockLLMOutput(
-            content=f"Okay, I will delegate '{DELEGATED_TASK_DESCRIPTION}' to {SPECIALIZED_PROFILE_ID}.",
-            tool_calls=[
-                ToolCallItem(
-                    id=f"call_{uuid.uuid4()}",
-                    type="function",
-                    function=ToolCallFunction(
-                        name="delegate_to_service",
-                        arguments=json.dumps(tool_call_args),
-                    ),
-                )
-            ],
-        )
-        return RuleBasedMockLLMClient(rules=[(delegate_matcher, delegate_response)])
+        return RuleBasedMockLLMClient(rules=rules)
 
     return _factory
 
