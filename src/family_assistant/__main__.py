@@ -238,6 +238,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "enable_mcp_server_ids": [],  # Default: empty list, meaning all available if not specified
                 "confirm_tools": [],  # Default empty; overridden by config.yaml or env var
             },
+            "slash_commands": [],  # Default: no specific slash commands for this profile
         },
     }
     logger.info("Initialized config with code defaults.")
@@ -286,8 +287,14 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                                 "processing_config",
                                 "tools_config",
                                 "chat_id_to_name_map",
+                                "slash_commands",  # Add slash_commands here
                             ]:
                                 config_data[key][sub_key] = sub_value
+                        # Handle slash_commands specifically (it's a list, replace)
+                        if "slash_commands" in value and isinstance(
+                            value["slash_commands"], list
+                        ):
+                            config_data[key]["slash_commands"] = value["slash_commands"]
                     elif (
                         key in config_data
                         and isinstance(value, dict)
@@ -545,6 +552,13 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 resolved_profile_config.get("chat_id_to_name_map", {}),
                 profile_def["chat_id_to_name_map"],
             )
+
+        # Handle slash_commands for the profile (replace if present)
+        if "slash_commands" in profile_def and isinstance(
+            profile_def["slash_commands"], list
+        ):
+            resolved_profile_config["slash_commands"] = profile_def["slash_commands"]
+        # If not in profile_def, it will retain the default (empty list from deepcopy of default_settings)
 
         resolved_service_profiles.append(resolved_profile_config)
 
