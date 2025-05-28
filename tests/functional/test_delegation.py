@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 import telegramify_markdown
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -290,7 +291,7 @@ def specialized_llm_mock() -> RuleBasedMockLLMClient:
     )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def mock_confirmation_callback() -> AsyncMock:
     return AsyncMock(spec=Callable[..., Awaitable[bool]])
 
@@ -351,7 +352,7 @@ def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider
     return confirming_provider
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def primary_processing_service(
     primary_service_config: ProcessingServiceConfig,
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
@@ -376,7 +377,7 @@ async def primary_processing_service(
     )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def specialized_processing_service(
     specialized_service_config_factory: Callable[[str], ProcessingServiceConfig],
     specialized_llm_mock: RuleBasedMockLLMClient,
