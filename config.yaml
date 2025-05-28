@@ -165,10 +165,7 @@ service_profiles:
       # due to the focused system prompt and lack of explicit inclusion.
     tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
       enable_local_tools:
-        - "search_documents"
-        - "get_full_document_content"
         - "get_message_history"
-        - "ingest_document_from_url"
       enable_mcp_server_ids:
         - "kubernetes"
         - "brave"
@@ -180,7 +177,6 @@ service_profiles:
         - "kubectl_generic" # Generic command can be destructive
     slash_commands:
       - "/k8s"
-      - "/kube"
 
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
