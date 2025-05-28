@@ -748,7 +748,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         if user_msg_record and user_msg_record.get("internal_id"):
                             stmt = (
                                 # Use SQLAlchemy update directly
-                                update(self.storage.message_history_table)
+                                sqlalchemy_update(self.storage.message_history_table)
                                 .where(
                                     self.storage.message_history_table.c.internal_id
                                     == user_msg_record["internal_id"]
