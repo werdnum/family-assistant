@@ -364,7 +364,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     # --- Target nested config for profile-specific settings ---
     profile_settings = config_data["default_profile_settings"]  # Get the whole profile
     profile_proc_config = profile_settings["processing_config"]
-    profile_tools_config = profile_settings["tools_config"]  # This is a reference to the dict
+    profile_tools_config = profile_settings[
+        "tools_config"
+    ]  # This is a reference to the dict
 
     # MCP Initialization Timeout from Env Var
     mcp_timeout_env = os.getenv("MCP_INITIALIZATION_TIMEOUT_SECONDS")
