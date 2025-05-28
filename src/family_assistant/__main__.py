@@ -1170,7 +1170,9 @@ async def main_async(
         telegram_token=config["telegram_token"],
         allowed_user_ids=config["allowed_user_ids"],
         developer_chat_id=config["developer_chat_id"],
-        processing_service=default_processing_service,  # Use default service
+        processing_service=default_processing_service,  # Default service for non-slash command interactions
+        processing_services_registry=processing_services_registry,  # Pass the full registry
+        app_config=config,  # Pass the main application config for slash command mapping
         get_db_context_func=get_db_context,
         new_task_event=new_task_event,  # Pass the global event
     )
