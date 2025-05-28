@@ -103,7 +103,7 @@ async def test_slash_command_routes_to_specific_profile(
     slash_command = "/focus"
     query_text = "What is the capital of France?"
     user_command_text = f"{slash_command} {query_text}"
-    command_args: list[str] = query_text.split()
+    command_args: list[str] = [str(s) for s in query_text.split()]
 
     focused_profile_id = "focused_assistant_profile"
     # Define a system prompt template for the focused profile.
