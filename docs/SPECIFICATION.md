@@ -28,8 +28,8 @@ Family members who need a centralized way to manage shared information and recei
     *   A vector search interface (`/vector-search`) to query indexed documents, view results grouped by document, and access a detailed document view (`/vector-search/document/{document_id}`).
     *   A UI for document upload (`/documents/upload`).
     *   A UI for API Token Management (`/settings/tokens`).
+    *   A chat interface (`/v1/chat/send_message` endpoint) for direct conversational interaction via HTTP requests.
     *   (Future) A dashboard view of upcoming events, reminders, etc.
-    *   (Future) An alternative way to interact with the assistant (chat interface).
     *   (Future) Configuration options.
 *   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail`. Parsed email data and attachments are stored, and an `index_email` task is enqueued for further processing by the indexing pipeline, which includes LLM-based primary link extraction.
 
@@ -185,13 +185,15 @@ graph TD
     *   Upload documents (including PDFs and web URLs) via API or Web UI.
     *   Indexing pipeline extracts text (e.g., from PDFs, fetched web pages), chunks content, generates embeddings, and stores them.
     *   Automatic title extraction for documents ingested from URLs if no title is provided.
-    *   Vector search UI (`/vector-search`) allows querying the indexed documents, with results grouped by document and linking to a detailed document view.
+    *   Vector search UI (`/vector-search`) allows querying the indexed documents, with results grouped by document and linking to a detailed document view (`/vector-search/document/{document_id}`).
 *   **Email Ingestion and Processing:**
     *   Emails received via webhook are parsed, attachments stored, and an `index_email` task is enqueued.
     *   The indexing pipeline for emails includes an `LLMPrimaryLinkExtractorProcessor` to identify and extract primary URLs from email content, which can then be fetched and processed.
 *   **API Token Management:**
     *   Users can create, view, and revoke API tokens through the Web UI (`/settings/tokens`).
-    *   The system supports API authentication using these tokens.
+    *   The system fully supports API authentication using these tokens.
+*   **Send Message to User Tool:** A tool (`send_message_to_user`) allowing the LLM to send messages to other configured users via Telegram.
+*   **Known Users Context:** Context about configured known users (chat ID to name mapping) provided by `KnownUsersContextProvider`.
 *   **(Future) Calendar Integration (Write):**
     *   Introduce tools allowing the LLM to add or update events on specific calendars.
     *   This will require a more robust configuration system for calendars, allowing administrators to define multiple calendars with distinct purposes (e.g., "Main Family Calendar", "Work Calendar", "Kids Activities", "Reminders").
@@ -223,7 +225,7 @@ graph TD
     *   `tool_calls`: JSONB, nullable. For 'assistant' role messages requesting tool execution (structured list of calls).
     *   `tool_call_id`: String(255), nullable, indexed. For 'tool' role messages, linking the response back to the specific `tool_calls` entry ID requested by the assistant.
     *   `reasoning_info`: JSONB, nullable. For 'assistant' role messages, storing LLM reasoning/usage data.
-    *   `error_traceback`: Text, nullable. Stores error details if processing this message caused an error, or if this message represents an error itself.
+    *   `error_traceback`: Text, nullable. Stores error details if processing this message caused an error, or if this message represents an an error itself.
 *   **Other Implemented Tables:**
     *   `received_emails`: Stores details of emails received via webhook. Columns include (unchanged by history refactoring):
         *   `id`: Internal auto-incrementing ID.
@@ -269,19 +271,19 @@ graph TD
 
 ## 8. Technology Considerations (High-Level)
 
-*   **LLM:** Configurable model via command-line argument, accessed through **LiteLLM** and **OpenRouter**. Supports tool use (function calling).
-*   **Backend:** **Python** using `python-telegram-bot` for Telegram interaction, `FastAPI` and `uvicorn` for the web server.
+*   **LLM:** Configurable model via command-line argument, accessed through **LiteLLM** and **OpenRouter**. Supports tool use (function calling). Supports configurable LLM models per processing profile, enabling optimization of model selection based on task complexity and cost.
+*   **Backend:** **Python** using `python-telegram-bot` for Telegram interaction, `FastAPI` and `uvicorn` for the web server. Leverages a `ChatInterface` protocol for abstracting message sending across different platforms (e.g., Telegram, Web).
 *   **Database & ORM:** **SQLite** (default) or **PostgreSQL** (supported via connection string), accessed via **SQLAlchemy** (async).
 *   **Configuration:** Environment variables (`.env`), YAML (`prompts.yaml`), JSON (`mcp_config.json`).
 *   **Timezone:** Configurable via `TIMEZONE` environment variable, uses **pytz**.
 *   **MCP:** Uses the `mcp` Python SDK to connect to and interact with MCP servers defined in `mcp_config.json`.
-*   **Containerization:** **Docker** with `uv` for Python package management and `npm` for Node.js-based MCP tools.
+*   **Containerization:** **Docker** with `uv` for Python package management and `npm` for Node.js-based MCP tools. Includes Playwright browser for web scraping.
 *   **Calendar Libraries:** `caldav` for CalDAV interaction, `vobject` for parsing VCALENDAR data (used by both CalDAV and iCal), `httpx` for fetching iCal URLs.
 *   **Formatting:** Uses `telegramify-markdown` for converting LLM output to Telegram MarkdownV2.
 *   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used.
 *   **Utilities:** `uuid` for generating unique IDs (e.g., task IDs).
 
-## 9. Current Implementation Status (as of 2025-05-21)
+## 9. Current Implementation Status (as of 2025-05-28)
 
 The following features from the specification are currently implemented:
 
@@ -322,6 +324,7 @@ The following features from the specification are currently implemented:
         *   `add_or_update_note`: Saves/updates notes in the database. Accepts `title` and `content`.
         *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone) and `context` (string). The `chat_id` (or equivalent interface/conversation ID) is automatically inferred from the conversation context. Task is created in the `tasks` table.
         *   `ingest_document_from_url`: Submits a URL for ingestion and indexing. Accepts `url`, an optional `title` (if not provided, title will be extracted automatically), `source_type`, `source_id`, and optional `metadata`.
+        *   `send_message_to_user`: A tool allowing the LLM to send messages to other configured users via Telegram.
     *   **MCP Integration:**
         *   Loads server configurations from `mcp_config.json` (resolves environment variables like `$API_KEY`).
         *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search) using the `mcp` library (connections established in parallel on startup).
@@ -335,7 +338,14 @@ The following features from the specification are currently implemented:
 *   **Task Queue:** Implemented using the `tasks` database table, `asyncio.Event` for immediate notification, and a worker loop. Includes retry logic with exponential backoff and supports manual retry via the UI. (See Section 10).
 *   **Email Ingestion & Processing:** Emails received via webhook are parsed, attachments stored, and an `index_email` task is enqueued. The indexing pipeline for emails includes an `LLMPrimaryLinkExtractorProcessor` to identify and extract primary URLs from email content for further processing (e.g., web fetching).
 *   **Document Indexing & Vector Search:** Supports document uploads via API and UI. The indexing pipeline processes content (including PDF text extraction and URL fetching with automatic title extraction), chunks it, generates embeddings, and stores them. The vector search UI allows querying and displays results grouped by document, with links to a detailed document view.
-*   **API Token Management:** Users can create, view, and revoke API tokens via the Web UI. The system supports API authentication using these tokens.
+*   **API Token Management:** Users can create, view, and revoke API tokens via the Web UI. The system fully supports API authentication using these tokens.
+*   **API Chat Endpoint (`/v1/chat/send_message`):** Allows programmatic interaction with the assistant, with history persistence.
+*   **Tool Filtering for Non-Interactive Contexts:** Tools requiring confirmation are filtered out in non-interactive contexts.
+*   **Known Users Context Provider (`KnownUsersContextProvider`):** Provides user mapping to LLM context.
+*   **Processing Profiles with LLM Models:** Supports configuring different LLM models per processing profile.
+*   **ChatInterface Abstraction:** Core message sending logic refactored to use a generic `ChatInterface` protocol.
+*   **Type-safe Tool Call Representation:** Internal LLM tool calls use `ToolCallFunction` and `ToolCallItem` dataclasses.
+*   **Playwright:** Added as a core dependency for web scraping.
 
 **Features Not Yet Implemented:**
 
@@ -446,7 +456,7 @@ Strategies to mitigate this include:
             *   The tool call is only executed if the user explicitly confirms via the interface element (e.g., button press). The LLM is *not* involved in generating or processing this confirmation request/response, preventing it from bypassing the check.
     *   **If the context is *not* tainted** (e.g., a direct user request without external data lookups involved in the *same* turn), sensitive tool calls might be allowed directly, depending on the tool's nature and configured policy.
 
-This approach describes *potential strategies* to balance functionality with security. Currently, **these mitigation strategies (context tainting, conditional tool access based on taint, user confirmation flows) are NOT implemented.** The system currently allows the LLM to call any available tool (local or MCP) based on its interpretation of the prompt and context, without explicit checks for context origin or user confirmation steps beyond the initial prompt.
+This approach describes *potential strategies* to balance functionality with security. Currently, **some initial mitigation strategies are implemented**, such as disallowing tools requiring confirmation in non-interactive contexts. However, comprehensive context tainting and full user confirmation flows are NOT yet fully implemented.
 
 ## 12. Testing Strategy
 
