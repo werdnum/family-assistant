@@ -226,15 +226,8 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "timezone": "UTC",
                 "max_history_messages": 5,
                 "history_max_age_hours": 24,
-            },
-            "chat_id_to_name_map": {},  # Added for known user mapping
-            "tools_config": {
-                # enable_local_tools and enable_mcp_server_ids are implicitly "all available"
-                # for the default profile in the current setup.
-                # Explicit lists can be added to config.yaml later if needed.
-                "confirm_tools": [],  # Default empty; overridden by config.yaml or env var
                 # Default LLM model for profiles, can be overridden per profile
-                "llm_model": config_data["model"],  # Initialize with global model
+                "llm_model": "openrouter/google/gemini-2.5-pro-preview-03-25",  # Use actual default model string
             },
             "chat_id_to_name_map": {},  # Added for known user mapping
             "tools_config": {
@@ -509,14 +502,20 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         ):
             # Deep merge for 'prompts' and 'calendar_config'
             if "prompts" in profile_def["processing_config"]:
-                resolved_profile_config["processing_config"]["prompts"] = deep_merge_dicts(
-                    resolved_profile_config["processing_config"].get("prompts", {}),
-                    profile_def["processing_config"]["prompts"],
+                resolved_profile_config["processing_config"]["prompts"] = (
+                    deep_merge_dicts(
+                        resolved_profile_config["processing_config"].get("prompts", {}),
+                        profile_def["processing_config"]["prompts"],
+                    )
                 )
             if "calendar_config" in profile_def["processing_config"]:
-                resolved_profile_config["processing_config"]["calendar_config"] = deep_merge_dicts(
-                    resolved_profile_config["processing_config"].get("calendar_config", {}),
-                    profile_def["processing_config"]["calendar_config"],
+                resolved_profile_config["processing_config"]["calendar_config"] = (
+                    deep_merge_dicts(
+                        resolved_profile_config["processing_config"].get(
+                            "calendar_config", {}
+                        ),
+                        profile_def["processing_config"]["calendar_config"],
+                    )
                 )
             # Replace for scalar values like llm_model, timezone, max_history, history_max_age
             for scalar_key in [
@@ -526,9 +525,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "history_max_age_hours",
             ]:
                 if scalar_key in profile_def["processing_config"]:
-                    resolved_profile_config["processing_config"][scalar_key] = profile_def[
-                        "processing_config"
-                    ][scalar_key]
+                    resolved_profile_config["processing_config"][scalar_key] = (
+                        profile_def["processing_config"][scalar_key]
+                    )
 
         # Replace tools_config entirely if defined in profile
         if "tools_config" in profile_def and isinstance(
@@ -539,7 +538,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             resolved_profile_config["tools_config"] = profile_def["tools_config"]
 
         # Merge chat_id_to_name_map (this is outside processing_config/tools_config in default_settings)
-        if "chat_id_to_name_map" in profile_def and isinstance(profile_def["chat_id_to_name_map"], dict):
+        if "chat_id_to_name_map" in profile_def and isinstance(
+            profile_def["chat_id_to_name_map"], dict
+        ):
             resolved_profile_config["chat_id_to_name_map"] = deep_merge_dicts(
                 resolved_profile_config.get("chat_id_to_name_map", {}),
                 profile_def["chat_id_to_name_map"],
@@ -558,7 +559,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         # Ensure the llm_model from default_profile_settings.processing_config is used,
         # or fall back to global if not set there.
         if "llm_model" not in default_profile_entry["processing_config"]:
-            default_profile_entry["processing_config"]["llm_model"] = config_data["model"]
+            default_profile_entry["processing_config"]["llm_model"] = config_data[
+                "model"
+            ]
 
         resolved_service_profiles.append(default_profile_entry)
 
@@ -729,21 +732,40 @@ async def shutdown_handler(
     # Uvicorn server shutdown is handled in main_async when shutdown_event is set
 
     # Close tool providers from all services in the registry
-    if fastapi_app.state.processing_services and isinstance(fastapi_app.state.processing_services, dict):
-        logger.info(f"Closing tool providers for {len(fastapi_app.state.processing_services)} services...")
-        for profile_id, service_instance in fastapi_app.state.processing_services.items():
-            if hasattr(service_instance, 'tools_provider') and service_instance.tools_provider:
+    if fastapi_app.state.processing_services and isinstance(
+        fastapi_app.state.processing_services, dict
+    ):
+        logger.info(
+            f"Closing tool providers for {len(fastapi_app.state.processing_services)} services..."
+        )
+        for (
+            profile_id,
+            service_instance,
+        ) in fastapi_app.state.processing_services.items():
+            if (
+                hasattr(service_instance, "tools_provider")
+                and service_instance.tools_provider
+            ):
                 try:
                     logger.info(f"Closing tools_provider for profile '{profile_id}'...")
                     await service_instance.tools_provider.close()
                     logger.info(f"Tools_provider for profile '{profile_id}' closed.")
                 except Exception as e:
-                    logger.error(f"Error closing tools_provider for profile '{profile_id}': {e}", exc_info=True)
+                    logger.error(
+                        f"Error closing tools_provider for profile '{profile_id}': {e}",
+                        exc_info=True,
+                    )
             else:
-                logger.warning(f"No tools_provider found for profile '{profile_id}' to close.")
+                logger.warning(
+                    f"No tools_provider found for profile '{profile_id}' to close."
+                )
         logger.info("All registered tool providers closed.")
-    elif tools_provider:  # Fallback for old logic if registry not populated (should not happen)
-        logger.warning("Processing services registry not found or not a dict, attempting to close single tools_provider.")
+    elif (
+        tools_provider
+    ):  # Fallback for old logic if registry not populated (should not happen)
+        logger.warning(
+            "Processing services registry not found or not a dict, attempting to close single tools_provider."
+        )
         await tools_provider.close()
         logger.info("Single tools_provider closed.")
     else:
@@ -917,29 +939,41 @@ async def main_async(
         profile_llm_model = profile_proc_conf_dict.get("llm_model", config["model"])
         llm_client_for_profile: LLMInterface = LiteLLMClient(
             model=profile_llm_model,
-            model_parameters=config.get("llm_parameters", {}),  # Global LLM params for now
+            model_parameters=config.get(
+                "llm_parameters", {}
+            ),  # Global LLM params for now
         )
         logger.info(f"Profile '{profile_id}' using LLM model: {profile_llm_model}")
 
         # ToolsProvider stack for this profile
         # Filter local tools
-        enabled_local_tool_names = set(profile_tools_conf_dict.get("enable_local_tools", []))
-        if not enabled_local_tool_names:  # If list is empty, enable all local tools by default
+        enabled_local_tool_names = set(
+            profile_tools_conf_dict.get("enable_local_tools", [])
+        )
+        if (
+            not enabled_local_tool_names
+        ):  # If list is empty, enable all local tools by default
             enabled_local_tool_names = set(local_tool_implementations.keys())
 
         profile_specific_local_definitions = []
-        for tool_def_template in base_local_tools_definition:  # Iterate over the global template
+        for (
+            tool_def_template
+        ) in base_local_tools_definition:  # Iterate over the global template
             tool_name = tool_def_template.get("function", {}).get("name")
             if tool_name in enabled_local_tool_names:
                 # Create a copy to modify description for this profile's provider
                 current_tool_def = copy.deepcopy(tool_def_template)
                 if tool_name == "get_user_documentation_content":
                     try:
-                        current_tool_def["function"]["description"] = current_tool_def["function"]["description"].format(
+                        current_tool_def["function"]["description"] = current_tool_def[
+                            "function"
+                        ]["description"].format(
                             available_doc_files=formatted_doc_list_for_tool_desc
                         )
                     except KeyError as e:
-                        logger.error(f"Failed to format doc tool description for profile {profile_id}: {e}")
+                        logger.error(
+                            f"Failed to format doc tool description for profile {profile_id}: {e}"
+                        )
                 profile_specific_local_definitions.append(current_tool_def)
 
         profile_local_implementations = {
@@ -956,9 +990,13 @@ async def main_async(
         )
 
         # Filter MCP tools
-        enabled_mcp_server_ids = set(profile_tools_conf_dict.get("enable_mcp_server_ids", []))
+        enabled_mcp_server_ids = set(
+            profile_tools_conf_dict.get("enable_mcp_server_ids", [])
+        )
         all_mcp_servers_config = config.get("mcp_config", {}).get("mcpServers", {})
-        if not enabled_mcp_server_ids and all_mcp_servers_config:  # If list is empty, enable all mcp servers
+        if (
+            not enabled_mcp_server_ids and all_mcp_servers_config
+        ):  # If list is empty, enable all mcp servers
             enabled_mcp_server_ids = set(all_mcp_servers_config.keys())
 
         profile_mcp_servers_config = {
@@ -975,12 +1013,21 @@ async def main_async(
         )
         # Validate composite provider for this profile
         try:
-            await composite_provider_for_profile.get_tool_definitions()  # This also validates
+            await (
+                composite_provider_for_profile.get_tool_definitions()
+            )  # This also validates
         except ValueError as provider_err:
-            logger.critical(f"Failed to initialize CompositeToolsProvider for profile '{profile_id}': {provider_err}", exc_info=True)
-            raise SystemExit(f"Tool provider initialization failed for profile '{profile_id}': {provider_err}") from provider_err
+            logger.critical(
+                f"Failed to initialize CompositeToolsProvider for profile '{profile_id}': {provider_err}",
+                exc_info=True,
+            )
+            raise SystemExit(
+                f"Tool provider initialization failed for profile '{profile_id}': {provider_err}"
+            ) from provider_err
 
-        profile_confirm_tools_set = set(profile_tools_conf_dict.get("confirm_tools", []))
+        profile_confirm_tools_set = set(
+            profile_tools_conf_dict.get("confirm_tools", [])
+        )
         confirming_provider_for_profile = ConfirmingToolsProvider(
             wrapped_provider=composite_provider_for_profile,
             tools_requiring_confirmation=profile_confirm_tools_set,
@@ -1029,17 +1076,23 @@ async def main_async(
             app_config=config,  # Global app config
         )
         processing_services_registry[profile_id] = processing_service_instance
-        logger.info(f"ProcessingService for profile '{profile_id}' initialized successfully.")
+        logger.info(
+            f"ProcessingService for profile '{profile_id}' initialized successfully."
+        )
 
     if not processing_services_registry:
         logger.critical("No processing service profiles could be initialized. Exiting.")
         raise SystemExit("No processing service profiles initialized.")
 
     fastapi_app.state.processing_services = processing_services_registry
-    logger.info(f"Stored {len(processing_services_registry)} processing services in FastAPI app state.")
+    logger.info(
+        f"Stored {len(processing_services_registry)} processing services in FastAPI app state."
+    )
 
     # Get the default processing service
-    default_processing_service = processing_services_registry.get(default_service_profile_id)
+    default_processing_service = processing_services_registry.get(
+        default_service_profile_id
+    )
     if not default_processing_service:
         # Fallback to the first available profile if default_service_profile_id is not found
         logger.warning(
@@ -1052,10 +1105,18 @@ async def main_async(
 
     # Store default service, its LLM client, tools provider and definitions in app state for general access
     fastapi_app.state.processing_service = default_processing_service
-    fastapi_app.state.llm_client = default_processing_service.llm_client  # LLM client of default service
-    fastapi_app.state.tools_provider = default_processing_service.tools_provider  # Tools provider of default service
-    fastapi_app.state.tool_definitions = await default_processing_service.tools_provider.get_tool_definitions()
-    logger.info(f"Default processing service set to profile ID: '{default_service_profile_id}'. Its components stored in app state.")
+    fastapi_app.state.llm_client = (
+        default_processing_service.llm_client
+    )  # LLM client of default service
+    fastapi_app.state.tools_provider = (
+        default_processing_service.tools_provider
+    )  # Tools provider of default service
+    fastapi_app.state.tool_definitions = (
+        await default_processing_service.tools_provider.get_tool_definitions()
+    )
+    logger.info(
+        f"Default processing service set to profile ID: '{default_service_profile_id}'. Its components stored in app state."
+    )
 
     # --- Instantiate Scraper ---
     # For now, PlaywrightScraper is instantiated directly.
@@ -1134,14 +1195,20 @@ async def main_async(
         if prof["id"] == default_service_profile_id:
             default_profile_for_worker_conf = prof
             break
-    if not default_profile_for_worker_conf:  # Should not happen if default_processing_service was found
-        raise SystemExit(f"Could not find configuration for default profile ID '{default_service_profile_id}' for TaskWorker.")
+    if (
+        not default_profile_for_worker_conf
+    ):  # Should not happen if default_processing_service was found
+        raise SystemExit(
+            f"Could not find configuration for default profile ID '{default_service_profile_id}' for TaskWorker."
+        )
 
     task_worker_instance = TaskWorker(
         processing_service=default_processing_service,
         chat_interface=telegram_service.chat_interface,
         new_task_event=new_task_event,  # Pass the global event
-        calendar_config=default_profile_for_worker_conf["processing_config"]["calendar_config"],
+        calendar_config=default_profile_for_worker_conf["processing_config"][
+            "calendar_config"
+        ],
         timezone_str=default_profile_for_worker_conf["processing_config"]["timezone"],
         embedding_generator=embedding_generator,
     )
