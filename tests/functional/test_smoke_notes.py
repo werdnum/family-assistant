@@ -184,6 +184,8 @@ async def test_add_and_retrieve_note_rule_mock(
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config={},  # Added missing tools_config
+        delegation_security_level="confirm",  # Added
+        id="test_smoke_notes_profile",  # Added
     )
 
     processing_service = ProcessingService(
