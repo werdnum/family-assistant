@@ -883,7 +883,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         message_text = update.message.text
         command_with_slash = message_text.split(maxsplit=1)[0]
-        user_input_for_profile = " ".join(context.args)  # Get arguments after command
+        user_input_for_profile = " ".join(
+            context.args or []
+        )  # Get arguments after command, default to empty list if None
 
         profile_id = self.telegram_service.slash_command_to_profile_id_map.get(
             command_with_slash
