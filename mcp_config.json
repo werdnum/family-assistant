@@ -52,7 +52,13 @@
     },
     "kubernetes": {
       "command": "deno",
-      "args": ["run", "-A", "npm:mcp-server-kubernetes"]
+      "args": ["run", "-A", "npm:mcp-server-kubernetes"],
+      "env": {
+        "KUBECONFIG": "$KUBECONFIG",
+        "KUBECONTEXT": "$KUBECONTEXT",
+        "HOME": "$HOME",
+        "PATH": "$PATH"
+      }
     }
   }
 }
