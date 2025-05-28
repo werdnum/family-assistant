@@ -950,3 +950,16 @@ The core architecture consists of:
 - `md_renderer`: `MarkdownIt` instance for rendering Markdown.
 
 **Internal Dependencies:** None (only `markdown-it`).
+
+### `contrib/scrape_mcp.py`
+
+**Description:** A standalone script that runs an MCP server providing a web scraping tool. It uses Playwright to render JavaScript-heavy pages and MarkItDown to convert HTML to Markdown. This script is intended to be run separately and connected to the main Family Assistant application via MCP configuration.
+
+**Major Symbols:**
+- `check_playwright_async_wrapper()`: Checks if Playwright is functional.
+- `serve()`: Sets up and runs the MCP server.
+- `list_tools()`: MCP endpoint to list available tools.
+- `call_tool()`: MCP endpoint to execute the scraping tool.
+
+**Internal Dependencies:**
+- `family_assistant.utils.scraping` (PlaywrightScraper, Scraper)
