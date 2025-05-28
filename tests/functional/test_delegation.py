@@ -157,7 +157,7 @@ def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider
     # If empty, enable all known local tools for simplicity in test setup,
     # or be specific if the test requires it. For delegation, primary needs delegate_to_service.
     if not enabled_local_tool_names and "delegate_to_service" in profile_tools_config.get("enable_local_tools", []):
-         enabled_local_tool_names = {"delegate_to_service"}  # Ensure primary has it
+        enabled_local_tool_names = {"delegate_to_service"}  # Ensure primary has it
     elif not enabled_local_tool_names:  # For specialized, if empty, means no local tools
         pass
 
@@ -244,7 +244,7 @@ async def assert_message_history_contains(
     expected_content_substring: str | None = None,
     expected_tool_call_name: str | None = None,
     min_messages: int = 1,
-):
+) -> None:
     history = await db_context.fetch_all(
         select(message_history_table)
         .where(message_history_table.c.conversation_id == conversation_id)
@@ -287,7 +287,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     mock_confirmation_callback: AsyncMock,
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
     confirm_tool_arg: bool | None,
-):
+) -> None:
     """Target is 'unrestricted', tool call confirm_delegation is False or omitted. Expect no confirmation."""
     logger.info("--- Test: Unrestricted Target, No Forced Confirmation ---")
     # Reconfigure primary LLM mock for this specific tool argument
@@ -339,7 +339,7 @@ async def test_delegation_confirm_target_granted(
     specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
     mock_confirmation_callback: AsyncMock,
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
-):
+) -> None:
     """Target is 'confirm', tool confirm_delegation=False. Expect confirmation, user grants it."""
     logger.info("--- Test: Confirm Target, Confirmation Granted ---")
     primary_processing_service.llm_client = primary_llm_mock_factory(False)  # Explicitly set confirm_delegation=False
@@ -387,7 +387,7 @@ async def test_delegation_confirm_target_denied(
     specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
     mock_confirmation_callback: AsyncMock,
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
-):
+) -> None:
     """Target is 'confirm', user denies confirmation."""
     logger.info("--- Test: Confirm Target, Confirmation Denied ---")
     primary_processing_service.llm_client = primary_llm_mock_factory(False)
@@ -431,7 +431,7 @@ async def test_delegation_blocked_target(
     primary_processing_service: ProcessingService,
     specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
     mock_confirmation_callback: AsyncMock,
-):
+) -> None:
     """Target is 'blocked'. Expect delegation to fail."""
     logger.info("--- Test: Blocked Target ---")
     # Primary LLM mock will attempt to delegate (confirm_delegation arg doesn't matter here)
@@ -475,7 +475,7 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     specialized_processing_service: Callable[[str], Awaitable[ProcessingService]],
     mock_confirmation_callback: AsyncMock,
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
-):
+) -> None:
     """Target is 'unrestricted', tool call confirm_delegation=True. Expect confirmation, user grants."""
     logger.info("--- Test: Unrestricted Target, Confirm Argument True, Granted ---")
     primary_processing_service.llm_client = primary_llm_mock_factory(True)  # confirm_delegation=True in tool call
