@@ -102,6 +102,10 @@ default_profile_settings:
       - delete_calendar_event
       - modify_calendar_event
       # - tool_that_posts_online
+  
+  # Default list of slash commands that trigger this profile.
+  # Can be overridden by individual service_profiles.
+  slash_commands: []
 
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.

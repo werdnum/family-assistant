@@ -86,6 +86,9 @@ service_profiles:
         - "add_or_update_note"
       enable_mcp_server_ids: []
       confirm_tools: []
+    slash_commands: # List of slash commands that trigger this profile
+      - "/focus"
+      - "/ask_focused"
 ```
 
 
