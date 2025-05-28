@@ -607,7 +607,8 @@ async def test_delegation_confirm_target_granted(
         DELEGATED_TASK_DESCRIPTION
     )
     assert escaped_description.lower() in call_args["prompt_text"].lower()
-    assert SPECIALIZED_PROFILE_ID.lower() in call_args["prompt_text"].lower()
+    escaped_profile_id = telegramify_markdown.escape_markdown(SPECIALIZED_PROFILE_ID)
+    assert escaped_profile_id.lower() in call_args["prompt_text"].lower()
 
 
 @pytest.mark.asyncio
