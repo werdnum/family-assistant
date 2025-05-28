@@ -155,6 +155,33 @@ service_profiles:
       - "/web"
       - "/ask_web"
 
+  - id: "kubernetes_debug"
+    description: "Assistant profile for Kubernetes debugging tasks."
+    processing_config:
+      prompts:
+        system_prompt: "You are a specialized Kubernetes debugging assistant. Current time is {current_time}. Focus on diagnosing and resolving Kubernetes issues. You have access to tools for interacting with Kubernetes clusters, searching the web, and executing Python code."
+      # This profile will inherit default timezone, history settings etc.
+      # It will not load calendar, notes, or known_users context providers by default
+      # due to the focused system prompt and lack of explicit inclusion.
+    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
+      enable_local_tools:
+        - "search_documents"
+        - "get_full_document_content"
+        - "get_message_history"
+        - "ingest_document_from_url"
+      enable_mcp_server_ids:
+        - "kubernetes"
+        - "brave"
+        - "python"
+      confirm_tools:
+        - "kubectl_delete"
+        - "uninstall_helm_chart"
+        - "cleanup" # Assumed tool name for cleanup operations
+        - "kubectl_generic" # Generic command can be destructive
+    slash_commands:
+      - "/k8s"
+      - "/kube"
+
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
