@@ -1098,6 +1098,13 @@ async def main_async(
         logger.critical("No processing service profiles could be initialized. Exiting.")
         raise SystemExit("No processing service profiles initialized.")
 
+    # Inject the full registry into each service instance
+    for service_instance_in_registry in processing_services_registry.values():
+        service_instance_in_registry.set_processing_services_registry(
+            processing_services_registry
+        )
+    logger.info("Injected full service registry into each ProcessingService instance.")
+
     fastapi_app.state.processing_services = processing_services_registry
     logger.info(
         f"Stored {len(processing_services_registry)} processing services in FastAPI app state."

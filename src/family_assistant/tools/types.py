@@ -40,6 +40,7 @@ class ToolExecutionContext:
 
     interface_type: str  # e.g., 'telegram', 'web', 'email'
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
+    user_name: str  # Name of the user initiating the request
     turn_id: str | None  # The ID of the current processing turn
     db_context: "DatabaseContext"
     chat_interface: Optional["ChatInterface"] = None  # Replaced application

@@ -92,7 +92,21 @@ default_profile_settings:
   tools_config:
     # `enable_local_tools` are not explicitly listed here for the default profile.
     # The application currently enables all available local tools.
-    # enable_local_tools: ["tool1", "tool2"]
+    enable_local_tools:
+      - "add_or_update_note"
+      - "schedule_future_callback"
+      - "schedule_recurring_task"
+      - "search_documents"
+      - "get_full_document_content"
+      - "get_message_history"
+      - "get_user_documentation_content"
+      - "ingest_document_from_url"
+      - "send_message_to_user"
+      - "add_calendar_event"
+      - "search_calendar_events"
+      - "modify_calendar_event"
+      - "delete_calendar_event"
+      - "delegate_to_service" # Added the new tool
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
