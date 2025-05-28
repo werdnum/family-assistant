@@ -120,41 +120,56 @@ async def test_slash_command_routes_to_specific_profile(
     focused_prompts_config = {
         "default": {"system_prompt": focused_system_prompt_template}
     }
-    # Use a distinct LLM model name for this profile to ensure it's being selected (optional)
     # For this test, the mock LLM client is shared, so system prompt is the main differentiator.
     focused_service_config = ProcessingServiceConfig(
-        prompts_config=focused_prompts_config,  # Pass the prompts config
+        prompts=focused_prompts_config,  # Changed from prompts_config
         calendar_config=fix.processing_service.service_config.calendar_config,  # Reuse from default
         timezone_str=fix.processing_service.service_config.timezone_str,
         max_history_messages=5,
         history_max_age_hours=24,
-        # For now, one mock LLM client, so system_prompt is key.
-        app_config=fix.app_config,  # Pass the main app_config
-        mcp_servers_config=fix.app_config.get("mcp_servers", {}),  # Pass MCP config
+        tools_config={},  # Added missing tools_config
+        # llm_model_name, llm_temperature, llm_max_tokens can be added if needed
     )
+
+    # Define a simple app_config for this test context
+    test_app_config_for_profile = {
+        "mcp_servers": {},  # Example, can be populated if tools need it
+        # Add other app_config keys if the ProcessingService uses them directly
+    }
 
     # Create the ProcessingService instance for the focused profile
     # It will use the same mock LLM and tools provider as the default service for simplicity in this test
     focused_processing_service = ProcessingService(
         service_config=focused_service_config,
         llm_client=fix.mock_llm,  # Share the mock LLM
-        tools_provider=fix.mock_tools_provider,  # Share mock tools
+        tools_provider=fix.tools_provider,  # Corrected attribute name
+        app_config=test_app_config_for_profile,  # Pass the test-specific app_config
+        context_providers=[],  # Add missing
+        server_url="http://test.server",  # Add missing
         # default_processing_profile_id and processing_services_registry are not directly used by PS itself
     )
 
     # 2. Manually populate the registry and slash command map on the TelegramService instance
     # This simulates how TelegramService would be initialized with multiple profiles from app_config
-    fix.telegram_service.processing_services_registry[focused_profile_id] = (
+    fix.mock_telegram_service.processing_services_registry[
+        focused_profile_id
+    ] = (  # Corrected attribute
         focused_processing_service
     )
-    fix.telegram_service.slash_command_to_profile_id_map[slash_command] = (
+    fix.mock_telegram_service.slash_command_to_profile_id_map[
+        slash_command
+    ] = (  # Corrected attribute
         focused_profile_id
     )
     logger.info(
         f"Manually configured profile '{focused_profile_id}' for command '{slash_command}' in test."
     )
-    logger.info(f"Registry: {fix.telegram_service.processing_services_registry}")
-    logger.info(f"Slash map: {fix.telegram_service.slash_command_to_profile_id_map}")
+    logger.info(
+        f"Registry: {fix.mock_telegram_service.processing_services_registry}"
+    )  # Corrected attribute
+    logger.info(
+        f"Slash map: {fix.mock_telegram_service.slash_command_to_profile_id_map}"
+    )  # Corrected attribute
 
     # 3. Define LLM rules for the mock LLM client
     def focused_profile_matcher(kwargs: MatcherArgs) -> bool:

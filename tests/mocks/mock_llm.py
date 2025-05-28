@@ -206,4 +206,21 @@ def get_last_message_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
-__all__ = ["RuleBasedMockLLMClient", "Rule", "MatcherFunction", "get_last_message_text"]
+def get_system_prompt(messages: list[dict[str, Any]]) -> str | None:
+    """Extracts the system prompt content from a list of messages."""
+    if not messages:
+        return None
+    if messages[0].get("role") == "system":
+        content = messages[0].get("content")
+        if isinstance(content, str):
+            return content
+    return None
+
+
+__all__ = [
+    "RuleBasedMockLLMClient",
+    "Rule",
+    "MatcherFunction",
+    "get_last_message_text",
+    "get_system_prompt",
+]
