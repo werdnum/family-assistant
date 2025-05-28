@@ -119,7 +119,11 @@ class RuleBasedMockLLMClient(LLMInterface):
                     )
 
                     # Corrected logging to reflect that the response is now generated/retrieved
-                    log_message_action = "Returning generated response from callable." if callable(response_generator) else "Returning predefined response object."
+                    log_message_action = (
+                        "Returning generated response from callable."
+                        if callable(response_generator)
+                        else "Returning predefined response object."
+                    )
                     logger.info(
                         f"Rule {i + 1} matched for 'generate_response'. {log_message_action}"
                     )
