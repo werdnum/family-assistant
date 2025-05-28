@@ -25,19 +25,49 @@ class MCPToolsProvider:
 
     def __init__(
         self,
-        mcp_server_configs: dict[
-            str, dict[str, Any]
-        ],  # Expects dict {server_id: config}
+        mcp_server_configs: dict[str, dict[str, Any]],
+        initialization_timeout_seconds: int = 300,  # Default 5 minutes
     ) -> None:
         self._mcp_server_configs = mcp_server_configs
+        self._initialization_timeout_seconds = initialization_timeout_seconds
         self._sessions: dict[str, ClientSession] = {}
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
         self._definitions: list[dict[str, Any]] = []
         self._initialized = False
         self._exit_stack = AsyncExitStack()  # Manage stdio process lifecycles
         logger.info(
-            f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. Initialization pending."
+            f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. Initialization timeout: {self._initialization_timeout_seconds}s. Initialization pending."
         )
+
+    async def _log_mcp_initialization_progress(
+        self, stop_event: asyncio.Event
+    ) -> None:
+        """Logs progress during MCP tool initialization."""
+        logger.debug("MCP initialization logging task started.")
+        try:
+            while not stop_event.is_set():
+                try:
+                    # Wait for 10 seconds or until stop_event is set
+                    await asyncio.wait_for(stop_event.wait(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    # Timeout occurred, meaning 10 seconds passed and stop_event is not set
+                    if not stop_event.is_set():  # Double check
+                        logger.info(
+                            f"Still initializing MCP tools... {len(self._sessions)} sessions active, "
+                            f"{len(self._definitions)} tools discovered so far. "
+                            f"Waiting up to {self._initialization_timeout_seconds}s total."
+                        )
+                except asyncio.CancelledError:  # If logging_task itself is cancelled
+                    raise
+        except asyncio.CancelledError:
+            logger.debug("MCP initialization logging task cancelled.")
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in MCP initialization logging task: {e}",
+                exc_info=True,
+            )
+        finally:
+            logger.debug("MCP initialization logging task finished.")
 
     async def initialize(self) -> None:
         """Connects to configured MCP servers, fetches and sanitizes tool definitions."""
@@ -236,39 +266,99 @@ class MCPToolsProvider:
             for server_id, server_conf in self._mcp_server_configs.items()
         ]
 
-        # --- Run tasks concurrently ---
-        logger.info(
-            f"Starting parallel connection to {len(connection_tasks)} MCP server(s)..."
+        # --- Run tasks concurrently with logging and timeout ---
+        stop_logging_event = asyncio.Event()
+        logging_task = asyncio.create_task(
+            self._log_mcp_initialization_progress(stop_logging_event)
         )
-        # Add explicit type hint for results to help type checker
-        results: list[Any] = await asyncio.gather(
+
+        connection_tasks_future = asyncio.gather(
             *connection_tasks, return_exceptions=True
         )
-        logger.info("Finished parallel MCP connection attempts.")
+        results: list[Any] = []  # Default to empty list
+
+        try:
+            logger.info(
+                f"Waiting for MCP server connections with a timeout of {self._initialization_timeout_seconds} seconds..."
+            )
+            results = await asyncio.wait_for(
+                connection_tasks_future, timeout=self._initialization_timeout_seconds
+            )
+            logger.info("Finished parallel MCP connection attempts (within timeout).")
+        except asyncio.TimeoutError:
+            logger.error(
+                f"MCPToolsProvider initialization timed out after {self._initialization_timeout_seconds} seconds. "
+                "Proceeding with any tools discovered before timeout or if tasks completed with errors."
+            )
+            # If gather was cancelled by timeout, its tasks might have CancelledError.
+            # We try to get results if the future is done.
+            if connection_tasks_future.done():
+                try:
+                    # This might raise CancelledError if gather itself was cancelled before completing
+                    # its internal result collection.
+                    results = connection_tasks_future.result()
+                except asyncio.CancelledError:
+                    logger.warning(
+                        "MCP connection gather operation was cancelled by timeout before all results could be collected."
+                    )
+                    # results remains as its last assigned value (potentially empty or partial from a previous attempt if any)
+                    # or its initial empty list. This is handled by the processing loop below.
+            # If not done, results remains empty, which is also handled.
+        except Exception as e:
+            logger.error(f"Unexpected error during MCP connection gathering: {e}", exc_info=True)
+            # Try to get results if possible
+            if connection_tasks_future.done() and not connection_tasks_future.cancelled():
+                results = connection_tasks_future.result()
+        finally:
+            stop_logging_event.set()
+            if not logging_task.done():
+                try:
+                    await asyncio.wait_for(logging_task, timeout=1.0)
+                except asyncio.TimeoutError:
+                    logging_task.cancel()
+                    try:
+                        await logging_task
+                    except asyncio.CancelledError:
+                        pass  # Expected
+                except asyncio.CancelledError:  # If logging_task itself was cancelled externally
+                    try:
+                        await logging_task
+                    except asyncio.CancelledError:
+                        pass  # Expected
+            # If logging_task was already done (e.g. error), no need to await/cancel.
 
         # --- Process results ---
+        # This loop will process whatever results were gathered, even if it's an empty list
+        # or a list containing exceptions (including CancelledError for timed-out tasks).
         for i, res_item in enumerate(results):
-            server_id = list(self._mcp_server_configs.keys())[i]
+            # Ensure server_id is safely accessed if results list is shorter than expected
+            if i < len(self._mcp_server_configs):
+                server_id = list(self._mcp_server_configs.keys())[i]
+            else:
+                logger.warning(f"Result item at index {i} has no corresponding server_id due to partial results. Item: {res_item}")
+                continue  # Skip processing this anomalous result item
 
             if isinstance(res_item, BaseException):
-                logger.error(
-                    f"Gather caught exception for server '{server_id}': {res_item}"
-                )
+                # This includes asyncio.CancelledError if a task was cancelled by the timeout
+                if isinstance(res_item, asyncio.CancelledError):
+                    logger.warning(
+                        f"Connection/discovery for MCP server '{server_id}' was cancelled (likely due to timeout)."
+                    )
+                else:
+                    logger.error(
+                        f"Gather caught exception for server '{server_id}': {res_item}"
+                    )
             elif res_item is None:
-                # This case should ideally not be hit if _connect_and_discover_mcp always returns a tuple,
-                # even on failure (e.g., (None, [], {})).
                 logger.warning(
-                    f"Received None result for server '{server_id}' from task."
+                    f"Received None result for server '{server_id}' from task (should be tuple)."
                 )
             else:
-                # Expect res_item to be a tuple: (ClientSession | None, list[dict], dict)
                 session, discovered_tools, tool_map_for_server = res_item
                 if session:
                     self._sessions[server_id] = session
                     self._definitions.extend(discovered_tools)
                     self._tool_map.update(tool_map_for_server)
                 else:
-                    # This means _connect_and_discover_mcp returned, but no session was established.
                     logger.warning(
                         f"Connection/discovery for MCP server '{server_id}' completed but yielded no active session. Result: {res_item}"
                     )
