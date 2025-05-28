@@ -84,6 +84,8 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
             "enable_mcp_server_ids": [],
             "confirm_tools": [],  # Ensure add_or_update_note is NOT here for API test
         },
+        delegation_security_level="confirm",  # Added
+        id="chat_api_test_profile",  # Added
     )
 
 
