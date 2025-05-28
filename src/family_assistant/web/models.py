@@ -56,6 +56,7 @@ class ApiTokenCreateResponse(BaseModel):
 class ChatPromptRequest(BaseModel):
     prompt: str
     conversation_id: str | None = None
+    profile_id: str | None = None  # Added to specify processing profile
 
 
 class ChatMessageResponse(BaseModel):
