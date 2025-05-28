@@ -20,6 +20,8 @@ from typing import (
 import telegramify_markdown  # type: ignore[import-untyped]
 from sqlalchemy import update  # For error handling db update
 from telegram import (
+    BotCommand,  # For defining bot commands
+    BotCommandScopeAllPrivateChats,  # For command scope
     ForceReply,  # Add ForceReply import
     InlineKeyboardButton,
     InlineKeyboardMarkup,  # Move this import here
@@ -837,14 +839,133 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self.message_handler
             )
         )
+        
+        # Register CommandHandlers for profile-specific slash commands
+        if self.telegram_service.slash_command_to_profile_id_map:
+            for command_str in self.telegram_service.slash_command_to_profile_id_map.keys():
+                command_name = command_str.lstrip('/')  # CommandHandler expects name without slash
+                application.add_handler(CommandHandler(command_name, self.handle_generic_slash_command))
+                logger.info(f"Registered CommandHandler for /{command_name}")
 
         application.add_error_handler(self.error_handler)
-        logger.info("Telegram handlers registered (start, message, error).")
+        logger.info("Telegram handlers registered (start, generic commands, message, error).")
+
+    async def handle_generic_slash_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handles generic slash commands mapped to processing profiles."""
+        if not update.effective_user:
+            logger.warning("Slash command: Update has no effective_user.")
+            return
+        user_id = update.effective_user.id
+
+        if not update.effective_chat:
+            logger.warning("Slash command: Update has no effective_chat.")
+            return
+        chat_id = update.effective_chat.id
+
+        if not update.message or not update.message.text:
+            logger.warning("Slash command: Update has no message or message text.")
+            return
+
+        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
+            logger.warning(f"Unauthorized slash command from user {user_id}")
+            await update.message.reply_text(
+                f"You're not authorized to use this command. User ID: `{user_id}`"
+            )
+            return
+
+        message_text = update.message.text
+        command_with_slash = message_text.split(maxsplit=1)[0]
+        user_input_for_profile = " ".join(context.args)  # Get arguments after command
+
+        profile_id = self.telegram_service.slash_command_to_profile_id_map.get(command_with_slash)
+        if not profile_id:
+            logger.error(f"No profile_id found for command '{command_with_slash}'. This shouldn't happen if CommandHandler is correctly set up.")
+            await update.message.reply_text(f"Error: Command '{command_with_slash}' is not configured correctly.")
+            return
+
+        targeted_processing_service = self.telegram_service.processing_services_registry.get(profile_id)
+        if not targeted_processing_service:
+            logger.error(f"ProcessingService for profile_id '{profile_id}' (command '{command_with_slash}') not found in registry.")
+            await update.message.reply_text(f"Error: Service for command '{command_with_slash}' is unavailable.")
+            return
+
+        logger.info(
+            f"Handling slash command '{command_with_slash}' for profile '{profile_id}'. User input: '{user_input_for_profile[:50]}...'"
+        )
+
+        photo_bytes = None
+        if update.message.photo:
+            logger.info(f"Slash command message {update.message.message_id} from chat {chat_id} contains photo.")
+            try:
+                photo_size = update.message.photo[-1]
+                photo_file = await photo_size.get_file()
+                with io.BytesIO() as buf:
+                    await photo_file.download_to_memory(out=buf)
+                    buf.seek(0)
+                    photo_bytes = buf.read()
+                logger.debug(f"Photo from slash command message {update.message.message_id} loaded.")
+            except Exception as img_err:
+                logger.error(f"Failed to process photo for slash command {update.message.message_id}: {img_err}", exc_info=True)
+                await update.message.reply_text("Sorry, error processing attached image with command.")
+                return  # Or proceed without photo? For now, return.
+
+        text_part = {"type": "text", "text": user_input_for_profile}
+        trigger_content_parts_for_profile = [text_part]
+        if photo_bytes:
+            try:
+                base64_image = base64.b64encode(photo_bytes).decode("utf-8")
+                mime_type = "image/jpeg"  # Assuming JPEG
+                trigger_content_parts_for_profile.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                })
+            except Exception as img_err_direct:
+                logger.error(f"Error encoding photo for slash command direct profile call: {img_err_direct}")
+                trigger_content_parts_for_profile = [text_part]  # Revert to text only
+
+        current_turn_id = str(uuid.uuid4())
+        reply_to_interface_id_str = str(update.message.reply_to_message.message_id) if update.message.reply_to_message else None
+            
+        async with self.get_db_context() as db_ctx:
+            async def confirmation_callback_wrapper(
+                conversation_id_cb: str, 
+                interface_type_cb: str, 
+                turn_id_cb: str | None, 
+                prompt_text_cb: str, 
+                tool_name_cb: str, 
+                tool_args_cb: dict[str, Any], 
+                timeout_cb: float,
+            ) -> bool:
+                return await self.confirmation_manager.request_confirmation(
+                    conversation_id=conversation_id_cb,
+                    interface_type=interface_type_cb,
+                    turn_id=turn_id_cb,
+                    prompt_text=prompt_text_cb,
+                    tool_name=tool_name_cb,
+                    tool_args=tool_args_cb,
+                    timeout=timeout_cb,
+                )
+
+            # Note: handle_chat_interaction will send the reply.
+            await targeted_processing_service.handle_chat_interaction(
+                db_context=db_ctx,
+                interface_type="telegram",
+                conversation_id=str(chat_id),
+                trigger_content_parts=trigger_content_parts_for_profile,
+                trigger_interface_message_id=str(update.message.message_id),
+                user_name=update.effective_user.full_name if update.effective_user else "Unknown User",
+                replied_to_interface_id=reply_to_interface_id_str,
+                chat_interface=self.telegram_service.chat_interface,
+                new_task_event=self.new_task_event,
+                request_confirmation_callback=confirmation_callback_wrapper,
+            )
 
     async def message_handler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:  # noqa: E501
-        """Handles incoming messages. If a slash command is detected, it routes directly. Otherwise, it buffers messages."""
+        """Handles incoming non-command messages (text and photos) by buffering them."""
         if not update.effective_user:
             logger.warning("Message handler: Update has no effective_user.")
             return
@@ -859,7 +980,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning("Message handler: Update has no message.")
             return
         
-        message_text = update.message.text or ""  # Ensure message_text is not None
+        # This handler now only processes non-command text and photo messages.
+        # Slash commands are handled by CommandHandlers.
         photo_bytes = None
 
         if self.allowed_user_ids and user_id not in self.allowed_user_ids:
@@ -889,98 +1011,23 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     "Sorry, error processing attached image."
                 )
                 return
-
-        # --- Slash Command Routing Logic ---
-        targeted_processing_service: ProcessingService | None = None
-        user_input_for_profile: str = message_text
-        trigger_content_parts_for_profile: list[dict[str, Any]] | None = None
-
-        if self.telegram_service.slash_command_to_profile_id_map and message_text:
-            for command, profile_id_for_command in self.telegram_service.slash_command_to_profile_id_map.items():
-                if message_text.startswith(command):
-                    if len(message_text) == len(command) or (len(message_text) > len(command) and message_text[len(command)].isspace()):
-                        user_input_for_profile = message_text[len(command):].lstrip()
-                        logger.info(
-                            f"Slash command '{command}' detected for profile '{profile_id_for_command}'. User input: '{user_input_for_profile[:50]}...'"
-                        )
-                        targeted_processing_service = self.telegram_service.processing_services_registry.get(profile_id_for_command)
-                        if not targeted_processing_service:
-                            logger.error(
-                                f"Profile ID '{profile_id_for_command}' for command '{command}' not found in registry. Falling back."
-                            )
-                        else:
-                            # Prepare trigger_content_parts for direct invocation
-                            text_part = {"type": "text", "text": user_input_for_profile}
-                            trigger_content_parts_for_profile = [text_part]
-                            if photo_bytes:  # Add photo if present
-                                try:
-                                    base64_image = base64.b64encode(photo_bytes).decode("utf-8")
-                                    mime_type = "image/jpeg"  # Assuming JPEG, adjust if needed
-                                    trigger_content_parts_for_profile.append({
-                                        "type": "image_url",
-                                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
-                                    })
-                                except Exception as img_err_direct:
-                                    logger.error(f"Error encoding photo for direct profile call: {img_err_direct}")
-                                    # Send text only if image fails
-                                    trigger_content_parts_for_profile = [text_part]
-                        break 
-
-        if targeted_processing_service and trigger_content_parts_for_profile is not None:
-            logger.info(f"Routing message directly to profile ID: {targeted_processing_service.service_config.prompts.get('system_prompt_name', 'Unknown Profile') if targeted_processing_service.service_config else 'Unknown Profile'}")
-            current_turn_id = str(uuid.uuid4())
-            reply_to_interface_id_str = str(update.message.reply_to_message.message_id) if update.message.reply_to_message else None
-            
-            async with self.get_db_context() as db_ctx:  # Use self.get_db_context
-                # Define an explicit wrapper function for the confirmation callback
-                async def confirmation_callback_wrapper(
-                    conversation_id_cb: str, 
-                    interface_type_cb: str, 
-                    turn_id_cb: str | None, 
-                    prompt_text_cb: str, 
-                    tool_name_cb: str, 
-                    tool_args_cb: dict[str, Any], 
-                    timeout_cb: float,
-                ) -> bool:
-                    return await self.confirmation_manager.request_confirmation(
-                        conversation_id=conversation_id_cb,
-                        interface_type=interface_type_cb,
-                        turn_id=turn_id_cb,
-                        prompt_text=prompt_text_cb,
-                        tool_name=tool_name_cb,
-                        tool_args=tool_args_cb,
-                        timeout=timeout_cb,
+        
+        # Delegate to the message batcher
+        if self.message_batcher is None:
+            logger.critical(
+                "CRITICAL: MessageBatcher not set in TelegramUpdateHandler. "
+                "This indicates an initialization error in TelegramService."
+            )
+            if update.message:
+                try:
+                    await update.message.reply_text(
+                        "Sorry, there's an internal issue with message processing. "
+                        "Please try again in a moment. If the problem persists, contact the administrator."
                     )
-
-                await targeted_processing_service.handle_chat_interaction(
-                    db_context=db_ctx,
-                    interface_type="telegram",
-                    conversation_id=str(chat_id),
-                    trigger_content_parts=trigger_content_parts_for_profile,
-                    trigger_interface_message_id=str(update.message.message_id),
-                    user_name=update.effective_user.full_name if update.effective_user else "Unknown User",
-                    replied_to_interface_id=reply_to_interface_id_str,
-                    chat_interface=self.telegram_service.chat_interface,
-                    new_task_event=self.new_task_event,  # Use self.new_task_event
-                    request_confirmation_callback=confirmation_callback_wrapper,
-                )
-        else:
-            # No specific slash command, or fallback: Delegate to the message batcher
-            if self.message_batcher is None:
-                logger.critical(
-                    "CRITICAL: MessageBatcher not set in TelegramUpdateHandler. "
-                    "This indicates an initialization error in TelegramService."
-                )
-                if update.message:
-                    try:
-                        await update.message.reply_text(
-                            "Sorry, there's an internal issue with message processing. "
-                            "Please try again in a moment. If the problem persists, contact the administrator."
-                        )
-                    except Exception as e_reply:
-                        logger.error(f"Failed to send error reply to user: {e_reply}")
-                return
-            await self.message_batcher.add_to_batch(update, context, photo_bytes)
+                except Exception as e_reply:
+                    logger.error(f"Failed to send error reply to user: {e_reply}")
+            return
+        await self.message_batcher.add_to_batch(update, context, photo_bytes)
 
 
 class TelegramConfirmationUIManager(ConfirmationUIManager):
@@ -1294,7 +1341,7 @@ class TelegramService:
             )
         self.update_handler.message_batcher = self.message_batcher
 
-        self.update_handler.register_handlers()
+        self.update_handler.register_handlers()  # This now registers CommandHandlers too
         self.application.add_handler(
             CallbackQueryHandler(
                 self.confirmation_manager.confirmation_callback_handler,
@@ -1336,11 +1383,54 @@ class TelegramService:
                 "Confirmation mechanism not properly initialized in handler."
             )
 
+    async def _set_bot_commands(self) -> None:
+        """Sets the bot's commands visible in the Telegram interface."""
+        bot_commands_to_set = [
+            BotCommand("start", "Start the bot and get a welcome message")
+        ]
+        
+        # Add commands from service profiles
+        # Ensure slash_command_to_profile_id_map keys include the leading slash
+        # BotCommand expects command name without slash
+        
+        processed_command_names = set()  # To avoid duplicates if a command maps to multiple profiles (though map prevents this)
+
+        for profile_config in self.app_config.get("service_profiles", []):
+            profile_id = profile_config.get("id")
+            profile_name = profile_config.get("name", profile_id)  # Use profile name or ID for description
+            
+            for slash_command_str in profile_config.get("slash_commands", []):
+                command_name = slash_command_str.lstrip('/')
+                if command_name not in processed_command_names:
+                    description = profile_config.get(
+                        "description",  # Check for a general profile description
+                        f"Activate {profile_name} mode"  # Fallback description
+                    )
+                    # More specific description if available per command in future
+                    # For now, use profile's name/description.
+                    bot_commands_to_set.append(BotCommand(command_name, description))
+                    processed_command_names.add(command_name)
+
+        try:
+            await self.application.bot.set_my_commands(
+                commands=bot_commands_to_set,
+                scope=BotCommandScopeAllPrivateChats()  # Commands primarily for private chats
+            )
+            logger.info(f"Set bot commands for private chats: {[cmd.command for cmd in bot_commands_to_set]}")
+            # Optionally set global commands or other scopes if needed
+            # await self.application.bot.set_my_commands(commands=global_commands) # For default scope
+        except Exception as e:
+            logger.error(f"Failed to set bot commands: {e}", exc_info=True)
+
     async def start_polling(self) -> None:
-        """Initializes the application and starts polling for updates."""
+        """Initializes the application, sets commands, and starts polling for updates."""
         logger.info("Starting Telegram polling...")
         await self.application.initialize()
-        await self.application.start()
+        await self.application.start()  # Starts the application components
+
+        # Set bot commands after application is initialized and bot is available
+        await self._set_bot_commands()
+
         if self.application.updater:
             # Use Update.ALL_TYPES to ensure all relevant updates are received
             await self.application.updater.start_polling(
