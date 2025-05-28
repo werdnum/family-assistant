@@ -152,8 +152,6 @@ service_profiles:
         - "browse_url" # Assuming 'browse_url' is a tool from the browser MCP server
     slash_commands:
       - "/browse"
-      - "/web"
-      - "/ask_web"
 
   - id: "kubernetes_debug"
     description: "Assistant profile for Kubernetes debugging tasks."
