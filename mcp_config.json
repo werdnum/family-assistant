@@ -19,7 +19,7 @@
       "command": "deno",
       "args": [
         "run",
-        "-A",
+        "--allow-net",
         "npm:@modelcontextprotocol/server-brave-search"
       ],
       "env": {
@@ -45,7 +45,7 @@
     },
     "google-maps": {
       "command": "deno",
-      "args": ["run", "-A", "npm:@modelcontextprotocol/server-google-maps"],
+      "args": ["run", "--allow-net", "npm:@modelcontextprotocol/server-google-maps"],
       "env": {
         "GOOGLE_MAPS_API_KEY": "$GOOGLE_MAPS_API_KEY"
       }
