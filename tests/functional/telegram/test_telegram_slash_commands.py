@@ -96,7 +96,7 @@ async def test_slash_command_routes_to_specific_profile(
     # Arrange
     fix = telegram_handler_fixture
     user_chat_id = 456  # Use different chat_id for clarity
-    user_id = 67890
+    user_id = 12345  # Changed to an authorized user ID
     user_message_id = 301
     assistant_message_id = 302
 
