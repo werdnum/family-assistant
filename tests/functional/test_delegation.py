@@ -184,20 +184,25 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 return False
             last_message = messages[-1]
             content_str = last_message.get("content", "")
+            # Make the match more specific to the exact error message
+            expected_error_message = (
+                f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
+            )
             match = (
                 last_message.get("role") == "tool"
-                and "not allowed" in content_str
-                and "delegation to service profile" in content_str
+                and content_str == expected_error_message
             )
             logger.debug(
-                f"blocked_matcher: returning {match} for content: '{content_str[:100]}...'"
+                f"blocked_matcher: checking content='{content_str[:100]}...' against expected='{expected_error_message}'. Match: {match}"
             )
             return match
 
         def blocked_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
             messages = kwargs.get("messages", [])
+            # Ensure we return the exact content that was matched
             content = messages[-1].get(
-                "content", "Error: Could not get blocked content."
+                "content",
+                f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed.",  # Default to expected if somehow missing
             )
             logger.info(
                 f"blocked_response_callable: Matched! Returning content: {content[:100]}..."
