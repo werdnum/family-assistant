@@ -103,7 +103,7 @@ async def test_slash_command_routes_to_specific_profile(
     slash_command = "/focus"
     query_text = "What is the capital of France?"
     user_command_text = f"{slash_command} {query_text}"
-    command_args = query_text.split()
+    command_args: list[str] = query_text.split()
 
     focused_profile_id = "focused_assistant_profile"
     # Define a system prompt template for the focused profile.
@@ -117,12 +117,11 @@ async def test_slash_command_routes_to_specific_profile(
     # 1. Configure the focused profile's ProcessingService
     # Create a ProcessingServiceConfig for the focused profile
     # We only need to override prompts for this test. Other configs can be default.
-    focused_prompts_config = {
-        "default": {"system_prompt": focused_system_prompt_template}
-    }
+    # The ProcessingServiceConfig expects a flat dict[str, str] for prompts.
+    focused_prompts_config = {"system_prompt": focused_system_prompt_template}
     # For this test, the mock LLM client is shared, so system prompt is the main differentiator.
     focused_service_config = ProcessingServiceConfig(
-        prompts=focused_prompts_config,  # Changed from prompts_config
+        prompts=focused_prompts_config,
         calendar_config=fix.processing_service.service_config.calendar_config,  # Reuse from default
         timezone_str=fix.processing_service.service_config.timezone_str,
         max_history_messages=5,
