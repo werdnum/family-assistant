@@ -78,7 +78,9 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
 
 
 @pytest.fixture
-def specialized_service_config_factory(dummy_prompts: dict[str, str]) -> Callable[[str], ProcessingServiceConfig]:
+def specialized_service_config_factory(
+    dummy_prompts: dict[str, str],
+) -> Callable[[str], ProcessingServiceConfig]:
     def _factory(delegation_security_level: str) -> ProcessingServiceConfig:
         return ProcessingServiceConfig(
             prompts=dummy_prompts,
@@ -92,6 +94,7 @@ def specialized_service_config_factory(dummy_prompts: dict[str, str]) -> Callabl
             },
             delegation_security_level=delegation_security_level,
         )
+
     return _factory
 
 
@@ -102,7 +105,10 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
         def delegate_matcher(kwargs: MatcherArgs) -> bool:
             messages = kwargs.get("messages", [])
             last_text = get_last_message_text(messages).lower()
-            return DELEGATED_TASK_DESCRIPTION.lower() in last_text and "delegate this task" in last_text
+            return (
+                DELEGATED_TASK_DESCRIPTION.lower() in last_text
+                and "delegate this task" in last_text
+            )
 
         tool_call_args = {
             "target_service_id": SPECIALIZED_PROFILE_ID,
@@ -125,6 +131,7 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
             ],
         )
         return RuleBasedMockLLMClient(rules=[(delegate_matcher, delegate_response)])
+
     return _factory
 
 
@@ -142,7 +149,9 @@ def specialized_llm_mock() -> RuleBasedMockLLMClient:
         content=f"Response from {SPECIALIZED_PROFILE_ID}: Task '{DELEGATED_TASK_DESCRIPTION}' processed.",
         tool_calls=None,
     )
-    return RuleBasedMockLLMClient(rules=[(specialized_task_matcher, specialized_response)])
+    return RuleBasedMockLLMClient(
+        rules=[(specialized_task_matcher, specialized_response)]
+    )
 
 
 @pytest.fixture
@@ -153,20 +162,27 @@ async def mock_confirmation_callback() -> AsyncMock:
 def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider:
     """Helper to create a ToolsProvider stack for a profile."""
     enabled_local_tool_names = set(profile_tools_config.get("enable_local_tools", []))
-    
+
     # If empty, enable all known local tools for simplicity in test setup,
     # or be specific if the test requires it. For delegation, primary needs delegate_to_service.
-    if not enabled_local_tool_names and "delegate_to_service" in profile_tools_config.get("enable_local_tools", []):
+    if (
+        not enabled_local_tool_names
+        and "delegate_to_service" in profile_tools_config.get("enable_local_tools", [])
+    ):
         enabled_local_tool_names = {"delegate_to_service"}  # Ensure primary has it
-    elif not enabled_local_tool_names:  # For specialized, if empty, means no local tools
+    elif (
+        not enabled_local_tool_names
+    ):  # For specialized, if empty, means no local tools
         pass
 
     profile_local_definitions = [
-        td for td in local_tools_definition_list 
+        td
+        for td in local_tools_definition_list
         if td.get("function", {}).get("name") in enabled_local_tool_names
     ]
     profile_local_implementations = {
-        name: func for name, func in local_tool_implementations_map.items() 
+        name: func
+        for name, func in local_tool_implementations_map.items()
         if name in enabled_local_tool_names
     }
 
@@ -175,9 +191,11 @@ def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider
         implementations=profile_local_implementations,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})  # Mocked
-    
-    composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
-    
+
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
+
     confirm_tools_set = set(profile_tools_config.get("confirm_tools", []))
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
@@ -193,7 +211,7 @@ async def primary_processing_service(
     dummy_prompts: dict[str, str],
 ) -> ProcessingService:
     # Default to no confirm_delegation argument for the primary LLM's tool call
-    llm_mock = primary_llm_mock_factory(None) 
+    llm_mock = primary_llm_mock_factory(None)
     tools_provider = create_tools_provider(primary_service_config.tools_config)
     await tools_provider.get_tool_definitions()  # Initialize
 
@@ -223,7 +241,8 @@ async def specialized_processing_service(
         await tools_provider.get_tool_definitions()  # Initialize
 
         known_users_provider = KnownUsersContextProvider(
-             chat_id_to_name_map={int(TEST_CHAT_ID): TEST_USER_NAME}, prompts=dummy_prompts
+            chat_id_to_name_map={int(TEST_CHAT_ID): TEST_USER_NAME},
+            prompts=dummy_prompts,
         )
 
         return ProcessingService(
@@ -234,6 +253,7 @@ async def specialized_processing_service(
             server_url="http://test.server",
             app_config={},
         )
+
     return _factory
 
 
@@ -250,36 +270,47 @@ async def assert_message_history_contains(
         .where(message_history_table.c.conversation_id == conversation_id)
         .order_by(message_history_table.c.timestamp.asc())
     )
-    assert len(history) >= min_messages, f"Expected at least {min_messages} messages, found {len(history)}"
+    assert len(history) >= min_messages, (
+        f"Expected at least {min_messages} messages, found {len(history)}"
+    )
 
     found_match = False
     for msg in history:
         role_match = msg.role == expected_role
         content_match = True
         if expected_content_substring:
-            content_match = msg.content and expected_content_substring.lower() in msg.content.lower()
-        
+            content_match = (
+                msg.content
+                and expected_content_substring.lower() in msg.content.lower()
+            )
+
         tool_call_match = True
         if expected_tool_call_name:
             tool_calls = msg.tool_calls
             if isinstance(tool_calls, list) and tool_calls:
                 tool_call_match = any(
-                    tc.get("function", {}).get("name") == expected_tool_call_name for tc in tool_calls
+                    tc.get("function", {}).get("name") == expected_tool_call_name
+                    for tc in tool_calls
                 )
             else:
                 tool_call_match = False
-        
+
         if role_match and content_match and tool_call_match:
             found_match = True
             break
-    
-    assert found_match, f"Message with role '{expected_role}', content containing '{expected_content_substring}', and tool call '{expected_tool_call_name}' not found."
+
+    assert found_match, (
+        f"Message with role '{expected_role}', content containing '{expected_content_substring}', and tool call '{expected_tool_call_name}' not found."
+    )
 
 
 # --- Test Cases ---
 
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("confirm_tool_arg", [False, None])  # Test with confirm_delegation=False and when arg is omitted
+@pytest.mark.parametrize(
+    "confirm_tool_arg", [False, None]
+)  # Test with confirm_delegation=False and when arg is omitted
 async def test_delegation_unrestricted_target_no_forced_confirm(
     test_db_engine: AsyncEngine,
     primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
@@ -294,7 +325,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     primary_processing_service.llm_client = primary_llm_mock_factory(confirm_tool_arg)
 
     target_service = await specialized_processing_service("unrestricted")
-    
+
     registry = {
         PRIMARY_PROFILE_ID: primary_processing_service,
         SPECIALIZED_PROFILE_ID: target_service,
@@ -303,9 +334,14 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     target_service.set_processing_services_registry(registry)
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
-    
+
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+        (
+            final_reply,
+            _,
+            _,
+            error,
+        ) = await primary_processing_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -325,11 +361,20 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
 
     # DB Assertions
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        await assert_message_history_contains(db_context, TEST_CHAT_ID, "user", user_query)
-        await assert_message_history_contains(db_context, TEST_CHAT_ID, "assistant", None, "delegate_to_service")
+        await assert_message_history_contains(
+            db_context, TEST_CHAT_ID, "user", user_query
+        )
+        await assert_message_history_contains(
+            db_context, TEST_CHAT_ID, "assistant", None, "delegate_to_service"
+        )
         # Check for the specialized service's response being part of the tool result for delegate_to_service
         # This is a bit indirect. The final assistant message from primary should contain it.
-        await assert_message_history_contains(db_context, TEST_CHAT_ID, "assistant", f"Response from {SPECIALIZED_PROFILE_ID}")
+        await assert_message_history_contains(
+            db_context,
+            TEST_CHAT_ID,
+            "assistant",
+            f"Response from {SPECIALIZED_PROFILE_ID}",
+        )
 
 
 @pytest.mark.asyncio
@@ -342,11 +387,13 @@ async def test_delegation_confirm_target_granted(
 ) -> None:
     """Target is 'confirm', tool confirm_delegation=False. Expect confirmation, user grants it."""
     logger.info("--- Test: Confirm Target, Confirmation Granted ---")
-    primary_processing_service.llm_client = primary_llm_mock_factory(False)  # Explicitly set confirm_delegation=False
+    primary_processing_service.llm_client = primary_llm_mock_factory(
+        False
+    )  # Explicitly set confirm_delegation=False
     mock_confirmation_callback.return_value = True  # User confirms
 
     target_service = await specialized_processing_service("confirm")
-    
+
     registry = {
         PRIMARY_PROFILE_ID: primary_processing_service,
         SPECIALIZED_PROFILE_ID: target_service,
@@ -355,9 +402,14 @@ async def test_delegation_confirm_target_granted(
     target_service.set_processing_services_registry(registry)
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
-    
+
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+        (
+            final_reply,
+            _,
+            _,
+            error,
+        ) = await primary_processing_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -375,9 +427,9 @@ async def test_delegation_confirm_target_granted(
     mock_confirmation_callback.assert_called_once()
     # Assert call args for confirmation if needed (tool_name, specific prompt text)
     call_args = mock_confirmation_callback.call_args[1]  # kwargs of the call
-    assert call_args['tool_name'] == 'delegate_to_service'
-    assert DELEGATED_TASK_DESCRIPTION.lower() in call_args['prompt_text'].lower()
-    assert SPECIALIZED_PROFILE_ID.lower() in call_args['prompt_text'].lower()
+    assert call_args["tool_name"] == "delegate_to_service"
+    assert DELEGATED_TASK_DESCRIPTION.lower() in call_args["prompt_text"].lower()
+    assert SPECIALIZED_PROFILE_ID.lower() in call_args["prompt_text"].lower()
 
 
 @pytest.mark.asyncio
@@ -394,7 +446,7 @@ async def test_delegation_confirm_target_denied(
     mock_confirmation_callback.return_value = False  # User denies
 
     target_service = await specialized_processing_service("confirm")
-    
+
     registry = {
         PRIMARY_PROFILE_ID: primary_processing_service,
         SPECIALIZED_PROFILE_ID: target_service,
@@ -403,9 +455,14 @@ async def test_delegation_confirm_target_denied(
     target_service.set_processing_services_registry(registry)
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
-    
+
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+        (
+            final_reply,
+            _,
+            _,
+            error,
+        ) = await primary_processing_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -421,7 +478,9 @@ async def test_delegation_confirm_target_denied(
     assert final_reply is not None
     assert "delegation to service" in final_reply.lower()
     assert "cancelled by user" in final_reply.lower()
-    assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply  # Specialized service should not be called
+    assert (
+        f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
+    )  # Specialized service should not be called
     mock_confirmation_callback.assert_called_once()
 
 
@@ -435,9 +494,9 @@ async def test_delegation_blocked_target(
     """Target is 'blocked'. Expect delegation to fail."""
     logger.info("--- Test: Blocked Target ---")
     # Primary LLM mock will attempt to delegate (confirm_delegation arg doesn't matter here)
-    
+
     target_service = await specialized_processing_service("blocked")
-    
+
     registry = {
         PRIMARY_PROFILE_ID: primary_processing_service,
         SPECIALIZED_PROFILE_ID: target_service,
@@ -446,9 +505,14 @@ async def test_delegation_blocked_target(
     target_service.set_processing_services_registry(registry)
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
-    
+
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+        (
+            final_reply,
+            _,
+            _,
+            error,
+        ) = await primary_processing_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -478,11 +542,13 @@ async def test_delegation_unrestricted_confirm_arg_granted(
 ) -> None:
     """Target is 'unrestricted', tool call confirm_delegation=True. Expect confirmation, user grants."""
     logger.info("--- Test: Unrestricted Target, Confirm Argument True, Granted ---")
-    primary_processing_service.llm_client = primary_llm_mock_factory(True)  # confirm_delegation=True in tool call
+    primary_processing_service.llm_client = primary_llm_mock_factory(
+        True
+    )  # confirm_delegation=True in tool call
     mock_confirmation_callback.return_value = True  # User confirms
 
     target_service = await specialized_processing_service("unrestricted")
-    
+
     registry = {
         PRIMARY_PROFILE_ID: primary_processing_service,
         SPECIALIZED_PROFILE_ID: target_service,
@@ -491,9 +557,14 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     target_service.set_processing_services_registry(registry)
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
-    
+
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        final_reply, _, _, error = await primary_processing_service.handle_chat_interaction(
+        (
+            final_reply,
+            _,
+            _,
+            error,
+        ) = await primary_processing_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=TEST_CHAT_ID,
@@ -510,5 +581,5 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
     mock_confirmation_callback.assert_called_once()
     # Assert that the tool_args in the confirmation call reflect confirm_delegation=True
-    confirmed_tool_args = mock_confirmation_callback.call_args[1]['tool_args']
-    assert confirmed_tool_args.get('confirm_delegation') is True
+    confirmed_tool_args = mock_confirmation_callback.call_args[1]["tool_args"]
+    assert confirmed_tool_args.get("confirm_delegation") is True
