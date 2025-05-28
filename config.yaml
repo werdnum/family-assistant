@@ -113,6 +113,7 @@ default_profile_settings:
       - "brave"
       - "python"
       - "homeassistant"
+      - "google-maps"
       # The "browser" mcp server is intentionally excluded here.
 
     # Tools requiring explicit user confirmation before execution for this default profile.
