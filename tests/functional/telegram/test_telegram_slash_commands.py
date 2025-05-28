@@ -75,11 +75,14 @@ def create_mock_update(
         text=message_text,
         reply_to_message=reply_to_message,
     )
-    update = Update(update_id=uuid.uuid4().int & (1 << 31) - 1, message=message)  # Ensure positive int
+    update = Update(
+        update_id=uuid.uuid4().int & (1 << 31) - 1, message=message
+    )  # Ensure positive int
     return update
 
 
 # --- Test Cases ---
+
 
 @pytest.mark.asyncio
 async def test_slash_command_routes_to_specific_profile(
@@ -125,7 +128,6 @@ async def test_slash_command_routes_to_specific_profile(
         timezone_str=fix.processing_service.service_config.timezone_str,
         max_history_messages=5,
         history_max_age_hours=24,
-        # llm_model_name="focused_model_for_test", # If we had per-profile LLM clients
         # For now, one mock LLM client, so system_prompt is key.
         app_config=fix.app_config,  # Pass the main app_config
         mcp_servers_config=fix.app_config.get("mcp_servers", {}),  # Pass MCP config
@@ -142,9 +144,15 @@ async def test_slash_command_routes_to_specific_profile(
 
     # 2. Manually populate the registry and slash command map on the TelegramService instance
     # This simulates how TelegramService would be initialized with multiple profiles from app_config
-    fix.telegram_service.processing_services_registry[focused_profile_id] = focused_processing_service
-    fix.telegram_service.slash_command_to_profile_id_map[slash_command] = focused_profile_id
-    logger.info(f"Manually configured profile '{focused_profile_id}' for command '{slash_command}' in test.")
+    fix.telegram_service.processing_services_registry[focused_profile_id] = (
+        focused_processing_service
+    )
+    fix.telegram_service.slash_command_to_profile_id_map[slash_command] = (
+        focused_profile_id
+    )
+    logger.info(
+        f"Manually configured profile '{focused_profile_id}' for command '{slash_command}' in test."
+    )
     logger.info(f"Registry: {fix.telegram_service.processing_services_registry}")
     logger.info(f"Slash map: {fix.telegram_service.slash_command_to_profile_id_map}")
 
@@ -153,8 +161,11 @@ async def test_slash_command_routes_to_specific_profile(
         messages = kwargs.get("messages", [])
         system_prompt = get_system_prompt(messages)
         last_text = get_last_message_text(messages)
-        
-        system_prompt_ok = system_prompt is not None and focused_system_prompt_check_substr in system_prompt
+
+        system_prompt_ok = (
+            system_prompt is not None
+            and focused_system_prompt_check_substr in system_prompt
+        )
         last_text_ok = last_text == query_text
 
         logger.debug(
@@ -174,7 +185,10 @@ async def test_slash_command_routes_to_specific_profile(
 
     # 5. Create mock Update and Context
     update = create_mock_update(
-        user_command_text, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id
+        user_command_text,
+        chat_id=user_chat_id,
+        user_id=user_id,
+        message_id=user_message_id,
     )
     # For handle_generic_slash_command, context.args needs to be populated
     # The default processing_service in bot_data is for the batcher, not directly used by slash command handler here.
@@ -183,7 +197,9 @@ async def test_slash_command_routes_to_specific_profile(
         args=command_args,
         chat_id=user_chat_id,
         user_id=user_id,
-        bot_data={"processing_service": fix.processing_service},  # Default service for other parts
+        bot_data={
+            "processing_service": fix.processing_service
+        },  # Default service for other parts
     )
 
     # Act: Call the generic slash command handler directly
@@ -205,14 +221,22 @@ async def test_slash_command_routes_to_specific_profile(
         args, kwargs = fix.mock_bot.send_message.call_args
 
         assert_that(kwargs).described_as("send_message kwargs").contains_key("chat_id")
-        assert_that(kwargs["chat_id"]).described_as("send_message chat_id").is_equal_to(user_chat_id)
+        assert_that(kwargs["chat_id"]).described_as("send_message chat_id").is_equal_to(
+            user_chat_id
+        )
 
         assert_that(kwargs).described_as("send_message kwargs").contains_key("text")
         expected_escaped_text = telegramify_markdown.markdownify(llm_response_text)
-        assert_that(kwargs["text"]).described_as("send_message text").is_equal_to(expected_escaped_text)
+        assert_that(kwargs["text"]).described_as("send_message text").is_equal_to(
+            expected_escaped_text
+        )
 
-        assert_that(kwargs).described_as("send_message kwargs").contains_key("reply_to_message_id")
-        assert_that(kwargs["reply_to_message_id"]).described_as("send_message reply_to_message_id").is_equal_to(user_message_id)
+        assert_that(kwargs).described_as("send_message kwargs").contains_key(
+            "reply_to_message_id"
+        )
+        assert_that(kwargs["reply_to_message_id"]).described_as(
+            "send_message reply_to_message_id"
+        ).is_equal_to(user_message_id)
 
         # 3. Confirmation Manager should not be called for this simple query
         fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
