@@ -844,7 +844,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     async def message_handler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:  # noqa: E501
-        """Buffers incoming messages and triggers processing if not already running."""
+        """Handles incoming messages. If a slash command is detected, it routes directly. Otherwise, it buffers messages."""
         if not update.effective_user:
             logger.warning("Message handler: Update has no effective_user.")
             return
@@ -858,8 +858,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         if not update.message:
             logger.warning("Message handler: Update has no message.")
             return
-        # Now safe to access update.message attributes
-
+        
+        message_text = update.message.text or ""  # Ensure message_text is not None
         photo_bytes = None
 
         if self.allowed_user_ids and user_id not in self.allowed_user_ids:
@@ -871,7 +871,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 f"Message {update.message.message_id} from chat {chat_id} contains photo."
             )
             try:
-                # photo is a tuple of PhotoSize objects, last one is usually largest
                 photo_size = update.message.photo[-1]
                 photo_file = await photo_size.get_file()
                 with io.BytesIO() as buf:
@@ -891,23 +890,97 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 return
 
-        # Delegate to the injected message batcher
-        if self.message_batcher is None:
-            logger.critical(
-                "CRITICAL: MessageBatcher not set in TelegramUpdateHandler. "
-                "This indicates an initialization error in TelegramService."
-            )
-            if update.message:
-                try:
-                    await update.message.reply_text(
-                        "Sorry, there's an internal issue with message processing. "
-                        "Please try again in a moment. If the problem persists, contact the administrator."
-                    )
-                except Exception as e_reply:
-                    logger.error(f"Failed to send error reply to user: {e_reply}")
-            return
+        # --- Slash Command Routing Logic ---
+        targeted_processing_service: ProcessingService | None = None
+        user_input_for_profile: str = message_text
+        trigger_content_parts_for_profile: list[dict[str, Any]] | None = None
 
-        await self.message_batcher.add_to_batch(update, context, photo_bytes)
+        if self.telegram_service.slash_command_to_profile_id_map and message_text:
+            for command, profile_id_for_command in self.telegram_service.slash_command_to_profile_id_map.items():
+                if message_text.startswith(command):
+                    if len(message_text) == len(command) or (len(message_text) > len(command) and message_text[len(command)].isspace()):
+                        user_input_for_profile = message_text[len(command):].lstrip()
+                        logger.info(
+                            f"Slash command '{command}' detected for profile '{profile_id_for_command}'. User input: '{user_input_for_profile[:50]}...'"
+                        )
+                        targeted_processing_service = self.telegram_service.processing_services_registry.get(profile_id_for_command)
+                        if not targeted_processing_service:
+                            logger.error(
+                                f"Profile ID '{profile_id_for_command}' for command '{command}' not found in registry. Falling back."
+                            )
+                        else:
+                            # Prepare trigger_content_parts for direct invocation
+                            text_part = {"type": "text", "text": user_input_for_profile}
+                            trigger_content_parts_for_profile = [text_part]
+                            if photo_bytes:  # Add photo if present
+                                try:
+                                    base64_image = base64.b64encode(photo_bytes).decode("utf-8")
+                                    mime_type = "image/jpeg"  # Assuming JPEG, adjust if needed
+                                    trigger_content_parts_for_profile.append({
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                                    })
+                                except Exception as img_err_direct:
+                                    logger.error(f"Error encoding photo for direct profile call: {img_err_direct}")
+                                    # Send text only if image fails
+                                    trigger_content_parts_for_profile = [text_part]
+                        break 
+
+        if targeted_processing_service and trigger_content_parts_for_profile is not None:
+            logger.info(f"Routing message directly to profile ID: {targeted_processing_service.service_config.prompts.get('system_prompt_name', 'Unknown Profile') if targeted_processing_service.service_config else 'Unknown Profile'}")
+            current_turn_id = str(uuid.uuid4())
+            reply_to_interface_id_str = str(update.message.reply_to_message.message_id) if update.message.reply_to_message else None
+            
+            async with self.get_db_context() as db_ctx:  # Use self.get_db_context
+                # Define an explicit wrapper function for the confirmation callback
+                async def confirmation_callback_wrapper(
+                    conversation_id_cb: str, 
+                    interface_type_cb: str, 
+                    turn_id_cb: str | None, 
+                    prompt_text_cb: str, 
+                    tool_name_cb: str, 
+                    tool_args_cb: dict[str, Any], 
+                    timeout_cb: float,
+                ) -> bool:
+                    return await self.confirmation_manager.request_confirmation(
+                        conversation_id=conversation_id_cb,
+                        interface_type=interface_type_cb,
+                        turn_id=turn_id_cb,
+                        prompt_text=prompt_text_cb,
+                        tool_name=tool_name_cb,
+                        tool_args=tool_args_cb,
+                        timeout=timeout_cb,
+                    )
+
+                await targeted_processing_service.handle_chat_interaction(
+                    db_context=db_ctx,
+                    interface_type="telegram",
+                    conversation_id=str(chat_id),
+                    trigger_content_parts=trigger_content_parts_for_profile,
+                    trigger_interface_message_id=str(update.message.message_id),
+                    user_name=update.effective_user.full_name if update.effective_user else "Unknown User",
+                    replied_to_interface_id=reply_to_interface_id_str,
+                    chat_interface=self.telegram_service.chat_interface,
+                    new_task_event=self.new_task_event,  # Use self.new_task_event
+                    request_confirmation_callback=confirmation_callback_wrapper,
+                )
+        else:
+            # No specific slash command, or fallback: Delegate to the message batcher
+            if self.message_batcher is None:
+                logger.critical(
+                    "CRITICAL: MessageBatcher not set in TelegramUpdateHandler. "
+                    "This indicates an initialization error in TelegramService."
+                )
+                if update.message:
+                    try:
+                        await update.message.reply_text(
+                            "Sorry, there's an internal issue with message processing. "
+                            "Please try again in a moment. If the problem persists, contact the administrator."
+                        )
+                    except Exception as e_reply:
+                        logger.error(f"Failed to send error reply to user: {e_reply}")
+                return
+            await self.message_batcher.add_to_batch(update, context, photo_bytes)
 
 
 class TelegramConfirmationUIManager(ConfirmationUIManager):
@@ -1134,12 +1207,14 @@ class TelegramService:
         telegram_token: str,
         allowed_user_ids: list[int],
         developer_chat_id: int | None,
-        processing_service: ProcessingService,
+        processing_service: ProcessingService,  # Default processing service
+        processing_services_registry: dict[str, ProcessingService],  # Registry of all services
+        app_config: dict[str, Any],  # Main application config
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
-        new_task_event: asyncio.Event,  # Add new_task_event
-        use_batching: bool = True,
+        new_task_event: asyncio.Event,
+        use_batching: bool = True,  # Added use_batching here to match previous logic if needed
     ) -> None:
         """
         Initializes the Telegram Service.
@@ -1148,8 +1223,11 @@ class TelegramService:
             telegram_token: The Telegram Bot API token.
             allowed_user_ids: List of chat IDs allowed to interact with the bot.
             developer_chat_id: Optional chat ID for sending error notifications.
-            processing_service: The ProcessingService instance.
+            processing_service: The Default ProcessingService instance.
+            processing_services_registry: Dictionary of all ProcessingService instances.
+            app_config: The main application configuration dictionary.
             get_db_context_func: Async context manager function to get a DatabaseContext.
+            new_task_event: asyncio.Event for task worker notification.
             use_batching: If True (default), use DefaultMessageBatcher. Otherwise, use NoBatchMessageBatcher.
         """
         logger.info("Initializing TelegramService...")
@@ -1157,32 +1235,55 @@ class TelegramService:
         self._was_started: bool = False
         self._last_error: Exception | None = None
         self.chat_interface = TelegramChatInterface(self.application)
-        self.new_task_event = new_task_event  # Store the event
+        self.new_task_event = new_task_event
 
-        # Store the ProcessingService instance in bot_data for access in handlers
-        # Note: This assumes handlers might still need direct access via context.bot_data
-        # If handlers only use self.processing_service, this line might be removable.
+        self.processing_service = processing_service  # Store default service
+        self.processing_services_registry = processing_services_registry  # Store registry
+        self.app_config = app_config  # Store app_config
+
+        # Store the Default ProcessingService instance in bot_data for access in handlers
+        # This is for the default service used by the batcher.
         self.application.bot_data["processing_service"] = processing_service
-        logger.info("Stored ProcessingService instance in application.bot_data.")
+        logger.info("Stored Default ProcessingService instance in application.bot_data.")
+
+        # Build slash command to profile ID map
+        self.slash_command_to_profile_id_map: dict[str, str] = {}
+        service_profiles = self.app_config.get("service_profiles", [])
+        for profile_config in service_profiles:  # Renamed variable for clarity
+            profile_id = profile_config.get("id")
+            if not profile_id:
+                continue
+            for command in profile_config.get("slash_commands", []):
+                if command in self.slash_command_to_profile_id_map:
+                    logger.warning(
+                        f"Slash command '{command}' is mapped to multiple profile IDs. "
+                        f"Using '{self.slash_command_to_profile_id_map[command]}', "
+                        f"ignoring mapping to '{profile_id}'."
+                    )
+                else:
+                    self.slash_command_to_profile_id_map[command] = profile_id
+        if self.slash_command_to_profile_id_map:
+            logger.info(
+                f"Initialized slash command to profile ID map: {self.slash_command_to_profile_id_map}"
+            )
 
         # Instantiate Confirmation Manager
         self.confirmation_manager = TelegramConfirmationUIManager(
             application=self.application
-            # Optionally pass custom timeout from config:
         )
 
         # Instantiate the handler class, passing self (the service instance)
+        # The handler will use self.processing_service (the default one) for batched messages.
         self.update_handler = TelegramUpdateHandler(
-            telegram_service=self,  # Pass self
+            telegram_service=self,
             allowed_user_ids=allowed_user_ids,
             developer_chat_id=developer_chat_id,
-            processing_service=processing_service,
+            processing_service=processing_service,  # Pass default service to handler
             get_db_context_func=get_db_context_func,
-            message_batcher=None,  # Will be set below
-            confirmation_manager=self.confirmation_manager,  # Inject manager
+            message_batcher=None,
+            confirmation_manager=self.confirmation_manager,
         )
 
-        # Now instantiate the appropriate batcher, passing the handler as the processor
         if use_batching:
             self.message_batcher = DefaultMessageBatcher(
                 batch_processor=self.update_handler
@@ -1191,13 +1292,9 @@ class TelegramService:
             self.message_batcher = NoBatchMessageBatcher(
                 batch_processor=self.update_handler
             )
-        self.update_handler.message_batcher = (
-            self.message_batcher
-        )  # Assign the batcher back to the handler
+        self.update_handler.message_batcher = self.message_batcher
 
-        # Register core handlers (start, message, error) using the handler instance
         self.update_handler.register_handlers()
-        # Register confirmation callback handler using the confirmation manager instance
         self.application.add_handler(
             CallbackQueryHandler(
                 self.confirmation_manager.confirmation_callback_handler,
