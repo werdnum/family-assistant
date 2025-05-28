@@ -596,7 +596,11 @@ async def test_delegation_confirm_target_granted(
     # Assert call args for confirmation if needed (tool_name, specific prompt text)
     call_args = awaited_mock_confirmation_callback.call_args[1]  # kwargs of the call
     assert call_args["tool_name"] == "delegate_to_service"
-    assert DELEGATED_TASK_DESCRIPTION.lower() in call_args["prompt_text"].lower()
+    # Compare with the escaped version of the description
+    escaped_description = telegramify_markdown.escape_markdown(
+        DELEGATED_TASK_DESCRIPTION
+    )
+    assert escaped_description.lower() in call_args["prompt_text"].lower()
     assert SPECIALIZED_PROFILE_ID.lower() in call_args["prompt_text"].lower()
 
 
