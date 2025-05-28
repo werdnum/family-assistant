@@ -971,6 +971,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "search_calendar_events": calendar_integration.search_calendar_events_tool,
     "modify_calendar_event": calendar_integration.modify_calendar_event_tool,
     "delete_calendar_event": calendar_integration.delete_calendar_event_tool,
+    "delegate_to_service": delegate_to_service_tool,  # Added missing tool
 }
 
 
