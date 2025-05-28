@@ -206,6 +206,7 @@ async def get_recent_history(
     conversation_id: str,
     limit: int,
     max_age: timedelta,
+    processing_profile_id: str | None = None,  # Added for filtering
 ) -> list[dict[str, Any]]:
     """Retrieves recent messages for a conversation, including tool call info.
     If a message included by limit/max_age belongs to a turn, all other messages
@@ -238,12 +239,15 @@ async def get_recent_history(
             .where(message_history_table.c.interface_type == interface_type)
             .where(message_history_table.c.conversation_id == conversation_id)
             .where(message_history_table.c.timestamp >= cutoff_time)
-            .order_by(
-                message_history_table.c.timestamp.desc(),
-                message_history_table.c.internal_id.desc(),  # Add this secondary sort
-            )
-            .limit(limit)
         )
+        if processing_profile_id:
+            stmt_candidates = stmt_candidates.where(
+                message_history_table.c.processing_profile_id == processing_profile_id
+            )
+        stmt_candidates = stmt_candidates.order_by(
+            message_history_table.c.timestamp.desc(),
+            message_history_table.c.internal_id.desc(),  # Add this secondary sort
+        ).limit(limit)
         candidate_rows_result = await db_context.fetch_all(
             cast("Select[Any]", stmt_candidates)
         )
@@ -268,9 +272,15 @@ async def get_recent_history(
                 .where(message_history_table.c.interface_type == interface_type)
                 .where(message_history_table.c.conversation_id == conversation_id)
                 .where(message_history_table.c.turn_id.in_(turn_ids_to_expand))
-                # We fetch all messages for these turns, even if some parts of the turn
-                # are older than cutoff_time, as one part of the turn met the criteria.
             )
+            # Also filter expanded turns by profile ID if provided
+            if processing_profile_id:
+                stmt_expand_turns = stmt_expand_turns.where(
+                    message_history_table.c.processing_profile_id
+                    == processing_profile_id
+                )
+            # We fetch all messages for these turns, even if some parts of the turn
+            # are older than cutoff_time, as one part of the turn met the criteria.
             expanded_turn_rows_result = await db_context.fetch_all(
                 cast("Select[Any]", stmt_expand_turns)
             )
@@ -357,7 +367,9 @@ async def get_messages_by_turn_id(
 
 
 async def get_messages_by_thread_id(
-    db_context: DatabaseContext, thread_root_id: int
+    db_context: DatabaseContext,
+    thread_root_id: int,
+    processing_profile_id: str | None = None,  # Added for filtering
 ) -> list[dict[str, Any]]:
     """Retrieves all messages belonging to a specific conversation thread."""
     # A thread is defined by the `internal_id` of its first message.
@@ -367,18 +379,19 @@ async def get_messages_by_thread_id(
         # although the first message itself has `thread_root_id` as NULL).
         # Corrected query to include the root message itself
         selected_columns = [col for col in message_history_table.c]
-        stmt = (
-            select(
-                *selected_columns
-            )  # Filter by thread root ID or the root message itself
-            .where(
-                (message_history_table.c.thread_root_id == thread_root_id)
-                | (message_history_table.c.internal_id == thread_root_id)
+        stmt = select(
+            *selected_columns
+        ).where(  # Filter by thread root ID or the root message itself
+            (message_history_table.c.thread_root_id == thread_root_id)
+            | (message_history_table.c.internal_id == thread_root_id)
+        )
+        if processing_profile_id:
+            stmt = stmt.where(
+                message_history_table.c.processing_profile_id == processing_profile_id
             )
-            .order_by(
-                message_history_table.c.internal_id
-            )  # Order by insertion sequence first
-        )  # Close the statement parenthesis
+        stmt = stmt.order_by(
+            message_history_table.c.internal_id
+        )  # Order by insertion sequence first
         rows = await db_context.fetch_all(
             cast("Select[Any]", stmt)
         )  # Cast for type checker
