@@ -241,6 +241,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "enable_local_tools": [],  # Default: empty list, meaning all available if not specified
                 "enable_mcp_server_ids": [],  # Default: empty list, meaning all available if not specified
                 "confirm_tools": [],  # Default empty; overridden by config.yaml or env var
+                "mcp_initialization_timeout_seconds": 300,  # Default 5 minutes
             },
             "slash_commands": [],  # Default: no specific slash commands for this profile
         },
@@ -363,7 +364,22 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     # --- Target nested config for profile-specific settings ---
     profile_settings = config_data["default_profile_settings"]  # Get the whole profile
     profile_proc_config = profile_settings["processing_config"]
-    profile_tools_config = profile_settings["tools_config"]
+    profile_tools_config = profile_settings["tools_config"]  # This is a reference to the dict
+
+    # MCP Initialization Timeout from Env Var
+    mcp_timeout_env = os.getenv("MCP_INITIALIZATION_TIMEOUT_SECONDS")
+    if mcp_timeout_env is not None:
+        try:
+            profile_tools_config["mcp_initialization_timeout_seconds"] = int(
+                mcp_timeout_env
+            )
+            logger.info(
+                f"Loaded MCP initialization timeout from environment variable: {profile_tools_config['mcp_initialization_timeout_seconds']}s"
+            )
+        except ValueError:
+            logger.error(
+                f"Invalid MCP_INITIALIZATION_TIMEOUT_SECONDS: '{mcp_timeout_env}'. Must be an integer. Using previous value."
+            )
 
     profile_proc_config["timezone"] = os.getenv(
         "TIMEZONE", profile_proc_config["timezone"]
@@ -1053,8 +1069,12 @@ async def main_async(
             for server_id, server_conf in all_mcp_servers_config.items()
             if server_id in enabled_mcp_server_ids
         }
+        mcp_timeout_seconds = profile_tools_conf_dict.get(
+            "mcp_initialization_timeout_seconds", 300
+        )  # Default to 300 if not in profile config
         mcp_provider_for_profile = MCPToolsProvider(
             mcp_server_configs=profile_mcp_servers_config,
+            initialization_timeout_seconds=mcp_timeout_seconds,
         )
 
         composite_provider_for_profile = CompositeToolsProvider(

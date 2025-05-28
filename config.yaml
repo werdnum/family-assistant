@@ -122,6 +122,7 @@ default_profile_settings:
       - delete_calendar_event
       - modify_calendar_event
       # - tool_that_posts_online
+    mcp_initialization_timeout_seconds: 300 # Default 5 minutes
   
   # Default list of slash commands that trigger this profile.
   # Can be overridden by individual service_profiles.
