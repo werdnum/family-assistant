@@ -158,7 +158,7 @@ service_profiles:
     description: "Assistant profile for Kubernetes debugging tasks."
     processing_config:
       prompts:
-        system_prompt: "You are a specialized Kubernetes debugging assistant. Focus on diagnosing and resolving Kubernetes issues. You have access to tools for interacting with Kubernetes clusters, searching the web, and executing Python code."
+        system_prompt: "You are a specialized Kubernetes debugging assistant. Current time is {current_time}. Focus on diagnosing and resolving Kubernetes issues. You have access to tools for interacting with Kubernetes clusters, searching the web, and executing Python code."
       # This profile will inherit default timezone, history settings etc.
       # It will not load calendar, notes, or known_users context providers by default
       # due to the focused system prompt and lack of explicit inclusion.
