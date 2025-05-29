@@ -16,6 +16,7 @@ from typing import (
     Protocol,
     TypeAlias,
     cast,
+    get_type_hints,
 )
 from zoneinfo import ZoneInfo
 
@@ -1615,35 +1616,51 @@ class LocalToolsProvider:
             # Prepare arguments, potentially injecting context or generator
             call_args = arguments.copy()
             sig = inspect.signature(callable_func)
+
+            resolved_hints = {}
+            try:
+                func_module = inspect.getmodule(callable_func)
+                global_ns = func_module.__dict__ if func_module else None
+                resolved_hints = get_type_hints(callable_func, globalns=global_ns)
+            except Exception as e:
+                logger.warning(
+                    f"Could not fully resolve type hints for '{callable_func.__name__}': {e}. "
+                    "Injection will rely on raw annotations where resolution failed."
+                )
+
             needs_exec_context = False
             needs_db_context = False
             needs_embedding_generator = False
-            needs_calendar_config = False  # Added flag
+            needs_calendar_config = False
 
             for param_name, param in sig.parameters.items():
-                # Check if the function expects the full context object
-                if param.annotation is ToolExecutionContext:
-                    needs_exec_context = True
-                if param.annotation is DatabaseContext and param_name == "db_context":
-                    needs_db_context = True
-                elif (
-                    param.annotation is EmbeddingGenerator
-                    and param_name == "embedding_generator"
-                ):
-                    needs_embedding_generator = True
-                elif (
-                    param_name == "calendar_config"
-                    and param.annotation == dict[str, Any]
-                ):  # Check for calendar_config
-                    needs_calendar_config = True
+                # Use resolved hint if available, otherwise use the raw annotation from signature.
+                annotation_to_check = resolved_hints.get(param_name, param.annotation)
 
-            # Inject dependencies based on flags
-            # Always check for exec_context first
+                if param_name == "exec_context":
+                    if annotation_to_check is ToolExecutionContext:
+                        needs_exec_context = True
+                    # Fallback for unresolved forward reference string
+                    elif isinstance(param.annotation, str) and param.annotation == "ToolExecutionContext":
+                        needs_exec_context = True
+                        logger.debug(f"Identified 'exec_context' for {callable_func.__name__} via string forward reference fallback.")
+                
+                elif param_name == "db_context":
+                    if annotation_to_check is DatabaseContext:
+                        needs_db_context = True
+                
+                elif param_name == "embedding_generator":
+                    if annotation_to_check is EmbeddingGenerator:
+                        needs_embedding_generator = True
+                
+                elif param_name == "calendar_config":
+                    if annotation_to_check == dict[str, Any]:  # For dict, use ==
+                        needs_calendar_config = True
+            
+            # Inject dependencies based on resolved needs
             if needs_exec_context:
                 call_args["exec_context"] = context
-            # Check for and inject other specific dependencies.
-            # Only inject if not already covered by exec_context (though harmless if redundant)
-            if needs_db_context and "db_context" not in call_args:
+            if needs_db_context:  # db_context is part of ToolExecutionContext
                 call_args["db_context"] = context.db_context
             if needs_embedding_generator:
                 if self._embedding_generator:
