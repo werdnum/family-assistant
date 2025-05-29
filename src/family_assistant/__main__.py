@@ -1012,13 +1012,19 @@ async def main_async(
 
         # ToolsProvider stack for this profile
         # Filter local tools
-        enabled_local_tool_names = set(
-            profile_tools_conf_dict.get("enable_local_tools", [])
-        )
-        if (
-            not enabled_local_tool_names
-        ):  # If list is empty, enable all local tools by default
+        # If 'enable_local_tools' is not in tools_config, default to all tools.
+        # If it is present, use its value (e.g., an empty list means no local tools).
+        local_tools_list_from_config = profile_tools_conf_dict.get("enable_local_tools")
+        if local_tools_list_from_config is None:  # Key was not present
             enabled_local_tool_names = set(local_tool_implementations.keys())
+            logger.info(
+                f"Profile '{profile_id}': 'enable_local_tools' not specified, defaulting to all {len(enabled_local_tool_names)} local tools."
+            )
+        else:  # Key was present, respect its value (even if empty list)
+            enabled_local_tool_names = set(local_tools_list_from_config)
+            logger.info(
+                f"Profile '{profile_id}': 'enable_local_tools' specified, enabling {len(enabled_local_tool_names)} local tools: {enabled_local_tool_names if enabled_local_tool_names else 'None'}."
+            )
 
         profile_specific_local_definitions = []
         for (
@@ -1055,14 +1061,29 @@ async def main_async(
         )
 
         # Filter MCP tools
-        enabled_mcp_server_ids = set(
-            profile_tools_conf_dict.get("enable_mcp_server_ids", [])
-        )
+        # If 'enable_mcp_server_ids' is not in tools_config, default to all configured MCP servers.
+        # If it is present, use its value (e.g., an empty list means no MCP tools).
         all_mcp_servers_config = config.get("mcp_config", {}).get("mcpServers", {})
-        if (
-            not enabled_mcp_server_ids and all_mcp_servers_config
-        ):  # If list is empty, enable all mcp servers
-            enabled_mcp_server_ids = set(all_mcp_servers_config.keys())
+        mcp_server_ids_from_config = profile_tools_conf_dict.get(
+            "enable_mcp_server_ids"
+        )
+
+        if mcp_server_ids_from_config is None:  # Key was not present
+            if all_mcp_servers_config:
+                enabled_mcp_server_ids = set(all_mcp_servers_config.keys())
+                logger.info(
+                    f"Profile '{profile_id}': 'enable_mcp_server_ids' not specified, defaulting to all {len(enabled_mcp_server_ids)} globally configured MCP servers: {enabled_mcp_server_ids if enabled_mcp_server_ids else 'None'}."
+                )
+            else:
+                enabled_mcp_server_ids = set()
+                logger.info(
+                    f"Profile '{profile_id}': 'enable_mcp_server_ids' not specified, and no MCP servers globally configured."
+                )
+        else:  # Key was present, respect its value (even if empty list)
+            enabled_mcp_server_ids = set(mcp_server_ids_from_config)
+            logger.info(
+                f"Profile '{profile_id}': 'enable_mcp_server_ids' specified, enabling {len(enabled_mcp_server_ids)} MCP servers: {enabled_mcp_server_ids if enabled_mcp_server_ids else 'None'}."
+            )
 
         profile_mcp_servers_config = {
             server_id: server_conf
