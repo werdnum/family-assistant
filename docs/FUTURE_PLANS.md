@@ -20,15 +20,17 @@ This document outlines potential future enhancements and features for the Family
     -   **Event Bus/Listener:** The application would need a component that subscribes to the Home Assistant event bus.
     -   **Filtering:** To avoid being overwhelmed by events, a robust filtering mechanism is needed.
         -   **CEL (Common Expression Language):** Consider using CEL for defining event filters. Users could define rules like `event.data.entity_id == 'sensor.living_room_motion' && event.data.new_state.state == 'on'`.
-        -   Configuration would store these CEL expressions mapped to specific actions or LLM prompts.
+        -   **Database Storage:** Listener configurations (CEL expressions, target actions/prompts, metadata) would be stored in the database.
     -   **Action Trigger:** When a filtered event is matched:
         -   The assistant could be "woken up."
         -   This might involve:
-            -   Sending a specific prompt to the LLM with the event data as context.
+            -   Sending a specific prompt to the LLM with the event data as context (as defined in the listener configuration).
             -   Executing a predefined tool or script.
             -   Sending a notification to a user.
+    -   **LLM-Managed Listeners:**
+        -   The assistant (LLM) could be given tools to proactively create, modify, or delete these event listeners in the database based on user requests or its own reasoning. For example, a user might say, "Hey, if the garage door is left open for more than 10 minutes, let me know," and the assistant could translate this into a CEL-based listener and store it.
 -   **Use Cases:**
-    -   "If motion is detected in the backyard after 11 PM, send me a Telegram message."
+    -   User: "If motion is detected in the backyard after 11 PM, send me a Telegram message." (Assistant creates a listener).
     -   "When the front door opens and I'm not home, log it and ask the LLM if any other sensors were triggered recently."
     -   "If the temperature in the server closet exceeds 30°C, trigger a tool to send an alert."
 
