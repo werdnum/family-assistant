@@ -186,6 +186,20 @@ service_profiles:
     slash_commands:
       - "/k8s"
 
+  - id: "research"
+    description: "Assistant profile for deep research, using Perplexity Sonar."
+    processing_config:
+      llm_model: "openrouter/perplexity/sonar-deep-research"
+      # Inherits default prompts, timezone, history settings.
+      # No specific context providers are added by default for this profile.
+      delegation_security_level: "unrestricted"
+    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
+      enable_local_tools: [] # No local tools for this profile
+      enable_mcp_server_ids: [] # No MCP tools for this profile
+      confirm_tools: [] # No tools to confirm
+    slash_commands:
+      - "/research"
+
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
