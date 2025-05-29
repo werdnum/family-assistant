@@ -159,7 +159,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "gemini_api_key": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "openrouter/google/gemini-2.5-pro-preview-03-25",
+        "model": "gemini/gemini-2.5-pro-preview-05-06",
         "embedding_model": "gemini/gemini-embedding-exp-03-07",
         "embedding_dimensions": 1536,
         "database_url": "sqlite+aiosqlite:///family_assistant.db",
@@ -231,7 +231,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "max_history_messages": 5,
                 "history_max_age_hours": 24,
                 # Default LLM model for profiles, can be overridden per profile
-                "llm_model": "openrouter/google/gemini-2.5-pro-preview-03-25",  # Use actual default model string
+                "llm_model": "gemini/gemini-2.5-pro-preview-05-06",  # Use actual default model string
             },
             "chat_id_to_name_map": {},  # Added for known user mapping
             "tools_config": {
