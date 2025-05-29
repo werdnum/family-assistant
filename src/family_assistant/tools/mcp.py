@@ -434,8 +434,10 @@ class MCPToolsProvider:
             for status in self._server_statuses.values()
             if status == MCP_SERVER_STATUS_CANCELLED
         )
+        initialization_end_time = asyncio.get_running_loop().time()
+        total_initialization_time = initialization_end_time - initialization_start_time
         logger.info(
-            f"MCPToolsProvider finished processing all {len(self._mcp_server_configs)} configured MCP server(s). "
+            f"MCPToolsProvider finished processing all {len(self._mcp_server_configs)} configured MCP server(s) in {total_initialization_time:.2f} seconds. "
             f"Summary: {connected_count} connected, {failed_count} failed, {cancelled_count} cancelled. "
             f"Active sessions: {len(self._sessions)}. Mapped {len(self._tool_map)} unique tools from {len(self._definitions)} total definitions."
         )
