@@ -241,7 +241,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "enable_local_tools": [],  # Default: empty list, meaning all available if not specified
                 "enable_mcp_server_ids": [],  # Default: empty list, meaning all available if not specified
                 "confirm_tools": [],  # Default empty; overridden by config.yaml or env var
-                "mcp_initialization_timeout_seconds": 300,  # Default 5 minutes
+                "mcp_initialization_timeout_seconds": 60,  # Default 1 minute
             },
             "slash_commands": [],  # Default: no specific slash commands for this profile
         },
@@ -1072,8 +1072,8 @@ async def main_async(
             if server_id in enabled_mcp_server_ids
         }
         mcp_timeout_seconds = profile_tools_conf_dict.get(
-            "mcp_initialization_timeout_seconds", 300
-        )  # Default to 300 if not in profile config
+            "mcp_initialization_timeout_seconds", 60
+        )  # Default to 60 if not in profile config
         mcp_provider_for_profile = MCPToolsProvider(
             mcp_server_configs=profile_mcp_servers_config,
             initialization_timeout_seconds=mcp_timeout_seconds,
