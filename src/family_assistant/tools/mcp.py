@@ -34,7 +34,7 @@ class MCPToolsProvider:
     def __init__(
         self,
         mcp_server_configs: dict[str, dict[str, Any]],
-        initialization_timeout_seconds: int = 300,  # Default 5 minutes
+        initialization_timeout_seconds: int = 60,  # Default 1 minute
     ) -> None:
         self._mcp_server_configs = mcp_server_configs
         self._initialization_timeout_seconds = initialization_timeout_seconds
