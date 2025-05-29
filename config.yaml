@@ -158,7 +158,7 @@ service_profiles:
     description: "Assistant profile for Kubernetes debugging tasks."
     processing_config:
       prompts:
-        system_prompt: "You are a specialized Kubernetes debugging assistant. Current time is {current_time}. Focus on diagnosing and resolving Kubernetes issues. You have access to tools for interacting with Kubernetes clusters, searching the web, and executing Python code."
+        system_prompt: "You are a specialized Kubernetes debugging assistant. Focus on diagnosing and resolving Kubernetes issues. You have access to tools for interacting with Kubernetes clusters, searching the web, and executing Python code."
       # This profile will inherit default timezone, history settings etc.
       # It will not load calendar, notes, or known_users context providers by default
       # due to the focused system prompt and lack of explicit inclusion.
@@ -190,7 +190,9 @@ service_profiles:
     description: "Assistant profile for deep research, using Perplexity Sonar."
     processing_config:
       llm_model: "openrouter/perplexity/sonar-deep-research"
-      # Inherits default prompts, timezone, history settings.
+      prompts:
+        system_prompt: "You are a research assistant. Please focus on providing comprehensive and accurate information."
+      # Inherits default timezone, history settings.
       # No specific context providers are added by default for this profile.
       delegation_security_level: "unrestricted"
     tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
