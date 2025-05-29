@@ -235,11 +235,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             },
             "chat_id_to_name_map": {},  # Added for known user mapping
             "tools_config": {
-                # enable_local_tools and enable_mcp_server_ids are implicitly "all available"
-                # for the default profile in the current setup.
-                # Explicit lists can be added to config.yaml later if needed.
-                "enable_local_tools": [],  # Default: empty list, meaning all available if not specified
-                "enable_mcp_server_ids": [],  # Default: empty list, meaning all available if not specified
+                # By default, if 'enable_local_tools' or 'enable_mcp_server_ids' are not specified
+                # in a profile or here, all available tools of that type will be enabled.
+                # An explicit empty list [] in a profile's config means NO tools of that type.
                 "confirm_tools": [],  # Default empty; overridden by config.yaml or env var
                 "mcp_initialization_timeout_seconds": 60,  # Default 1 minute
             },
