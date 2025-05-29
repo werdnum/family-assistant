@@ -1641,22 +1641,29 @@ class LocalToolsProvider:
                     if annotation_to_check is ToolExecutionContext:
                         needs_exec_context = True
                     # Fallback for unresolved forward reference string
-                    elif isinstance(param.annotation, str) and param.annotation == "ToolExecutionContext":
+                    elif (
+                        isinstance(param.annotation, str)
+                        and param.annotation == "ToolExecutionContext"
+                    ):
                         needs_exec_context = True
-                        logger.debug(f"Identified 'exec_context' for {callable_func.__name__} via string forward reference fallback.")
-                
+                        logger.debug(
+                            f"Identified 'exec_context' for {callable_func.__name__} via string forward reference fallback."
+                        )
+
                 elif param_name == "db_context":
                     if annotation_to_check is DatabaseContext:
                         needs_db_context = True
-                
+
                 elif param_name == "embedding_generator":
                     if annotation_to_check is EmbeddingGenerator:
                         needs_embedding_generator = True
-                
-                elif param_name == "calendar_config":
-                    if annotation_to_check == dict[str, Any]:  # For dict, use ==
-                        needs_calendar_config = True
-            
+
+                elif (
+                    param_name == "calendar_config"
+                    and annotation_to_check == dict[str, Any]
+                ):  # For dict, use ==
+                    needs_calendar_config = True
+
             # Inject dependencies based on resolved needs
             if needs_exec_context:
                 call_args["exec_context"] = context
