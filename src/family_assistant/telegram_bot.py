@@ -474,22 +474,25 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         conversation_id = str(chat_id)
 
         try:
-            # Retrieve the ProcessingService instance - it should be passed during init or accessible
-            # Assuming it's stored in bot_data by main.py
-            processing_service = context.bot_data.get("processing_service")
-            if not processing_service:
+            # Default to the main processing service for this handler.
+            # This is the 'default' profile's service instance, set during TelegramUpdateHandler init.
+            selected_processing_service: ProcessingService = self.processing_service
+
+            if not selected_processing_service:
                 logger.error(
-                    "ProcessingService not found in bot_data. Cannot generate response."
+                    "Default ProcessingService not available in handler. Cannot generate response."
                 )
                 await context.bot.send_message(
-                    chat_id, "Internal error: Processing service unavailable."
+                    chat_id, "Internal error: Default processing service unavailable."
                 )
                 return
 
             db_context_getter = self.get_db_context()
             async with db_context_getter as db_context:
-                # --- Determine Thread Root ID ---
+                # --- Determine Thread Root ID & Potentially Switch Profile based on Reply ---
                 thread_root_id_for_turn: int | None = None
+                replied_to_db_msg = None  # Initialize replied_to_db_msg
+
                 if replied_to_interface_id:
                     try:
                         replied_to_db_msg = (
@@ -501,23 +504,56 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             )
                         )
                         if replied_to_db_msg:
-                            # If the replied-to message has a root ID, use it. Otherwise, use its own internal ID.
                             thread_root_id_for_turn = replied_to_db_msg.get(
                                 "thread_root_id"
                             ) or replied_to_db_msg.get("internal_id")
                             logger.info(
                                 f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}"
                             )
+
+                            # Check for profile_id on replied-to message to switch service
+                            original_profile_id = replied_to_db_msg.get(
+                                "processing_profile_id"
+                            )
+                            if original_profile_id:
+                                logger.info(
+                                    f"Replied-to message (ID: {replied_to_interface_id}) has processing_profile_id: {original_profile_id}"
+                                )
+                                profile_specific_service = self.telegram_service.processing_services_registry.get(
+                                    original_profile_id
+                                )
+                                if profile_specific_service:
+                                    selected_processing_service = (
+                                        profile_specific_service
+                                    )
+                                    logger.info(
+                                        f"Switched to ProcessingService for profile '{original_profile_id}' for this reply."
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Profile ID '{original_profile_id}' from replied-to message not found in registry. "
+                                        f"Falling back to default processing service ('{selected_processing_service.service_config.id}')."
+                                    )
+                            else:
+                                logger.info(
+                                    f"Replied-to message (ID: {replied_to_interface_id}) does not have a specific profile_id. "
+                                    f"Using default processing service ('{selected_processing_service.service_config.id}')."
+                                )
                         else:
                             logger.warning(
-                                f"Could not find replied-to message {replied_to_interface_id} in DB to determine thread root."
+                                f"Could not find replied-to message {replied_to_interface_id} in DB. "
+                                f"Using default processing service ('{selected_processing_service.service_config.id}')."
                             )
                     except Exception as thread_err:
                         logger.error(
-                            f"Error determining thread root ID: {thread_err}",
+                            f"Error determining thread root ID or profile from reply: {thread_err}",
                             exc_info=True,
                         )
-                        # Continue without thread_root_id if error occurs
+                        # Stick with default service if error occurs here
+                else:  # Not a reply
+                    logger.info(
+                        f"Not a reply. Using default processing service ('{selected_processing_service.service_config.id}')."
+                    )
 
                 # --- Prepare and Save User Trigger Message(s) ---
                 trigger_interface_message_id: str | None = None
@@ -592,7 +628,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         last_assistant_internal_id,  # Renamed from final_assistant_message_internal_id for brevity here
                         _final_reasoning_info,  # Not directly used in this handler for now
                         processing_error_traceback,
-                    ) = await self.processing_service.handle_chat_interaction(
+                    ) = await selected_processing_service.handle_chat_interaction(
                         db_context=db_context,
                         interface_type=interface_type,
                         conversation_id=conversation_id,
