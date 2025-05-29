@@ -46,6 +46,7 @@ from telegram.ext import (
 )
 
 # Import necessary types for type hinting
+from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.interfaces import ChatInterface  # Import the new interface
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
@@ -232,6 +233,9 @@ class DefaultMessageBatcher(MessageBatcher):
             )
 
 
+TELEGRAM_MAX_MESSAGE_LENGTH = 4000  # Slightly less than 4096 to be safe
+
+
 class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     """Handles specific Telegram updates (messages, commands) and delegates processing."""  # noqa: E501
 
@@ -285,6 +289,82 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         from family_assistant import storage  # Import storage locally if needed
 
         self.storage = storage
+        self.text_chunker = TextChunker(
+            chunk_size=TELEGRAM_MAX_MESSAGE_LENGTH,
+            chunk_overlap=50,  # Small overlap to maintain context across messages
+            separators=("\n\n", "\n", ". ", " ", ""),
+        )
+
+    async def _send_message_chunks(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        text: str,
+        parse_mode: ParseMode | None,
+        reply_to_message_id: int | None,
+        reply_markup: Any | None = None,  # For ForceReply etc.
+    ) -> Message | None:
+        """Sends a message, splitting it into chunks if it's too long."""
+        first_sent_message: Message | None = None
+        if not text:  # Do not send empty messages
+            logger.warning(
+                f"Attempted to send empty message to chat {chat_id}. Aborting."
+            )
+            return None
+
+        if len(text) > TELEGRAM_MAX_MESSAGE_LENGTH:
+            logger.info(
+                f"Message to chat {chat_id} exceeds {TELEGRAM_MAX_MESSAGE_LENGTH} chars. Splitting."
+            )
+            chunks = self.text_chunker._chunk_text_natively(text)
+            if not chunks:
+                logger.warning(
+                    f"TextChunker returned no chunks for a long message to chat {chat_id}. Original text length: {len(text)}"
+                )
+                return None
+
+            for i, chunk_text in enumerate(chunks):
+                current_reply_to_id = reply_to_message_id if i == 0 else None
+                current_reply_markup = reply_markup if i == 0 else None
+                try:
+                    sent_msg = await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk_text,
+                        parse_mode=parse_mode,
+                        reply_to_message_id=current_reply_to_id,
+                        reply_markup=current_reply_markup,
+                    )
+                    if i == 0:
+                        first_sent_message = sent_msg
+                    if len(chunks) > 1 and i < len(chunks) - 1:
+                        await asyncio.sleep(0.2)  # 200ms delay
+                except Exception as e_chunk:
+                    logger.error(
+                        f"Failed to send chunk {i + 1}/{len(chunks)} to {chat_id}: {e_chunk}",
+                        exc_info=True,
+                    )
+                    if (
+                        i == 0
+                    ):  # If the first chunk fails, we can't return a message object
+                        return None
+            return first_sent_message
+        else:
+            # Message is within limit, send as a single part
+            try:
+                sent_msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=parse_mode,
+                    reply_to_message_id=reply_to_message_id,
+                    reply_markup=reply_markup,
+                )
+                return sent_msg
+            except Exception as e:
+                logger.error(
+                    f"Failed to send single message to {chat_id}: {e}",
+                    exc_info=True,
+                )
+                return None
 
     @contextlib.asynccontextmanager
     async def _typing_notifications(
@@ -651,7 +731,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         converted_markdown = telegramify_markdown.markdownify(
                             final_llm_content_to_send
                         )
-                        sent_assistant_message = await context.bot.send_message(
+                        sent_assistant_message = await self._send_message_chunks(
+                            context=context,
                             chat_id=chat_id,
                             text=converted_markdown,
                             parse_mode=ParseMode.MARKDOWN_V2,
@@ -663,15 +744,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             f"Failed to convert markdown: {md_err}. Sending plain text.",
                             exc_info=True,
                         )
-                        sent_assistant_message = await context.bot.send_message(
+                        sent_assistant_message = await self._send_message_chunks(
+                            context=context,
                             chat_id=chat_id,
                             text=final_llm_content_to_send,
+                            parse_mode=None,  # Plain text
                             reply_to_message_id=reply_target_message_id,
                             reply_markup=force_reply_markup,
                         )
 
                     if (
-                        sent_assistant_message
+                        sent_assistant_message  # This is now a Message object or None
                         and last_assistant_internal_id is not None
                     ):
                         try:
@@ -708,26 +791,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     else:
                         logger.info(f"Sending generic error message to chat {chat_id}")
 
-                    await context.bot.send_message(
-                        # Send either the generic message or the traceback
+                    await self._send_message_chunks(
+                        context=context,
                         chat_id=chat_id,
                         text=error_message_to_send,
-                        parse_mode=(
-                            ParseMode.HTML if self.debug_mode else None
-                        ),  # Use HTML for traceback
+                        parse_mode=(ParseMode.HTML if self.debug_mode else None),
                         reply_to_message_id=reply_target_message_id,
-                        reply_markup=force_reply_markup,  # Add ForceReply
+                        reply_markup=force_reply_markup,
                     )
                 else:  # Handle case where there's no content and no specific processing error
                     logger.warning(  # This case might be less common now as we save all messages
                         "Received empty response from LLM (and no processing error detected)."
                     )
                     if reply_target_message_id:
-                        sent_assistant_message = await context.bot.send_message(
+                        await self._send_message_chunks(
+                            context=context,
                             chat_id=chat_id,
-                            text="Sorry, I couldn't process that request.",  # Generic message for empty response
+                            text="Sorry, I couldn't process that request.",
+                            parse_mode=None,
                             reply_to_message_id=reply_target_message_id,
-                            reply_markup=force_reply_markup,  # Add ForceReply
+                            reply_markup=force_reply_markup,
                         )
             # --- END OF DB CONTEXT BLOCK --- # async with automatically handles exit/commit/rollback
 
@@ -748,23 +831,25 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 with contextlib.suppress(
                     Exception
                 ):  # Suppress errors sending the error message
-                    sent_assistant_message = await context.bot.send_message(
+                    error_text_to_send_unhandled = (
+                        f"An unexpected error occurred \\(debug mode\\):\n<pre>{html.escape(processing_error_traceback)}</pre>"
+                        if self.debug_mode and processing_error_traceback
+                        else "Sorry, an unexpected error occurred."
+                    )
+                    await self._send_message_chunks(
+                        context=context,
                         chat_id=chat_id,
-                        # Send traceback in debug mode, otherwise generic message
-                        text=(
-                            f"An unexpected error occurred \\(debug mode\\):\n<pre>{html.escape(processing_error_traceback)}</pre>"
-                            if self.debug_mode and processing_error_traceback
-                            else "Sorry, an unexpected error occurred."
-                        ),
+                        text=error_text_to_send_unhandled,
                         parse_mode=(
                             ParseMode.HTML
                             if self.debug_mode and processing_error_traceback
                             else None
                         ),
                         reply_to_message_id=reply_target_message_id,
+                        # No ForceReply for unexpected errors usually
                     )
                     logger.info(
-                        f"Sent {'debug' if self.debug_mode else 'generic'} unexpected error message to chat {chat_id}"
+                        f"Sent {'debug' if self.debug_mode else 'generic'} unexpected error message to chat {chat_id} via _send_message_chunks"
                     )
 
             # --- Save Error Traceback with User Message ---
@@ -850,16 +935,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )
 
         if self.developer_chat_id:
-            max_len = 4096
-            for i in range(0, len(message), max_len):
-                try:
-                    await context.bot.send_message(
-                        chat_id=self.developer_chat_id,
-                        text=message[i : i + max_len],
-                        parse_mode=ParseMode.HTML,
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send error message to developer: {e}")
+            try:
+                await self._send_message_chunks(
+                    context=context,
+                    chat_id=self.developer_chat_id,
+                    text=message,
+                    parse_mode=ParseMode.HTML,
+                    reply_to_message_id=None,  # No reply for dev notifications
+                    reply_markup=None,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to send error message to developer via _send_message_chunks: {e}"
+                )
         else:
             logger.warning("DEVELOPER_CHAT_ID not set, cannot send error notification.")
 
@@ -1057,7 +1145,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         converted_markdown = telegramify_markdown.markdownify(
                             final_llm_content_to_send
                         )
-                        sent_assistant_message = await context.bot.send_message(
+                        sent_assistant_message = await self._send_message_chunks(
+                            context=context,
                             chat_id=chat_id,
                             text=converted_markdown,
                             parse_mode=ParseMode.MARKDOWN_V2,
@@ -1069,15 +1158,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             f"Failed to convert markdown for slash command response: {md_err}. Sending plain text.",
                             exc_info=True,
                         )
-                        sent_assistant_message = await context.bot.send_message(
+                        sent_assistant_message = await self._send_message_chunks(
+                            context=context,
                             chat_id=chat_id,
                             text=final_llm_content_to_send,
+                            parse_mode=None,  # Plain text
                             reply_to_message_id=reply_target_message_id_for_bot,
                             reply_markup=force_reply_markup,
                         )
 
                     if (
-                        sent_assistant_message
+                        sent_assistant_message  # This is now a Message object or None
                         and last_assistant_internal_id is not None
                     ):
                         await self.storage.update_message_interface_id(
@@ -1101,7 +1192,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             "Encountered error during slash command processing (debug mode):\n"
                             f"<pre>{html.escape(processing_error_traceback)}</pre>"
                         )
-                    await context.bot.send_message(
+                    await self._send_message_chunks(
+                        context=context,
                         chat_id=chat_id,
                         text=error_message_to_send,
                         parse_mode=(ParseMode.HTML if self.debug_mode else None),
@@ -1112,9 +1204,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     logger.warning(
                         "Slash command resulted in empty response and no processing error."
                     )
-                    await context.bot.send_message(
+                    await self._send_message_chunks(
+                        context=context,
                         chat_id=chat_id,
                         text="Sorry, I couldn't process that command.",
+                        parse_mode=None,
                         reply_to_message_id=reply_target_message_id_for_bot,
                         reply_markup=force_reply_markup,
                     )
@@ -1127,19 +1221,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     processing_error_traceback = traceback.format_exc()
 
                 with contextlib.suppress(Exception):
-                    await context.bot.send_message(
+                    error_text_to_send_unhandled_cmd = (
+                        f"An unexpected error occurred with your command (debug mode):\n<pre>{html.escape(processing_error_traceback)}</pre>"
+                        if self.debug_mode and processing_error_traceback
+                        else "Sorry, an unexpected error occurred with your command."
+                    )
+                    await self._send_message_chunks(
+                        context=context,
                         chat_id=chat_id,
-                        text=(
-                            f"An unexpected error occurred with your command (debug mode):\n<pre>{html.escape(processing_error_traceback)}</pre>"
-                            if self.debug_mode and processing_error_traceback
-                            else "Sorry, an unexpected error occurred with your command."
-                        ),
+                        text=error_text_to_send_unhandled_cmd,
                         parse_mode=(
                             ParseMode.HTML
                             if self.debug_mode and processing_error_traceback
                             else None
                         ),
                         reply_to_message_id=update.message.message_id,
+                        # No ForceReply for unexpected errors usually
                     )
                 # Save error traceback if possible (similar to process_batch)
                 if (
