@@ -108,6 +108,7 @@ dev = [
     "sentence-transformers>=2.7.0",
     "mcp-proxy>=0.3.0", # Added for testing SSE transport
     "mcp-server-time>=0.1.0", # Ensure mcp-server-time is available for tests
+    "radicale>=3",
     "symbex>=2.0",
     "pytest-timeout",
     "ruff",
