@@ -270,7 +270,7 @@ def _fetch_caldav_events_sync(
             parsed_first_cal_url = httpx.URL(calendar_urls[0])
             client_url = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
             if parsed_first_cal_url.port is None:  # Handle default ports
-                 client_url = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                client_url = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
             logger.warning(
                 f"CalDAV base_url not provided, inferred '{client_url}' from first calendar URL. "
                 "It's recommended to configure 'base_url' explicitly in caldav_config."
