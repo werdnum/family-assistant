@@ -172,7 +172,7 @@ async def test_add_event_and_verify_in_system_prompt(
         "ical": {"urls": []},
     }
     dummy_prompts = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{other_context}"
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }
 
     local_provider = LocalToolsProvider(
@@ -385,7 +385,7 @@ async def test_modify_event(
         "ical": {"urls": []},
     }
     dummy_prompts = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{other_context}"
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
@@ -590,7 +590,7 @@ async def test_delete_event(
         "ical": {"urls": []},
     }
     dummy_prompts = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{other_context}"
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }  # type: ignore
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
@@ -817,7 +817,7 @@ async def test_search_events(
         "ical": {"urls": []},
     }
     dummy_prompts: dict[str, Any] = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{other_context}"
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
