@@ -3,7 +3,7 @@ import json
 import logging
 import uuid
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
