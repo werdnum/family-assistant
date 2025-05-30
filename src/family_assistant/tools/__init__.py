@@ -706,10 +706,8 @@ async def list_pending_callbacks_tool(
 
         formatted_callbacks = ["Pending LLM callbacks:"]
         for row_proxy in results:
-            # Convert row_proxy to a Mapping (like a dict) to satisfy type checkers for .get()
-            row: Mapping[str, Any] = (
-                row_proxy._mapping if hasattr(row_proxy, "_mapping") else row_proxy
-            )  # type: ignore
+            # row_proxy is already a Mapping[str, Any] as per fetch_all's contract
+            row: Mapping[str, Any] = row_proxy
 
             task_id = row.get("task_id")
             scheduled_at_utc = row.get("scheduled_at")
@@ -778,11 +776,8 @@ async def modify_pending_callback_tool(
         if not task_row_proxy:
             return f"Error: Callback task with ID '{task_id}' not found."
 
-        task: Mapping[str, Any] = (
-            task_row_proxy._mapping
-            if hasattr(task_row_proxy, "_mapping")
-            else task_row_proxy
-        )  # type: ignore
+        # task_row_proxy is already a Mapping[str, Any] as per fetch_one's contract
+        task: Mapping[str, Any] = task_row_proxy
 
         if task.get("task_type") != "llm_callback":
             return f"Error: Task '{task_id}' is not an LLM callback task."
@@ -873,11 +868,8 @@ async def cancel_pending_callback_tool(
         if not task_row_proxy:
             return f"Error: Callback task with ID '{task_id}' not found."
 
-        task: Mapping[str, Any] = (
-            task_row_proxy._mapping
-            if hasattr(task_row_proxy, "_mapping")
-            else task_row_proxy
-        )  # type: ignore
+        # task_row_proxy is already a Mapping[str, Any] as per fetch_one's contract
+        task: Mapping[str, Any] = task_row_proxy
 
         if task.get("task_type") != "llm_callback":
             return f"Error: Task '{task_id}' is not an LLM callback task."
