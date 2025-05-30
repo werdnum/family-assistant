@@ -3,7 +3,6 @@ import base64
 import contextlib
 import html
 import io
-import json
 import logging
 import os  # Added for environment variable access
 import traceback
@@ -926,30 +925,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             tb_string = "No exception context available."
 
         update_repr = self._serialize_update_for_error_log(update)
-        message = (
-            "An exception was raised while handling an update\n"
-            f"<pre>update = {html.escape(json.dumps(update_repr, indent=2, ensure_ascii=False))}</pre>\n\n"
-            f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
-            f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
-            f"<pre>{html.escape(tb_string)}</pre>"
-        )
-
-        if self.developer_chat_id:
-            try:
-                await self._send_message_chunks(
-                    context=context,
-                    chat_id=self.developer_chat_id,
-                    text=message,
-                    parse_mode=ParseMode.HTML,
-                    reply_to_message_id=None,  # No reply for dev notifications
-                    reply_markup=None,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to send error message to developer via _send_message_chunks: {e}"
-                )
-        else:
-            logger.warning("DEVELOPER_CHAT_ID not set, cannot send error notification.")
+        # The detailed message for the developer is no longer constructed or sent.
+        # Logging of the error (done above) and storing it in self.telegram_service._last_error remains.
+        logger.debug(
+            f"Error details for update {update_repr}: {tb_string}"
+        )  # Log details instead of sending
+        logger.warning("Error notification to developer has been removed.")
 
     def register_handlers(self) -> None:
         """Registers the necessary Telegram handlers with the application."""
