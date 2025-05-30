@@ -590,7 +590,7 @@ async def test_delete_event(
         "ical": {"urls": []},
     }
     dummy_prompts = {
-        "system_prompt": "System: {calendar_today_tomorrow}\nFuture: {calendar_next_two_weeks}"
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{other_context}"
     }  # type: ignore
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
@@ -817,7 +817,7 @@ async def test_search_events(
         "ical": {"urls": []},
     }
     dummy_prompts: dict[str, Any] = {
-        "system_prompt": "System: {calendar_today_tomorrow}\nFuture: {calendar_next_two_weeks}"
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{other_context}"
     }
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
