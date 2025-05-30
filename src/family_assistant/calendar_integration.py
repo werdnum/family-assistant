@@ -296,16 +296,16 @@ def _fetch_caldav_events_sync(
 
             logger.info(
                 f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"
-                )
+            )
 
-                caldav_results = target_calendar.search(
-                    start=start_date,
-                    end=end_date,
-                    event=True,
-                    expand=True,  # Fetches full data
-                )
-                logger.debug(
-                    f"Found {len(caldav_results)} potential events in calendar {target_calendar.url}"
+            caldav_results = target_calendar.search(
+                start=start_date,
+                end=end_date,
+                event=True,
+                expand=True,  # Fetches full data
+            )
+            logger.debug(
+                f"Found {len(caldav_results)} potential events in calendar {target_calendar.url}"
                 )
 
                 # Process fetched events
