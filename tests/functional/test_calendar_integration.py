@@ -291,7 +291,6 @@ async def test_modify_event(
     # modified_end_dt was unused, if needed:
     # modified_end_dt = modified_start_dt + timedelta(hours=1)
 
-
     # --- Create initial event directly in Radicale using vobject ---
     client = get_radicale_client(radicale_server)
     principal = await asyncio.to_thread(client.principal)
@@ -304,23 +303,23 @@ async def test_modify_event(
     )
 
     # Use vobject to create the VCALENDAR string
-    cal = vobject.iCalendar() # type: ignore[attr-defined]
-    vevent = cal.add("vevent") # type: ignore[attr-defined]
+    cal = vobject.iCalendar()  # type: ignore[attr-defined]
+    vevent = cal.add("vevent")  # type: ignore[attr-defined]
     event_uid_val = str(uuid.uuid4())
-    vevent.add("uid").value = event_uid_val # type: ignore[attr-defined]
-    vevent.add("summary").value = original_summary # type: ignore[attr-defined]
-    vevent.add("dtstart").value = original_start_dt # type: ignore[attr-defined] # vobject handles aware datetime
-    vevent.add("dtend").value = original_end_dt # type: ignore[attr-defined]   # vobject handles aware datetime
-    vevent.add("dtstamp").value = datetime.now(timezone.utc) # type: ignore[attr-defined]
-    event_vcal_str = cal.serialize() # type: ignore[attr-defined]
+    vevent.add("uid").value = event_uid_val  # type: ignore[attr-defined]
+    vevent.add("summary").value = original_summary  # type: ignore[attr-defined]
+    vevent.add("dtstart").value = original_start_dt  # type: ignore[attr-defined] # vobject handles aware datetime
+    vevent.add("dtend").value = original_end_dt  # type: ignore[attr-defined]   # vobject handles aware datetime
+    vevent.add("dtstamp").value = datetime.now(timezone.utc)  # type: ignore[attr-defined]
+    event_vcal_str = cal.serialize()  # type: ignore[attr-defined]
 
     # add_event returns the caldav.objects.Event object after saving
     created_event_object = await asyncio.to_thread(
         target_calendar.add_event, vcal=event_vcal_str
     )
     # Ensure UID is accessible from the created event object if needed, or use the one we generated
-    event_uid = created_event_object.vobject_instance.vevent.uid.value # type: ignore[attr-defined]
-    assert event_uid == event_uid_val # Verify UID consistency
+    event_uid = created_event_object.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
+    assert event_uid == event_uid_val  # Verify UID consistency
     logger.info(
         f"Directly created event '{original_summary}' with UID {event_uid} in Radicale using vobject."
     )
@@ -511,20 +510,20 @@ async def test_delete_event(
         f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' not found."
     )
 
-    cal_del = vobject.iCalendar() # type: ignore[attr-defined]
-    vevent_del = cal_del.add("vevent") # type: ignore[attr-defined]
+    cal_del = vobject.iCalendar()  # type: ignore[attr-defined]
+    vevent_del = cal_del.add("vevent")  # type: ignore[attr-defined]
     event_uid_del_val = str(uuid.uuid4())
-    vevent_del.add("uid").value = event_uid_del_val # type: ignore[attr-defined]
-    vevent_del.add("summary").value = event_to_delete_summary # type: ignore[attr-defined]
-    vevent_del.add("dtstart").value = event_start_dt # type: ignore[attr-defined]
-    vevent_del.add("dtend").value = event_end_dt # type: ignore[attr-defined]
-    vevent_del.add("dtstamp").value = datetime.now(timezone.utc) # type: ignore[attr-defined]
-    event_vcal_del_str = cal_del.serialize() # type: ignore[attr-defined]
+    vevent_del.add("uid").value = event_uid_del_val  # type: ignore[attr-defined]
+    vevent_del.add("summary").value = event_to_delete_summary  # type: ignore[attr-defined]
+    vevent_del.add("dtstart").value = event_start_dt  # type: ignore[attr-defined]
+    vevent_del.add("dtend").value = event_end_dt  # type: ignore[attr-defined]
+    vevent_del.add("dtstamp").value = datetime.now(timezone.utc)  # type: ignore[attr-defined]
+    event_vcal_del_str = cal_del.serialize()  # type: ignore[attr-defined]
 
     created_event_object_del = await asyncio.to_thread(
         target_calendar.add_event, vcal=event_vcal_del_str
     )
-    event_uid_del = created_event_object_del.vobject_instance.vevent.uid.value # type: ignore[attr-defined]
+    event_uid_del = created_event_object_del.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
     assert event_uid_del == event_uid_del_val
     logger.info(
         f"Directly created event '{event_to_delete_summary}' with UID {event_uid_del} for deletion test using vobject."
@@ -698,14 +697,14 @@ async def test_search_events(
         (event1_summary, event1_start, event1_end),
         (event2_summary, event2_start, event2_end),
     ]:
-        cal_search = vobject.iCalendar() # type: ignore[attr-defined]
-        vevent_search = cal_search.add("vevent") # type: ignore[attr-defined]
-        vevent_search.add("uid").value = str(uuid.uuid4()) # type: ignore[attr-defined]
-        vevent_search.add("summary").value = summ # type: ignore[attr-defined]
-        vevent_search.add("dtstart").value = st # type: ignore[attr-defined]
-        vevent_search.add("dtend").value = en # type: ignore[attr-defined]
-        vevent_search.add("dtstamp").value = datetime.now(timezone.utc) # type: ignore[attr-defined]
-        event_vcal_search_str = cal_search.serialize() # type: ignore[attr-defined]
+        cal_search = vobject.iCalendar()  # type: ignore[attr-defined]
+        vevent_search = cal_search.add("vevent")  # type: ignore[attr-defined]
+        vevent_search.add("uid").value = str(uuid.uuid4())  # type: ignore[attr-defined]
+        vevent_search.add("summary").value = summ  # type: ignore[attr-defined]
+        vevent_search.add("dtstart").value = st  # type: ignore[attr-defined]
+        vevent_search.add("dtend").value = en  # type: ignore[attr-defined]
+        vevent_search.add("dtstamp").value = datetime.now(timezone.utc)  # type: ignore[attr-defined]
+        event_vcal_search_str = cal_search.serialize()  # type: ignore[attr-defined]
         await asyncio.to_thread(target_calendar.add_event, vcal=event_vcal_search_str)
     logger.info(
         f"Directly created '{event1_summary}' and '{event2_summary}' for search test using vobject."
