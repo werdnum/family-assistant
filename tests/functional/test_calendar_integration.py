@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import caldav
 import pytest
+import vobject  # Added import for vobject
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.calendar_integration import (
