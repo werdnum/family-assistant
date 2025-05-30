@@ -662,7 +662,7 @@ async def add_calendar_event_tool(
             parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
             client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
             if parsed_first_cal_url.port is None:
-                 client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
             logger.warning(
                 f"CalDAV base_url not provided for add_calendar_event_tool, inferred '{client_url_to_use}'. "
                 "Explicit 'base_url' in config is recommended."
@@ -822,7 +822,7 @@ async def search_calendar_events_tool(
             parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
             client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
             if parsed_first_cal_url.port is None:
-                 client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
             logger.warning(
                 f"CalDAV base_url not provided for search_calendar_events_tool, inferred '{client_url_to_use}'. "
                 "Explicit 'base_url' in config is recommended."
@@ -1062,7 +1062,7 @@ async def modify_calendar_event_tool(
             parsed_cal_url = httpx.URL(calendar_url)
             client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
             if parsed_cal_url.port is None:
-                 client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}"
+                client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}"
             logger.warning(
                 f"CalDAV base_url not provided for modify_calendar_event_tool, inferred '{client_url_to_use}' from target calendar URL. "
                 "Explicit 'base_url' in config is recommended."
@@ -1270,7 +1270,7 @@ async def delete_calendar_event_tool(
             parsed_cal_url = httpx.URL(calendar_url)
             client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
             if parsed_cal_url.port is None:
-                 client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}"
+                client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}"
             logger.warning(
                 f"CalDAV base_url not provided for delete_calendar_event_tool, inferred '{client_url_to_use}' from target calendar URL. "
                 "Explicit 'base_url' in config is recommended."
