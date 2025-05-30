@@ -326,7 +326,7 @@ async def test_modify_event(
     vevent.add("summary").value = original_summary  # type: ignore[attr-defined]
     vevent.add("dtstart").value = original_start_dt  # type: ignore[attr-defined] # vobject handles aware datetime
     vevent.add("dtend").value = original_end_dt  # type: ignore[attr-defined]   # vobject handles aware datetime
-    vevent.add("dtstamp").value = datetime.now(timezone.utc)  # type: ignore[attr-defined]
+    vevent.add("dtstamp").value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
     event_vcal_str = cal.serialize()  # type: ignore[attr-defined]
 
     # add_event returns the caldav.objects.Event object after saving
@@ -538,7 +538,7 @@ async def test_delete_event(
     vevent_del.add("summary").value = event_to_delete_summary  # type: ignore[attr-defined]
     vevent_del.add("dtstart").value = event_start_dt  # type: ignore[attr-defined]
     vevent_del.add("dtend").value = event_end_dt  # type: ignore[attr-defined]
-    vevent_del.add("dtstamp").value = datetime.now(timezone.utc)  # type: ignore[attr-defined]
+    vevent_del.add("dtstamp").value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
     event_vcal_del_str = cal_del.serialize()  # type: ignore[attr-defined]
 
     created_event_object_del = await asyncio.to_thread(
@@ -733,7 +733,7 @@ async def test_search_events(
         vevent_search.add("summary").value = summ  # type: ignore[attr-defined]
         vevent_search.add("dtstart").value = st  # type: ignore[attr-defined]
         vevent_search.add("dtend").value = en  # type: ignore[attr-defined]
-        vevent_search.add("dtstamp").value = datetime.now(timezone.utc)  # type: ignore[attr-defined]
+        vevent_search.add("dtstamp").value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
         event_vcal_search_str = cal_search.serialize()  # type: ignore[attr-defined]
         await asyncio.to_thread(target_calendar.add_event, vcal=event_vcal_search_str)
     logger.info(
