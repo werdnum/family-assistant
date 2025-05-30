@@ -354,7 +354,7 @@ filesystem_folder = {collections_dir}
                 timeout=30,
             )
             # This call will create the user's collection if it doesn't exist
-            await asyncio.to_thread(client.principal)
+            client.principal()  # Direct synchronous call
             logger.info(
                 f"Radicale server session ready. User '{RADICALE_TEST_USER}' principal checked/created."
             )
