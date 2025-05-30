@@ -351,7 +351,7 @@ filesystem_folder = {collections_dir}
                 password=RADICALE_TEST_PASS,
                 timeout=30,
             )
-            principal = client.principal()
+            client.principal()  # Call to ensure user collection exists, result not needed
             # Ensure user collection exists (Radicale creates it on first auth usually)
             # We can try to create it or rely on Radicale's auto-creation.
             # For robustness, let's try to ensure the user's base collection exists.
