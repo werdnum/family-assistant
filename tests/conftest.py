@@ -468,9 +468,12 @@ async def radicale_server(
                     f"Radicale unique calendar '{unique_calendar_name}' could not be verified after creation."
                 )
 
-        if not calendar_verified: # Should be caught by pytest.fail above, but as a safeguard
-            pytest.fail(f"Failed to create and verify unique calendar '{unique_calendar_name}'.")
-
+        if (
+            not calendar_verified
+        ):  # Should be caught by pytest.fail above, but as a safeguard
+            pytest.fail(
+                f"Failed to create and verify unique calendar '{unique_calendar_name}'."
+            )
 
         yield base_url, username, password, unique_calendar_url
 
