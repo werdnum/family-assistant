@@ -259,16 +259,17 @@ async def task_worker_manager() -> AsyncGenerator[
 
 RADICALE_TEST_USER = "testuser"
 RADICALE_TEST_PASS = "testpass"
-RADICALE_TEST_CALENDAR_NAME = "testcalendar"
+# RADICALE_TEST_CALENDAR_NAME is no longer needed here as calendars are per-function
 
 
 @pytest.fixture(scope="session")
-def radicale_server_session() -> Generator[tuple[str, str, str, str], None, None]:
+def radicale_server_session() -> Generator[tuple[str, str, str], None, None]:
     """
     Manages a Radicale CalDAV server instance for the entire test session.
+    Sets up the server process and user, but does not create a specific calendar.
 
     Yields:
-        tuple: (base_url, username, password, calendar_url)
+        tuple: (base_url, username, password)
     """
     temp_dir = tempfile.mkdtemp(prefix="radicale_test_")
     collections_dir = pathlib.Path(temp_dir) / "collections"
@@ -278,8 +279,8 @@ def radicale_server_session() -> Generator[tuple[str, str, str, str], None, None
 
     port = find_free_port()
     base_url = f"http://127.0.0.1:{port}"
-    user_url_part = f"{base_url}/{RADICALE_TEST_USER}"
-    calendar_url = f"{user_url_part}/{RADICALE_TEST_CALENDAR_NAME}/"
+    # user_url_part = f"{base_url}/{RADICALE_TEST_USER}" # Not strictly needed by session fixture now
+    # calendar_url = f"{user_url_part}/{RADICALE_TEST_CALENDAR_NAME}/" # Calendar created per-function
 
     # Create htpasswd file
     hashed_password = bcrypt.hash(RADICALE_TEST_PASS)
@@ -343,58 +344,29 @@ filesystem_folder = {collections_dir}
         # Give Radicale a moment more to settle after port is open
         time.sleep(2)  # Added delay
 
-        # Create a default calendar for the test user
+        # Session fixture no longer creates a default calendar.
+        # It only ensures the server is running and the user exists.
         try:
+            # Verify user principal exists by making a client connection
             client = caldav.DAVClient(
                 url=base_url,
                 username=RADICALE_TEST_USER,
                 password=RADICALE_TEST_PASS,
                 timeout=30,
             )
-            client.principal()  # Call to ensure user collection exists, result not needed
-            # Ensure user collection exists (Radicale creates it on first auth usually)
-            # We can try to create it or rely on Radicale's auto-creation.
-            # For robustness, let's try to ensure the user's base collection exists.
-            # Create a default calendar for the test user, ensuring a predictable URL component
-            # by using the 'id' parameter. Radicale typically uses the 'id' for the URL path.
-            calendar_resource_id = (
-                RADICALE_TEST_CALENDAR_NAME.lower()
-            )  # Ensure lowercase for ID
-            # Update calendar_url to reflect the resource_id that will be used.
-            calendar_url = f"{user_url_part}/{calendar_resource_id}/"
-
-            try:
-                # Attempt to create the calendar. If it already exists, this might raise an error.
-                # Use Calendar object and save() to create at a specific URL path.
-                new_calendar = caldav.Calendar(
-                    client=client, url=calendar_url, name=RADICALE_TEST_CALENDAR_NAME
-                )
-                new_calendar.save()  # This performs the MKCALENDAR request
-                logger.info(
-                    f"Ensured test calendar '{RADICALE_TEST_CALENDAR_NAME}' (resource_id: '{calendar_resource_id}') for user '{RADICALE_TEST_USER}' at {calendar_url}"
-                )
-            except (
-                caldav_error.MkcalendarError
-            ):  # Or other relevant caldav errors for "already exists"
-                logger.info(
-                    f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' (resource_id: '{calendar_resource_id}') likely already exists for user '{RADICALE_TEST_USER}' at {calendar_url}."
-                )
-            except Exception as e_cal_create:
-                logger.error(
-                    f"Failed to create initial test calendar '{RADICALE_TEST_CALENDAR_NAME}' (id: '{calendar_resource_id}') in Radicale: {e_cal_create}",
-                    exc_info=True,
-                )
-                pytest.fail(f"Radicale calendar setup failed: {e_cal_create}")
-
-        except Exception as e:
+            # This call will create the user's collection if it doesn't exist
+            await asyncio.to_thread(client.principal)
+            logger.info(
+                f"Radicale server session ready. User '{RADICALE_TEST_USER}' principal checked/created."
+            )
+        except Exception as e_prin:
             logger.error(
-                f"Failed to create initial test calendar in Radicale: {e}",
+                f"Failed to verify/create user principal for '{RADICALE_TEST_USER}' in Radicale: {e_prin}",
                 exc_info=True,
             )
-            # Depending on strictness, you might want to fail the fixture setup here.
-            # For now, we'll proceed, assuming tests might handle calendar creation.
+            pytest.fail(f"Radicale user principal setup failed: {e_prin}")
 
-        yield base_url, RADICALE_TEST_USER, RADICALE_TEST_PASS, calendar_url
+        yield base_url, RADICALE_TEST_USER, RADICALE_TEST_PASS
 
     finally:
         if process:
@@ -417,52 +389,80 @@ filesystem_folder = {collections_dir}
 
 @pytest_asyncio.fixture(scope="function")
 async def radicale_server(
-    radicale_server_session: tuple[str, str, str, str],
-    pg_vector_db_engine: AsyncEngine,  # Use pg_vector_db_engine to ensure DB is clean for each test
-) -> AsyncGenerator[tuple[str, str, str, str], None]:  # Corrected type hint
+    radicale_server_session: tuple[str, str, str],  # Now yields 3 items
+    pg_vector_db_engine: AsyncEngine,
+    request: pytest.FixtureRequest,  # To get test name for unique calendar
+) -> AsyncGenerator[tuple[str, str, str, str], None]:
     """
     Provides Radicale server details for a single test function.
-    Ensures the Radicale collections are clean for each test by clearing them,
-    then re-creating the default test calendar.
-    Relies on pg_vector_db_engine to ensure the application's DB is also clean.
+    Creates a new, unique calendar for each test.
+    Yields: (base_url, username, password, unique_calendar_url)
     """
-    base_url, username, password, calendar_url_template = radicale_server_session
+    base_url, username, password = radicale_server_session
+    # Generate a unique calendar name for this test function
+    # Sanitize test name to be a valid URL component
+    test_name_sanitized = "".join(
+        c if c.isalnum() else "_" for c in request.node.name
+    )
+    unique_calendar_name = f"testcal_{test_name_sanitized}_{uuid.uuid4().hex[:8]}"
+    unique_calendar_resource_id = unique_calendar_name.lower()
+    user_url_part = f"{base_url}/{username}"
+    unique_calendar_url = f"{user_url_part}/{unique_calendar_resource_id}/"
 
-    # Clean Radicale collections before each test
-    # This is a bit simplistic; a more robust way might involve deleting all items
     client = caldav.DAVClient(
         url=base_url, username=username, password=password, timeout=30
     )
+
     try:
-        # Get the specific calendar object using the known URL from the session fixture
-        # This URL should be stable (e.g., .../testuser/testcalendar/)
-        # Use client.calendar(url=...) which is the correct method on DAVClient
-        calendar_obj = await asyncio.to_thread(
-            client.calendar, url=calendar_url_template
+        logger.info(
+            f"Creating unique Radicale calendar '{unique_calendar_name}' at {unique_calendar_url} for test {request.node.name}"
         )
-        if not calendar_obj:
-            pytest.fail(
-                f"Radicale test calendar not found at URL: {calendar_url_template} during function setup."
-            )
+        # Create the unique calendar
+        new_calendar = caldav.Calendar(
+            client=client, url=unique_calendar_url, name=unique_calendar_name
+        )
+        await asyncio.to_thread(new_calendar.save)  # MKCALENDAR request
+        logger.info(
+            f"Successfully created unique calendar '{unique_calendar_name}'."
+        )
 
-        # Clear all events from the calendar
-        logger.info(f"Clearing all events from calendar: {calendar_obj.url}")
-        # Fetch all events. Note: events() might be a blocking call.
-        existing_events = await asyncio.to_thread(calendar_obj.events)
-        if existing_events:
-            logger.info(f"Found {len(existing_events)} events to delete for cleanup.")
-            for event_in_cal in existing_events:
-                logger.debug(f"Deleting event: {getattr(event_in_cal, 'url', 'N/A')}")
-                await asyncio.to_thread(event_in_cal.delete)
-            logger.info(f"All events cleared from {calendar_obj.url}.")
-        else:
-            logger.info(f"No events found in {calendar_obj.url} to clear.")
+        yield base_url, username, password, unique_calendar_url
 
-    except Exception as e:
+    except Exception as e_create:
         logger.error(
-            f"Error during Radicale calendar cleanup for test function: {e}",
+            f"Failed to create unique Radicale calendar '{unique_calendar_name}': {e_create}",
             exc_info=True,
         )
-        pytest.fail(f"Failed to clean/recreate Radicale calendar: {e}")
-
-    yield base_url, username, password, calendar_url_template
+        pytest.fail(
+            f"Radicale unique calendar creation failed for test {request.node.name}: {e_create}"
+        )
+    finally:
+        # Attempt to delete the uniquely created calendar
+        try:
+            logger.info(
+                f"Cleaning up: Deleting unique Radicale calendar '{unique_calendar_name}' at {unique_calendar_url}"
+            )
+            # Need to get the calendar object again to delete it
+            # It's safer to fetch it by URL before attempting deletion
+            calendar_to_delete = await asyncio.to_thread(
+                client.calendar, url=unique_calendar_url
+            )
+            if calendar_to_delete:
+                await asyncio.to_thread(calendar_to_delete.delete)
+                logger.info(
+                    f"Successfully deleted unique calendar '{unique_calendar_name}'."
+                )
+            else:
+                logger.warning(
+                    f"Could not find unique calendar '{unique_calendar_name}' at {unique_calendar_url} for deletion. It might have been already deleted or never created."
+                )
+        except caldav_error.NotFoundError:
+            logger.info(
+                f"Unique calendar '{unique_calendar_name}' at {unique_calendar_url} was not found during cleanup (already deleted)."
+            )
+        except Exception as e_delete:
+            logger.error(
+                f"Error deleting unique Radicale calendar '{unique_calendar_name}': {e_delete}",
+                exc_info=True,
+            )
+            # Don't fail the test run for cleanup errors, but log them.

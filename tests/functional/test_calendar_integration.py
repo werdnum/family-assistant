@@ -35,7 +35,7 @@ from family_assistant.tools import (
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
 
-from tests.conftest import RADICALE_TEST_CALENDAR_NAME
+# RADICALE_TEST_CALENDAR_NAME is no longer needed as direct URL is provided by fixture
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -61,20 +61,23 @@ def get_radicale_client(
 
 
 async def get_event_by_summary_from_radicale(
-    radicale_server_details: tuple[str, str, str, str],
-    calendar_name: str,
+    radicale_server_details: tuple[str, str, str, str],  # Includes calendar_url now
     event_summary: str,
 ) -> caldav.objects.Event | None:
-    """Fetches an event by its summary from the specified calendar on Radicale."""
-    client = get_radicale_client(radicale_server_details)
-    principal = await asyncio.to_thread(client.principal)
-    calendars = await asyncio.to_thread(principal.calendars)
-    target_calendar = next(
-        (cal for cal in calendars if cal.name == calendar_name), None
-    )
-    if not target_calendar:
-        logger.warning(f"Calendar '{calendar_name}' not found on Radicale for user.")
+    """Fetches an event by its summary from the specified calendar_url on Radicale."""
+    base_url, user, passwd, calendar_url = radicale_server_details
+    client = caldav.DAVClient(url=base_url, username=user, password=passwd, timeout=30) # Use base_url for client
+
+    try:
+        # Get the calendar object directly using its full URL
+        target_calendar = await asyncio.to_thread(client.calendar, url=calendar_url)
+        if not target_calendar:
+            logger.warning(f"Calendar not found at URL '{calendar_url}' on Radicale.")
+            return None
+    except Exception as e_get_cal:
+        logger.error(f"Error getting calendar at URL '{calendar_url}': {e_get_cal}", exc_info=True)
         return None
+
 
     events = await asyncio.to_thread(target_calendar.events)
     for event_obj in events:  # event_obj is caldav.objects.Event
@@ -225,10 +228,11 @@ async def test_add_event_and_verify_in_system_prompt(
     assert final_reply and f"OK, I'll schedule '{event_summary}'." in final_reply
 
     # --- Verify Event in Radicale ---
+    # radicale_server now contains the direct calendar URL as the 4th element
     radicale_event = await get_event_by_summary_from_radicale(
-        radicale_server, RADICALE_TEST_CALENDAR_NAME, event_summary
+        radicale_server, event_summary
     )
-    assert radicale_event is not None, f"Event '{event_summary}' not found in Radicale."
+    assert radicale_event is not None, f"Event '{event_summary}' not found in Radicale calendar {radicale_server[3]}."
 
     # More detailed verification of event properties in Radicale if needed (e.g., start/end times)
     # This requires parsing radicale_event.data (VCALENDAR string)
@@ -292,15 +296,17 @@ async def test_modify_event(
     # modified_end_dt was unused, if needed:
 
     # --- Create initial event directly in Radicale using vobject ---
-    client = get_radicale_client(radicale_server)
-    principal = await asyncio.to_thread(client.principal)
-    calendars = await asyncio.to_thread(principal.calendars)
-    target_calendar = next(
-        (cal for cal in calendars if cal.name == RADICALE_TEST_CALENDAR_NAME), None
-    )
-    assert target_calendar is not None, (
-        f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' not found."
-    )
+    # radicale_server now contains the direct calendar URL as the 4th element
+    base_url, r_user_modify, r_pass_modify, unique_calendar_url_modify = radicale_server
+    client = caldav.DAVClient(url=base_url, username=r_user_modify, password=r_pass_modify, timeout=30)
+
+    try:
+        target_calendar = await asyncio.to_thread(client.calendar, url=unique_calendar_url_modify)
+        assert target_calendar is not None, (
+            f"Test calendar not found at URL '{unique_calendar_url_modify}'."
+        )
+    except Exception as e_get_cal_mod:
+        pytest.fail(f"Failed to get calendar for modification test: {e_get_cal_mod}")
 
     # Use vobject to create the VCALENDAR string
     cal = vobject.iCalendar()  # type: ignore[attr-defined]
@@ -434,18 +440,18 @@ async def test_modify_event(
 
     # --- Verify Event in Radicale ---
     modified_radicale_event = await get_event_by_summary_from_radicale(
-        radicale_server, RADICALE_TEST_CALENDAR_NAME, modified_summary
+        radicale_server, modified_summary
     )
     assert modified_radicale_event is not None, (
-        f"Event '{modified_summary}' not found in Radicale after modification."
+        f"Event '{modified_summary}' not found in Radicale calendar {radicale_server[3]} after modification."
     )
 
     # Verify original summary event is gone
     original_radicale_event_after_modify = await get_event_by_summary_from_radicale(
-        radicale_server, RADICALE_TEST_CALENDAR_NAME, original_summary
+        radicale_server, original_summary
     )
     assert original_radicale_event_after_modify is None, (
-        f"Event with original summary '{original_summary}' still found in Radicale after modification."
+        f"Event with original summary '{original_summary}' still found in Radicale calendar {radicale_server[3]} after modification."
     )
 
     # --- Verify Modified Event in System Prompt ---
@@ -500,15 +506,16 @@ async def test_delete_event(
     event_end_dt = event_start_dt + timedelta(hours=1)
 
     # --- Create initial event directly in Radicale using vobject ---
-    client = get_radicale_client(radicale_server)
-    principal = await asyncio.to_thread(client.principal)
-    calendars = await asyncio.to_thread(principal.calendars)
-    target_calendar = next(
-        (cal for cal in calendars if cal.name == RADICALE_TEST_CALENDAR_NAME), None
-    )
-    assert target_calendar is not None, (
-        f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' not found."
-    )
+    base_url_del, r_user_del, r_pass_del, unique_calendar_url_del = radicale_server
+    client = caldav.DAVClient(url=base_url_del, username=r_user_del, password=r_pass_del, timeout=30)
+
+    try:
+        target_calendar = await asyncio.to_thread(client.calendar, url=unique_calendar_url_del)
+        assert target_calendar is not None, (
+            f"Test calendar not found at URL '{unique_calendar_url_del}'."
+        )
+    except Exception as e_get_cal_del:
+        pytest.fail(f"Failed to get calendar for deletion test: {e_get_cal_del}")
 
     cal_del = vobject.iCalendar()  # type: ignore[attr-defined]
     vevent_del = cal_del.add("vevent")  # type: ignore[attr-defined]
@@ -633,10 +640,10 @@ async def test_delete_event(
 
     # --- Verify Event in Radicale ---
     deleted_radicale_event = await get_event_by_summary_from_radicale(
-        radicale_server, RADICALE_TEST_CALENDAR_NAME, event_to_delete_summary
+        radicale_server, event_to_delete_summary
     )
     assert deleted_radicale_event is None, (
-        f"Event '{event_to_delete_summary}' still found in Radicale after deletion."
+        f"Event '{event_to_delete_summary}' still found in Radicale calendar {radicale_server[3]} after deletion."
     )
 
     # --- Verify Event NOT in System Prompt ---
@@ -685,13 +692,16 @@ async def test_search_events(
     event2_end = event2_start + timedelta(hours=2)
 
     # --- Create events directly in Radicale ---
-    client = get_radicale_client(radicale_server)
-    principal = await asyncio.to_thread(client.principal)
-    calendars = await asyncio.to_thread(principal.calendars)
-    target_calendar = next(
-        (cal for cal in calendars if cal.name == RADICALE_TEST_CALENDAR_NAME), None
-    )
-    assert target_calendar is not None
+    base_url_search, r_user_search, r_pass_search, unique_calendar_url_search = radicale_server
+    client = caldav.DAVClient(url=base_url_search, username=r_user_search, password=r_pass_search, timeout=30)
+
+    try:
+        target_calendar = await asyncio.to_thread(client.calendar, url=unique_calendar_url_search)
+        assert target_calendar is not None, (
+            f"Test calendar not found at URL '{unique_calendar_url_search}'."
+        )
+    except Exception as e_get_cal_search:
+        pytest.fail(f"Failed to get calendar for search test: {e_get_cal_search}")
 
     for summ, st, en in [
         (event1_summary, event1_start, event1_end),
