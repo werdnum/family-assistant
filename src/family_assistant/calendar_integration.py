@@ -269,7 +269,7 @@ def _fetch_caldav_events_sync(
         try:
             parsed_first_cal_url = httpx.URL(calendar_urls[0])
             client_url = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
-            if parsed_first_cal_url.port is None: # Handle default ports
+            if parsed_first_cal_url.port is None:  # Handle default ports
                  client_url = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
             logger.warning(
                 f"CalDAV base_url not provided, inferred '{client_url}' from first calendar URL. "
@@ -278,10 +278,9 @@ def _fetch_caldav_events_sync(
         except Exception as e:
             logger.error(f"Could not infer CalDAV base_url from '{calendar_urls[0]}': {e}. Cannot proceed with CalDAV fetch.")
             return []
-    elif not client_url and not calendar_urls: # Should be caught by earlier check but defensive
+    elif not client_url and not calendar_urls:  # Should be caught by earlier check but defensive
         logger.error("No CalDAV base_url provided and no calendar_urls to infer from.")
         return []
-
 
     # Define date range based on the provided timezone
     try:
@@ -299,7 +298,7 @@ def _fetch_caldav_events_sync(
     # Initialize one client with the determined client_url (server base or inferred)
     try:
         client = caldav.DAVClient(
-            url=client_url, # Use the determined base URL for the client
+            url=client_url,  # Use the determined base URL for the client
             username=username,
             password=password,
             timeout=30,
@@ -313,10 +312,10 @@ def _fetch_caldav_events_sync(
         logger.info(f"Attempting to fetch from calendar collection: {calendar_url_item}")
         try:
             # Get the Calendar object using the client and the specific calendar_url_item
-            target_calendar = client.calendar(url=calendar_url_item) # type: ignore[no-untyped-call]
+            target_calendar = client.calendar(url=calendar_url_item)  # type: ignore[no-untyped-call]
 
             logger.info(
-                f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}" # type: ignore[attr-defined]
+                f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"  # type: ignore[attr-defined]
             )
 
             caldav_results = target_calendar.search(
@@ -395,10 +394,10 @@ async def fetch_upcoming_events(
     if caldav_config:
         username = caldav_config.get("username")
         password = caldav_config.get("password")
-        calendar_urls = caldav_config.get("calendar_urls", []) # These are full URLs to collections
-        base_url = caldav_config.get("base_url") # This is the server base URL
+        calendar_urls = caldav_config.get("calendar_urls", [])  # These are full URLs to collections
+        base_url = caldav_config.get("base_url")  # This is the server base URL
 
-        if username and password and calendar_urls: # base_url is optional but recommended
+        if username and password and calendar_urls:  # base_url is optional but recommended
             loop = asyncio.get_running_loop()
             logger.debug("Scheduling synchronous CalDAV fetch in executor.")
             caldav_task = loop.run_in_executor(
@@ -406,9 +405,9 @@ async def fetch_upcoming_events(
                 _fetch_caldav_events_sync,
                 username,
                 password,
-                calendar_urls, # Pass list of full collection URLs
+                calendar_urls,  # Pass list of full collection URLs
                 timezone_str,
-                base_url, # Pass the server base_url
+                base_url,  # Pass the server base_url
             )
             tasks.append(caldav_task)
         else:
@@ -672,7 +671,7 @@ async def add_calendar_event_tool(
             logger.error(f"Could not infer CalDAV base_url for add_calendar_event_tool: {e}")
             return "Error: CalDAV base_url missing and could not be inferred. Cannot add event."
     
-    if not client_url_to_use: # Should be caught above, but defensive
+    if not client_url_to_use:  # Should be caught above, but defensive
         return "Error: CalDAV client URL could not be determined."
 
     target_calendar_url: str = calendar_urls_list[0]  # Use the first configured full calendar URL
@@ -741,14 +740,14 @@ async def add_calendar_event_tool(
         def save_event_sync() -> str:
             logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
             with caldav.DAVClient(
-                url=client_url_to_use, # Use base_url for client
+                url=client_url_to_use,  # Use base_url for client
                 username=username,
                 password=password,
                 timeout=30,
             ) as client:
                 # Get the specific calendar object using its full URL
                 target_calendar_obj: caldav.objects.Calendar = client.calendar(
-                    url=target_calendar_url # Use full collection URL here
+                    url=target_calendar_url  # Use full collection URL here
                 )
                 if not target_calendar_obj:
                     raise ConnectionError(
@@ -871,14 +870,14 @@ async def search_calendar_events_tool(
         
         try:
             dav_client = caldav.DAVClient(
-                url=client_url_to_use, # Use base_url for client
+                url=client_url_to_use,  # Use base_url for client
                 username=username,
                 password=password,
                 timeout=30,
             )
         except Exception as e_client_search:
             logger.error(f"Failed to initialize CalDAV client for server URL '{client_url_to_use}' in search: {e_client_search}")
-            return [] # Return empty list, error message will be generated by caller
+            return []  # Return empty list, error message will be generated by caller
 
         for cal_url_item in calendar_urls_list:
             logger.debug(
@@ -886,7 +885,7 @@ async def search_calendar_events_tool(
             )
             try:
                 target_calendar_obj: caldav.objects.Calendar = dav_client.calendar(
-                    url=cal_url_item # Get specific calendar using its full URL
+                    url=cal_url_item  # Get specific calendar using its full URL
                 )
                 if not target_calendar_obj:
                     logger.warning(
@@ -1092,14 +1091,14 @@ async def modify_calendar_event_tool(
     def modify_sync() -> str | None:
         try:
             with caldav.DAVClient(
-                url=client_url_to_use, # Use base_url for client
+                url=client_url_to_use,  # Use base_url for client
                 username=username,
                 password=password,
                 timeout=30,
             ) as client:
                 # Get specific calendar object using its full URL
                 target_calendar_obj: caldav.objects.Calendar = client.calendar(
-                    url=calendar_url # Full URL of the calendar collection to modify
+                    url=calendar_url  # Full URL of the calendar collection to modify
                 )
                 if not target_calendar_obj:
                     raise ValueError(
@@ -1259,7 +1258,7 @@ async def delete_calendar_event_tool(
         return "Error: CalDAV is not configured. Cannot delete event."
     username: str | None = caldav_config.get("username")
     password: str | None = caldav_config.get("password")
-    base_url: str | None = caldav_config.get("base_url") # Expect base_url in config
+    base_url: str | None = caldav_config.get("base_url")  # Expect base_url in config
 
     if not username or not password:
         return "Error: CalDAV user/pass missing. Cannot delete event."
@@ -1287,14 +1286,14 @@ async def delete_calendar_event_tool(
     def delete_sync() -> str | None:
         try:
             with caldav.DAVClient(
-                url=client_url_to_use, # Use base_url for client
+                url=client_url_to_use,  # Use base_url for client
                 username=username,
                 password=password,
                 timeout=30,
             ) as client:
                 # Get specific calendar object using its full URL
                 target_calendar_obj: caldav.objects.Calendar = client.calendar(
-                    url=calendar_url # Full URL of the calendar collection
+                    url=calendar_url  # Full URL of the calendar collection
                 )
                 if not target_calendar_obj:
                     raise ValueError(
