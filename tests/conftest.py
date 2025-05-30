@@ -425,14 +425,58 @@ async def radicale_server(
             client=client, url=unique_calendar_url, name=unique_calendar_name
         )
         await asyncio.to_thread(new_calendar.save)  # MKCALENDAR request
-        logger.info(f"Successfully created unique calendar '{unique_calendar_name}'.")
-        await asyncio.sleep(0.2)  # Add a small delay for Radicale to process MKCALENDAR
+        logger.info(
+            f"MKCALENDAR request sent for unique calendar '{unique_calendar_name}'."
+        )
+
+        # Verify calendar creation by trying to fetch it
+        calendar_verified = False
+        max_retries = 5
+        retry_delay = 0.5  # seconds
+        for attempt in range(max_retries):
+            try:
+                # Attempt to fetch the calendar to confirm its existence
+                fetched_calendar = await asyncio.to_thread(
+                    client.calendar, url=unique_calendar_url
+                )
+                if fetched_calendar and fetched_calendar.url == unique_calendar_url:
+                    logger.info(
+                        f"Successfully verified creation of unique calendar '{unique_calendar_name}' (attempt {attempt + 1})."
+                    )
+                    calendar_verified = True
+                    break
+                else:
+                    logger.warning(
+                        f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}': fetched object mismatch or None."
+                    )
+            except caldav_error.NotFoundError:
+                logger.warning(
+                    f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}': Not found yet."
+                )
+            except Exception as e_verify:
+                logger.warning(
+                    f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}' failed with error: {e_verify}"
+                )
+
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error(
+                    f"Failed to verify creation of unique calendar '{unique_calendar_name}' after {max_retries} attempts."
+                )
+                pytest.fail(
+                    f"Radicale unique calendar '{unique_calendar_name}' could not be verified after creation."
+                )
+
+        if not calendar_verified: # Should be caught by pytest.fail above, but as a safeguard
+            pytest.fail(f"Failed to create and verify unique calendar '{unique_calendar_name}'.")
+
 
         yield base_url, username, password, unique_calendar_url
 
     except Exception as e_create:
         logger.error(
-            f"Failed to create unique Radicale calendar '{unique_calendar_name}': {e_create}",
+            f"Failed during setup of unique Radicale calendar '{unique_calendar_name}': {e_create}",
             exc_info=True,
         )
         pytest.fail(
