@@ -932,18 +932,40 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )  # Log details instead of sending
         logger.warning("Error notification to developer has been removed.")
 
+    async def handle_unknown_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handles unrecognized commands."""
+        if not update.effective_user:
+            logger.warning("Unknown command: Update has no effective_user.")
+            return
+        user_id = update.effective_user.id
+
+        if not update.message:  # Ensure message object exists to reply to
+            logger.warning("Unknown command: Update has no message.")
+            return
+
+        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
+            logger.warning(
+                f"Unauthorized unknown command from chat_id {user_id}: {update.message.text}"
+            )
+            # Silently ignore for unauthorized users to avoid confirming bot presence for unknown commands
+            return
+
+        logger.info(
+            f"Received unknown command from user {user_id}: {update.message.text}"
+        )
+        await update.message.reply_text(
+            "Sorry, I didn't recognize that command. Type /start to see what I can do."
+        )
+
     def register_handlers(self) -> None:
         """Registers the necessary Telegram handlers with the application."""
         # Access application via the telegram_service instance
         application = self.telegram_service.application  # Get application instance
 
+        # Specific known commands first
         application.add_handler(CommandHandler("start", self.start))
-
-        application.add_handler(
-            MessageHandler(
-                (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self.message_handler
-            )
-        )
 
         # Register CommandHandlers for profile-specific slash commands
         if self.telegram_service.slash_command_to_profile_id_map:
@@ -956,9 +978,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 logger.info(f"Registered CommandHandler for /{command_name}")
 
+        # Catch-all for any other commands not handled by specific CommandHandlers
+        application.add_handler(
+            MessageHandler(filters.COMMAND, self.handle_unknown_command)
+        )
+        logger.info("Registered MessageHandler for unknown commands.")
+
+        # Handler for regular messages (text/photo, explicitly not commands)
+        application.add_handler(
+            MessageHandler(
+                (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self.message_handler
+            )
+        )
+
         application.add_error_handler(self.error_handler)
         logger.info(
-            "Telegram handlers registered (start, generic commands, message, error)."
+            "Telegram handlers registered (start, generic commands, unknown commands, message, error)."
         )
 
     async def handle_generic_slash_command(
