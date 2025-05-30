@@ -241,7 +241,7 @@ async def test_add_event_and_verify_in_system_prompt(
         await processing_service._aggregate_context_from_providers()
     )
     system_prompt_str = dummy_prompts["system_prompt"].format(
-        **system_prompt_context_parts
+        **dict(system_prompt_context_parts)
     )
 
     logger.info(f"Generated system prompt for verification:\n{system_prompt_str}")
@@ -449,7 +449,7 @@ END:VCALENDAR"""
         await processing_service._aggregate_context_from_providers()
     )
     system_prompt_str_mod = dummy_prompts["system_prompt"].format(
-        **system_prompt_context_parts_mod
+        **dict(system_prompt_context_parts_mod)
     )
     logger.info(f"Generated system prompt after modification:\n{system_prompt_str_mod}")
 
@@ -641,7 +641,7 @@ END:VCALENDAR"""
         await processing_service._aggregate_context_from_providers()
     )
     system_prompt_str_del = dummy_prompts["system_prompt"].format(  # type: ignore
-        **system_prompt_context_parts_del
+        **dict(system_prompt_context_parts_del)
     )
     logger.info(f"Generated system prompt after deletion:\n{system_prompt_str_del}")
 
