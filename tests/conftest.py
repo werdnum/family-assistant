@@ -8,6 +8,7 @@ import subprocess
 import sys  # Import sys module
 import tempfile
 import time
+import uuid
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import MagicMock, patch
 
@@ -279,8 +280,6 @@ def radicale_server_session() -> Generator[tuple[str, str, str], None, None]:
 
     port = find_free_port()
     base_url = f"http://127.0.0.1:{port}"
-    # user_url_part = f"{base_url}/{RADICALE_TEST_USER}" # Not strictly needed by session fixture now
-    # calendar_url = f"{user_url_part}/{RADICALE_TEST_CALENDAR_NAME}/" # Calendar created per-function
 
     # Create htpasswd file
     hashed_password = bcrypt.hash(RADICALE_TEST_PASS)
