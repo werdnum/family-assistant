@@ -182,7 +182,6 @@ async def test_add_event_and_verify_in_system_prompt(
         return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
-        # get_db_context_func=get_test_db_context_factory, # Parameter removed as per linter error
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone_str=TEST_TIMEZONE_STR,
@@ -385,7 +384,6 @@ END:VCALENDAR"""
         return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
-        # get_db_context_func=get_test_db_context_factory, # Parameter removed as per linter error
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone_str=TEST_TIMEZONE_STR,
@@ -591,7 +589,6 @@ END:VCALENDAR"""
         return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
-        # get_db_context_func=get_test_db_context_factory, # Parameter removed as per linter error
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone_str=TEST_TIMEZONE_STR,
@@ -818,7 +815,6 @@ END:VCALENDAR"""
         return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
-        # get_db_context_func=get_test_db_context_factory, # Parameter removed as per linter error
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone_str=TEST_TIMEZONE_STR,
