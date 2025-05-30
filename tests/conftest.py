@@ -342,6 +342,9 @@ filesystem_folder = {collections_dir}
                 f"Radicale server did not start on port {port} within {max_wait_time} seconds."
             )
 
+        # Give Radicale a moment more to settle after port is open
+        time.sleep(2)  # Added delay
+
         # Create a default calendar for the test user
         try:
             client = caldav.DAVClient(
