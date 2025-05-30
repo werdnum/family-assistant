@@ -893,7 +893,9 @@ class ProcessingService:
                     return ""  # Return empty string for missing keys
 
             # Use format_map with the custom dictionary to safely format the template
-            final_system_prompt = system_prompt_template.format_map(SafePromptFormatter(format_args)).strip()
+            final_system_prompt = system_prompt_template.format_map(
+                SafePromptFormatter(format_args)
+            ).strip()
 
             if final_system_prompt:
                 messages_for_llm.insert(
