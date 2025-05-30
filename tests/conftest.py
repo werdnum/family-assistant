@@ -420,6 +420,7 @@ async def radicale_server(
         )
         await asyncio.to_thread(new_calendar.save)  # MKCALENDAR request
         logger.info(f"Successfully created unique calendar '{unique_calendar_name}'.")
+        await asyncio.sleep(0.2)  # Add a small delay for Radicale to process MKCALENDAR
 
         yield base_url, username, password, unique_calendar_url
 
