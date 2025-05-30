@@ -373,7 +373,9 @@ filesystem_folder = {collections_dir}
                 logger.info(
                     f"Ensured test calendar '{RADICALE_TEST_CALENDAR_NAME}' (resource_id: '{calendar_resource_id}') for user '{RADICALE_TEST_USER}' at {calendar_url}"
                 )
-            except caldav_error.MkcalendarError:  # Or other relevant caldav errors for "already exists"
+            except (
+                caldav_error.MkcalendarError
+            ):  # Or other relevant caldav errors for "already exists"
                 logger.info(
                     f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' (resource_id: '{calendar_resource_id}') likely already exists for user '{RADICALE_TEST_USER}' at {calendar_url}."
                 )
