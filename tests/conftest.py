@@ -433,35 +433,31 @@ async def radicale_server(
     # A more aggressive cleanup:
     client = caldav.DAVClient(url=base_url, username=username, password=password)
     try:
-        principal = client.principal()
-        calendars = principal.calendars()
-        for cal in calendars:
-            if cal.name == RADICALE_TEST_CALENDAR_NAME:
-                logger.info(f"Clearing events from calendar: {cal.url}")
-                events = await asyncio.to_thread(
-                    cal.events
-                )  # cal.events() can be blocking
-                for event_in_cal in events:  # event_in_cal is caldav.objects.Event
-                    await asyncio.to_thread(event_in_cal.delete)
-                logger.info(f"Cleared events from {RADICALE_TEST_CALENDAR_NAME}.")
-                break
-        else:  # If loop completes without break (calendar not found)
-            try:
-                principal.make_calendar(name=RADICALE_TEST_CALENDAR_NAME)
+        principal = await asyncio.to_thread(client.principal)
+        calendars = await asyncio.to_thread(principal.calendars)
+        for cal_obj in calendars:
+            if cal_obj.name == RADICALE_TEST_CALENDAR_NAME:
                 logger.info(
-                    f"Re-created test calendar '{RADICALE_TEST_CALENDAR_NAME}' as it was not found during cleanup."
+                    f"Deleting existing test calendar: {cal_obj.url} for cleanup."
                 )
-            except caldav_error.MkcalendarError:  # Catch MkcalendarError
-                pass  # Calendar already exists, which is fine for cleanup.
-            except Exception as e_create:
-                logger.error(
-                    f"Failed to re-create test calendar during cleanup: {e_create}"
-                )
+                await asyncio.to_thread(cal_obj.delete)
+                logger.info(f"Deleted calendar {RADICALE_TEST_CALENDAR_NAME}.")
+                break  # Found and deleted
+
+        # Always recreate the calendar to ensure it exists for the test
+        logger.info(f"Re-creating test calendar '{RADICALE_TEST_CALENDAR_NAME}'.")
+        await asyncio.to_thread(
+            principal.make_calendar, name=RADICALE_TEST_CALENDAR_NAME
+        )
+        logger.info(
+            f"Re-created test calendar '{RADICALE_TEST_CALENDAR_NAME}' at {calendar_url_template}."
+        )
 
     except Exception as e:
         logger.error(
-            f"Error during Radicale cleanup/setup for test function: {e}", exc_info=True
+            f"Error during Radicale cleanup/re-creation for test function: {e}",
+            exc_info=True,
         )
-        # Proceeding, but tests might be affected if cleanup failed.
+        pytest.fail(f"Failed to clean/recreate Radicale calendar: {e}")
 
     yield base_url, username, password, calendar_url_template
