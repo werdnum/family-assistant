@@ -279,40 +279,34 @@ def _fetch_caldav_events_sync(
         try:
             # Create a *new* client instance for *each* calendar URL
             # This avoids the URL joining issue by using the specific URL for initialization.
-            with caldav.DAVClient(
-                url=calendar_url,  # Use the specific calendar URL here
-                username=username,
-                password=password,
-                timeout=30,
-            ) as client:
-                # The client is now connected directly to the calendar URL's host.
-                # Get the calendar object associated with this specific URL.
-                # The `calendar()` method on the client, when given the *same URL* the client
-                # was initialized with, should return the calendar object itself.
-                target_calendar: caldav.objects.Calendar = client.calendar(
-                    url=calendar_url
-                )  # type: ignore
-
-                if not target_calendar:
-                    logger.error(
-                        f"Failed to obtain calendar object for URL: {calendar_url}"
-                    )
-                    continue  # Skip to the next URL
+            # Initialize DAVClient with the base URL of the server, or the principal's URL if known.
+            # For simplicity, if calendar_url is a full collection URL, we can initialize client with it.
+            # Then, instantiate a Calendar object using this client and the same URL.
+            try:
+                # Initialize client with the specific calendar URL.
+                # This client instance is scoped to this particular calendar collection.
+                client = caldav.DAVClient(
+                    url=calendar_url,
+                    username=username,
+                    password=password,
+                    timeout=30,
+                )
+                # Instantiate a Calendar object for this specific URL using the client.
+                # This is the object on which search operations will be performed.
+                target_calendar = caldav.Calendar(client=client, url=calendar_url) # type: ignore[no-untyped-call]
 
                 logger.info(
-                    f"Searching for events between {start_date} and {end_date} in calendar {calendar_url}"
+                    f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"
                 )
-                # `search` returns list of CalendarObjectResource instances
-                caldav_results: list[caldav.objects.CalendarObjectResource] = (
-                    target_calendar.search(  # type: ignore
-                        start=start_date,
-                        end=end_date,
-                        event=True,
-                        expand=True,  # expand=True fetches full data
-                    )
+
+                caldav_results = target_calendar.search(
+                    start=start_date,
+                    end=end_date,
+                    event=True,
+                    expand=True, # Fetches full data
                 )
                 logger.debug(
-                    f"Found {len(caldav_results)} potential events in calendar {calendar_url}"
+                    f"Found {len(caldav_results)} potential events in calendar {target_calendar.url}"
                 )
 
                 # Process fetched events

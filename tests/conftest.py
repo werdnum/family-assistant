@@ -355,35 +355,28 @@ filesystem_folder = {collections_dir}
             # Ensure user collection exists (Radicale creates it on first auth usually)
             # We can try to create it or rely on Radicale's auto-creation.
             # For robustness, let's try to ensure the user's base collection exists.
+            # Create a default calendar for the test user, ensuring a predictable URL component
+            # by using the 'id' parameter. Radicale typically uses the 'id' for the URL path.
+            calendar_resource_id = RADICALE_TEST_CALENDAR_NAME.lower() # Ensure lowercase for ID
+            # Update calendar_url to reflect the resource_id that will be used.
+            calendar_url = f"{user_url_part}/{calendar_resource_id}/"
+
             try:
-                principal.make_calendar(name=RADICALE_TEST_CALENDAR_NAME)
+                # Attempt to create the calendar. If it already exists, this might raise an error.
+                principal.make_calendar(name=RADICALE_TEST_CALENDAR_NAME, id=calendar_resource_id)
                 logger.info(
-                    f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' for user '{RADICALE_TEST_USER}' at {calendar_url}"
+                    f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' (id: '{calendar_resource_id}') for user '{RADICALE_TEST_USER}' at {calendar_url}"
                 )
-            except (
-                caldav_error.MkcalendarError
-            ):  # Catch MkcalendarError for "already exists"
+            except caldav_error.MkcalendarError:
                 logger.info(
-                    f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' likely already exists for user '{RADICALE_TEST_USER}' (caught MkcalendarError)."
+                    f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' (id: '{calendar_resource_id}') likely already exists for user '{RADICALE_TEST_USER}'."
                 )
             except Exception as e_cal_create:
-                logger.warning(
-                    f"Could not ensure user collection or create calendar directly, Radicale might auto-create it. Error: {e_cal_create}"
+                logger.error(
+                    f"Failed to create initial test calendar '{RADICALE_TEST_CALENDAR_NAME}' (id: '{calendar_resource_id}') in Radicale: {e_cal_create}",
+                    exc_info=True,
                 )
-                # Radicale typically creates the user's root collection on first valid request.
-                # And clients usually create calendars. For testing, we might need to be more explicit.
-                # If direct creation fails, we might need to rely on the application's tools to create it.
-                # For now, we assume Radicale will create the user's base collection.
-                # Let's try creating the calendar within the principal's calendars.
-                calendars = principal.calendars()
-                found_cal = any(
-                    cal.name == RADICALE_TEST_CALENDAR_NAME for cal in calendars
-                )
-                if not found_cal:
-                    principal.make_calendar(name=RADICALE_TEST_CALENDAR_NAME)
-                    logger.info(
-                        f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' for user '{RADICALE_TEST_USER}' at {calendar_url}"
-                    )
+                pytest.fail(f"Radicale calendar setup failed: {e_cal_create}")
 
         except Exception as e:
             logger.error(
@@ -429,36 +422,30 @@ async def radicale_server(
 
     # Clean Radicale collections before each test
     # This is a bit simplistic; a more robust way might involve deleting all items
-    # from the specific test calendar or re-creating the collections dir.
-    # For now, let's assume tests manage their own event cleanup or work with unique event IDs.
-    # A more aggressive cleanup:
-    client = caldav.DAVClient(
-        url=base_url, username=username, password=password, timeout=30
-    )
+    client = caldav.DAVClient(url=base_url, username=username, password=password, timeout=30)
     try:
-        principal = await asyncio.to_thread(client.principal)
-        calendars = await asyncio.to_thread(principal.calendars)
-        for cal_obj in calendars:
-            if cal_obj.name == RADICALE_TEST_CALENDAR_NAME:
-                logger.info(
-                    f"Deleting existing test calendar: {cal_obj.url} for cleanup."
-                )
-                await asyncio.to_thread(cal_obj.delete)
-                logger.info(f"Deleted calendar {RADICALE_TEST_CALENDAR_NAME}.")
-                break  # Found and deleted
+        # Get the specific calendar object using the known URL from the session fixture
+        # This URL should be stable (e.g., .../testuser/testcalendar/)
+        calendar_obj = await asyncio.to_thread(client.calendar_by_url, url=calendar_url_template)
+        if not calendar_obj:
+            pytest.fail(f"Radicale test calendar not found at URL: {calendar_url_template} during function setup.")
 
-        # Always recreate the calendar to ensure it exists for the test
-        logger.info(f"Re-creating test calendar '{RADICALE_TEST_CALENDAR_NAME}'.")
-        await asyncio.to_thread(
-            principal.make_calendar, name=RADICALE_TEST_CALENDAR_NAME
-        )
-        logger.info(
-            f"Re-created test calendar '{RADICALE_TEST_CALENDAR_NAME}' at {calendar_url_template}."
-        )
+        # Clear all events from the calendar
+        logger.info(f"Clearing all events from calendar: {calendar_obj.url}")
+        # Fetch all events. Note: events() might be a blocking call.
+        existing_events = await asyncio.to_thread(calendar_obj.events)
+        if existing_events:
+            logger.info(f"Found {len(existing_events)} events to delete for cleanup.")
+            for event_in_cal in existing_events:
+                logger.debug(f"Deleting event: {getattr(event_in_cal, 'url', 'N/A')}")
+                await asyncio.to_thread(event_in_cal.delete)
+            logger.info(f"All events cleared from {calendar_obj.url}.")
+        else:
+            logger.info(f"No events found in {calendar_obj.url} to clear.")
 
     except Exception as e:
         logger.error(
-            f"Error during Radicale cleanup/re-creation for test function: {e}",
+            f"Error during Radicale calendar cleanup for test function: {e}",
             exc_info=True,
         )
         pytest.fail(f"Failed to clean/recreate Radicale calendar: {e}")
