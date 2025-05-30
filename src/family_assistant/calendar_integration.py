@@ -301,8 +301,10 @@ def _fetch_caldav_events_sync(
         days=16
     )  # Search up to 16 days out (exclusive end)
 
-    if not client_url: # Ensure client_url is not None before use
-        logger.error("CalDAV client URL could not be determined. Cannot proceed with CalDAV fetch.")
+    if not client_url:  # Ensure client_url is not None before use
+        logger.error(
+            "CalDAV client URL could not be determined. Cannot proceed with CalDAV fetch."
+        )
         return []
 
     # Initialize one client with the determined client_url (server base or inferred)
