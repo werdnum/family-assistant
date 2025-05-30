@@ -164,6 +164,7 @@ async def test_add_event_and_verify_in_system_prompt(
     # --- Setup ProcessingService ---
     test_calendar_config = {
         "caldav": {
+            "base_url": radicale_base_url,  # Add base_url for DAVClient
             "username": r_user,
             "password": r_pass,
             "calendar_urls": [test_calendar_direct_url],
@@ -376,6 +377,7 @@ async def test_modify_event(
     # --- Setup ProcessingService (similar to add_event test) ---
     test_calendar_config = {
         "caldav": {
+            "base_url": radicale_base_url,  # Add base_url
             "username": r_user,
             "password": r_pass,
             "calendar_urls": [test_calendar_direct_url],
@@ -580,6 +582,7 @@ async def test_delete_event(
     # --- Setup ProcessingService (similar to other tests) ---
     test_calendar_config = {
         "caldav": {
+            "base_url": radicale_base_url,  # Add base_url
             "username": r_user,
             "password": r_pass,
             "calendar_urls": [test_calendar_direct_url],
@@ -806,6 +809,7 @@ async def test_search_events(
     # --- Setup ProcessingService (similar to other tests) ---
     test_calendar_config = {
         "caldav": {
+            "base_url": radicale_base_url,  # Add base_url
             "username": r_user,
             "password": r_pass,
             "calendar_urls": [test_calendar_direct_url],
