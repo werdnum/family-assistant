@@ -295,7 +295,7 @@ ssl = false
 [auth]
 type = htpasswd
 htpasswd_filename = {htpasswd_file_path}
-htpasswd_encryption = bcrypt # or plain if not using passlib for generation
+htpasswd_encryption = bcrypt
 
 [storage]
 filesystem_folder = {collections_dir}
