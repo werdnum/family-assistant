@@ -270,15 +270,21 @@ def _fetch_caldav_events_sync(
             parsed_first_cal_url = httpx.URL(calendar_urls[0])
             client_url = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
             if parsed_first_cal_url.port is None:  # Handle default ports
-                client_url = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                client_url = (
+                    f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                )
             logger.warning(
                 f"CalDAV base_url not provided, inferred '{client_url}' from first calendar URL. "
                 "It's recommended to configure 'base_url' explicitly in caldav_config."
             )
         except Exception as e:
-            logger.error(f"Could not infer CalDAV base_url from '{calendar_urls[0]}': {e}. Cannot proceed with CalDAV fetch.")
+            logger.error(
+                f"Could not infer CalDAV base_url from '{calendar_urls[0]}': {e}. Cannot proceed with CalDAV fetch."
+            )
             return []
-    elif not client_url and not calendar_urls:  # Should be caught by earlier check but defensive
+    elif (
+        not client_url and not calendar_urls
+    ):  # Should be caught by earlier check but defensive
         logger.error("No CalDAV base_url provided and no calendar_urls to infer from.")
         return []
 
@@ -304,12 +310,16 @@ def _fetch_caldav_events_sync(
             timeout=30,
         )
     except Exception as e_client:
-        logger.error(f"Failed to initialize CalDAV client for server URL '{client_url}': {e_client}")
+        logger.error(
+            f"Failed to initialize CalDAV client for server URL '{client_url}': {e_client}"
+        )
         return []
 
     # Iterate through each specific calendar URL
     for calendar_url_item in calendar_urls:
-        logger.info(f"Attempting to fetch from calendar collection: {calendar_url_item}")
+        logger.info(
+            f"Attempting to fetch from calendar collection: {calendar_url_item}"
+        )
         try:
             # Get the Calendar object using the client and the specific calendar_url_item
             target_calendar = client.calendar(url=calendar_url_item)  # type: ignore[no-untyped-call]
@@ -351,7 +361,9 @@ def _fetch_caldav_events_sync(
                         exc_info=True,
                     )
         except NotFoundError:
-            logger.error(f"Calendar collection not found at URL {calendar_url_item}. Skipping.")
+            logger.error(
+                f"Calendar collection not found at URL {calendar_url_item}. Skipping."
+            )
         except DAVError as e:
             logger.error(
                 f"CalDAV error while processing calendar {calendar_url_item}: {e}",
@@ -394,10 +406,14 @@ async def fetch_upcoming_events(
     if caldav_config:
         username = caldav_config.get("username")
         password = caldav_config.get("password")
-        calendar_urls = caldav_config.get("calendar_urls", [])  # These are full URLs to collections
+        calendar_urls = caldav_config.get(
+            "calendar_urls", []
+        )  # These are full URLs to collections
         base_url = caldav_config.get("base_url")  # This is the server base URL
 
-        if username and password and calendar_urls:  # base_url is optional but recommended
+        if (
+            username and password and calendar_urls
+        ):  # base_url is optional but recommended
             loop = asyncio.get_running_loop()
             logger.debug("Scheduling synchronous CalDAV fetch in executor.")
             caldav_task = loop.run_in_executor(
@@ -662,20 +678,28 @@ async def add_calendar_event_tool(
             parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
             client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
             if parsed_first_cal_url.port is None:
-                client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                client_url_to_use = (
+                    f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                )
             logger.warning(
                 f"CalDAV base_url not provided for add_calendar_event_tool, inferred '{client_url_to_use}'. "
                 "Explicit 'base_url' in config is recommended."
             )
         except Exception as e:
-            logger.error(f"Could not infer CalDAV base_url for add_calendar_event_tool: {e}")
+            logger.error(
+                f"Could not infer CalDAV base_url for add_calendar_event_tool: {e}"
+            )
             return "Error: CalDAV base_url missing and could not be inferred. Cannot add event."
-    
+
     if not client_url_to_use:  # Should be caught above, but defensive
         return "Error: CalDAV client URL could not be determined."
 
-    target_calendar_url: str = calendar_urls_list[0]  # Use the first configured full calendar URL
-    logger.info(f"Targeting CalDAV server '{client_url_to_use}' and calendar collection '{target_calendar_url}'")
+    target_calendar_url: str = calendar_urls_list[
+        0
+    ]  # Use the first configured full calendar URL
+    logger.info(
+        f"Targeting CalDAV server '{client_url_to_use}' and calendar collection '{target_calendar_url}'"
+    )
 
     try:
         # Parse start and end times
@@ -822,13 +846,17 @@ async def search_calendar_events_tool(
             parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
             client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
             if parsed_first_cal_url.port is None:
-                client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                client_url_to_use = (
+                    f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                )
             logger.warning(
                 f"CalDAV base_url not provided for search_calendar_events_tool, inferred '{client_url_to_use}'. "
                 "Explicit 'base_url' in config is recommended."
             )
         except Exception as e:
-            logger.error(f"Could not infer CalDAV base_url for search_calendar_events_tool: {e}")
+            logger.error(
+                f"Could not infer CalDAV base_url for search_calendar_events_tool: {e}"
+            )
             return "Error: CalDAV base_url missing and could not be inferred. Cannot search events."
 
     if not client_url_to_use:
@@ -867,7 +895,7 @@ async def search_calendar_events_tool(
         query_lower = query_text.lower()
         events_checked = 0
         events_matched = 0
-        
+
         try:
             dav_client = caldav.DAVClient(
                 url=client_url_to_use,  # Use base_url for client
@@ -876,7 +904,9 @@ async def search_calendar_events_tool(
                 timeout=30,
             )
         except Exception as e_client_search:
-            logger.error(f"Failed to initialize CalDAV client for server URL '{client_url_to_use}' in search: {e_client_search}")
+            logger.error(
+                f"Failed to initialize CalDAV client for server URL '{client_url_to_use}' in search: {e_client_search}"
+            )
             return []  # Return empty list, error message will be generated by caller
 
         for cal_url_item in calendar_urls_list:
@@ -893,7 +923,7 @@ async def search_calendar_events_tool(
                     )
                     continue
 
-                # Fetch events in the range
+                    # Fetch events in the range
                     # Note: This fetches *all* events in the range first.
                     # More advanced filtering might be possible with specific CalDAV servers/queries.
                     caldav_results: list[caldav.objects.CalendarObjectResource] = (
@@ -983,7 +1013,9 @@ async def search_calendar_events_tool(
                         break
 
             except NotFoundError:
-                logger.error(f"Calendar collection not found at URL {cal_url_item} on server {client_url_to_use}. Skipping.")
+                logger.error(
+                    f"Calendar collection not found at URL {cal_url_item} on server {client_url_to_use}. Skipping."
+                )
             except (DAVError, ConnectionError, Exception) as sync_err:
                 logger.error(
                     f"Error searching calendar collection {cal_url_item} on server {client_url_to_use}: {sync_err}",
@@ -1060,7 +1092,9 @@ async def modify_calendar_event_tool(
         try:
             # Infer from the specific calendar_url being modified
             parsed_cal_url = httpx.URL(calendar_url)
-            client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
+            client_url_to_use = (
+                f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
+            )
             if parsed_cal_url.port is None:
                 client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}"
             logger.warning(
@@ -1068,9 +1102,11 @@ async def modify_calendar_event_tool(
                 "Explicit 'base_url' in config is recommended."
             )
         except Exception as e:
-            logger.error(f"Could not infer CalDAV base_url for modify_calendar_event_tool: {e}")
+            logger.error(
+                f"Could not infer CalDAV base_url for modify_calendar_event_tool: {e}"
+            )
             return "Error: CalDAV base_url missing and could not be inferred. Cannot modify event."
-            
+
     if not client_url_to_use:
         return "Error: CalDAV client URL could not be determined for modify."
 
@@ -1105,7 +1141,9 @@ async def modify_calendar_event_tool(
                         f"Could not get calendar object for {calendar_url} on server {client_url_to_use}"
                     )
 
-                logger.debug(f"Fetching event with UID {uid} from {target_calendar_obj.url}")
+                logger.debug(
+                    f"Fetching event with UID {uid} from {target_calendar_obj.url}"
+                )
                 event_resource: caldav.objects.Event = target_calendar_obj.event_by_uid(
                     uid
                 )  # type: ignore
@@ -1268,7 +1306,9 @@ async def delete_calendar_event_tool(
         try:
             # Infer from the specific calendar_url being targeted
             parsed_cal_url = httpx.URL(calendar_url)
-            client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
+            client_url_to_use = (
+                f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
+            )
             if parsed_cal_url.port is None:
                 client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}"
             logger.warning(
@@ -1276,7 +1316,9 @@ async def delete_calendar_event_tool(
                 "Explicit 'base_url' in config is recommended."
             )
         except Exception as e:
-            logger.error(f"Could not infer CalDAV base_url for delete_calendar_event_tool: {e}")
+            logger.error(
+                f"Could not infer CalDAV base_url for delete_calendar_event_tool: {e}"
+            )
             return "Error: CalDAV base_url missing and could not be inferred. Cannot delete event."
 
     if not client_url_to_use:
