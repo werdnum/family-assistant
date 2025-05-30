@@ -5,6 +5,7 @@ import pathlib
 import shutil
 import socket
 import subprocess
+import sys  # Import sys module
 import tempfile
 import time
 from collections.abc import AsyncGenerator, Generator
@@ -308,7 +309,7 @@ filesystem_folder = {collections_dir}
             f"Starting Radicale server on port {port} with storage at {collections_dir}"
         )
         process = subprocess.Popen(
-            ["python3", "-m", "radicale", "--config", str(config_file_path)],
+            [sys.executable, "-m", "radicale", "--config", str(config_file_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
