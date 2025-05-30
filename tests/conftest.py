@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
-from caldav.lib.error import AlreadyExists  # Import AlreadyExists directly
+from caldav.lib import error as caldav_error  # Import the error module
 from docker.errors import DockerException  # Import DockerException directly
 from passlib.hash import bcrypt
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -355,7 +355,7 @@ filesystem_folder = {collections_dir}
                 logger.info(
                     f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' for user '{RADICALE_TEST_USER}' at {calendar_url}"
                 )
-            except AlreadyExists:  # Use direct import
+            except caldav_error.AlreadyExists:  # Use qualified name
                 logger.info(
                     f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' already exists for user '{RADICALE_TEST_USER}'."
                 )
@@ -448,7 +448,7 @@ async def radicale_server(
                 logger.info(
                     f"Re-created test calendar '{RADICALE_TEST_CALENDAR_NAME}' as it was not found during cleanup."
                 )
-            except AlreadyExists:  # Use direct import
+            except caldav_error.AlreadyExists:  # Use qualified name
                 pass  # Should not happen if it wasn't found
             except Exception as e_create:
                 logger.error(
