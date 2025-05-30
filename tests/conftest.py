@@ -299,6 +299,12 @@ htpasswd_encryption = bcrypt
 
 [storage]
 filesystem_folder = {collections_dir}
+
+[logging]
+level = debug
+request_header_on_debug = True
+request_content_on_debug = True
+backtrace_on_debug = True
     """
     with open(config_file_path, "w", encoding="utf-8") as f:
         f.write(radicale_config_content)
