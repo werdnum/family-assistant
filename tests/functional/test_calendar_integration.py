@@ -237,23 +237,24 @@ async def test_add_event_and_verify_in_system_prompt(
     # Allow some time for Radicale to process and for our app to potentially cache/fetch
     await asyncio.sleep(0.5)
 
-    system_prompt_context_parts = (
+    # _aggregate_context_from_providers returns a single string
+    aggregated_context_str = (
         await processing_service._aggregate_context_from_providers()
     )
-    system_prompt_str = dummy_prompts["system_prompt"].format(
-        **dict(system_prompt_context_parts)
-    )
 
-    logger.info(f"Generated system prompt for verification:\n{system_prompt_str}")
+    logger.info(
+        f"Generated aggregated context for verification:\n{aggregated_context_str}"
+    )
 
     # Check for summary and a characteristic part of the formatted time
     # format_datetime_or_date for tomorrow 10:00 should be "Tomorrow 10:00"
+    # The formatting depends on CalendarContextProvider's internal prompts
     expected_time_str_in_prompt = "Tomorrow 10:00"
-    assert event_summary in system_prompt_str, (
-        "Event summary not found in system prompt."
+    assert event_summary in aggregated_context_str, (
+        "Event summary not found in aggregated context string."
     )
-    assert expected_time_str_in_prompt in system_prompt_str, (
-        f"Expected time '{expected_time_str_in_prompt}' not found in system prompt."
+    assert expected_time_str_in_prompt in aggregated_context_str, (
+        f"Expected time '{expected_time_str_in_prompt}' not found in aggregated context string."
     )
 
     logger.info("Test Add Event & Verify in System Prompt PASSED.")
@@ -445,26 +446,25 @@ END:VCALENDAR"""
 
     # --- Verify Modified Event in System Prompt ---
     await asyncio.sleep(0.5)
-    system_prompt_context_parts_mod = (
+    aggregated_context_str_mod = (
         await processing_service._aggregate_context_from_providers()
     )
-    system_prompt_str_mod = dummy_prompts["system_prompt"].format(
-        **dict(system_prompt_context_parts_mod)
+    logger.info(
+        f"Generated aggregated context after modification:\n{aggregated_context_str_mod}"
     )
-    logger.info(f"Generated system prompt after modification:\n{system_prompt_str_mod}")
 
     formatted_day_after_tomorrow = format_datetime_or_date(
         day_after_tomorrow.date(), TEST_TIMEZONE_STR
     )
     expected_time_str_in_prompt_mod = f"{formatted_day_after_tomorrow} 15:00"  # 3 PM
-    assert modified_summary in system_prompt_str_mod, (
-        "Modified event summary not found in system prompt."
+    assert modified_summary in aggregated_context_str_mod, (
+        "Modified event summary not found in aggregated context string."
     )
-    assert expected_time_str_in_prompt_mod in system_prompt_str_mod, (
-        f"Expected modified time '{expected_time_str_in_prompt_mod}' not found."
+    assert expected_time_str_in_prompt_mod in aggregated_context_str_mod, (
+        f"Expected modified time '{expected_time_str_in_prompt_mod}' not found in aggregated context string."
     )
-    assert original_summary not in system_prompt_str_mod, (
-        "Original event summary still found in system prompt after modification."
+    assert original_summary not in aggregated_context_str_mod, (
+        "Original event summary still found in aggregated context string after modification."
     )
 
     logger.info("Test Modify Event PASSED.")
@@ -637,16 +637,15 @@ END:VCALENDAR"""
 
     # --- Verify Event NOT in System Prompt ---
     await asyncio.sleep(0.5)
-    system_prompt_context_parts_del = (
+    aggregated_context_str_del = (
         await processing_service._aggregate_context_from_providers()
     )
-    system_prompt_str_del = dummy_prompts["system_prompt"].format(  # type: ignore
-        **dict(system_prompt_context_parts_del)
+    logger.info(
+        f"Generated aggregated context after deletion:\n{aggregated_context_str_del}"
     )
-    logger.info(f"Generated system prompt after deletion:\n{system_prompt_str_del}")
 
-    assert event_to_delete_summary not in system_prompt_str_del, (
-        "Deleted event summary still found in system prompt."
+    assert event_to_delete_summary not in aggregated_context_str_del, (
+        "Deleted event summary still found in aggregated context string."
     )
 
     logger.info("Test Delete Event PASSED.")
