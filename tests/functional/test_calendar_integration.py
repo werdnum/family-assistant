@@ -66,7 +66,9 @@ async def get_event_by_summary_from_radicale(
 ) -> caldav.objects.Event | None:
     """Fetches an event by its summary from the specified calendar_url on Radicale."""
     base_url, user, passwd, calendar_url = radicale_server_details
-    client = caldav.DAVClient(url=base_url, username=user, password=passwd, timeout=30) # Use base_url for client
+    client = caldav.DAVClient(
+        url=base_url, username=user, password=passwd, timeout=30
+    )  # Use base_url for client
 
     try:
         # Get the calendar object directly using its full URL
@@ -75,9 +77,11 @@ async def get_event_by_summary_from_radicale(
             logger.warning(f"Calendar not found at URL '{calendar_url}' on Radicale.")
             return None
     except Exception as e_get_cal:
-        logger.error(f"Error getting calendar at URL '{calendar_url}': {e_get_cal}", exc_info=True)
+        logger.error(
+            f"Error getting calendar at URL '{calendar_url}': {e_get_cal}",
+            exc_info=True,
+        )
         return None
-
 
     events = await asyncio.to_thread(target_calendar.events)
     for event_obj in events:  # event_obj is caldav.objects.Event
@@ -232,7 +236,9 @@ async def test_add_event_and_verify_in_system_prompt(
     radicale_event = await get_event_by_summary_from_radicale(
         radicale_server, event_summary
     )
-    assert radicale_event is not None, f"Event '{event_summary}' not found in Radicale calendar {radicale_server[3]}."
+    assert radicale_event is not None, (
+        f"Event '{event_summary}' not found in Radicale calendar {radicale_server[3]}."
+    )
 
     # More detailed verification of event properties in Radicale if needed (e.g., start/end times)
     # This requires parsing radicale_event.data (VCALENDAR string)
@@ -298,10 +304,14 @@ async def test_modify_event(
     # --- Create initial event directly in Radicale using vobject ---
     # radicale_server now contains the direct calendar URL as the 4th element
     base_url, r_user_modify, r_pass_modify, unique_calendar_url_modify = radicale_server
-    client = caldav.DAVClient(url=base_url, username=r_user_modify, password=r_pass_modify, timeout=30)
+    client = caldav.DAVClient(
+        url=base_url, username=r_user_modify, password=r_pass_modify, timeout=30
+    )
 
     try:
-        target_calendar = await asyncio.to_thread(client.calendar, url=unique_calendar_url_modify)
+        target_calendar = await asyncio.to_thread(
+            client.calendar, url=unique_calendar_url_modify
+        )
         assert target_calendar is not None, (
             f"Test calendar not found at URL '{unique_calendar_url_modify}'."
         )
@@ -507,10 +517,14 @@ async def test_delete_event(
 
     # --- Create initial event directly in Radicale using vobject ---
     base_url_del, r_user_del, r_pass_del, unique_calendar_url_del = radicale_server
-    client = caldav.DAVClient(url=base_url_del, username=r_user_del, password=r_pass_del, timeout=30)
+    client = caldav.DAVClient(
+        url=base_url_del, username=r_user_del, password=r_pass_del, timeout=30
+    )
 
     try:
-        target_calendar = await asyncio.to_thread(client.calendar, url=unique_calendar_url_del)
+        target_calendar = await asyncio.to_thread(
+            client.calendar, url=unique_calendar_url_del
+        )
         assert target_calendar is not None, (
             f"Test calendar not found at URL '{unique_calendar_url_del}'."
         )
@@ -692,11 +706,17 @@ async def test_search_events(
     event2_end = event2_start + timedelta(hours=2)
 
     # --- Create events directly in Radicale ---
-    base_url_search, r_user_search, r_pass_search, unique_calendar_url_search = radicale_server
-    client = caldav.DAVClient(url=base_url_search, username=r_user_search, password=r_pass_search, timeout=30)
+    base_url_search, r_user_search, r_pass_search, unique_calendar_url_search = (
+        radicale_server
+    )
+    client = caldav.DAVClient(
+        url=base_url_search, username=r_user_search, password=r_pass_search, timeout=30
+    )
 
     try:
-        target_calendar = await asyncio.to_thread(client.calendar, url=unique_calendar_url_search)
+        target_calendar = await asyncio.to_thread(
+            client.calendar, url=unique_calendar_url_search
+        )
         assert target_calendar is not None, (
             f"Test calendar not found at URL '{unique_calendar_url_search}'."
         )
