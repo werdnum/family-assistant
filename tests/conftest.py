@@ -310,8 +310,6 @@ filesystem_folder = {collections_dir}
         )
         process = subprocess.Popen(
             [sys.executable, "-m", "radicale", "--config", str(config_file_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
         )
 
         # Wait for Radicale to start
@@ -327,16 +325,16 @@ filesystem_folder = {collections_dir}
             except (TimeoutError, ConnectionRefusedError):
                 time.sleep(0.5)
                 if process.poll() is not None:  # Check if process terminated
-                    stdout, stderr = process.communicate()
+                    process.communicate()  # Ensure process is reaped
                     logger.error(
-                        f"Radicale process terminated prematurely. Stdout: {stdout.decode(errors='ignore')}, Stderr: {stderr.decode(errors='ignore')}"
+                        "Radicale process terminated prematurely. Check test output for Radicale logs."
                     )
                     pytest.fail("Radicale server failed to start.")
 
         if not server_ready:
-            stdout, stderr = process.communicate()
+            process.communicate()  # Ensure process is reaped
             logger.error(
-                f"Radicale server did not start within {max_wait_time}s. Stdout: {stdout.decode(errors='ignore')}, Stderr: {stderr.decode(errors='ignore')}"
+                f"Radicale server did not start within {max_wait_time}s. Check test output for Radicale logs."
             )
             pytest.fail(
                 f"Radicale server did not start on port {port} within {max_wait_time} seconds."
@@ -409,11 +407,8 @@ filesystem_folder = {collections_dir}
                 process.kill()
                 process.wait()
                 logger.info("Radicale server killed.")
-            stdout, stderr = process.communicate()
-            if stdout:
-                logger.debug(f"Radicale stdout:\n{stdout.decode(errors='ignore')}")
-            if stderr:
-                logger.debug(f"Radicale stderr:\n{stderr.decode(errors='ignore')}")
+            # Ensure the process is reaped. Output would have gone to test output.
+            process.communicate()
 
         shutil.rmtree(temp_dir)
         logger.info(f"Cleaned up Radicale temp directory: {temp_dir}")
