@@ -134,7 +134,9 @@ class ProcessingService:
                     # If it's a list, extend. This handles empty lists correctly (no-op).
                     all_fragments.extend(fragments_output)
                     if not fragments_output:  # Log if the list was empty
-                        logger.debug(f"Context provider '{provider.name}' returned an empty list of fragments.")
+                        logger.debug(
+                            f"Context provider '{provider.name}' returned an empty list of fragments."
+                        )
                 elif fragments_output is None:
                     # Log a warning if a provider violates protocol by returning None
                     logger.warning(
