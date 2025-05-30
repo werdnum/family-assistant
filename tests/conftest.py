@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
+from caldav.lib.error import AlreadyExists  # Import AlreadyExists directly
 from docker.errors import DockerException  # Import DockerException directly
 from passlib.hash import bcrypt
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -354,7 +355,7 @@ filesystem_folder = {collections_dir}
                 logger.info(
                     f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' for user '{RADICALE_TEST_USER}' at {calendar_url}"
                 )
-            except caldav.lib.error.AlreadyExists:
+            except AlreadyExists:  # Use direct import
                 logger.info(
                     f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' already exists for user '{RADICALE_TEST_USER}'."
                 )
@@ -413,7 +414,7 @@ filesystem_folder = {collections_dir}
 async def radicale_server(
     radicale_server_session: tuple[str, str, str, str],
     pg_vector_db_engine: AsyncEngine,  # Use pg_vector_db_engine to ensure DB is clean for each test
-) -> AsyncGenerator[tuple[str, str, str, str], None, None]:
+) -> AsyncGenerator[tuple[str, str, str, str], None]:  # Corrected type hint
     """
     Provides Radicale server details for a single test function.
     Ensures the Radicale collections are clean for each test by clearing them,
@@ -447,7 +448,7 @@ async def radicale_server(
                 logger.info(
                     f"Re-created test calendar '{RADICALE_TEST_CALENDAR_NAME}' as it was not found during cleanup."
                 )
-            except caldav.lib.error.AlreadyExists:
+            except AlreadyExists:  # Use direct import
                 pass  # Should not happen if it wasn't found
             except Exception as e_create:
                 logger.error(
