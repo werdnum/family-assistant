@@ -290,7 +290,6 @@ async def test_modify_event(
     original_end_dt = original_start_dt + timedelta(hours=1)
     modified_start_dt = original_start_dt.replace(hour=15)  # Change to 3 PM
     # modified_end_dt was unused, if needed:
-    # modified_end_dt = modified_start_dt + timedelta(hours=1)
 
     # --- Create initial event directly in Radicale using vobject ---
     client = get_radicale_client(radicale_server)
