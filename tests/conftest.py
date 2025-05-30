@@ -365,15 +365,17 @@ filesystem_folder = {collections_dir}
 
             try:
                 # Attempt to create the calendar. If it already exists, this might raise an error.
-                principal.make_calendar(
-                    name=RADICALE_TEST_CALENDAR_NAME, id=calendar_resource_id
+                # Use Calendar object and save() to create at a specific URL path.
+                new_calendar = caldav.Calendar(
+                    client=client, url=calendar_url, name=RADICALE_TEST_CALENDAR_NAME
                 )
+                new_calendar.save()  # This performs the MKCALENDAR request
                 logger.info(
-                    f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' (id: '{calendar_resource_id}') for user '{RADICALE_TEST_USER}' at {calendar_url}"
+                    f"Ensured test calendar '{RADICALE_TEST_CALENDAR_NAME}' (resource_id: '{calendar_resource_id}') for user '{RADICALE_TEST_USER}' at {calendar_url}"
                 )
-            except caldav_error.MkcalendarError:
+            except caldav_error.MkcalendarError:  # Or other relevant caldav errors for "already exists"
                 logger.info(
-                    f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' (id: '{calendar_resource_id}') likely already exists for user '{RADICALE_TEST_USER}'."
+                    f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' (resource_id: '{calendar_resource_id}') likely already exists for user '{RADICALE_TEST_USER}' at {calendar_url}."
                 )
             except Exception as e_cal_create:
                 logger.error(
@@ -432,8 +434,9 @@ async def radicale_server(
     try:
         # Get the specific calendar object using the known URL from the session fixture
         # This URL should be stable (e.g., .../testuser/testcalendar/)
+        # Use client.calendar(url=...) which is the correct method on DAVClient
         calendar_obj = await asyncio.to_thread(
-            client.calendar_by_url, url=calendar_url_template
+            client.calendar, url=calendar_url_template
         )
         if not calendar_obj:
             pytest.fail(

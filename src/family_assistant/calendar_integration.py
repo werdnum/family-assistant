@@ -282,28 +282,27 @@ def _fetch_caldav_events_sync(
             # Initialize DAVClient with the base URL of the server, or the principal's URL if known.
             # For simplicity, if calendar_url is a full collection URL, we can initialize client with it.
             # Then, instantiate a Calendar object using this client and the same URL.
-            try:
-                # Initialize client with the specific calendar URL.
-                # This client instance is scoped to this particular calendar collection.
-                client = caldav.DAVClient(
-                    url=calendar_url,
-                    username=username,
-                    password=password,
-                    timeout=30,
-                )
-                # Instantiate a Calendar object for this specific URL using the client.
-                # This is the object on which search operations will be performed.
-                target_calendar = caldav.Calendar(client=client, url=calendar_url) # type: ignore[no-untyped-call]
+            # Initialize client with the specific calendar URL.
+            # This client instance is scoped to this particular calendar collection.
+            client = caldav.DAVClient(
+                url=calendar_url,
+                username=username,
+                password=password,
+                timeout=30,
+            )
+            # Instantiate a Calendar object for this specific URL using the client.
+            # This is the object on which search operations will be performed.
+            target_calendar = caldav.Calendar(client=client, url=calendar_url)  # type: ignore[no-untyped-call]
 
-                logger.info(
-                    f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"
+            logger.info(
+                f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"
                 )
 
                 caldav_results = target_calendar.search(
                     start=start_date,
                     end=end_date,
                     event=True,
-                    expand=True, # Fetches full data
+                    expand=True,  # Fetches full data
                 )
                 logger.debug(
                     f"Found {len(caldav_results)} potential events in calendar {target_calendar.url}"
