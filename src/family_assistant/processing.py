@@ -128,15 +128,31 @@ class ProcessingService:
         all_fragments: list[str] = []
         for provider in self.context_providers:
             try:
-                fragments = await provider.get_context_fragments()
-                if fragments:  # Only add if provider returned something
-                    all_fragments.extend(fragments)
+                fragments_output = await provider.get_context_fragments()
+
+                if isinstance(fragments_output, list):
+                    # If it's a list, extend. This handles empty lists correctly (no-op).
+                    all_fragments.extend(fragments_output)
+                    if not fragments_output:  # Log if the list was empty
+                        logger.debug(f"Context provider '{provider.name}' returned an empty list of fragments.")
+                elif fragments_output is None:
+                    # Log a warning if a provider violates protocol by returning None
+                    logger.warning(
+                        f"Context provider '{provider.name}' returned None instead of a list. Skipping."
+                    )
+                else:
+                    # Log an error if a provider returns something other than a list or None
+                    logger.error(
+                        f"Context provider '{provider.name}' returned an unexpected type: {type(fragments_output)}. Expected list[str]. Skipping."
+                    )
             except Exception as e:
+                # This catches errors from await provider.get_context_fragments() itself
                 logger.error(
-                    f"Error getting context from provider '{provider.name}': {e}",
+                    f"Error calling get_context_fragments() for provider '{provider.name}': {e}",
                     exc_info=True,
                 )
-        # Join all non-empty fragments, separated by double newlines for clarity
+        # Join all non-empty fragments (i.e., filter out empty strings from individual providers' lists)
+        # separated by double newlines for clarity.
         return "\n\n".join(filter(None, all_fragments)).strip()
 
     # Removed _execute_function_call method (if it was previously here)
