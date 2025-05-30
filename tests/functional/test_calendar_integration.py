@@ -239,10 +239,10 @@ async def test_add_event_and_verify_in_system_prompt(
 
     system_prompt_context_parts = (
         await processing_service._aggregate_context_from_providers(
-            db_context,
-            "test",
-            TEST_CHAT_ID,
-            TEST_USER_NAME,  # type: ignore[no-value-for-parameter]
+            db_context=db_context,
+            interface_type="test",
+            conversation_id=TEST_CHAT_ID,
+            user_name=TEST_USER_NAME,
         )
     )
     system_prompt_str = dummy_prompts["system_prompt"].format(
@@ -452,10 +452,10 @@ END:VCALENDAR"""
     await asyncio.sleep(0.5)
     system_prompt_context_parts_mod = (
         await processing_service._aggregate_context_from_providers(
-            db_context,
-            "test",
-            TEST_CHAT_ID,
-            TEST_USER_NAME,  # type: ignore[no-value-for-parameter]
+            db_context=db_context,
+            interface_type="test",
+            conversation_id=TEST_CHAT_ID,
+            user_name=TEST_USER_NAME,
         )
     )
     system_prompt_str_mod = dummy_prompts["system_prompt"].format(
@@ -649,10 +649,10 @@ END:VCALENDAR"""
     await asyncio.sleep(0.5)
     system_prompt_context_parts_del = (
         await processing_service._aggregate_context_from_providers(
-            db_context,
-            "test",
-            TEST_CHAT_ID,
-            TEST_USER_NAME,  # type: ignore[no-value-for-parameter]
+            db_context=db_context,
+            interface_type="test",
+            conversation_id=TEST_CHAT_ID,
+            user_name=TEST_USER_NAME,
         )
     )
     system_prompt_str_del = dummy_prompts["system_prompt"].format(  # type: ignore
