@@ -357,13 +357,17 @@ filesystem_folder = {collections_dir}
             # For robustness, let's try to ensure the user's base collection exists.
             # Create a default calendar for the test user, ensuring a predictable URL component
             # by using the 'id' parameter. Radicale typically uses the 'id' for the URL path.
-            calendar_resource_id = RADICALE_TEST_CALENDAR_NAME.lower() # Ensure lowercase for ID
+            calendar_resource_id = (
+                RADICALE_TEST_CALENDAR_NAME.lower()
+            )  # Ensure lowercase for ID
             # Update calendar_url to reflect the resource_id that will be used.
             calendar_url = f"{user_url_part}/{calendar_resource_id}/"
 
             try:
                 # Attempt to create the calendar. If it already exists, this might raise an error.
-                principal.make_calendar(name=RADICALE_TEST_CALENDAR_NAME, id=calendar_resource_id)
+                principal.make_calendar(
+                    name=RADICALE_TEST_CALENDAR_NAME, id=calendar_resource_id
+                )
                 logger.info(
                     f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' (id: '{calendar_resource_id}') for user '{RADICALE_TEST_USER}' at {calendar_url}"
                 )
@@ -422,13 +426,19 @@ async def radicale_server(
 
     # Clean Radicale collections before each test
     # This is a bit simplistic; a more robust way might involve deleting all items
-    client = caldav.DAVClient(url=base_url, username=username, password=password, timeout=30)
+    client = caldav.DAVClient(
+        url=base_url, username=username, password=password, timeout=30
+    )
     try:
         # Get the specific calendar object using the known URL from the session fixture
         # This URL should be stable (e.g., .../testuser/testcalendar/)
-        calendar_obj = await asyncio.to_thread(client.calendar_by_url, url=calendar_url_template)
+        calendar_obj = await asyncio.to_thread(
+            client.calendar_by_url, url=calendar_url_template
+        )
         if not calendar_obj:
-            pytest.fail(f"Radicale test calendar not found at URL: {calendar_url_template} during function setup.")
+            pytest.fail(
+                f"Radicale test calendar not found at URL: {calendar_url_template} during function setup."
+            )
 
         # Clear all events from the calendar
         logger.info(f"Clearing all events from calendar: {calendar_obj.url}")
