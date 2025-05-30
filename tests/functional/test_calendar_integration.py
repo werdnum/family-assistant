@@ -56,7 +56,7 @@ def get_radicale_client(
 ) -> caldav.DAVClient:
     """Helper to get a caldav client for the test Radicale server."""
     base_url, user, passwd, _ = radicale_server_details
-    return caldav.DAVClient(url=base_url, username=user, password=passwd)
+    return caldav.DAVClient(url=base_url, username=user, password=passwd, timeout=30)
 
 
 async def get_event_by_summary_from_radicale(
