@@ -400,9 +400,7 @@ async def radicale_server(
     base_url, username, password = radicale_server_session
     # Generate a unique calendar name for this test function
     # Sanitize test name to be a valid URL component
-    test_name_sanitized = "".join(
-        c if c.isalnum() else "_" for c in request.node.name
-    )
+    test_name_sanitized = "".join(c if c.isalnum() else "_" for c in request.node.name)
     unique_calendar_name = f"testcal_{test_name_sanitized}_{uuid.uuid4().hex[:8]}"
     unique_calendar_resource_id = unique_calendar_name.lower()
     user_url_part = f"{base_url}/{username}"
@@ -421,9 +419,7 @@ async def radicale_server(
             client=client, url=unique_calendar_url, name=unique_calendar_name
         )
         await asyncio.to_thread(new_calendar.save)  # MKCALENDAR request
-        logger.info(
-            f"Successfully created unique calendar '{unique_calendar_name}'."
-        )
+        logger.info(f"Successfully created unique calendar '{unique_calendar_name}'.")
 
         yield base_url, username, password, unique_calendar_url
 
