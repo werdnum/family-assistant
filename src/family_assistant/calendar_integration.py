@@ -306,30 +306,30 @@ def _fetch_caldav_events_sync(
             )
             logger.debug(
                 f"Found {len(caldav_results)} potential events in calendar {target_calendar.url}"
-                )
+            )
 
-                # Process fetched events
-                for (
-                    event_resource
-                ) in caldav_results:  # event_resource is CalendarObjectResource
-                    try:
-                        event_url_attr = getattr(event_resource, "url", "N/A")
-                        event_data_str: str = (
-                            event_resource.data
-                        )  # Access data synchronously, it's a string
-                        # Pass the timezone_str to parse_event for localization
-                        parsed = parse_event(event_data_str, timezone_str=timezone_str)
-                        if parsed:
-                            all_events.append(parsed)
-                        else:
-                            logger.warning(
-                                f"Failed to parse event data for event {event_url_attr} in {calendar_url}. Skipping."
-                            )
-                    except (DAVError, NotFoundError, Exception) as event_err:
-                        logger.error(
-                            f"Error processing individual event {getattr(event_resource, 'url', 'N/A')} in {calendar_url}: {event_err}",
-                            exc_info=True,
+            # Process fetched events
+            for (
+                event_resource
+            ) in caldav_results:  # event_resource is CalendarObjectResource
+                try:
+                    event_url_attr = getattr(event_resource, "url", "N/A")
+                    event_data_str: str = (
+                        event_resource.data
+                    )  # Access data synchronously, it's a string
+                    # Pass the timezone_str to parse_event for localization
+                    parsed = parse_event(event_data_str, timezone_str=timezone_str)
+                    if parsed:
+                        all_events.append(parsed)
+                    else:
+                        logger.warning(
+                            f"Failed to parse event data for event {event_url_attr} in {calendar_url}. Skipping."
                         )
+                except (DAVError, NotFoundError, Exception) as event_err:
+                    logger.error(
+                        f"Error processing individual event {getattr(event_resource, 'url', 'N/A')} in {calendar_url}: {event_err}",
+                        exc_info=True,
+                    )
 
         except DAVError as e:
             logger.error(
