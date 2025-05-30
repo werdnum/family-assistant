@@ -355,9 +355,11 @@ filesystem_folder = {collections_dir}
                 logger.info(
                     f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' for user '{RADICALE_TEST_USER}' at {calendar_url}"
                 )
-            except caldav_error.AlreadyExists:  # Use qualified name
+            except (
+                caldav_error.MkcalendarError
+            ):  # Catch MkcalendarError for "already exists"
                 logger.info(
-                    f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' already exists for user '{RADICALE_TEST_USER}'."
+                    f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' likely already exists for user '{RADICALE_TEST_USER}' (caught MkcalendarError)."
                 )
             except Exception as e_cal_create:
                 logger.warning(
@@ -448,8 +450,8 @@ async def radicale_server(
                 logger.info(
                     f"Re-created test calendar '{RADICALE_TEST_CALENDAR_NAME}' as it was not found during cleanup."
                 )
-            except caldav_error.AlreadyExists:  # Use qualified name
-                pass  # Should not happen if it wasn't found
+            except caldav_error.MkcalendarError:  # Catch MkcalendarError
+                pass  # Calendar already exists, which is fine for cleanup.
             except Exception as e_create:
                 logger.error(
                     f"Failed to re-create test calendar during cleanup: {e_create}"
