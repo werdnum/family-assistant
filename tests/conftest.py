@@ -1,12 +1,20 @@
 import asyncio
 import logging
 import os
+import pathlib
+import shutil
+import socket
+import subprocess
+import tempfile
+import time
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import MagicMock, patch
 
+import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
 from docker.errors import DockerException  # Import DockerException directly
+from passlib.hash import bcrypt
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
@@ -26,6 +34,13 @@ from family_assistant.task_worker import TaskWorker
 logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
+
+
+def find_free_port() -> int:
+    """Finds a free port on localhost."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)  # Use pytest_asyncio.fixture
@@ -236,3 +251,184 @@ async def task_worker_manager() -> AsyncGenerator[
                 logger.error(
                     f"Error during TaskWorker (fixture) shutdown: {e}", exc_info=True
                 )
+
+
+# --- Radicale CalDAV Server Fixture ---
+
+RADICALE_TEST_USER = "testuser"
+RADICALE_TEST_PASS = "testpass"
+RADICALE_TEST_CALENDAR_NAME = "testcalendar"
+
+
+@pytest.fixture(scope="session")
+def radicale_server_session() -> Generator[tuple[str, str, str, str], None, None]:
+    """
+    Manages a Radicale CalDAV server instance for the entire test session.
+
+    Yields:
+        tuple: (base_url, username, password, calendar_url)
+    """
+    temp_dir = tempfile.mkdtemp(prefix="radicale_test_")
+    collections_dir = pathlib.Path(temp_dir) / "collections"
+    collections_dir.mkdir(parents=True, exist_ok=True)
+    config_file_path = pathlib.Path(temp_dir) / "radicale_config"
+    htpasswd_file_path = pathlib.Path(temp_dir) / "users"
+
+    port = find_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    user_url_part = f"{base_url}/{RADICALE_TEST_USER}"
+    calendar_url = f"{user_url_part}/{RADICALE_TEST_CALENDAR_NAME}/"
+
+    # Create htpasswd file
+    hashed_password = bcrypt.hash(RADICALE_TEST_PASS)
+    with open(htpasswd_file_path, "w", encoding="utf-8") as f:
+        f.write(f"{RADICALE_TEST_USER}:{hashed_password}\n")
+
+    # Create Radicale config file
+    radicale_config_content = f"""
+[server]
+hosts = 127.0.0.1:{port}
+ssl = false
+
+[auth]
+type = htpasswd
+htpasswd_filename = {htpasswd_file_path}
+htpasswd_encryption = bcrypt # or plain if not using passlib for generation
+
+[storage]
+filesystem_folder = {collections_dir}
+    """
+    with open(config_file_path, "w", encoding="utf-8") as f:
+        f.write(radicale_config_content)
+
+    process = None
+    try:
+        logger.info(f"Starting Radicale server on port {port} with storage at {collections_dir}")
+        process = subprocess.Popen(
+            ["python3", "-m", "radicale", "--config", str(config_file_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Wait for Radicale to start
+        max_wait_time = 30  # seconds
+        start_time = time.time()
+        server_ready = False
+        while time.time() - start_time < max_wait_time:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=1):
+                    logger.info(f"Radicale server is up on port {port}.")
+                    server_ready = True
+                    break
+            except (TimeoutError, ConnectionRefusedError):
+                time.sleep(0.5)
+                if process.poll() is not None:  # Check if process terminated
+                    stdout, stderr = process.communicate()
+                    logger.error(f"Radicale process terminated prematurely. Stdout: {stdout.decode(errors='ignore')}, Stderr: {stderr.decode(errors='ignore')}")
+                    pytest.fail("Radicale server failed to start.")
+
+        if not server_ready:
+            stdout, stderr = process.communicate()
+            logger.error(f"Radicale server did not start within {max_wait_time}s. Stdout: {stdout.decode(errors='ignore')}, Stderr: {stderr.decode(errors='ignore')}")
+            pytest.fail(f"Radicale server did not start on port {port} within {max_wait_time} seconds.")
+
+        # Create a default calendar for the test user
+        try:
+            client = caldav.DAVClient(
+                url=base_url, username=RADICALE_TEST_USER, password=RADICALE_TEST_PASS
+            )
+            principal = client.principal()
+            # Ensure user collection exists (Radicale creates it on first auth usually)
+            # We can try to create it or rely on Radicale's auto-creation.
+            # For robustness, let's try to ensure the user's base collection exists.
+            try:
+                principal.make_calendar(name=RADICALE_TEST_CALENDAR_NAME)
+                logger.info(f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' for user '{RADICALE_TEST_USER}' at {calendar_url}")
+            except caldav.lib.error.AlreadyExists:
+                 logger.info(f"Test calendar '{RADICALE_TEST_CALENDAR_NAME}' already exists for user '{RADICALE_TEST_USER}'.")
+            except Exception as e_cal_create:
+                logger.warning(f"Could not ensure user collection or create calendar directly, Radicale might auto-create it. Error: {e_cal_create}")
+                # Radicale typically creates the user's root collection on first valid request.
+                # And clients usually create calendars. For testing, we might need to be more explicit.
+                # If direct creation fails, we might need to rely on the application's tools to create it.
+                # For now, we assume Radicale will create the user's base collection.
+                # Let's try creating the calendar within the principal's calendars.
+                calendars = principal.calendars()
+                found_cal = any(cal.name == RADICALE_TEST_CALENDAR_NAME for cal in calendars)
+                if not found_cal:
+                    principal.make_calendar(name=RADICALE_TEST_CALENDAR_NAME)
+                    logger.info(f"Created test calendar '{RADICALE_TEST_CALENDAR_NAME}' for user '{RADICALE_TEST_USER}' at {calendar_url}")
+
+        except Exception as e:
+            logger.error(f"Failed to create initial test calendar in Radicale: {e}", exc_info=True)
+            # Depending on strictness, you might want to fail the fixture setup here.
+            # For now, we'll proceed, assuming tests might handle calendar creation.
+
+        yield base_url, RADICALE_TEST_USER, RADICALE_TEST_PASS, calendar_url
+
+    finally:
+        if process:
+            logger.info("Stopping Radicale server...")
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+                logger.info("Radicale server stopped.")
+            except subprocess.TimeoutExpired:
+                logger.warning("Radicale server did not stop in time, killing.")
+                process.kill()
+                process.wait()
+                logger.info("Radicale server killed.")
+            stdout, stderr = process.communicate()
+            if stdout:
+                logger.debug(f"Radicale stdout:\n{stdout.decode(errors='ignore')}")
+            if stderr:
+                logger.debug(f"Radicale stderr:\n{stderr.decode(errors='ignore')}")
+
+        shutil.rmtree(temp_dir)
+        logger.info(f"Cleaned up Radicale temp directory: {temp_dir}")
+
+
+@pytest_asyncio.fixture(scope="function")
+async def radicale_server(
+    radicale_server_session: tuple[str, str, str, str],
+    pg_vector_db_engine: AsyncEngine,  # Use pg_vector_db_engine to ensure DB is clean for each test
+) -> AsyncGenerator[tuple[str, str, str, str], None, None]:
+    """
+    Provides Radicale server details for a single test function.
+    Ensures the Radicale collections are clean for each test by clearing them,
+    then re-creating the default test calendar.
+    Relies on pg_vector_db_engine to ensure the application's DB is also clean.
+    """
+    base_url, username, password, calendar_url_template = radicale_server_session
+
+    # Clean Radicale collections before each test
+    # This is a bit simplistic; a more robust way might involve deleting all items
+    # from the specific test calendar or re-creating the collections dir.
+    # For now, let's assume tests manage their own event cleanup or work with unique event IDs.
+    # A more aggressive cleanup:
+    client = caldav.DAVClient(url=base_url, username=username, password=password)
+    try:
+        principal = client.principal()
+        calendars = principal.calendars()
+        for cal in calendars:
+            if cal.name == RADICALE_TEST_CALENDAR_NAME:
+                logger.info(f"Clearing events from calendar: {cal.url}")
+                events = await asyncio.to_thread(cal.events)  # cal.events() can be blocking
+                for event_in_cal in events:  # event_in_cal is caldav.objects.Event
+                    await asyncio.to_thread(event_in_cal.delete)
+                logger.info(f"Cleared events from {RADICALE_TEST_CALENDAR_NAME}.")
+                break
+        else:  # If loop completes without break (calendar not found)
+            try:
+                principal.make_calendar(name=RADICALE_TEST_CALENDAR_NAME)
+                logger.info(f"Re-created test calendar '{RADICALE_TEST_CALENDAR_NAME}' as it was not found during cleanup.")
+            except caldav.lib.error.AlreadyExists:
+                pass  # Should not happen if it wasn't found
+            except Exception as e_create:
+                logger.error(f"Failed to re-create test calendar during cleanup: {e_create}")
+
+    except Exception as e:
+        logger.error(f"Error during Radicale cleanup/setup for test function: {e}", exc_info=True)
+        # Proceeding, but tests might be affected if cleanup failed.
+
+    yield base_url, username, password, calendar_url_template
