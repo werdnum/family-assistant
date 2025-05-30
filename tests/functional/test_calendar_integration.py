@@ -2,8 +2,9 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, AsyncContextManager
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -177,7 +178,7 @@ async def test_add_event_and_verify_in_system_prompt(
     await composite_provider.get_tool_definitions()
 
     # Corrected factory function
-    def get_test_db_context_factory() -> AsyncContextManager[DatabaseContext]:
+    def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
         return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
@@ -380,7 +381,7 @@ END:VCALENDAR"""
     )
     await composite_provider.get_tool_definitions()
 
-    def get_test_db_context_factory() -> AsyncContextManager[DatabaseContext]:
+    def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
         return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
@@ -586,7 +587,7 @@ END:VCALENDAR"""
     )
     await composite_provider.get_tool_definitions()
 
-    def get_test_db_context_factory() -> AsyncContextManager[DatabaseContext]:
+    def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
         return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
@@ -813,7 +814,7 @@ END:VCALENDAR"""
     )
     await composite_provider.get_tool_definitions()
 
-    def get_test_db_context_factory() -> AsyncContextManager[DatabaseContext]:
+    def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
         return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
