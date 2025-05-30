@@ -283,6 +283,7 @@ def _fetch_caldav_events_sync(
                 url=calendar_url,  # Use the specific calendar URL here
                 username=username,
                 password=password,
+                timeout=30,
             ) as client:
                 # The client is now connected directly to the calendar URL's host.
                 # Get the calendar object associated with this specific URL.
@@ -707,6 +708,7 @@ async def add_calendar_event_tool(
                 url=target_calendar_url,
                 username=username,
                 password=password,  # type: ignore
+                timeout=30,
             ) as client:
                 # Get the specific calendar object
                 # This assumes target_calendar_url is the *direct* URL to the calendar collection
@@ -827,6 +829,7 @@ async def search_calendar_events_tool(
                     url=cal_url_item,
                     username=username,
                     password=password,  # type: ignore
+                    timeout=30,
                 ) as client:
                     target_calendar_obj: caldav.objects.Calendar = client.calendar(
                         url=cal_url_item
@@ -1013,6 +1016,7 @@ async def modify_calendar_event_tool(
                 url=calendar_url,
                 username=username,
                 password=password,  # type: ignore
+                timeout=30,
             ) as client:
                 target_calendar_obj: caldav.objects.Calendar = client.calendar(
                     url=calendar_url
@@ -1185,6 +1189,7 @@ async def delete_calendar_event_tool(
                 url=calendar_url,
                 username=username,
                 password=password,  # type: ignore
+                timeout=30,
             ) as client:
                 target_calendar_obj: caldav.objects.Calendar = client.calendar(
                     url=calendar_url

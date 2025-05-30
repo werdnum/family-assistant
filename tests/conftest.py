@@ -345,7 +345,10 @@ filesystem_folder = {collections_dir}
         # Create a default calendar for the test user
         try:
             client = caldav.DAVClient(
-                url=base_url, username=RADICALE_TEST_USER, password=RADICALE_TEST_PASS
+                url=base_url,
+                username=RADICALE_TEST_USER,
+                password=RADICALE_TEST_PASS,
+                timeout=30,
             )
             principal = client.principal()
             # Ensure user collection exists (Radicale creates it on first auth usually)
@@ -431,7 +434,9 @@ async def radicale_server(
     # from the specific test calendar or re-creating the collections dir.
     # For now, let's assume tests manage their own event cleanup or work with unique event IDs.
     # A more aggressive cleanup:
-    client = caldav.DAVClient(url=base_url, username=username, password=password)
+    client = caldav.DAVClient(
+        url=base_url, username=username, password=password, timeout=30
+    )
     try:
         principal = await asyncio.to_thread(client.principal)
         calendars = await asyncio.to_thread(principal.calendars)
