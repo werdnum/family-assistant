@@ -873,13 +873,27 @@ class ProcessingService:
                 await self._aggregate_context_from_providers()
             )
 
-            final_system_prompt = system_prompt_template.format(
-                user_name=user_name,
-                current_time=current_time_str,
-                aggregated_other_context=aggregated_other_context_str,
-                server_url=self.server_url,
-                profile_id=self.service_config.id,  # Add profile_id here
-            ).strip()
+            # Prepare arguments for system prompt formatting
+            format_args = {
+                "user_name": user_name,
+                "current_time": current_time_str,
+                "aggregated_other_context": aggregated_other_context_str,
+                "server_url": self.server_url,
+                "profile_id": self.service_config.id,
+            }
+
+            class SafePromptFormatter(dict):
+                def __missing__(self, key: str) -> str:
+                    # This method is called by format_map if a key is not found.
+                    logger.warning(
+                        f"System prompt template used key '{{{key}}}' which was not found "
+                        f"in the provided format arguments: {list(self.keys())}. "
+                        f"Substituting with an empty string."
+                    )
+                    return ""  # Return empty string for missing keys
+
+            # Use format_map with the custom dictionary to safely format the template
+            final_system_prompt = system_prompt_template.format_map(SafePromptFormatter(format_args)).strip()
 
             if final_system_prompt:
                 messages_for_llm.insert(
