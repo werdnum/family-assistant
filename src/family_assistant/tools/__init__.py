@@ -9,7 +9,10 @@ import logging
 import os
 import pathlib
 import uuid
-from collections.abc import Callable  # Added Awaitable, Set
+from collections.abc import (
+    Callable,  # Added Awaitable, Set
+    Mapping,
+)
 from datetime import datetime, timedelta, timezone  # Added date, time
 from typing import (
     Any,
@@ -24,7 +27,8 @@ import aiofiles
 import telegramify_markdown  # type: ignore[import-untyped] # For escaping confirmation prompts
 from dateutil import rrule
 from dateutil.parser import isoparse
-from sqlalchemy.sql import text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.sql import select, text, update
 
 # Import storage functions needed by local tools
 # Import calendar helper functions AND tool implementations
@@ -973,6 +977,9 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "modify_calendar_event": calendar_integration.modify_calendar_event_tool,
     "delete_calendar_event": calendar_integration.delete_calendar_event_tool,
     "delegate_to_service": delegate_to_service_tool,  # Added missing tool
+    "list_pending_callbacks": list_pending_callbacks_tool,
+    "modify_pending_callback": modify_pending_callback_tool,
+    "cancel_pending_callback": cancel_pending_callback_tool,
 }
 
 
@@ -1071,6 +1078,247 @@ TOOL_CONFIRMATION_RENDERERS: dict[
 
 
 # --- Helper to Fetch Event Details by UID (moved to calendar_integration.py) ---
+
+
+# --- New Callback Management Tool Implementations ---
+
+
+async def list_pending_callbacks_tool(
+    exec_context: ToolExecutionContext,
+    limit: int = 5,
+) -> str:
+    """
+    Lists pending 'llm_callback' tasks for the current conversation.
+
+    Args:
+        exec_context: The execution context.
+        limit: Maximum number of callbacks to list.
+
+    Returns:
+        A string listing pending callbacks or a message if none are found.
+    """
+    db_context = exec_context.db_context
+    conversation_id = exec_context.conversation_id
+    interface_type = exec_context.interface_type
+    timezone_str = exec_context.timezone_str
+    logger.info(
+        f"Executing list_pending_callbacks_tool for {interface_type}:{conversation_id}, limit={limit}"
+    )
+
+    try:
+        # Assuming storage.tasks_table is the correct SQLAlchemy Table object
+        # and payload is a JSON/JSONB column.
+        # The filtering on JSON payload needs to be database-agnostic if possible,
+        # or handle specific dialects. SQLAlchemy's JSON type helps.
+        stmt = (
+            select(
+                storage.tasks_table.c.task_id,
+                storage.tasks_table.c.scheduled_at,
+                storage.tasks_table.c.payload,
+            )
+            .where(
+                storage.tasks_table.c.task_type == "llm_callback",
+                storage.tasks_table.c.status == "pending",
+                storage.tasks_table.c.payload["interface_type"].astext == interface_type,  # type: ignore[index]
+                storage.tasks_table.c.payload["conversation_id"].astext == conversation_id,  # type: ignore[index]
+            )
+            .order_by(storage.tasks_table.c.scheduled_at.asc())
+            .limit(limit)
+        )
+
+        results = await db_context.fetch_all(stmt)
+
+        if not results:
+            return "No pending LLM callbacks found for this conversation."
+
+        formatted_callbacks = ["Pending LLM callbacks:"]
+        for row_proxy in results:
+            # Convert row_proxy to a Mapping (like a dict) to satisfy type checkers for .get()
+            row: Mapping[str, Any] = row_proxy._mapping if hasattr(row_proxy, '_mapping') else row_proxy  # type: ignore
+
+            task_id = row.get("task_id")
+            scheduled_at_utc = row.get("scheduled_at")
+            payload = row.get("payload", {})
+            callback_context = payload.get("callback_context", "No context available.")
+
+            scheduled_at_local_str = "Unknown time"
+            if scheduled_at_utc:
+                # Ensure scheduled_at_utc is timezone-aware (should be if stored correctly)
+                if scheduled_at_utc.tzinfo is None:
+                    scheduled_at_utc = scheduled_at_utc.replace(tzinfo=timezone.utc)
+                scheduled_at_local = scheduled_at_utc.astimezone(ZoneInfo(timezone_str))
+                scheduled_at_local_str = scheduled_at_local.strftime(
+                    "%Y-%m-%d %H:%M:%S %Z"
+                )
+
+            formatted_callbacks.append(
+                f"- Task ID: {task_id}\n  Scheduled At: {scheduled_at_local_str}\n  Context: {callback_context[:100]}{'...' if len(callback_context) > 100 else ''}"
+            )
+        return "\n".join(formatted_callbacks)
+
+    except Exception as e:
+        logger.error(
+            f"Error listing pending callbacks for {interface_type}:{conversation_id}: {e}",
+            exc_info=True,
+        )
+        return f"Error: Failed to list pending callbacks. {e}"
+
+
+async def modify_pending_callback_tool(
+    exec_context: ToolExecutionContext,
+    task_id: str,
+    new_callback_time: str | None = None,
+    new_context: str | None = None,
+) -> str:
+    """
+    Modifies the scheduled time or context of a pending 'llm_callback' task.
+
+    Args:
+        exec_context: The execution context.
+        task_id: The ID of the callback task to modify.
+        new_callback_time: Optional. New ISO 8601 time for the callback.
+        new_context: Optional. New context string for the callback.
+
+    Returns:
+        A string confirming modification or an error message.
+    """
+    db_context = exec_context.db_context
+    conversation_id = exec_context.conversation_id
+    interface_type = exec_context.interface_type
+    timezone_str = exec_context.timezone_str
+    logger.info(
+        f"Executing modify_pending_callback_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
+    )
+
+    if not new_callback_time and not new_context:
+        return "Error: You must provide either a new_callback_time or a new_context to modify."
+
+    try:
+        # Fetch the task to verify ownership and status
+        task_stmt = select(storage.tasks_table).where(
+            storage.tasks_table.c.task_id == task_id
+        )
+        task_row_proxy = await db_context.fetch_one(task_stmt)
+
+        if not task_row_proxy:
+            return f"Error: Callback task with ID '{task_id}' not found."
+        
+        task: Mapping[str, Any] = task_row_proxy._mapping if hasattr(task_row_proxy, '_mapping') else task_row_proxy  # type: ignore
+
+        if task.get("task_type") != "llm_callback":
+            return f"Error: Task '{task_id}' is not an LLM callback task."
+        if task.get("status") != "pending":
+            return f"Error: Callback task '{task_id}' is not pending (current status: {task.get('status')}). It cannot be modified."
+
+        task_payload = task.get("payload", {})
+        if task_payload.get("interface_type") != interface_type or task_payload.get(
+            "conversation_id"
+        ) != conversation_id:
+            return f"Error: Callback task '{task_id}' does not belong to this conversation. Modification denied."
+
+        updates: dict[str, Any] = {}
+        if new_callback_time:
+            try:
+                scheduled_dt = isoparse(new_callback_time)
+                if scheduled_dt.tzinfo is None:
+                    scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(timezone_str))
+                if scheduled_dt <= datetime.now(timezone.utc):  # Compare with UTC now
+                    raise ValueError("New callback time must be in the future.")
+                updates["scheduled_at"] = scheduled_dt.astimezone(timezone.utc)  # Store as UTC
+            except ValueError as ve:
+                return f"Error: Invalid new_callback_time. {ve}"
+
+        if new_context:
+            new_payload = task_payload.copy()
+            new_payload["callback_context"] = new_context
+            updates["payload"] = new_payload
+
+        if not updates:
+            return "No valid modifications specified."
+
+        # Perform the update
+        update_stmt = (
+            update(storage.tasks_table)
+            .where(storage.tasks_table.c.task_id == task_id)
+            .values(**updates)
+        )
+        result = await db_context.execute_with_retry(update_stmt)
+
+        if result and result.rowcount > 0:  # type: ignore
+            # If scheduled_at was changed, notify the worker if an event is available
+            if "scheduled_at" in updates and exec_context.new_task_event:
+                exec_context.new_task_event.set()
+            return f"Callback task '{task_id}' modified successfully."
+        else:
+            # This case should ideally not be reached if fetch_one found the task
+            return f"Error: Failed to modify callback task '{task_id}'. It might have been processed or deleted."
+
+    except Exception as e:
+        logger.error(
+            f"Error modifying callback task '{task_id}' for {interface_type}:{conversation_id}: {e}",
+            exc_info=True,
+        )
+        return f"Error: Failed to modify callback task. {e}"
+
+
+async def cancel_pending_callback_tool(
+    exec_context: ToolExecutionContext, task_id: str
+) -> str:
+    """
+    Cancels a pending 'llm_callback' task.
+
+    Args:
+        exec_context: The execution context.
+        task_id: The ID of the callback task to cancel.
+
+    Returns:
+        A string confirming cancellation or an error message.
+    """
+    db_context = exec_context.db_context
+    conversation_id = exec_context.conversation_id
+    interface_type = exec_context.interface_type
+    logger.info(
+        f"Executing cancel_pending_callback_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
+    )
+
+    try:
+        # Fetch the task to verify ownership and status
+        task_stmt = select(storage.tasks_table).where(
+            storage.tasks_table.c.task_id == task_id
+        )
+        task_row_proxy = await db_context.fetch_one(task_stmt)
+
+        if not task_row_proxy:
+            return f"Error: Callback task with ID '{task_id}' not found."
+
+        task: Mapping[str, Any] = task_row_proxy._mapping if hasattr(task_row_proxy, '_mapping') else task_row_proxy  # type: ignore
+
+        if task.get("task_type") != "llm_callback":
+            return f"Error: Task '{task_id}' is not an LLM callback task."
+        if task.get("status") != "pending":
+            return f"Error: Callback task '{task_id}' is not pending (current status: {task.get('status')}). It cannot be cancelled."
+
+        task_payload = task.get("payload", {})
+        if task_payload.get("interface_type") != interface_type or task_payload.get(
+            "conversation_id"
+        ) != conversation_id:
+            return f"Error: Callback task '{task_id}' does not belong to this conversation. Cancellation denied."
+
+        # Mark as 'failed' with a specific error message indicating cancellation
+        await storage.update_task_status(
+            db_context=db_context,
+            task_id=task_id,
+            status="failed",  # Using 'failed' as 'cancelled' might not be a standard status
+            error="Callback cancelled by user.",
+        )
+        return f"Callback task '{task_id}' cancelled successfully."
+
+    except Exception as e:
+        logger.error(
+            f"Error cancelling callback task '{task_id}' for {interface_type}:{conversation_id}: {e}",
+            exc_info=True,
+        )
+        return f"Error: Failed to cancel callback task. {e}"
 
 
 # --- Tool Definitions ---
@@ -1570,6 +1818,67 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["uid", "calendar_url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_pending_callbacks",
+            "description": "Lists pending LLM callback tasks that were previously scheduled for the current conversation. Shows their task IDs, scheduled times, and context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Optional. Maximum number of pending callbacks to list (default: 5).",
+                        "default": 5,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "modify_pending_callback",
+            "description": "Modifies the scheduled time or context of a specific pending LLM callback task. You must provide the task_id of the callback to modify.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "The unique ID of the LLM callback task to modify (obtained from list_pending_callbacks or when it was scheduled).",
+                    },
+                    "new_callback_time": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Optional. The new exact date and time (ISO 8601 format, including timezone, e.g., '2025-06-01T10:00:00-07:00') for the callback. If omitted, the time is not changed.",
+                    },
+                    "new_context": {
+                        "type": "string",
+                        "description": "Optional. The new context or instructions for the callback. If omitted, the context is not changed.",
+                    },
+                },
+                "required": ["task_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_pending_callback",
+            "description": "Cancels a specific pending LLM callback task. You must provide the task_id of the callback to cancel.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "The unique ID of the LLM callback task to cancel (obtained from list_pending_callbacks or when it was scheduled).",
+                    },
+                },
+                "required": ["task_id"],
             },
         },
     },
