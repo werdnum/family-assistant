@@ -79,7 +79,7 @@ async def get_event_by_summary_from_radicale(
         # caldav.objects.Event.data is a vobject.base.Component
         # We need to access the VEVENT component and then its summary.
         try:
-            vevent = event_obj.vobject_instance.vevent
+            vevent = event_obj.vobject_instance.vevent  # type: ignore[attr-defined]
             if (
                 vevent
                 and hasattr(vevent, "summary")
@@ -176,12 +176,14 @@ async def test_add_event_and_verify_in_system_prompt(
     )
     await composite_provider.get_tool_definitions()
 
-    async def get_test_db_context_func() -> DatabaseContext:
-        manager = get_db_context(engine=pg_vector_db_engine)
-        return await manager.__aenter__()  # type: ignore
+    # Corrected factory function
+    def get_test_db_context_factory() -> asyncio.AbstractContextManager[
+        DatabaseContext
+    ]:
+        return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
-        get_db_context_func=get_test_db_context_func,  # Not used by calendar, but required
+        db_context_factory=get_test_db_context_factory,  # Corrected parameter name and function
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone_str=TEST_TIMEZONE_STR,
@@ -239,7 +241,10 @@ async def test_add_event_and_verify_in_system_prompt(
 
     system_prompt_context_parts = (
         await processing_service._aggregate_context_from_providers(
-            db_context, "test", TEST_CHAT_ID, TEST_USER_NAME
+            db_context,
+            "test",
+            TEST_CHAT_ID,
+            TEST_USER_NAME,  # type: ignore[no-value-for-parameter]
         )
     )
     system_prompt_str = dummy_prompts["system_prompt"].format(
@@ -316,7 +321,7 @@ END:VCALENDAR"""
     created_event_radicale = await asyncio.to_thread(
         target_calendar.add_event, vcal=event_vcal
     )
-    event_uid = created_event_radicale.vobject_instance.vevent.uid.value
+    event_uid = created_event_radicale.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
     logger.info(
         f"Directly created event '{original_summary}' with UID {event_uid} in Radicale."
     )
@@ -377,12 +382,13 @@ END:VCALENDAR"""
     )
     await composite_provider.get_tool_definitions()
 
-    async def get_test_db_context_func() -> DatabaseContext:
-        manager = get_db_context(engine=pg_vector_db_engine)
-        return await manager.__aenter__()  # type: ignore
+    def get_test_db_context_factory() -> asyncio.AbstractContextManager[
+        DatabaseContext
+    ]:
+        return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
-        get_db_context_func=get_test_db_context_func,
+        db_context_factory=get_test_db_context_factory,
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone_str=TEST_TIMEZONE_STR,
@@ -451,9 +457,12 @@ END:VCALENDAR"""
     await asyncio.sleep(0.5)
     system_prompt_context_parts_mod = (
         await processing_service._aggregate_context_from_providers(
-            db_context, "test", TEST_CHAT_ID, TEST_USER_NAME
+            db_context,
+            "test",
+            TEST_CHAT_ID,
+            TEST_USER_NAME,  # type: ignore[no-value-for-parameter]
         )
-    )  # type: ignore
+    )
     system_prompt_str_mod = dummy_prompts["system_prompt"].format(
         **system_prompt_context_parts_mod
     )
@@ -526,7 +535,7 @@ END:VCALENDAR"""
     created_event_radicale_del = await asyncio.to_thread(
         target_calendar.add_event, vcal=event_vcal_del
     )
-    event_uid_del = created_event_radicale_del.vobject_instance.vevent.uid.value
+    event_uid_del = created_event_radicale_del.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
     logger.info(
         f"Directly created event '{event_to_delete_summary}' with UID {event_uid_del} for deletion test."
     )
@@ -581,26 +590,27 @@ END:VCALENDAR"""
     )
     await composite_provider.get_tool_definitions()
 
-    async def get_test_db_context_func() -> DatabaseContext:
-        manager = get_db_context(engine=pg_vector_db_engine)
-        return await manager.__aenter__()  # type: ignore
+    def get_test_db_context_factory() -> asyncio.AbstractContextManager[
+        DatabaseContext
+    ]:
+        return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
-        get_db_context_func=get_test_db_context_func,
+        db_context_factory=get_test_db_context_factory,
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone_str=TEST_TIMEZONE_STR,
-    )  # type: ignore
+    )
     service_config = ProcessingServiceConfig(
         id="test_cal_del_profile",
-        prompts=dummy_prompts,
+        prompts=dummy_prompts,  # type: ignore
         calendar_config=test_calendar_config,
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
         delegation_security_level="unrestricted",
-    )  # type: ignore
+    )
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
@@ -647,12 +657,15 @@ END:VCALENDAR"""
     await asyncio.sleep(0.5)
     system_prompt_context_parts_del = (
         await processing_service._aggregate_context_from_providers(
-            db_context, "test", TEST_CHAT_ID, TEST_USER_NAME
+            db_context,
+            "test",
+            TEST_CHAT_ID,
+            TEST_USER_NAME,  # type: ignore[no-value-for-parameter]
         )
-    )  # type: ignore
-    system_prompt_str_del = dummy_prompts["system_prompt"].format(
+    )
+    system_prompt_str_del = dummy_prompts["system_prompt"].format(  # type: ignore
         **system_prompt_context_parts_del
-    )  # type: ignore
+    )
     logger.info(f"Generated system prompt after deletion:\n{system_prompt_str_del}")
 
     assert event_to_delete_summary not in system_prompt_str_del, (
@@ -806,12 +819,13 @@ END:VCALENDAR"""
     )
     await composite_provider.get_tool_definitions()
 
-    async def get_test_db_context_func() -> DatabaseContext:
-        manager = get_db_context(engine=pg_vector_db_engine)
-        return await manager.__aenter__()  # type: ignore
+    def get_test_db_context_factory() -> asyncio.AbstractContextManager[
+        DatabaseContext
+    ]:
+        return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
-        get_db_context_func=get_test_db_context_func,
+        db_context_factory=get_test_db_context_factory,
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone_str=TEST_TIMEZONE_STR,
