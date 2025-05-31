@@ -1122,9 +1122,8 @@ async def test_callback_skip_behavior_on_user_response(
     )
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        await db_context.execute_with_retry(
-            text("SELECT pg_sleep(0.01)")  # Use text() for raw SQL functions
-        )  # Small delay to ensure timestamps differ
+        # Small delay to ensure timestamps differ, pg_sleep is not available in SQLite
+        await asyncio.sleep(0.01)
         await storage.add_message_to_history(  # Call storage.add_message_to_history directly
             db_context=db_context,
             interface_type="test",
