@@ -342,6 +342,10 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     mock_clock = MockClock()
     initial_time = mock_clock.now()
 
+    # Task Worker Events (use fresh events for each test run)
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+
     initial_callback_delay_seconds = 5
     initial_callback_dt = initial_time + timedelta(
         seconds=initial_callback_delay_seconds
@@ -689,6 +693,10 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     mock_clock = MockClock()
     initial_time = mock_clock.now()
 
+    # Task Worker Events (use fresh events for each test run)
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+
     initial_callback_delay_seconds = (
         5  # Short delay, it should be cancelled before this
     )
@@ -1010,6 +1018,11 @@ async def test_callback_skip_behavior_on_user_response(
 
     mock_clock = MockClock()
     initial_time = mock_clock.now()
+
+    # Task Worker Events (use fresh events for each test run)
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+
     callback_dt = initial_time + timedelta(seconds=CALLBACK_DELAY_SECONDS)
     callback_time_iso = callback_dt.isoformat()
     user_message_id_schedule = 701
