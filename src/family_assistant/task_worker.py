@@ -285,6 +285,7 @@ class TaskWorker:
         processing_service: ProcessingService,
         chat_interface: ChatInterface,
         new_task_event: asyncio.Event,  # Add new_task_event
+        shutdown_event_instance: asyncio.Event, # Added shutdown_event_instance
         calendar_config: dict[str, Any],
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
@@ -294,6 +295,7 @@ class TaskWorker:
         self.processing_service = processing_service
         self.chat_interface = chat_interface
         self.new_task_event = new_task_event  # Store the event
+        self.shutdown_event = shutdown_event_instance # Store the shutdown event
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.embedding_generator = embedding_generator
@@ -580,9 +582,7 @@ class TaskWorker:
             # If wait_for completes without timeout, the event was set
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
             wake_up_event.clear()  # Reset the event for the next notification
-            await asyncio.sleep(
-                0.1
-            )  # Sometimes there is a slight delay before the task is actually visible.
+            # Removed: await asyncio.sleep(0.1)
         except asyncio.TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
             logger.debug(
@@ -601,7 +601,7 @@ class TaskWorker:
             )
             return
 
-        while not shutdown_event.is_set():
+        while not self.shutdown_event.is_set(): # Use self.shutdown_event
             try:
                 task = None  # Initialize task variable for the outer scope
                 # Database context per iteration (starts a transaction)

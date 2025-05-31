@@ -237,6 +237,7 @@ async def schedule_future_callback_tool(
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
     db_context = exec_context.db_context
+    clock = exec_context.clock or SystemClock() # Use context's clock or default to SystemClock
 
     try:
         # Parse the ISO 8601 string, ensuring it's timezone-aware
@@ -251,11 +252,11 @@ async def schedule_future_callback_tool(
             )
 
         # Ensure it's in the future (optional, but good practice)
-        if scheduled_dt <= datetime.now(timezone.utc):
+        if scheduled_dt <= clock.now(): # Compare against the potentially mocked clock's now
             raise ValueError("Callback time must be in the future.")
 
         task_id = f"llm_callback_{uuid.uuid4()}"
-        scheduling_time = datetime.now(timezone.utc)  # Get current UTC time
+        scheduling_time = clock.now()  # Use the clock from context
         payload = {
             "interface_type": interface_type,  # Store interface type
             "conversation_id": conversation_id,  # Store conversation ID
