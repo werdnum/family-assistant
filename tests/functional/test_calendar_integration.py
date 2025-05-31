@@ -1196,7 +1196,7 @@ async def test_search_events(
                 f"present_search_results_matcher: Not enough messages ({len(messages)})"
             )
             return False
-        
+
         # The last message in the input to the LLM for this turn should be the tool's result.
         tool_result_message = messages[-1]
         # The message before that should be the assistant's call to the tool.
@@ -1224,22 +1224,20 @@ async def test_search_events(
                 "present_search_results_matcher: Assistant tool call verification failed."
             )
             return False
-        
+
         # Verify the tool result message
         tool_content_ok = (
             tool_result_message.get("role") == "tool"
             and tool_result_message.get("tool_call_id") == tool_call_id_search
-            and event1_summary.lower()
-            in tool_result_message.get("content", "").lower()
-            and event2_summary.lower()
-            in tool_result_message.get("content", "").lower()
+            and event1_summary.lower() in tool_result_message.get("content", "").lower()
+            and event2_summary.lower() in tool_result_message.get("content", "").lower()
         )
         if not tool_content_ok:
             logger.debug(
                 f"present_search_results_matcher: Tool result content verification failed. Content: {tool_result_message.get('content', '')}"
             )
             return False
-        
+
         logger.debug("present_search_results_matcher: All conditions met.")
         return True
 
