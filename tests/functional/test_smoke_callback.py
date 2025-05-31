@@ -523,11 +523,28 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     logger.info(f"--- Part 2: Modifying callback task_id: {scheduled_task_id} ---")
     # Update the placeholder in the LLM rule's arguments for modify_pending_callback
     # This is a bit of a hack for the test; in reality, LLM gets this from user or list_tool
-    modify_response.tool_calls[0].function.arguments = json.dumps({
-        "task_id": scheduled_task_id,
-        "new_callback_time": modified_callback_time_iso,
-        "new_context": modified_context,
-    })
+    if modify_response.tool_calls and len(modify_response.tool_calls) > 0:
+        original_tool_call_item = modify_response.tool_calls[0]
+        new_function_args = json.dumps({
+            "task_id": scheduled_task_id,
+            "new_callback_time": modified_callback_time_iso,
+            "new_context": modified_context,
+        })
+        new_function = ToolCallFunction(
+            name=original_tool_call_item.function.name,
+            arguments=new_function_args
+        )
+        new_tool_call_item = ToolCallItem(
+            id=original_tool_call_item.id,
+            type=original_tool_call_item.type,
+            function=new_function
+        )
+        modify_response.tool_calls = [new_tool_call_item]
+    else:
+        # This case should not happen based on how modify_response is constructed,
+        # but handle defensively.
+        logger.error("modify_response.tool_calls is None or empty, cannot update arguments.")
+        # Optionally, raise an error or handle as appropriate for the test.
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         _resp, _, _, modify_error = await processing_service.handle_chat_interaction(
@@ -572,7 +589,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     await wait_for_tasks_to_complete(
         engine=test_db_engine,
         timeout_seconds=wait_time,
-        target_task_id=scheduled_task_id,
+        # target_task_id parameter removed
     )
 
     # --- Part 4: Verify MODIFIED Callback Execution ---
@@ -811,9 +828,25 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     logger.info(
         f"--- Part 2: Cancelling callback task_id: {scheduled_task_id_for_cancel} ---"
     )
-    cancel_response.tool_calls[0].function.arguments = json.dumps({
-        "task_id": scheduled_task_id_for_cancel
-    })
+    if cancel_response.tool_calls and len(cancel_response.tool_calls) > 0:
+        original_tool_call_item = cancel_response.tool_calls[0]
+        new_function_args = json.dumps({
+            "task_id": scheduled_task_id_for_cancel
+        })
+        new_function = ToolCallFunction(
+            name=original_tool_call_item.function.name,
+            arguments=new_function_args
+        )
+        new_tool_call_item = ToolCallItem(
+            id=original_tool_call_item.id,
+            type=original_tool_call_item.type,
+            function=new_function
+        )
+        cancel_response.tool_calls = [new_tool_call_item]
+    else:
+        logger.error("cancel_response.tool_calls is None or empty, cannot update arguments.")
+        # Optionally, raise an error or handle as appropriate for the test.
+
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         _resp, _, _, cancel_error = await processing_service.handle_chat_interaction(
@@ -865,8 +898,8 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     )
 
     # Check LLM client calls to ensure the "cancelled_callback_trigger_matcher" was not hit
-    assert llm_client.call_count == 2, (
-        f"LLM was called {llm_client.call_count} times, expected 2 (schedule, cancel)"
+    assert len(llm_client.recorded_calls) == 2, (
+        f"LLM was called {len(llm_client.recorded_calls)} times, expected 2 (schedule, cancel)"
     )
 
     # --- Cleanup ---
