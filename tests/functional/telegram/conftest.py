@@ -29,6 +29,7 @@ class TelegramHandlerTestFixture(NamedTuple):
     # mock_telegram_service is now assistant.telegram_service
     mock_llm: LLMInterface
     mock_confirmation_manager: AsyncMock  # This will be a mock on assistant.telegram_service.chat_interface.request_confirmation
+    mock_application: AsyncMock  # Add mock_application field
     processing_service: (
         ProcessingService  # This is assistant.default_processing_service
     )
@@ -120,16 +121,38 @@ async def telegram_handler_fixture(
 
     # Ensure TelegramService and its application are created
     assert assistant_app.telegram_service is not None
-    assert assistant_app.telegram_service.application is not None
+    # The real application is assistant_app.telegram_service.application
+    # We will create a separate mock_application for use with create_mock_context.
 
-    # Mock the bot instance within the real Telegram Application
-    # This bot is used by TelegramChatInterface and other parts of TelegramService
+    # Mock the bot instance that will be used by both the real application (by patching)
+    # and the mock_application (by assignment).
     mock_bot_instance = AsyncMock(name="MockBotInstance")
     mock_bot_instance.send_message = AsyncMock()
     mock_bot_instance.send_chat_action = AsyncMock()
     mock_bot_instance.edit_message_text = AsyncMock()
     mock_bot_instance.edit_message_reply_markup = AsyncMock()
+
+    # Patch the .bot attribute of the *real* application instance used by the handler
+    assert assistant_app.telegram_service.application is not None
     assistant_app.telegram_service.application.bot = mock_bot_instance
+
+    # Create a fully mocked Application for create_mock_context
+    # This mock_application will be passed to create_mock_context.
+    # It needs to provide the same mock_bot_instance for context.bot.
+    # It also needs bot_data and job_queue attributes for CallbackContext.
+    from telegram.ext import Application, JobQueue  # Required for spec
+
+    mock_application_for_context = AsyncMock(
+        spec=Application, name="MockApplicationForContext"
+    )
+    mock_application_for_context.bot = mock_bot_instance
+    mock_application_for_context.bot_data = {}  # Initialize as dict
+    mock_application_for_context.bot_data_class = (
+        dict  # For CallbackContext initialization
+    )
+    mock_application_for_context.job_queue = AsyncMock(
+        spec=JobQueue, name="MockJobQueue"
+    )
 
     # Mock the ConfirmationUIManager's request_confirmation method
     # The ConfirmationUIManager is now part of TelegramChatInterface
@@ -174,6 +197,7 @@ async def telegram_handler_fixture(
         mock_bot=mock_bot_instance,  # The bot from the real application, now mocked
         mock_llm=mock_llm_client,
         mock_confirmation_manager=mock_request_confirmation_method,  # The mocked method
+        mock_application=mock_application_for_context,  # Pass the new mock application
         processing_service=assistant_app.default_processing_service,
         tools_provider=assistant_app.default_processing_service.tools_provider,
         get_db_context_func=get_test_db_context_func,
