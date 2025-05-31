@@ -221,6 +221,7 @@ async def schedule_future_callback_tool(
     exec_context: ToolExecutionContext,  # Use execution context
     callback_time: str,
     context: str,  # This is the LLM context string
+    skip_if_user_responded: bool = True,  # New parameter for "nag" behavior
 ) -> str | None:
     """
     Schedules a task to trigger an LLM callback in a specific chat at a future time.
@@ -229,6 +230,7 @@ async def schedule_future_callback_tool(
         exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback.
+        skip_if_user_responded: If True (default), the callback will be skipped if the user sends any message after this callback was scheduled. Set to False to ensure the callback always runs.
     """
     # Get interface_type, conversation_id, and db_context from the execution context object
     # application instance is no longer directly needed here.
@@ -259,6 +261,7 @@ async def schedule_future_callback_tool(
             "conversation_id": conversation_id,  # Store conversation ID
             "callback_context": context,
             "scheduling_timestamp": scheduling_time.isoformat(),  # Add scheduling timestamp
+            "skip_if_user_responded": skip_if_user_responded,  # Add the new flag
             # Application instance should not be stored in payload.
             # It will be injected into the task handler at runtime.
         }
@@ -1405,6 +1408,13 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                         "description": (
                             "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan')."
                         ),
+                    },
+                    "skip_if_user_responded": {
+                        "type": "boolean",
+                        "description": (
+                            "Optional. If true (default), the callback will be skipped if the user sends any message after this callback was scheduled. Set to false to ensure the callback always runs, regardless of user activity."
+                        ),
+                        "default": True,
                     },
                 },
                 "required": ["callback_time", "context"],
