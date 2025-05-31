@@ -186,7 +186,7 @@ async def test_send_message_to_user_tool(
         message_id=alice_message_id,
     )
     context_alice = create_mock_context(
-        fix.mock_telegram_service.application,
+        fix.mock_application,  # Use the mock_application from the fixture
         bot_data={"processing_service": fix.processing_service},
     )
 
