@@ -1191,21 +1191,59 @@ async def test_search_events(
     # This rule's matcher needs to look for the tool's output in the message history
     def present_search_results_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        if not messages or len(messages) < 2:
+        # Expecting [system, user_search_prompt, assistant_search_tool_call, tool_search_result]
+        # The LLM is called with these messages to generate the *next* response.
+        if len(messages) < 4:  # Need at least system, user, assistant, tool
+            logger.debug(
+                f"present_search_results_matcher: Not enough messages ({len(messages)})"
+            )
             return False
-        # Last message is assistant's thinking, previous is tool's output
-        last_msg = messages[-1]
-        prev_msg = messages[-2]
-        return (
-            prev_msg.get("role") == "tool"
-            and prev_msg.get("tool_call_id") == tool_call_id_search
-            and event1_summary.lower()
-            in prev_msg.get(
-                "content", ""
-            ).lower()  # Check if tool output contains expected event
-            and last_msg.get("role")
-            == "user"  # This is actually the system prompt for the LLM to generate the *next* response
+        
+        # The last message in the input to the LLM for this turn should be the tool's result.
+        tool_result_message = messages[-1]
+        # The message before that should be the assistant's call to the tool.
+        assistant_tool_call_message = messages[-2]
+
+        # Log messages for debugging
+        logger.debug(
+            f"present_search_results_matcher: Assistant tool call message: {assistant_tool_call_message}"
         )
+        logger.debug(
+            f"present_search_results_matcher: Tool result message: {tool_result_message}"
+        )
+
+        # Verify the assistant called the correct tool
+        if not (
+            assistant_tool_call_message.get("role") == "assistant"
+            and assistant_tool_call_message.get("tool_calls")
+            and len(assistant_tool_call_message["tool_calls"]) == 1
+            and assistant_tool_call_message["tool_calls"][0]["id"]
+            == tool_call_id_search
+            and assistant_tool_call_message["tool_calls"][0]["function"]["name"]
+            == "search_calendar_events"
+        ):
+            logger.debug(
+                "present_search_results_matcher: Assistant tool call verification failed."
+            )
+            return False
+        
+        # Verify the tool result message
+        tool_content_ok = (
+            tool_result_message.get("role") == "tool"
+            and tool_result_message.get("tool_call_id") == tool_call_id_search
+            and event1_summary.lower()
+            in tool_result_message.get("content", "").lower()
+            and event2_summary.lower()
+            in tool_result_message.get("content", "").lower()
+        )
+        if not tool_content_ok:
+            logger.debug(
+                f"present_search_results_matcher: Tool result content verification failed. Content: {tool_result_message.get('content', '')}"
+            )
+            return False
+        
+        logger.debug("present_search_results_matcher: All conditions met.")
+        return True
 
     present_search_results_response = MockLLMOutput(
         content=f"Found these events: {event1_summary} at 9 AM and {event2_summary} at 1 PM.",
