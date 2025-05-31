@@ -43,7 +43,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
@@ -89,7 +88,9 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     user_message_id_schedule = 401  # Added user message ID for the scheduling request
     callback_dt = initial_time + timedelta(seconds=CALLBACK_DELAY_SECONDS)
     callback_time_iso = callback_dt.isoformat()
-    logger.info(f"Scheduling callback for: {callback_time_iso} (current mock time: {initial_time.isoformat()})")
+    logger.info(
+        f"Scheduling callback for: {callback_time_iso} (current mock time: {initial_time.isoformat()})"
+    )
 
     # --- Define Rules for Mock LLM ---
     schedule_tool_call_id = f"call_schedule_{test_run_id}"
@@ -277,8 +278,12 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     )
 
     # --- Part 2: Advance time and let worker process the callback ---
-    logger.info(f"--- Part 2: Advancing clock by {CALLBACK_DELAY_SECONDS + 1} seconds and letting worker run ---")
-    mock_clock.advance(timedelta(seconds=CALLBACK_DELAY_SECONDS + 1))  # Advance past callback time
+    logger.info(
+        f"--- Part 2: Advancing clock by {CALLBACK_DELAY_SECONDS + 1} seconds and letting worker run ---"
+    )
+    mock_clock.advance(
+        timedelta(seconds=CALLBACK_DELAY_SECONDS + 1)
+    )  # Advance past callback time
     test_new_task_event.set()  # Notify worker to check for tasks
     await asyncio.sleep(0.1)  # Allow worker to process the task
 
@@ -340,14 +345,19 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     initial_time = mock_clock.now()
 
     initial_callback_delay_seconds = 5
-    initial_callback_dt = initial_time + timedelta(seconds=initial_callback_delay_seconds)
+    initial_callback_dt = initial_time + timedelta(
+        seconds=initial_callback_delay_seconds
+    )
     initial_callback_time_iso = initial_callback_dt.isoformat()
     initial_context = "Initial context for modification test"
 
     modified_callback_delay_seconds = (
-        initial_callback_delay_seconds + 10  # Ensure it's later than initial, relative to initial_time
+        initial_callback_delay_seconds
+        + 10  # Ensure it's later than initial, relative to initial_time
     )
-    modified_callback_dt = initial_time + timedelta(seconds=modified_callback_delay_seconds)
+    modified_callback_dt = initial_time + timedelta(
+        seconds=modified_callback_delay_seconds
+    )
     modified_callback_time_iso = modified_callback_dt.isoformat()
     modified_context = "This is the MODIFIED context"
 
@@ -603,12 +613,18 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     logger.info("--- Part 3: Waiting for MODIFIED task completion ---")
     # Advance clock to just after the modified callback time
     # The modified_callback_dt is absolute, so calculate duration from current mock time
-    duration_to_advance = (modified_callback_dt - mock_clock.now()) + timedelta(seconds=1)
+    duration_to_advance = (modified_callback_dt - mock_clock.now()) + timedelta(
+        seconds=1
+    )
     if duration_to_advance.total_seconds() > 0:
-        logger.info(f"Advancing clock by {duration_to_advance.total_seconds()}s to trigger modified callback.")
+        logger.info(
+            f"Advancing clock by {duration_to_advance.total_seconds()}s to trigger modified callback."
+        )
         mock_clock.advance(duration_to_advance)
     else:  # If modify tool call took "longer" than the difference, clock might already be past
-        logger.info(f"Clock already at or past modified callback time. Current: {mock_clock.now()}, Target: {modified_callback_dt}")
+        logger.info(
+            f"Clock already at or past modified callback time. Current: {mock_clock.now()}, Target: {modified_callback_dt}"
+        )
 
     test_new_task_event.set()  # Notify worker
     await asyncio.sleep(0.1)  # Allow worker to process
@@ -677,7 +693,9 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     initial_callback_delay_seconds = (
         5  # Short delay, it should be cancelled before this
     )
-    initial_callback_dt = initial_time + timedelta(seconds=initial_callback_delay_seconds)
+    initial_callback_dt = initial_time + timedelta(
+        seconds=initial_callback_delay_seconds
+    )
     initial_callback_time_iso = initial_callback_dt.isoformat()
     initial_context_for_cancel = "Initial context for cancellation test"
     scheduled_task_id_placeholder_cancel = "task_id_to_be_cancelled"
@@ -921,11 +939,15 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     # --- Part 3: Wait a bit to ensure worker does NOT process it ---
     logger.info("--- Part 3: Waiting to ensure cancelled task is NOT processed ---")
     # Advance clock past the original schedule time
-    duration_to_advance_past_schedule = (initial_callback_dt - mock_clock.now()) + timedelta(seconds=2)
+    duration_to_advance_past_schedule = (
+        initial_callback_dt - mock_clock.now()
+    ) + timedelta(seconds=2)
     if duration_to_advance_past_schedule.total_seconds() > 0:
         mock_clock.advance(duration_to_advance_past_schedule)
     test_new_task_event.set()  # Notify worker
-    await asyncio.sleep(0.1)  # Allow worker to process (it should find nothing or a failed task)
+    await asyncio.sleep(
+        0.1
+    )  # Allow worker to process (it should find nothing or a failed task)
 
     # --- Part 4: Verify Callback Was NOT Executed ---
     logger.info("--- Part 4: Verifying Cancelled Callback Was NOT Executed ---")
@@ -1177,7 +1199,9 @@ async def test_callback_skip_behavior_on_user_response(
     # --- Part 3: Wait for potential callback execution ---
     logger.info(f"--- Part 3: Waiting for task completion for {scenario_name} test ---")
     # Advance clock past callback time
-    duration_to_advance_past_schedule = (callback_dt - mock_clock.now()) + timedelta(seconds=1)
+    duration_to_advance_past_schedule = (callback_dt - mock_clock.now()) + timedelta(
+        seconds=1
+    )
     if duration_to_advance_past_schedule.total_seconds() > 0:
         mock_clock.advance(duration_to_advance_past_schedule)
     test_new_task_event.set()  # Notify worker
