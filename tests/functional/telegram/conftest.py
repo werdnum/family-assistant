@@ -145,6 +145,7 @@ async def telegram_handler_fixture(
     )  # Default to no confirmation
 
     # Patch the method on the confirmation_manager instance within TelegramService
+    assert assistant_app.telegram_service is not None  # Ensure telegram_service exists
     assert assistant_app.telegram_service.confirmation_manager is not None
     original_request_confirmation = (
         assistant_app.telegram_service.confirmation_manager.request_confirmation
@@ -182,7 +183,8 @@ async def telegram_handler_fixture(
     # 6. Teardown
     # Restore original request_confirmation if it was patched
     if (
-        assistant_app.telegram_service.confirmation_manager is not None
+        assistant_app.telegram_service is not None  # Ensure telegram_service exists
+        and assistant_app.telegram_service.confirmation_manager is not None
         and hasattr(
             assistant_app.telegram_service.confirmation_manager, "request_confirmation"
         )
