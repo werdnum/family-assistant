@@ -431,9 +431,11 @@ async def radicale_server(
             cal_id=unique_calendar_resource_id,
         )
 
-        assert new_calendar_obj is not None, "make_calendar did not return a calendar object."
+        assert new_calendar_obj is not None, (
+            "make_calendar did not return a calendar object."
+        )
         assert new_calendar_obj.url is not None, "Created calendar has no URL."
-        unique_calendar_url = str(new_calendar_obj.url) # Ensure it's a string
+        unique_calendar_url = str(new_calendar_obj.url)  # Ensure it's a string
         logger.info(
             f"Successfully created unique calendar '{unique_calendar_name}' with URL: {unique_calendar_url}"
         )
@@ -441,9 +443,9 @@ async def radicale_server(
         # Verification: Check if the calendar is listable or has events (should be 0)
         # This also implicitly checks if the calendar exists on the server.
         events = await asyncio.to_thread(new_calendar_obj.events)
-        assert (
-            len(events) == 0
-        ), f"Newly created calendar '{unique_calendar_name}' should have 0 events, found {len(events)}."
+        assert len(events) == 0, (
+            f"Newly created calendar '{unique_calendar_name}' should have 0 events, found {len(events)}."
+        )
         logger.info(
             f"Verified newly created calendar '{unique_calendar_name}' exists and has 0 events."
         )
