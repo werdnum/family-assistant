@@ -1191,8 +1191,6 @@ async def test_search_events(
     # This rule's matcher needs to look for the tool's output in the message history
     def present_search_results_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        # Expecting [system, user_search_prompt, assistant_search_tool_call, tool_search_result]
-        # The LLM is called with these messages to generate the *next* response.
         if len(messages) < 4:  # Need at least system, user, assistant, tool
             logger.debug(
                 f"present_search_results_matcher: Not enough messages ({len(messages)})"
