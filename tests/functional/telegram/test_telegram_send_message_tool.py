@@ -91,8 +91,9 @@ async def test_send_message_to_user_tool(
     bob_name = "Bob TestUser"
 
     # Message IDs for bot's communications
-    message_to_bob_id = 402
-    final_confirmation_to_alice_id = 403
+    intermediate_reply_to_alice_id = 402
+    message_to_bob_id = 403
+    final_confirmation_to_alice_id = 404
 
     # --- Configure KnownUsersContextProvider for this test ---
     chat_id_map = {bob_chat_id: bob_name}
@@ -169,11 +170,19 @@ async def test_send_message_to_user_tool(
     mock_llm_client.rules = [rule_send_message_request, rule_final_confirmation]
 
     # --- Mock Bot Responses ---
+    # Order of side_effect matters:
+    # 1. Intermediate reply to Alice
+    # 2. Message to Bob (from tool)
+    # 3. Final confirmation to Alice
+    mock_intermediate_reply_to_alice = AsyncMock(
+        spec=Message, message_id=intermediate_reply_to_alice_id
+    )
     mock_message_sent_to_bob = AsyncMock(spec=Message, message_id=message_to_bob_id)
     mock_final_reply_to_alice = AsyncMock(
         spec=Message, message_id=final_confirmation_to_alice_id
     )
     fix.mock_bot.send_message.side_effect = [
+        mock_intermediate_reply_to_alice,
         mock_message_sent_to_bob,
         mock_final_reply_to_alice,
     ]
@@ -205,56 +214,71 @@ async def test_send_message_to_user_tool(
             # 2. Bot API Calls (send_message)
             assert_that(fix.mock_bot.send_message.await_count).described_as(
                 "Bot send_message call count"
-            ).is_equal_to(2)
+            ).is_equal_to(3)
 
-            # Call 1: Message sent to Bob by the tool
-            args_to_bob, kwargs_to_bob = fix.mock_bot.send_message.call_args_list[0]
+            # Call 1: Intermediate response to Alice
+            args_intermediate_alice, kwargs_intermediate_alice = (
+                fix.mock_bot.send_message.call_args_list[0]
+            )
+            assert_that(kwargs_intermediate_alice["chat_id"]).described_as(
+                "Chat ID for intermediate response to Alice"
+            ).is_equal_to(alice_chat_id)
+            expected_intermediate_escaped_text = telegramify_markdown.markdownify(
+                llm_intermediate_response_to_alice
+            )
+            assert_that(kwargs_intermediate_alice["text"]).described_as(
+                "Text for intermediate response to Alice"
+            ).is_equal_to(expected_intermediate_escaped_text)
+            assert_that(kwargs_intermediate_alice["reply_to_message_id"]).described_as(
+                "Reply ID for intermediate response to Alice"
+            ).is_equal_to(alice_message_id)
+            assert_that(kwargs_intermediate_alice["parse_mode"].value).described_as(
+                "Parse mode for intermediate response to Alice"
+            ).is_equal_to("MarkdownV2")
+            assert_that(kwargs_intermediate_alice["reply_markup"]).described_as(
+                "Reply markup for intermediate response to Alice"
+            ).is_not_none()  # ForceReply
+
+            # Call 2: Message sent to Bob by the tool
+            args_to_bob, kwargs_to_bob = fix.mock_bot.send_message.call_args_list[1]
             assert_that(kwargs_to_bob["chat_id"]).described_as(
                 "Chat ID for message to Bob"
             ).is_equal_to(bob_chat_id)
             assert_that(kwargs_to_bob["text"]).described_as(
                 "Text for message to Bob"
             ).is_equal_to(message_for_bob)
-            assert_that(kwargs_to_bob).described_as(
-                "kwargs for message to Bob"
-            ).contains_key("reply_to_message_id")
-            assert_that(kwargs_to_bob["reply_to_message_id"]).described_as(
+            assert_that(kwargs_to_bob.get("reply_to_message_id")).described_as(
                 "Reply ID for message to Bob"
             ).is_none()
-            assert_that(kwargs_to_bob).described_as(
-                "kwargs for message to Bob"
-            ).contains_key("parse_mode")
-            assert_that(kwargs_to_bob["parse_mode"]).described_as(
+            assert_that(kwargs_to_bob.get("parse_mode")).described_as(
                 "Parse mode for message to Bob"
             ).is_none()
+            assert_that(kwargs_to_bob.get("reply_markup")).described_as(
+                "Reply markup for message to Bob"
+            ).is_none()
 
-            # Call 2: Final confirmation sent to Alice by the handler
-            args_to_alice, kwargs_to_alice = fix.mock_bot.send_message.call_args_list[1]
-            assert_that(kwargs_to_alice["chat_id"]).described_as(
-                "Chat ID for confirmation to Alice"
+            # Call 3: Final confirmation sent to Alice by the handler
+            args_final_alice, kwargs_final_alice = (
+                fix.mock_bot.send_message.call_args_list[2]
+            )
+            assert_that(kwargs_final_alice["chat_id"]).described_as(
+                "Chat ID for final confirmation to Alice"
             ).is_equal_to(alice_chat_id)
-
             expected_final_escaped_text = telegramify_markdown.markdownify(
                 llm_final_response_to_alice
             )
-            assert_that(kwargs_to_alice["text"]).described_as(
-                "Text for confirmation to Alice"
+            assert_that(kwargs_final_alice["text"]).described_as(
+                "Text for final confirmation to Alice"
             ).is_equal_to(expected_final_escaped_text)
-            assert_that(kwargs_to_alice["reply_to_message_id"]).described_as(
-                "Reply ID for confirmation to Alice"
+            assert_that(kwargs_final_alice["reply_to_message_id"]).described_as(
+                "Reply ID for final confirmation to Alice"
             ).is_equal_to(alice_message_id)
-            assert_that(kwargs_to_alice).described_as(
-                "kwargs for confirmation to Alice"
-            ).contains_key("parse_mode")
-            assert_that(kwargs_to_alice["parse_mode"]).described_as(
-                "Parse mode for confirmation to Alice"
-            ).is_not_none()
-            assert_that(kwargs_to_alice).described_as(
-                "kwargs for confirmation to Alice"
-            ).contains_key("reply_markup")
-            assert_that(kwargs_to_alice["reply_markup"]).described_as(
-                "Reply markup for confirmation to Alice"
-            ).is_not_none()
+            assert_that(kwargs_final_alice["parse_mode"].value).described_as(
+                "Parse mode for final confirmation to Alice"
+            ).is_equal_to("MarkdownV2")
+            assert_that(kwargs_final_alice["reply_markup"]).described_as(
+                "Reply markup for final confirmation to Alice"
+            ).is_not_none()  # ForceReply
 
             # 3. Confirmation Manager (should not be called for this tool by default)
             fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
