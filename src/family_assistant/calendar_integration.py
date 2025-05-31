@@ -785,8 +785,9 @@ async def add_calendar_event_tool(
                     )
 
                 logger.info(f"Saving event to calendar: {target_calendar_obj.url}")
+                # Save event with no_overwrite=True to use If-None-Match:* for creation
                 new_event_resource: caldav.objects.Event = (
-                    target_calendar_obj.save_event(event_data)
+                    target_calendar_obj.save_event(event_data, no_overwrite=True)
                 )
                 logger.info(
                     f"Event saved successfully. URL: {getattr(new_event_resource, 'url', 'N/A')}, ETag: {getattr(new_event_resource, 'etag', 'N/A')}"
@@ -807,7 +808,7 @@ async def add_calendar_event_tool(
                 return (
                     "Error: Failed to add event due to CalDAV authentication failure."
                 )
-            elif "not found" in str(sync_err).lower():
+            elif "not found" in str(sync_err).lower(): # type: ignore[operator]
                 return f"Error: Failed to add event. Calendar not found at URL: {target_calendar_url}"
             else:
                 return f"Error: Failed to add event to CalDAV calendar. {sync_err}"

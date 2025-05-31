@@ -429,50 +429,50 @@ async def radicale_server(
             f"MKCALENDAR request sent for unique calendar '{unique_calendar_name}'."
         )
 
-        # Verify calendar creation by trying to fetch it
+        # Verify calendar creation by trying to fetch its properties
+        # new_calendar is the caldav.Calendar object on which .save() was called
         calendar_verified = False
         max_retries = 5
-        retry_delay = 0.5  # seconds
+        retry_delay = 1.0  # Increased delay
         for attempt in range(max_retries):
             try:
-                # Attempt to fetch the calendar to confirm its existence
-                fetched_calendar = await asyncio.to_thread(
-                    client.calendar, url=unique_calendar_url
-                )
-                if fetched_calendar and fetched_calendar.url == unique_calendar_url:
+                # Attempt to fetch properties of the newly created calendar
+                props_to_fetch = [caldav.dav.DisplayName(), caldav.dav.ResourceID()]
+                fetched_props = await asyncio.to_thread(new_calendar.get_properties, props=props_to_fetch)
+                
+                # Check if displayname is present (or any other expected prop)
+                if fetched_props and caldav.dav.DisplayName.tag in fetched_props:
                     logger.info(
-                        f"Successfully verified creation of unique calendar '{unique_calendar_name}' (attempt {attempt + 1})."
+                        f"Successfully verified creation of unique calendar '{unique_calendar_name}' by fetching properties (attempt {attempt + 1}). DisplayName: {fetched_props[caldav.dav.DisplayName.tag]}"
                     )
                     calendar_verified = True
                     break
                 else:
                     logger.warning(
-                        f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}': fetched object mismatch or None."
+                        f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}': fetched properties missing displayname or None. Props: {fetched_props}"
                     )
-            except caldav_error.NotFoundError:
+            except caldav_error.NotFoundError: # Catch specific NotFoundError
                 logger.warning(
-                    f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}': Not found yet."
+                    f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}' by fetching properties: Not found yet."
                 )
-            except Exception as e_verify:
+            except Exception as e_verify_props:
                 logger.warning(
-                    f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}' failed with error: {e_verify}"
+                    f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}' by fetching properties failed with error: {e_verify_props}"
                 )
 
             if attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)
             else:
                 logger.error(
-                    f"Failed to verify creation of unique calendar '{unique_calendar_name}' after {max_retries} attempts."
+                    f"Failed to verify creation of unique calendar '{unique_calendar_name}' by fetching properties after {max_retries} attempts."
                 )
                 pytest.fail(
-                    f"Radicale unique calendar '{unique_calendar_name}' could not be verified after creation."
+                    f"Radicale unique calendar '{unique_calendar_name}' could not be verified after creation by fetching properties."
                 )
 
-        if (
-            not calendar_verified
-        ):  # Should be caught by pytest.fail above, but as a safeguard
+        if not calendar_verified: # Should be caught by pytest.fail above
             pytest.fail(
-                f"Failed to create and verify unique calendar '{unique_calendar_name}'."
+                f"Failed to create and verify unique calendar '{unique_calendar_name}' by fetching properties."
             )
 
         yield base_url, username, password, unique_calendar_url
