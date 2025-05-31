@@ -1180,10 +1180,10 @@ async def test_search_events(
                     name="search_calendar_events",
                     arguments=json.dumps({
                         "query_text": search_query_text,  # Tool will search for "Search Event"
-                        "start_date_str": search_day.strftime("%Y-%m-%d"),
+                        "start_date_str": (search_day - timedelta(days=1)).strftime("%Y-%m-%d"), # Start search one day earlier
                         "end_date_str": (search_day + timedelta(days=2)).strftime(
                             "%Y-%m-%d"
-                        ),  # Search for two days to be safe
+                        ),  # End search two days after search_day (total 4-day window)
                     }),
                 ),
             )
