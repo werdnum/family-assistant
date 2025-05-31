@@ -99,8 +99,8 @@ async def handle_llm_callback(
     # chat_id is now from context
     callback_context = payload.get("callback_context")
     scheduling_timestamp_str = payload.get("scheduling_timestamp")
-    # Default to True if not present for backward compatibility
-    skip_if_user_responded = payload.get("skip_if_user_responded", True)
+    # Default to False if not present (original behavior: always run callback)
+    skip_if_user_responded = payload.get("skip_if_user_responded", False)
 
     # Validate payload content
     if not callback_context:
