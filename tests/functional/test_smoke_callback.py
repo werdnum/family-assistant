@@ -943,3 +943,263 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     finally:
         global_task_worker_shutdown_event.clear()  # Ensure global event is reset
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skip_if_user_responded_flag", [True, False])
+async def test_callback_skip_behavior_on_user_response(
+    test_db_engine: AsyncEngine, skip_if_user_responded_flag: bool
+) -> None:
+    """
+    Tests the callback skipping behavior based on the `skip_if_user_responded` flag
+    when a user message is sent after scheduling but before execution.
+
+    - If skip_if_user_responded_flag is True: Callback should be skipped.
+    - If skip_if_user_responded_flag is False: Callback should execute (nag mode).
+    """
+    test_run_id = uuid.uuid4()
+    scenario_name = "SkipCallback" if skip_if_user_responded_flag else "NagCallback"
+    logger.info(
+        f"\n--- Running {scenario_name} Test ({test_run_id}, skip_flag={skip_if_user_responded_flag}) ---"
+    )
+
+    now_utc = datetime.now(timezone.utc)
+    callback_dt = now_utc + timedelta(seconds=CALLBACK_DELAY_SECONDS)
+    callback_time_iso = callback_dt.isoformat()
+    user_message_id_schedule = 701
+    user_message_id_intervening = 702
+
+    schedule_tool_call_id = f"call_schedule_skip_test_{test_run_id}"
+
+    # Rule 1: Schedule callback
+    def schedule_matcher_for_skip_test(kwargs: MatcherArgs) -> bool:
+        return (
+            f"schedule for skip_if_user_responded={skip_if_user_responded_flag}"
+            in get_last_message_text(kwargs.get("messages", [])).lower()
+        )
+
+    schedule_response_for_skip_test = MockLLMOutput(
+        content=f"OK, scheduling callback with skip_flag={skip_if_user_responded_flag}.",
+        tool_calls=[
+            ToolCallItem(
+                id=schedule_tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name="schedule_future_callback",
+                    arguments=json.dumps({
+                        "callback_time": callback_time_iso,
+                        "context": CALLBACK_CONTEXT,
+                        "skip_if_user_responded": skip_if_user_responded_flag,
+                    }),
+                ),
+            )
+        ],
+    )
+
+    # Rule 2: System trigger for the callback (should only be hit if not skipped)
+    def callback_trigger_matcher_for_skip_test(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages:
+            return False
+        last_message = messages[-1]
+        if last_message.get("role") == "user":
+            content = last_message.get("content")
+            if isinstance(content, str):
+                return (
+                    "System Callback Trigger:" in content
+                    and CALLBACK_CONTEXT in content
+                )
+        return False
+
+    callback_final_response_text_for_skip_test = f"Rule-based mock: Executing callback (skip_flag={skip_if_user_responded_flag}). Reminder: {CALLBACK_CONTEXT}"
+    callback_response_for_skip_test = MockLLMOutput(
+        content=callback_final_response_text_for_skip_test
+    )
+
+    llm_client: LLMInterface = RuleBasedMockLLMClient(
+        rules=[
+            (
+                schedule_matcher_for_skip_test,
+                schedule_response_for_skip_test,
+            ),
+            (
+                callback_trigger_matcher_for_skip_test,
+                callback_response_for_skip_test,
+            ),
+        ],
+        default_response=MockLLMOutput(
+            content=f"Default mock response for {scenario_name} test."
+        ),
+    )
+
+    # --- Instantiate Dependencies (similar to other tests) ---
+    local_provider = LocalToolsProvider(
+        definitions=local_tools_definition, implementations=local_tool_implementations
+    )
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
+    await composite_provider.get_tool_definitions()
+
+    dummy_prompts = {"system_prompt": f"Test system prompt for {scenario_name}."}
+    test_service_config_obj_skip = ProcessingServiceConfig(
+        prompts=dummy_prompts,
+        calendar_config={},
+        timezone_str="UTC",
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={},
+        delegation_security_level="confirm",
+        id=f"smoke_{scenario_name.lower()}_profile",
+    )
+    processing_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=composite_provider,
+        service_config=test_service_config_obj_skip,
+        app_config={},
+        context_providers=[],
+        server_url=None,
+    )
+
+    mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
+    mock_chat_interface_for_worker.send_message.return_value = (
+        f"mock_message_id_{scenario_name.lower()}_callback"
+    )
+
+    test_new_task_event = asyncio.Event()
+    task_worker_instance = TaskWorker(
+        processing_service=processing_service,
+        chat_interface=mock_chat_interface_for_worker,
+        new_task_event=test_new_task_event,
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=AsyncMock(),
+    )
+    task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
+    worker_task = asyncio.create_task(
+        task_worker_instance.run(test_new_task_event),
+        name=f"TaskWorker-{scenario_name}-{test_run_id}",
+    )
+
+    # --- Part 1: Schedule the callback ---
+    logger.info(
+        f"--- Part 1: Scheduling callback for {scenario_name} test (skip_flag={skip_if_user_responded_flag}) ---"
+    )
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=mock_chat_interface_for_worker,
+            new_task_event=test_new_task_event,
+            interface_type="test",
+            conversation_id=str(TEST_CHAT_ID),
+            trigger_content_parts=[
+                {
+                    "type": "text",
+                    "text": f"Please schedule for skip_if_user_responded={skip_if_user_responded_flag}",
+                }
+            ],
+            trigger_interface_message_id=str(user_message_id_schedule),
+            user_name=TEST_USER_NAME,
+        )
+    assert schedule_error is None, f"Error scheduling callback: {schedule_error}"
+    logger.info(
+        f"Callback scheduled for {scenario_name} test. LLM calls: {len(llm_client.get_calls())}"  # type: ignore
+    )
+
+    # --- Part 2: Simulate an intervening user message ---
+    logger.info(
+        f"--- Part 2: Simulating intervening user message for {scenario_name} test ---"
+    )
+    # Add a message directly to history *after* scheduling_timestamp but *before* callback_dt
+    # The scheduling_timestamp is created inside schedule_future_callback_tool.
+    # For the test, we know it's roughly `now_utc` when the tool call happens.
+    # The callback is scheduled for `callback_dt`.
+    # We need to ensure this intervening message's timestamp is > scheduling_timestamp and < callback_dt.
+    # Let's place it halfway.
+    intervening_message_timestamp = now_utc + timedelta(
+        seconds=CALLBACK_DELAY_SECONDS / 2
+    )
+
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        await db_context.execute_with_retry(
+            select("pg_sleep(0.01)")
+        )  # Small delay to ensure timestamps differ
+        await processing_service.message_history_storage.add_message_to_history(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id=str(TEST_CHAT_ID),
+            interface_message_id=str(user_message_id_intervening),
+            turn_id=str(uuid.uuid4()),  # New turn for this user message
+            thread_root_id=None,  # Assuming this is a new interaction for simplicity
+            timestamp=intervening_message_timestamp,
+            role="user",
+            content="This is an intervening user message.",
+            tool_calls=None,
+            tool_call_id=None,
+            reasoning_info=None,
+            error_traceback=None,
+        )
+    logger.info(
+        f"Intervening user message added at {intervening_message_timestamp.isoformat()} for {scenario_name} test."
+    )
+
+    # --- Part 3: Wait for potential callback execution ---
+    logger.info(f"--- Part 3: Waiting for task completion for {scenario_name} test ---")
+    wait_time = CALLBACK_DELAY_SECONDS + WAIT_BUFFER_SECONDS
+    await wait_for_tasks_to_complete(engine=test_db_engine, timeout_seconds=wait_time)
+
+    # --- Part 4: Verify behavior ---
+    logger.info(f"--- Part 4: Verifying behavior for {scenario_name} test ---")
+    if skip_if_user_responded_flag:
+        # Callback should have been SKIPPED
+        mock_chat_interface_for_worker.send_message.assert_not_called()
+        logger.info(
+            f"Verified: Callback was SKIPPED for {scenario_name} (skip_flag=True), send_message not called."
+        )
+        # LLM calls: 2 for scheduling. Callback trigger rule should NOT have been hit.
+        assert len(llm_client.get_calls()) == 2, (  # type: ignore
+            f"LLM calls for {scenario_name} (skip=True) was {len(llm_client.get_calls())}, expected 2."  # type: ignore
+        )
+    else:
+        # Callback should have EXECUTED (Nag mode)
+        mock_chat_interface_for_worker.send_message.assert_awaited_once()
+        _call_args, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
+        assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
+        sent_text = call_kwargs.get("text")
+        assert sent_text is not None
+        assert CALLBACK_CONTEXT in sent_text, (
+            f"Final message for {scenario_name} (skip_flag=False) did not contain expected context. Sent: '{sent_text}'"
+        )
+        logger.info(
+            f"Verified: Callback EXECUTED for {scenario_name} (skip_flag=False), send_message called with context."
+        )
+        # LLM calls: 2 for scheduling, 2 for callback execution.
+        assert len(llm_client.get_calls()) == 4, (  # type: ignore
+            f"LLM calls for {scenario_name} (skip=False) was {len(llm_client.get_calls())}, expected 4."  # type: ignore
+        )
+
+    # --- Cleanup ---
+    logger.info(f"--- Cleanup for {scenario_name} Test ---")
+    global_task_worker_shutdown_event.set()
+    test_new_task_event.set()
+    try:
+        await asyncio.wait_for(worker_task, timeout=5.0)
+        logger.info(f"TaskWorker-{scenario_name}-{test_run_id} task finished.")
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"TaskWorker-{scenario_name}-{test_run_id} task did not finish within timeout. Cancelling."
+        )
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            logger.info(f"TaskWorker-{scenario_name}-{test_run_id} task was cancelled.")
+    except Exception as e:
+        logger.error(
+            f"Error during TaskWorker-{scenario_name}-{test_run_id} cleanup: {e}",
+            exc_info=True,
+        )
+    finally:
+        global_task_worker_shutdown_event.clear()
+    logger.info(f"--- {scenario_name} Test ({test_run_id}) Passed ---")
