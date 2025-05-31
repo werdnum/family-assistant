@@ -999,15 +999,15 @@ async def test_search_events(
         (event2_summary, event2_start, event2_end),
     ]:
         # Use the new_event_object() pattern for creating events
-        def create_event_sync() -> None:
+        def create_event_sync(current_summ: str = summ, current_st: datetime = st, current_en: datetime = en) -> None:
             event = target_calendar.new_event_object()  # type: ignore[attr-defined]
             # new_event_object creates a shell with PRODID "-//python-caldav//caldav//en_DK"
             # We need to populate its vevent component.
             vevent = event.vobject_instance.vevent  # type: ignore[attr-defined]
             vevent.uid.value = str(uuid.uuid4())  # type: ignore[attr-defined]
-            vevent.summary.value = summ  # type: ignore[attr-defined]
-            vevent.dtstart.value = st  # type: ignore[attr-defined]
-            vevent.dtend.value = en  # type: ignore[attr-defined]
+            vevent.summary.value = current_summ  # type: ignore[attr-defined]
+            vevent.dtstart.value = current_st  # type: ignore[attr-defined]
+            vevent.dtend.value = current_en  # type: ignore[attr-defined]
             vevent.dtstamp.value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
             # event.data will be updated by the setter of vobject_instance implicitly if not already.
             # Or more explicitly:
