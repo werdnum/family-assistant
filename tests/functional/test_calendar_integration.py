@@ -999,17 +999,26 @@ async def test_search_events(
         (event1_summary, event1_start, event1_end),
         (event2_summary, event2_start, event2_end),
     ]:
-        cal_search = vobject.iCalendar()  # type: ignore[attr-defined]
-        vevent_search = cal_search.add("vevent")  # type: ignore[attr-defined]
-        vevent_search.add("uid").value = str(uuid.uuid4())  # type: ignore[attr-defined]
-        vevent_search.add("summary").value = summ  # type: ignore[attr-defined]
-        vevent_search.add("dtstart").value = st  # type: ignore[attr-defined]
-        vevent_search.add("dtend").value = en  # type: ignore[attr-defined]
-        vevent_search.add("dtstamp").value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
-        event_vcal_search_str = cal_search.serialize()  # type: ignore[attr-defined]
-        await asyncio.to_thread(target_calendar.add_event, vcal=event_vcal_search_str)
+        # Use the new_event_object() pattern for creating events
+        def create_event_sync() -> None:
+            event = target_calendar.new_event_object()  # type: ignore[attr-defined]
+            # new_event_object creates a shell with PRODID "-//python-caldav//caldav//en_DK"
+            # We need to populate its vevent component.
+            vevent = event.vobject_instance.vevent  # type: ignore[attr-defined]
+            vevent.uid.value = str(uuid.uuid4())  # type: ignore[attr-defined]
+            vevent.summary.value = summ  # type: ignore[attr-defined]
+            vevent.dtstart.value = st  # type: ignore[attr-defined]
+            vevent.dtend.value = en  # type: ignore[attr-defined]
+            vevent.dtstamp.value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
+            # event.data will be updated by the setter of vobject_instance implicitly if not already.
+            # Or more explicitly:
+            event.data = event.vobject_instance.serialize() # type: ignore[attr-defined]
+            event.save() # type: ignore[attr-defined]
+
+        await asyncio.to_thread(create_event_sync)
+
     logger.info(
-        f"Directly created '{event1_summary}' and '{event2_summary}' for search test using vobject."
+        f"Directly created '{event1_summary}' and '{event2_summary}' for search test using new_event_object pattern."
     )
 
     # --- LLM Rules ---
