@@ -33,6 +33,7 @@ from .storage.context import DatabaseContext
 
 # Import ToolsProvider interface and context
 from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
+from .utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ class ProcessingService:
         context_providers: list[ContextProvider],  # NEW: List of context providers
         server_url: str | None,
         app_config: dict[str, Any],  # Keep app_config for now
+        clock: Clock = SystemClock(),
     ) -> None:
         """
         Initializes the ProcessingService.
@@ -92,6 +94,7 @@ class ProcessingService:
             server_url or "http://localhost:8000"
         )  # Default if not provided
         self.app_config = app_config  # Store app_config
+        self.clock = clock # Store the clock instance
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
 
@@ -456,6 +459,7 @@ class ProcessingService:
                             timezone_str=self.timezone_str,
                             request_confirmation_callback=request_confirmation_callback,
                             processing_service=self,
+                            clock=self.clock, # Pass the clock from ProcessingService
                         )
 
                         tool_response_content_val = None  # Renamed to avoid conflict
@@ -676,9 +680,7 @@ class ProcessingService:
         try:
             # --- 1. Determine Thread Root ID & Save User Trigger Message ---
             thread_root_id_for_turn: int | None = None
-            user_message_timestamp = datetime.now(
-                timezone.utc
-            )  # Timestamp for user message
+            user_message_timestamp = self.clock.now()  # Timestamp for user message
 
             if replied_to_interface_id:
                 try:
@@ -858,7 +860,8 @@ class ProcessingService:
             )
             try:
                 local_tz = pytz.timezone(self.timezone_str)
-                current_time_str = datetime.now(local_tz).strftime(
+                # Use the injected clock's now() method
+                current_time_str = self.clock.now().astimezone(local_tz).strftime(
                     "%Y-%m-%d %H:%M:%S %Z"
                 )
             except Exception as tz_err:
@@ -940,7 +943,7 @@ class ProcessingService:
                     msg_to_save["turn_id"] = turn_id
                     msg_to_save["thread_root_id"] = thread_root_id_for_turn
                     msg_to_save["timestamp"] = msg_to_save.get(
-                        "timestamp", datetime.now(timezone.utc)
+                        "timestamp", self.clock.now() # Use ProcessingService's clock
                     )
                     msg_to_save.setdefault("interface_message_id", None)
                     # Add processing_profile_id for turn messages
