@@ -690,7 +690,9 @@ def main() -> int:
     fastapi_app.state.config = config_data
     logger.info("Stored final configuration dictionary in FastAPI app state.")
 
-    assistant_app = Assistant(config_data)
+    # LLM client overrides would be passed here if needed for main execution,
+    # but typically this is for testing. For main run, it's None.
+    assistant_app = Assistant(config_data, llm_client_overrides=None)
     loop = asyncio.get_event_loop()
 
     # Setup Signal Handlers
