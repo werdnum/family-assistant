@@ -107,10 +107,17 @@ class Assistant:
     dependency setup, service initialization, and graceful shutdown.
     """
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        llm_client_overrides: dict[str, LLMInterface] | None = None,
+    ) -> None:
         self.config = config
         self.shutdown_event = asyncio.Event()
         self.new_task_event = asyncio.Event()
+        self.llm_client_overrides = (
+            llm_client_overrides if llm_client_overrides is not None else {}
+        )
 
         self.shared_httpx_client: httpx.AsyncClient | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
@@ -213,10 +220,17 @@ class Assistant:
             profile_llm_model = profile_proc_conf_dict.get(
                 "llm_model", self.config["model"]
             )
-            llm_client_for_profile: LLMInterface = LiteLLMClient(
-                model=profile_llm_model,
-                model_parameters=self.config.get("llm_parameters", {}),
-            )
+
+            if profile_id in self.llm_client_overrides:
+                llm_client_for_profile = self.llm_client_overrides[profile_id]
+                logger.info(
+                    f"Profile '{profile_id}' using overridden LLM client: {type(llm_client_for_profile).__name__}"
+                )
+            else:
+                llm_client_for_profile = LiteLLMClient(
+                    model=profile_llm_model,
+                    model_parameters=self.config.get("llm_parameters", {}),
+                )
 
             local_tools_list_from_config = profile_tools_conf_dict.get(
                 "enable_local_tools"
