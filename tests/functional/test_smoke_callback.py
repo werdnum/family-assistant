@@ -44,7 +44,6 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 
-# from tests.helpers import wait_for_tasks_to_complete # wait_for_tasks_to_complete will be replaced
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
@@ -88,7 +87,6 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
 
     # --- Calculate future callback time ---
     user_message_id_schedule = 401  # Added user message ID for the scheduling request
-    # now_utc = datetime.now(timezone.utc) # Replaced with mock_clock
     callback_dt = initial_time + timedelta(seconds=CALLBACK_DELAY_SECONDS)
     callback_time_iso = callback_dt.isoformat()
     logger.info(f"Scheduling callback for: {callback_time_iso} (current mock time: {initial_time.isoformat()})")

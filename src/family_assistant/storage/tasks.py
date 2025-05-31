@@ -125,7 +125,6 @@ async def dequeue_task(
     current_time: datetime,  # Added current_time parameter
 ) -> dict[str, Any] | None:
     """Atomically dequeues the next available task."""
-    # now = datetime.now(timezone.utc) # Replaced with current_time
 
     assert db_context.conn is not None  # Ensure conn is available in this context
 
