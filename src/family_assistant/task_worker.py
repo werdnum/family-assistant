@@ -24,6 +24,7 @@ from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +70,18 @@ async def handle_llm_callback(
     )
     chat_interface: ChatInterface | None = exec_context.chat_interface
     db_context = exec_context.db_context
+    clock = exec_context.clock
+
     # Get interface identifiers from context
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
 
     # Basic validation of dependencies from context
+    if not clock:
+        logger.error(
+            "Clock not found in ToolExecutionContext for handle_llm_callback."
+        )
+        raise ValueError("Missing Clock dependency in context.")
     if not processing_service:
         logger.error(
             "ProcessingService not found in ToolExecutionContext for handle_llm_callback."
@@ -152,7 +160,7 @@ async def handle_llm_callback(
     logger.info(
         f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}, skip_if_user_responded={skip_if_user_responded})"
     )
-    current_time_str = datetime.now(
+    current_time_str = clock.now().astimezone(
         zoneinfo.ZoneInfo(exec_context.timezone_str)
     ).strftime("%Y-%m-%d %H:%M:%S %Z")  # Use timezone from context
 
@@ -164,7 +172,7 @@ async def handle_llm_callback(
         callback_turn_id = str(uuid.uuid4())
 
         # Save the initial system trigger message for the callback to history
-        callback_trigger_timestamp = datetime.now(timezone.utc)
+        callback_trigger_timestamp = clock.now()
         await storage.add_message_to_history(
             db_context=db_context,
             interface_type=interface_type,  # Should be "system_callback" or similar
@@ -280,6 +288,7 @@ class TaskWorker:
         calendar_config: dict[str, Any],
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
+        clock: Clock = SystemClock(),
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -288,6 +297,7 @@ class TaskWorker:
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.embedding_generator = embedding_generator
+        self.clock = clock  # Store the clock instance
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
         self.task_handlers: dict[
@@ -394,6 +404,7 @@ class TaskWorker:
                 timezone_str=self.timezone_str,
                 processing_service=self.processing_service,
                 embedding_generator=self.embedding_generator,
+                clock=self.clock,  # Pass the clock instance
             )
             # --- Execute Handler with Context ---
             logger.debug(
@@ -520,7 +531,7 @@ class TaskWorker:
         if current_retry < max_retries:
             # Calculate exponential backoff with jitter
             backoff_delay = (5 * (2**current_retry)) + random.uniform(0, 2)
-            next_attempt_time = datetime.now(timezone.utc) + timedelta(
+            next_attempt_time = self.clock.now() + timedelta(
                 seconds=backoff_delay
             )
             logger.info(
@@ -603,6 +614,7 @@ class TaskWorker:
                             db_context=db_context,
                             worker_id=self.worker_id,
                             task_types=task_types_handled,
+                            current_time=self.clock.now(),  # Pass current time from worker's clock
                         )
 
                         if task:
