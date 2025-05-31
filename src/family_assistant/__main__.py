@@ -27,7 +27,9 @@ logging.basicConfig(
 )
 # Keep external libraries less verbose
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("telegram").setLevel(logging.INFO)  # Or as configured by TelegramService
+logging.getLogger("telegram").setLevel(
+    logging.INFO
+)  # Or as configured by TelegramService
 logging.getLogger("apscheduler").setLevel(logging.INFO)
 logging.getLogger("caldav").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -654,10 +656,14 @@ parser.add_argument(
     help="Path to store email attachments (overrides config file and environment variable)",
 )
 
-# reload_config_handler and other helpers like load_config, deep_merge_dicts remain here.
-# async_get_db_context_for_provider and task_wrapper_handle_log_message are imported from assistant.py
-# if they are defined there, or could be defined here if they are purely __main__ utilities.
-# For this refactor, I've moved them to assistant.py as they are closely tied to its setup.
+
+def reload_config_handler(signum: int, frame: Any) -> None:
+    """Handles SIGHUP for config reloading (placeholder)."""
+    # Note: Frame type is `types.FrameType | None` but Any for simplicity here.
+    logger.info(f"Received signal {signum}. Basic config reload triggered.")
+    # This currently only re-calls load_config. A running Assistant instance
+    # would not automatically pick up these changes without further logic.
+    load_config()
 
 
 def main() -> int:
@@ -692,7 +698,8 @@ def main() -> int:
     for sig_num, sig_name in signal_map.items():
         loop.add_signal_handler(
             sig_num,
-            lambda name=sig_name, app_instance=assistant_app: app_instance.initiate_shutdown(name)
+            lambda name=sig_name,
+            app_instance=assistant_app: app_instance.initiate_shutdown(name),
         )
 
     if hasattr(signal, "SIGHUP"):
@@ -700,7 +707,9 @@ def main() -> int:
             # reload_config_handler needs to be adapted if it re-initializes parts of assistant_app
             # For now, it just reloads config_data which isn't automatically re-read by a running Assistant instance.
             # A more robust reload would involve assistant_app.reload_config(new_config_data) or similar.
-            loop.add_signal_handler(signal.SIGHUP, reload_config_handler, signal.SIGHUP, None)
+            loop.add_signal_handler(
+                signal.SIGHUP, reload_config_handler, signal.SIGHUP, None
+            )
             logger.info("SIGHUP handler registered for config reload (basic).")
         except NotImplementedError:
             logger.warning("SIGHUP signal handler not supported on this platform.")
@@ -710,22 +719,28 @@ def main() -> int:
     try:
         logger.info("Starting application via Assistant class...")
         loop.run_until_complete(assistant_app.setup_dependencies())
-        loop.run_until_complete(assistant_app.start_services())  # This will block until shutdown
-        
+        loop.run_until_complete(
+            assistant_app.start_services()
+        )  # This will block until shutdown
+
         # After start_services() completes (meaning shutdown_event was set and initial stop began)
         # we ensure full stop_services logic runs.
         if not assistant_app.is_shutdown_complete():
-             logger.info("Ensuring all services are stopped post-start_services completion...")
-             loop.run_until_complete(assistant_app.stop_services())
+            logger.info(
+                "Ensuring all services are stopped post-start_services completion..."
+            )
+            loop.run_until_complete(assistant_app.stop_services())
 
     except ValueError as config_err:
         logger.critical(f"Configuration error during startup: {config_err}")
         return 1
     except (KeyboardInterrupt, SystemExit) as ex:
-        logger.warning(f"Received {type(ex).__name__} in main, initiating shutdown sequence.")
+        logger.warning(
+            f"Received {type(ex).__name__} in main, initiating shutdown sequence."
+        )
         if not assistant_app.is_shutdown_complete():
             if not assistant_app.shutdown_event.is_set():
-                 assistant_app.initiate_shutdown(type(ex).__name__)
+                assistant_app.initiate_shutdown(type(ex).__name__)
             # Wait for start_services to react to shutdown_event or call stop_services directly
             # This ensures that if start_services was interrupted before its own shutdown logic,
             # stop_services is still called.
@@ -736,7 +751,9 @@ def main() -> int:
         if not assistant_app.is_shutdown_complete():
             logger.error("Attempting emergency shutdown due to unhandled exception.")
             if not assistant_app.shutdown_event.is_set():
-                 assistant_app.initiate_shutdown(f"UnhandledException: {type(e).__name__}")
+                assistant_app.initiate_shutdown(
+                    f"UnhandledException: {type(e).__name__}"
+                )
             loop.run_until_complete(assistant_app.stop_services())
         return 1
     finally:
@@ -746,21 +763,22 @@ def main() -> int:
         # or if stop_services was interrupted.
         remaining_tasks = [t for t in asyncio.all_tasks(loop=loop) if not t.done()]
         if remaining_tasks:
-            logger.info(f"Cancelling {len(remaining_tasks)} remaining tasks in main finally block...")
+            logger.info(
+                f"Cancelling {len(remaining_tasks)} remaining tasks in main finally block..."
+            )
             for task in remaining_tasks:
                 task.cancel()
-            loop.run_until_complete(asyncio.gather(*remaining_tasks, return_exceptions=True))
+            loop.run_until_complete(
+                asyncio.gather(*remaining_tasks, return_exceptions=True)
+            )
             logger.info("Remaining tasks cancelled.")
 
         logger.info("Closing event loop.")
-        # loop.close() # Be cautious with loop.close() if it's managed elsewhere or in tests.
-        # For a standalone script, it's usually fine.
-        # If loop is already closed, this will error.
         if not loop.is_closed():
             loop.close()
 
         logger.info("Application finished.")
-    
+
     return 0
 
 
