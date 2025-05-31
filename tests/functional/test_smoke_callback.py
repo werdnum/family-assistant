@@ -912,8 +912,12 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     )
 
     # Check LLM client calls to ensure the "cancelled_callback_trigger_matcher" was not hit
-    assert len(llm_client.get_calls()) == 2, (  # type: ignore[attr-defined]
-        f"LLM was called {len(llm_client.get_calls())} times, expected 2 (schedule, cancel)"  # type: ignore[attr-defined]
+    # Each user interaction (schedule, then cancel) involves:
+    # 1. LLM call for initial processing + tool request
+    # 2. LLM call after tool execution for final response
+    # So, 2 interactions * 2 LLM calls/interaction = 4 calls total.
+    assert len(llm_client.get_calls()) == 4, (  # type: ignore[attr-defined]
+        f"LLM was called {len(llm_client.get_calls())} times, expected 4 (schedule, then cancel)"  # type: ignore[attr-defined]
     )
 
     # --- Cleanup ---
