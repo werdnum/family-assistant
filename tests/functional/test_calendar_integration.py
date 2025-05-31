@@ -235,7 +235,7 @@ async def test_add_event_and_verify_in_system_prompt(
         delegation_security_level="unrestricted",
     )
     processing_service = ProcessingService(
-        llm_client=MagicMock(), # Will be replaced after initial creation
+        llm_client=MagicMock(),  # Will be replaced after initial creation
         tools_provider=composite_provider,
         context_providers=[calendar_context_provider],
         service_config=service_config,
@@ -279,9 +279,8 @@ async def test_add_event_and_verify_in_system_prompt(
     assert original_radicale_event is not None, (
         f"Event '{original_summary}' not found in Radicale after tool creation."
     )
-    event_uid = original_radicale_event.vobject_instance.vevent.uid.value # type: ignore[attr-defined]
+    event_uid = original_radicale_event.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
     logger.info(f"Retrieved UID for '{original_summary}': {event_uid}")
-
 
     # --- LLM Rules for Modifying the Event ---
     tool_call_id_modify = f"call_mod_{uuid.uuid4()}"
@@ -300,11 +299,11 @@ async def test_add_event_and_verify_in_system_prompt(
                 function=ToolCallFunction(
                     name="modify_calendar_event",
                     arguments=json.dumps({
-                        "uid": event_uid, # Use the retrieved UID
+                        "uid": event_uid,  # Use the retrieved UID
                         "calendar_url": test_calendar_direct_url,
                         "new_summary": modified_summary,
                         "new_start_time": modified_start_dt.isoformat(),
-                        "new_end_time": modified_end_dt.isoformat(), # Add end time
+                        "new_end_time": modified_end_dt.isoformat(),  # Add end time
                     }),
                 ),
             )
@@ -319,7 +318,7 @@ async def test_add_event_and_verify_in_system_prompt(
             last_message.get("role") == "tool"
             and last_message.get("tool_call_id") == tool_call_id_modify
             and "OK. Event '" in last_message.get("content", "")
-            and f"'{modified_summary}' updated" in last_message.get("content", "") # Tool returns new summary
+            and f"'{modified_summary}' updated" in last_message.get("content", "")  # Tool returns new summary
         )
 
     final_llm_response_for_modify_content = f"Alright, '{modified_summary}' has been updated."
@@ -390,7 +389,7 @@ async def test_modify_event(
     )
     original_end_dt = original_start_dt + timedelta(hours=1)
     modified_start_dt = original_start_dt.replace(hour=15)  # Change to 3 PM
-    modified_end_dt = modified_start_dt + timedelta(hours=1) # Ensure end time is also set for modification
+    modified_end_dt = modified_start_dt + timedelta(hours=1)  # Ensure end time is also set for modification
 
     # --- LLM Rules for Initial Event Creation ---
     tool_call_id_add_original = f"call_add_orig_{uuid.uuid4()}"
@@ -437,7 +436,7 @@ async def test_modify_event(
     # --- Setup ProcessingService for initial event creation ---
     # Note: This ProcessingService instance is configured for the *initial add*
     # It will be reconfigured later for the *modify* step.
-    test_calendar_config_for_add = { # Use a distinct config dict if needed, or reuse
+    test_calendar_config_for_add = {  # Use a distinct config dict if needed, or reuse
         "caldav": {
             "base_url": radicale_base_url,
             "username": r_user,
@@ -458,7 +457,7 @@ async def test_modify_event(
     composite_provider_for_add = CompositeToolsProvider(
         providers=[local_provider_for_add, mcp_provider_for_add]
     )
-    await composite_provider_for_add.get_tool_definitions() # Ensure tools are loaded
+    await composite_provider_for_add.get_tool_definitions()  # Ensure tools are loaded
 
     calendar_context_provider_for_add = CalendarContextProvider(
         calendar_config=test_calendar_config_for_add,
@@ -466,7 +465,7 @@ async def test_modify_event(
         timezone_str=TEST_TIMEZONE_STR,
     )
     service_config_for_add = ProcessingServiceConfig(
-        id="test_cal_initial_add_profile", # Unique profile ID
+        id="test_cal_initial_add_profile",  # Unique profile ID
         prompts=dummy_prompts_for_add,
         calendar_config=test_calendar_config_for_add,
         timezone_str=TEST_TIMEZONE_STR,
@@ -499,10 +498,10 @@ async def test_modify_event(
             error_create,
         ) = await processing_service_for_add.handle_chat_interaction(
             db_context=db_context,
-            chat_interface=MagicMock(), # Mock interface for this interaction
+            chat_interface=MagicMock(),  # Mock interface for this interaction
             new_task_event=asyncio.Event(),
-            interface_type="test_initial_add", # Distinguish interface type
-            conversation_id=f"{TEST_CHAT_ID}_initial_add", # Distinguish conversation
+            interface_type="test_initial_add",  # Distinguish interface type
+            conversation_id=f"{TEST_CHAT_ID}_initial_add",  # Distinguish conversation
             trigger_content_parts=[{"type": "text", "text": user_message_create_original}],
             trigger_interface_message_id="msg_create_orig_for_modify",
             user_name=TEST_USER_NAME,
@@ -520,7 +519,7 @@ async def test_modify_event(
         f"Event '{original_summary}' not found in Radicale after LLM tool creation."
     )
     # Ensure event_uid is correctly typed as str for JSON serialization
-    event_uid: str = str(original_radicale_event.vobject_instance.vevent.uid.value) # type: ignore[attr-defined]
+    event_uid: str = str(original_radicale_event.vobject_instance.vevent.uid.value)  # type: ignore[attr-defined]
     logger.info(f"Retrieved UID for '{original_summary}' created by LLM tool: {event_uid}")
 
     # --- LLM Rules for Modifying the Event (using the retrieved UID) ---
@@ -528,10 +527,10 @@ async def test_modify_event(
 
     def modify_event_matcher(kwargs: MatcherArgs) -> bool:
         last_text = get_last_message_text(kwargs.get("messages", [])).lower()
-        return f"change event {original_summary.lower()}" in last_text # User refers to original summary
+        return f"change event {original_summary.lower()}" in last_text  # User refers to original summary
 
     modify_event_response = MockLLMOutput(
-        content=f"OK, I'll modify '{original_summary}'.", # LLM confirms based on original summary
+        content=f"OK, I'll modify '{original_summary}'.",  # LLM confirms based on original summary
         tool_calls=[
             ToolCallItem(
                 id=tool_call_id_modify,
@@ -539,11 +538,11 @@ async def test_modify_event(
                 function=ToolCallFunction(
                     name="modify_calendar_event",
                     arguments=json.dumps({
-                        "uid": event_uid, # Use the UID from the LLM-created event
+                        "uid": event_uid,  # Use the UID from the LLM-created event
                         "calendar_url": test_calendar_direct_url,
                         "new_summary": modified_summary,
                         "new_start_time": modified_start_dt.isoformat(),
-                        "new_end_time": modified_end_dt.isoformat(), # Ensure end time is included
+                        "new_end_time": modified_end_dt.isoformat(),  # Ensure end time is included
                     }),
                 ),
             )
@@ -563,7 +562,7 @@ async def test_modify_event(
     # The `composite_provider` and `calendar_context_provider` can be reused if their config is the same.
     # The `service_config` might need a different ID if that's important.
     # The following lines are from the original test structure, now using the `llm_client_for_modify`.
-    llm_client: LLMInterface = llm_client_for_modify # Ensure this is the one used by ProcessingService below
+    llm_client: LLMInterface = llm_client_for_modify  # Ensure this is the one used by ProcessingService below
 
     # --- Setup ProcessingService (similar to add_event test) ---
     test_calendar_config = {
@@ -638,7 +637,6 @@ async def test_modify_event(
     assert error_modify is None, f"Error during modify chat interaction: {error_modify}"
     assert final_reply_modify and final_llm_response_for_modify_content in final_reply_modify, \
         f"Expected modify reply '{final_llm_response_for_modify_content}', but got '{final_reply_modify}'"
-
 
     # --- Verify Event in Radicale ---
     modified_radicale_event = await get_event_by_summary_from_radicale(
@@ -792,7 +790,7 @@ async def test_delete_event(
         delegation_security_level="unrestricted",
     )
     processing_service = ProcessingService(
-        llm_client=MagicMock(), # Will be replaced
+        llm_client=MagicMock(),  # Will be replaced
         tools_provider=composite_provider,
         context_providers=[calendar_context_provider],
         service_config=service_config,
@@ -836,7 +834,7 @@ async def test_delete_event(
     assert radicale_event_to_delete is not None, (
         f"Event '{event_to_delete_summary}' not found in Radicale after tool creation."
     )
-    event_uid_del = radicale_event_to_delete.vobject_instance.vevent.uid.value # type: ignore[attr-defined]
+    event_uid_del = radicale_event_to_delete.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
     logger.info(f"Retrieved UID for '{event_to_delete_summary}': {event_uid_del}")
 
     # --- LLM Rule for Deleting Event ---
@@ -855,7 +853,7 @@ async def test_delete_event(
                 function=ToolCallFunction(
                     name="delete_calendar_event",
                     arguments=json.dumps({
-                        "uid": event_uid_del, # Use retrieved UID
+                        "uid": event_uid_del,  # Use retrieved UID
                         "calendar_url": test_calendar_direct_url,
                     }),
                 ),
@@ -909,7 +907,6 @@ async def test_delete_event(
     assert error_delete is None, f"Error during delete chat interaction: {error_delete}"
     assert final_reply_delete and final_llm_response_for_delete_content in final_reply_delete, \
         f"Expected delete reply '{final_llm_response_for_delete_content}', but got '{final_reply_delete}'"
-
 
     # --- Verify Event in Radicale ---
     deleted_radicale_event = await get_event_by_summary_from_radicale(
