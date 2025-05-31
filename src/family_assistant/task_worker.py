@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone  # Added Union
 from typing import Any
 
 from dateutil import rrule
+from dateutil.parser import isoparse
+from sqlalchemy import select
 
 from family_assistant import storage
 from family_assistant.embeddings import EmbeddingGenerator
@@ -96,6 +98,7 @@ async def handle_llm_callback(
     # Extract necessary info from payload
     # chat_id is now from context
     callback_context = payload.get("callback_context")
+    scheduling_timestamp_str = payload.get("scheduling_timestamp")
 
     # Validate payload content
     if not callback_context:
@@ -104,8 +107,41 @@ async def handle_llm_callback(
         )
         raise ValueError("Missing required field in payload: callback_context")
 
+    if not scheduling_timestamp_str:
+        logger.error(
+            f"Invalid payload for llm_callback task (missing scheduling_timestamp): {payload}"
+        )
+        raise ValueError("Missing required field in payload: scheduling_timestamp")
+
+    try:
+        scheduling_timestamp_dt = isoparse(scheduling_timestamp_str)
+        if scheduling_timestamp_dt.tzinfo is None:  # Ensure it's offset-aware
+            scheduling_timestamp_dt = scheduling_timestamp_dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        logger.error(
+            f"Invalid scheduling_timestamp format in llm_callback task: {scheduling_timestamp_str}"
+        )
+        raise ValueError("Invalid scheduling_timestamp format")
+
+    # Check for intervening user messages
+    stmt = (
+        select(storage.message_history_table.c.internal_id)
+        .where(storage.message_history_table.c.interface_type == interface_type)
+        .where(storage.message_history_table.c.conversation_id == conversation_id)
+        .where(storage.message_history_table.c.role == "user")
+        .where(storage.message_history_table.c.timestamp > scheduling_timestamp_dt)
+        .limit(1)
+    )
+    intervening_messages = await db_context.fetch_all(stmt)
+
+    if intervening_messages:
+        logger.info(
+            f"User has responded since callback/nag was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}. Skipping callback."
+        )
+        return  # Abort the callback
+
     logger.info(
-        f"Handling LLM callback for conversation {interface_type}:{conversation_id}"
+        f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str})"
     )
     current_time_str = datetime.now(
         zoneinfo.ZoneInfo(exec_context.timezone_str)
