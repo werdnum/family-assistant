@@ -332,7 +332,9 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     initial_callback_time_iso = initial_callback_dt.isoformat()
     initial_context = "Initial context for modification test"
 
-    modified_callback_delay_seconds = initial_callback_delay_seconds + 10  # Ensure it's later
+    modified_callback_delay_seconds = (
+        initial_callback_delay_seconds + 10
+    )  # Ensure it's later
     modified_callback_dt = now_utc + timedelta(seconds=modified_callback_delay_seconds)
     modified_callback_time_iso = modified_callback_dt.isoformat()
     modified_context = "This is the MODIFIED context"
@@ -351,7 +353,10 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     # --- Define Rules for Mock LLM ---
     # Rule 1: Schedule initial callback
     def schedule_matcher_for_modify(kwargs: MatcherArgs) -> bool:
-        return "schedule initial for modify" in get_last_message_text(kwargs.get("messages", [])).lower()
+        return (
+            "schedule initial for modify"
+            in get_last_message_text(kwargs.get("messages", [])).lower()
+        )
 
     schedule_response_for_modify = MockLLMOutput(
         content=f"OK, scheduling initial callback for {initial_callback_time_iso}.",
@@ -372,7 +377,10 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # Rule 2: Modify the callback
     def modify_matcher(kwargs: MatcherArgs) -> bool:
-        return "modify the callback" in get_last_message_text(kwargs.get("messages", [])).lower()
+        return (
+            "modify the callback"
+            in get_last_message_text(kwargs.get("messages", [])).lower()
+        )
 
     modify_response = MockLLMOutput(
         content=f"OK, attempting to modify callback to {modified_callback_time_iso} with new context.",
@@ -401,13 +409,18 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         if last_message.get("role") == "user":
             content = last_message.get("content")
             if isinstance(content, str):
-                return "System Callback Trigger:" in content and modified_context in content
+                return (
+                    "System Callback Trigger:" in content
+                    and modified_context in content
+                )
         return False
 
     modified_callback_final_response_text = (
         f"Rule-based mock: Executing MODIFIED callback. Reminder: {modified_context}"
     )
-    modified_callback_response = MockLLMOutput(content=modified_callback_final_response_text)
+    modified_callback_response = MockLLMOutput(
+        content=modified_callback_final_response_text
+    )
 
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[
@@ -415,7 +428,9 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
             (modify_matcher, modify_response),
             (modified_callback_trigger_matcher, modified_callback_response),
         ],
-        default_response=MockLLMOutput(content="Default mock response for modify test."),
+        default_response=MockLLMOutput(
+            content="Default mock response for modify test."
+        ),
     )
 
     # --- Instantiate Dependencies (similar to the first test) ---
@@ -423,46 +438,69 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         definitions=local_tools_definition, implementations=local_tool_implementations
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
-    composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
     await composite_provider.get_tool_definitions()
 
     dummy_prompts = {"system_prompt": "Test system prompt for modify."}
     test_service_config_obj_modify = ProcessingServiceConfig(
-        prompts=dummy_prompts, calendar_config={}, timezone_str="UTC",
-        max_history_messages=5, history_max_age_hours=24, tools_config={},
-        delegation_security_level="confirm", id="smoke_modify_profile",
+        prompts=dummy_prompts,
+        calendar_config={},
+        timezone_str="UTC",
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={},
+        delegation_security_level="confirm",
+        id="smoke_modify_profile",
     )
     processing_service = ProcessingService(
-        llm_client=llm_client, tools_provider=composite_provider,
-        service_config=test_service_config_obj_modify, app_config={},
-        context_providers=[], server_url=None,
+        llm_client=llm_client,
+        tools_provider=composite_provider,
+        service_config=test_service_config_obj_modify,
+        app_config={},
+        context_providers=[],
+        server_url=None,
     )
 
     mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
-    mock_chat_interface_for_worker.send_message.return_value = "mock_message_id_modified_callback"
+    mock_chat_interface_for_worker.send_message.return_value = (
+        "mock_message_id_modified_callback"
+    )
 
     test_new_task_event = asyncio.Event()
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface_for_worker,
-        new_task_event=test_new_task_event, calendar_config={},
-        timezone_str="UTC", embedding_generator=AsyncMock(),
+        new_task_event=test_new_task_event,
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=AsyncMock(),
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-    worker_task = asyncio.create_task(task_worker_instance.run(test_new_task_event), name=f"TaskWorker-Modify-{test_run_id}")
+    worker_task = asyncio.create_task(
+        task_worker_instance.run(test_new_task_event),
+        name=f"TaskWorker-Modify-{test_run_id}",
+    )
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for modification test ---")
     async with DatabaseContext(engine=test_db_engine) as db_context:
         _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
-            db_context=db_context, chat_interface=mock_chat_interface_for_worker,
-            new_task_event=test_new_task_event, interface_type="test",
+            db_context=db_context,
+            chat_interface=mock_chat_interface_for_worker,
+            new_task_event=test_new_task_event,
+            interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[{"type": "text", "text": "Please schedule initial for modify"}],
+            trigger_content_parts=[
+                {"type": "text", "text": "Please schedule initial for modify"}
+            ],
             trigger_interface_message_id=str(user_message_id_schedule),
             user_name=TEST_USER_NAME,
         )
-    assert schedule_error is None, f"Error scheduling initial callback: {schedule_error}"
+    assert schedule_error is None, (
+        f"Error scheduling initial callback: {schedule_error}"
+    )
 
     # Find the scheduled task_id
     scheduled_task_id = None
@@ -470,8 +508,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         # Query for the task based on type and context (or part of it)
         # This is a bit fragile; ideally, the schedule tool would return the task_id
         stmt = select(tasks_table.c.task_id, tasks_table.c.payload).where(
-            tasks_table.c.task_type == "llm_callback",
-            tasks_table.c.status == "pending"
+            tasks_table.c.task_type == "llm_callback", tasks_table.c.status == "pending"
         )
         all_pending_callbacks = await db_context.fetch_all(stmt)
         for task_row in all_pending_callbacks:
@@ -494,10 +531,14 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         _resp, _, _, modify_error = await processing_service.handle_chat_interaction(
-            db_context=db_context, chat_interface=mock_chat_interface_for_worker,
-            new_task_event=test_new_task_event, interface_type="test",
+            db_context=db_context,
+            chat_interface=mock_chat_interface_for_worker,
+            new_task_event=test_new_task_event,
+            interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[{"type": "text", "text": "Please modify the callback"}],
+            trigger_content_parts=[
+                {"type": "text", "text": "Please modify the callback"}
+            ],
             trigger_interface_message_id=str(user_message_id_modify),
             user_name=TEST_USER_NAME,
         )
@@ -505,24 +546,34 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # Verify task is updated in DB
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        stmt = select(tasks_table.c.scheduled_at, tasks_table.c.payload).where(tasks_table.c.task_id == scheduled_task_id)
+        stmt = select(tasks_table.c.scheduled_at, tasks_table.c.payload).where(
+            tasks_table.c.task_id == scheduled_task_id
+        )
         modified_task_data = await db_context.fetch_one(stmt)
     assert modified_task_data, f"Modified task {scheduled_task_id} not found in DB"
-    
+
     # Convert stored scheduled_at (UTC) to the test's modified_callback_dt for comparison
     # Ensure modified_task_data["scheduled_at"] is offset-aware UTC
     db_scheduled_at = modified_task_data["scheduled_at"]
     if db_scheduled_at.tzinfo is None:  # Should be stored as UTC
         db_scheduled_at = db_scheduled_at.replace(tzinfo=timezone.utc)
 
-    assert db_scheduled_at == modified_callback_dt.astimezone(timezone.utc), "Callback time not updated correctly"
-    assert modified_task_data["payload"]["callback_context"] == modified_context, "Callback context not updated"
+    assert db_scheduled_at == modified_callback_dt.astimezone(timezone.utc), (
+        "Callback time not updated correctly"
+    )
+    assert modified_task_data["payload"]["callback_context"] == modified_context, (
+        "Callback context not updated"
+    )
     logger.info(f"Callback task {scheduled_task_id} verified as modified in DB.")
 
     # --- Part 3: Wait for MODIFIED callback execution ---
     logger.info("--- Part 3: Waiting for MODIFIED task completion ---")
     wait_time = modified_callback_delay_seconds + WAIT_BUFFER_SECONDS
-    await wait_for_tasks_to_complete(engine=test_db_engine, timeout_seconds=wait_time, target_task_id=scheduled_task_id)
+    await wait_for_tasks_to_complete(
+        engine=test_db_engine,
+        timeout_seconds=wait_time,
+        target_task_id=scheduled_task_id,
+    )
 
     # --- Part 4: Verify MODIFIED Callback Execution ---
     logger.info("--- Part 4: Verifying MODIFIED Callback Execution ---")
@@ -531,15 +582,21 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
     sent_text = call_kwargs.get("text")
     assert sent_text is not None
-    assert modified_context in sent_text, f"Final message did not contain MODIFIED context. Sent: '{sent_text}'"
-    logger.info("Verified mock_bot.send_message was called with the MODIFIED final response.")
+    assert modified_context in sent_text, (
+        f"Final message did not contain MODIFIED context. Sent: '{sent_text}'"
+    )
+    logger.info(
+        "Verified mock_bot.send_message was called with the MODIFIED final response."
+    )
 
     # --- Cleanup ---
     logger.info("--- Cleanup for Modify Test ---")
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
     except asyncio.TimeoutError:
-        logger.warning("TaskWorker task did not finish within timeout during modify test cleanup.")
+        logger.warning(
+            "TaskWorker task did not finish within timeout during modify test cleanup."
+        )
         worker_task.cancel()
         await asyncio.sleep(0.1)
     logger.info(f"--- Modify Callback Test ({test_run_id}) Passed ---")
@@ -565,7 +622,9 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     user_message_id_cancel = 602
     now_utc = datetime.now(timezone.utc)
 
-    initial_callback_delay_seconds = 5  # Short delay, it should be cancelled before this
+    initial_callback_delay_seconds = (
+        5  # Short delay, it should be cancelled before this
+    )
     initial_callback_dt = now_utc + timedelta(seconds=initial_callback_delay_seconds)
     initial_callback_time_iso = initial_callback_dt.isoformat()
     initial_context_for_cancel = "Initial context for cancellation test"
@@ -574,7 +633,10 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     # --- Define Rules for Mock LLM ---
     # Rule 1: Schedule initial callback
     def schedule_matcher_for_cancel(kwargs: MatcherArgs) -> bool:
-        return "schedule initial for cancel" in get_last_message_text(kwargs.get("messages", [])).lower()
+        return (
+            "schedule initial for cancel"
+            in get_last_message_text(kwargs.get("messages", [])).lower()
+        )
 
     schedule_response_for_cancel = MockLLMOutput(
         content=f"OK, scheduling initial callback for {initial_callback_time_iso} (cancel test).",
@@ -595,7 +657,10 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # Rule 2: Cancel the callback
     def cancel_matcher(kwargs: MatcherArgs) -> bool:
-        return "cancel the callback" in get_last_message_text(kwargs.get("messages", [])).lower()
+        return (
+            "cancel the callback"
+            in get_last_message_text(kwargs.get("messages", [])).lower()
+        )
 
     cancel_response = MockLLMOutput(
         content="OK, attempting to cancel callback.",
@@ -605,7 +670,9 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
                 type="function",
                 function=ToolCallFunction(
                     name="cancel_pending_callback",
-                    arguments=json.dumps({"task_id": scheduled_task_id_placeholder_cancel}),
+                    arguments=json.dumps({
+                        "task_id": scheduled_task_id_placeholder_cancel
+                    }),
                 ),
             )
         ],
@@ -624,19 +691,28 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
                 is_trigger = "System Callback Trigger:" in content
                 has_context = initial_context_for_cancel in content
                 if is_trigger and has_context:
-                    logger.error("CANCEL TEST FAILURE: Callback trigger was matched, meaning cancellation likely failed.")
+                    logger.error(
+                        "CANCEL TEST FAILURE: Callback trigger was matched, meaning cancellation likely failed."
+                    )
                 return is_trigger and has_context
         return False
 
-    cancelled_callback_response = MockLLMOutput(content="ERROR: This callback should have been cancelled!")
+    cancelled_callback_response = MockLLMOutput(
+        content="ERROR: This callback should have been cancelled!"
+    )
 
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[
             (schedule_matcher_for_cancel, schedule_response_for_cancel),
             (cancel_matcher, cancel_response),
-            (cancelled_callback_trigger_matcher, cancelled_callback_response),  # Should not be hit
+            (
+                cancelled_callback_trigger_matcher,
+                cancelled_callback_response,
+            ),  # Should not be hit
         ],
-        default_response=MockLLMOutput(content="Default mock response for cancel test."),
+        default_response=MockLLMOutput(
+            content="Default mock response for cancel test."
+        ),
     )
 
     # --- Instantiate Dependencies (similar to other tests) ---
@@ -644,74 +720,111 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         definitions=local_tools_definition, implementations=local_tool_implementations
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
-    composite_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
     await composite_provider.get_tool_definitions()
 
     dummy_prompts = {"system_prompt": "Test system prompt for cancel."}
     test_service_config_obj_cancel = ProcessingServiceConfig(
-        prompts=dummy_prompts, calendar_config={}, timezone_str="UTC",
-        max_history_messages=5, history_max_age_hours=24, tools_config={},
-        delegation_security_level="confirm", id="smoke_cancel_profile",
+        prompts=dummy_prompts,
+        calendar_config={},
+        timezone_str="UTC",
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={},
+        delegation_security_level="confirm",
+        id="smoke_cancel_profile",
     )
     processing_service = ProcessingService(
-        llm_client=llm_client, tools_provider=composite_provider,
-        service_config=test_service_config_obj_cancel, app_config={},
-        context_providers=[], server_url=None,
+        llm_client=llm_client,
+        tools_provider=composite_provider,
+        service_config=test_service_config_obj_cancel,
+        app_config={},
+        context_providers=[],
+        server_url=None,
     )
 
     mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
     # send_message should NOT be called by the worker if cancellation is successful
-    mock_chat_interface_for_worker.send_message.return_value = "mock_message_id_cancelled_callback"
+    mock_chat_interface_for_worker.send_message.return_value = (
+        "mock_message_id_cancelled_callback"
+    )
 
     test_new_task_event = asyncio.Event()
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface_for_worker,
-        new_task_event=test_new_task_event, calendar_config={},
-        timezone_str="UTC", embedding_generator=AsyncMock(),
+        new_task_event=test_new_task_event,
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=AsyncMock(),
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-    worker_task = asyncio.create_task(task_worker_instance.run(test_new_task_event), name=f"TaskWorker-Cancel-{test_run_id}")
+    worker_task = asyncio.create_task(
+        task_worker_instance.run(test_new_task_event),
+        name=f"TaskWorker-Cancel-{test_run_id}",
+    )
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for cancellation test ---")
     async with DatabaseContext(engine=test_db_engine) as db_context:
         _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
-            db_context=db_context, chat_interface=mock_chat_interface_for_worker,
-            new_task_event=test_new_task_event, interface_type="test",
+            db_context=db_context,
+            chat_interface=mock_chat_interface_for_worker,
+            new_task_event=test_new_task_event,
+            interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[{"type": "text", "text": "Please schedule initial for cancel"}],
+            trigger_content_parts=[
+                {"type": "text", "text": "Please schedule initial for cancel"}
+            ],
             trigger_interface_message_id=str(user_message_id_schedule),
             user_name=TEST_USER_NAME,
         )
-    assert schedule_error is None, f"Error scheduling initial callback for cancel test: {schedule_error}"
+    assert schedule_error is None, (
+        f"Error scheduling initial callback for cancel test: {schedule_error}"
+    )
 
     # Find the scheduled task_id
     scheduled_task_id_for_cancel = None
     async with DatabaseContext(engine=test_db_engine) as db_context:
         stmt = select(tasks_table.c.task_id, tasks_table.c.payload).where(
-            tasks_table.c.task_type == "llm_callback",
-            tasks_table.c.status == "pending"
+            tasks_table.c.task_type == "llm_callback", tasks_table.c.status == "pending"
         )
         all_pending_callbacks = await db_context.fetch_all(stmt)
         for task_row in all_pending_callbacks:
             payload = task_row["payload"]
-            if payload and payload.get("callback_context") == initial_context_for_cancel:
+            if (
+                payload
+                and payload.get("callback_context") == initial_context_for_cancel
+            ):
                 scheduled_task_id_for_cancel = task_row["task_id"]
                 break
-    assert scheduled_task_id_for_cancel, "Could not find the initially scheduled task for cancel test in DB"
-    logger.info(f"Initial callback for cancel test scheduled with task_id: {scheduled_task_id_for_cancel}")
+    assert scheduled_task_id_for_cancel, (
+        "Could not find the initially scheduled task for cancel test in DB"
+    )
+    logger.info(
+        f"Initial callback for cancel test scheduled with task_id: {scheduled_task_id_for_cancel}"
+    )
 
     # --- Part 2: Cancel the scheduled callback ---
-    logger.info(f"--- Part 2: Cancelling callback task_id: {scheduled_task_id_for_cancel} ---")
-    cancel_response.tool_calls[0].function.arguments = json.dumps({"task_id": scheduled_task_id_for_cancel})
+    logger.info(
+        f"--- Part 2: Cancelling callback task_id: {scheduled_task_id_for_cancel} ---"
+    )
+    cancel_response.tool_calls[0].function.arguments = json.dumps({
+        "task_id": scheduled_task_id_for_cancel
+    })
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         _resp, _, _, cancel_error = await processing_service.handle_chat_interaction(
-            db_context=db_context, chat_interface=mock_chat_interface_for_worker,
-            new_task_event=test_new_task_event, interface_type="test",
+            db_context=db_context,
+            chat_interface=mock_chat_interface_for_worker,
+            new_task_event=test_new_task_event,
+            interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[{"type": "text", "text": "Please cancel the callback"}],
+            trigger_content_parts=[
+                {"type": "text", "text": "Please cancel the callback"}
+            ],
             trigger_interface_message_id=str(user_message_id_cancel),
             user_name=TEST_USER_NAME,
         )
@@ -719,26 +832,42 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # Verify task is marked as 'failed' in DB
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        stmt = select(tasks_table.c.status, tasks_table.c.error).where(tasks_table.c.task_id == scheduled_task_id_for_cancel)
+        stmt = select(tasks_table.c.status, tasks_table.c.error).where(
+            tasks_table.c.task_id == scheduled_task_id_for_cancel
+        )
         cancelled_task_data = await db_context.fetch_one(stmt)
-    assert cancelled_task_data, f"Cancelled task {scheduled_task_id_for_cancel} not found in DB"
-    assert cancelled_task_data["status"] == "failed", "Callback status not updated to 'failed' after cancellation"
-    assert "cancelled by user" in cancelled_task_data["error"].lower(), "Error message does not indicate user cancellation"
-    logger.info(f"Callback task {scheduled_task_id_for_cancel} verified as cancelled in DB.")
+    assert cancelled_task_data, (
+        f"Cancelled task {scheduled_task_id_for_cancel} not found in DB"
+    )
+    assert cancelled_task_data["status"] == "failed", (
+        "Callback status not updated to 'failed' after cancellation"
+    )
+    assert "cancelled by user" in cancelled_task_data["error"].lower(), (
+        "Error message does not indicate user cancellation"
+    )
+    logger.info(
+        f"Callback task {scheduled_task_id_for_cancel} verified as cancelled in DB."
+    )
 
     # --- Part 3: Wait a bit to ensure worker does NOT process it ---
     logger.info("--- Part 3: Waiting to ensure cancelled task is NOT processed ---")
     # Wait for a duration longer than the original callback delay
     # If it was processed, the mock_chat_interface_for_worker.send_message would be called.
-    await asyncio.sleep(initial_callback_delay_seconds + 2)  # Wait a bit longer than original schedule
+    await asyncio.sleep(
+        initial_callback_delay_seconds + 2
+    )  # Wait a bit longer than original schedule
 
     # --- Part 4: Verify Callback Was NOT Executed ---
     logger.info("--- Part 4: Verifying Cancelled Callback Was NOT Executed ---")
     mock_chat_interface_for_worker.send_message.assert_not_called()
-    logger.info("Verified mock_bot.send_message was NOT called, as expected for a cancelled task.")
+    logger.info(
+        "Verified mock_bot.send_message was NOT called, as expected for a cancelled task."
+    )
 
     # Check LLM client calls to ensure the "cancelled_callback_trigger_matcher" was not hit
-    assert llm_client.call_count == 2, f"LLM was called {llm_client.call_count} times, expected 2 (schedule, cancel)"
+    assert llm_client.call_count == 2, (
+        f"LLM was called {llm_client.call_count} times, expected 2 (schedule, cancel)"
+    )
 
     # --- Cleanup ---
     logger.info("--- Cleanup for Cancel Test ---")
@@ -747,7 +876,9 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         test_new_task_event.set()  # Wake it up once more to ensure it sees shutdown if it was sleeping
         await asyncio.wait_for(worker_task, timeout=5.0)
     except asyncio.TimeoutError:
-        logger.warning("TaskWorker task did not finish within timeout during cancel test cleanup.")
+        logger.warning(
+            "TaskWorker task did not finish within timeout during cancel test cleanup."
+        )
         worker_task.cancel()
         await asyncio.sleep(0.1)
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
