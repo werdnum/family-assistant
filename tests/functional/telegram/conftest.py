@@ -144,11 +144,12 @@ async def telegram_handler_fixture(
         return_value=False
     )  # Default to no confirmation
 
-    # Patch the method on the actual chat_interface instance
+    # Patch the method on the confirmation_manager instance within TelegramService
+    assert assistant_app.telegram_service.confirmation_manager is not None
     original_request_confirmation = (
-        assistant_app.telegram_service.chat_interface.request_confirmation
+        assistant_app.telegram_service.confirmation_manager.request_confirmation
     )
-    assistant_app.telegram_service.chat_interface.request_confirmation = (
+    assistant_app.telegram_service.confirmation_manager.request_confirmation = (
         mock_request_confirmation_method
     )
 
@@ -162,11 +163,13 @@ async def telegram_handler_fixture(
     # Ensure default_processing_service and its tools_provider are set
     assert assistant_app.default_processing_service is not None
     assert assistant_app.default_processing_service.tools_provider is not None
-    assert assistant_app.telegram_service.handler is not None
+    assert (
+        assistant_app.telegram_service.update_handler is not None
+    )  # Changed handler to update_handler
 
     fixture_tuple = TelegramHandlerTestFixture(
         assistant=assistant_app,
-        handler=assistant_app.telegram_service.handler,
+        handler=assistant_app.telegram_service.update_handler,  # Changed handler to update_handler
         mock_bot=mock_bot_instance,  # The bot from the real application, now mocked
         mock_llm=mock_llm_client,
         mock_confirmation_manager=mock_request_confirmation_method,  # The mocked method
@@ -179,11 +182,14 @@ async def telegram_handler_fixture(
     # 6. Teardown
     # Restore original request_confirmation if it was patched
     if (
-        hasattr(assistant_app.telegram_service.chat_interface, "request_confirmation")
-        and assistant_app.telegram_service.chat_interface.request_confirmation
+        assistant_app.telegram_service.confirmation_manager is not None
+        and hasattr(
+            assistant_app.telegram_service.confirmation_manager, "request_confirmation"
+        )
+        and assistant_app.telegram_service.confirmation_manager.request_confirmation
         is mock_request_confirmation_method
     ):
-        assistant_app.telegram_service.chat_interface.request_confirmation = (
+        assistant_app.telegram_service.confirmation_manager.request_confirmation = (
             original_request_confirmation
         )
 
