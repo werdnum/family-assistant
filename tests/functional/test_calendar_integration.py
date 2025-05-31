@@ -390,60 +390,148 @@ async def test_modify_event(
     )
     original_end_dt = original_start_dt + timedelta(hours=1)
     modified_start_dt = original_start_dt.replace(hour=15)  # Change to 3 PM
-    # modified_end_dt was unused, if needed:
+    modified_end_dt = modified_start_dt + timedelta(hours=1) # Ensure end time is also set for modification
 
-    # --- Create initial event directly in Radicale using vobject ---
-    # radicale_server now contains the direct calendar URL as the 4th element
-    base_url, r_user_modify, r_pass_modify, unique_calendar_url_modify = radicale_server
-    client = caldav.DAVClient(
-        url=base_url, username=r_user_modify, password=r_pass_modify, timeout=30
+    # --- LLM Rules for Initial Event Creation ---
+    tool_call_id_add_original = f"call_add_orig_{uuid.uuid4()}"
+
+    def add_original_event_matcher(kwargs: MatcherArgs) -> bool:
+        last_text = get_last_message_text(kwargs.get("messages", [])).lower()
+        return f"schedule {original_summary.lower()}" in last_text
+
+    add_original_event_response = MockLLMOutput(
+        content=f"OK, I'll schedule '{original_summary}'.",
+        tool_calls=[
+            ToolCallItem(
+                id=tool_call_id_add_original,
+                type="function",
+                function=ToolCallFunction(
+                    name="add_calendar_event",
+                    arguments=json.dumps({
+                        "summary": original_summary,
+                        "start_time": original_start_dt.isoformat(),
+                        "end_time": original_end_dt.isoformat(),
+                        "all_day": False,
+                    }),
+                ),
+            )
+        ],
     )
 
-    try:
-        target_calendar = await asyncio.to_thread(
-            client.calendar, url=unique_calendar_url_modify
+    def final_response_matcher_for_add_original(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages or len(messages) < 2: return False
+        last_message = messages[-1]
+        return (
+            last_message.get("role") == "tool"
+            and last_message.get("tool_call_id") == tool_call_id_add_original
+            and "OK. Event '" in last_message.get("content", "")
+            and f"'{original_summary}' added" in last_message.get("content", "")
         )
-        assert target_calendar is not None, (
-            f"Test calendar not found at URL '{unique_calendar_url_modify}'."
+
+    final_llm_response_for_add_original_content = f"Alright, '{original_summary}' is scheduled."
+    final_llm_response_for_add_original = MockLLMOutput(
+        content=final_llm_response_for_add_original_content, tool_calls=None
+    )
+
+    # --- Setup ProcessingService for initial event creation ---
+    # Note: This ProcessingService instance is configured for the *initial add*
+    # It will be reconfigured later for the *modify* step.
+    test_calendar_config_for_add = { # Use a distinct config dict if needed, or reuse
+        "caldav": {
+            "base_url": radicale_base_url,
+            "username": r_user,
+            "password": r_pass,
+            "calendar_urls": [test_calendar_direct_url],
+        },
+        "ical": {"urls": []},
+    }
+    dummy_prompts_for_add = {
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
+    }
+    local_provider_for_add = LocalToolsProvider(
+        definitions=local_tools_definition,
+        implementations=local_tool_implementations,
+        calendar_config=test_calendar_config_for_add,
+    )
+    mcp_provider_for_add = MCPToolsProvider(mcp_server_configs={})
+    composite_provider_for_add = CompositeToolsProvider(
+        providers=[local_provider_for_add, mcp_provider_for_add]
+    )
+    await composite_provider_for_add.get_tool_definitions() # Ensure tools are loaded
+
+    calendar_context_provider_for_add = CalendarContextProvider(
+        calendar_config=test_calendar_config_for_add,
+        prompts=dummy_prompts_for_add,
+        timezone_str=TEST_TIMEZONE_STR,
+    )
+    service_config_for_add = ProcessingServiceConfig(
+        id="test_cal_initial_add_profile", # Unique profile ID
+        prompts=dummy_prompts_for_add,
+        calendar_config=test_calendar_config_for_add,
+        timezone_str=TEST_TIMEZONE_STR,
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={"confirmation_required": []},
+        delegation_security_level="unrestricted",
+    )
+    processing_service_for_add = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[
+                (add_original_event_matcher, add_original_event_response),
+                (final_response_matcher_for_add_original, final_llm_response_for_add_original),
+            ]
+        ),
+        tools_provider=composite_provider_for_add,
+        context_providers=[calendar_context_provider_for_add],
+        service_config=service_config_for_add,
+        server_url=None,
+        app_config={},
+    )
+
+    # --- Simulate User Interaction to Create Initial Event ---
+    user_message_create_original = f"Please schedule {original_summary} for day after tomorrow at 2 PM."
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        (
+            final_reply_create,
+            _,
+            _,
+            error_create,
+        ) = await processing_service_for_add.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=MagicMock(), # Mock interface for this interaction
+            new_task_event=asyncio.Event(),
+            interface_type="test_initial_add", # Distinguish interface type
+            conversation_id=f"{TEST_CHAT_ID}_initial_add", # Distinguish conversation
+            trigger_content_parts=[{"type": "text", "text": user_message_create_original}],
+            trigger_interface_message_id="msg_create_orig_for_modify",
+            user_name=TEST_USER_NAME,
         )
-    except Exception as e_get_cal_mod:
-        pytest.fail(f"Failed to get calendar for modification test: {e_get_cal_mod}")
 
-    # Use vobject to create the VCALENDAR string
-    cal = vobject.iCalendar()  # type: ignore[attr-defined]
-    vevent = cal.add("vevent")  # type: ignore[attr-defined]
-    event_uid_val = str(uuid.uuid4())
-    vevent.add("uid").value = event_uid_val  # type: ignore[attr-defined]
-    vevent.add("summary").value = original_summary  # type: ignore[attr-defined]
-    vevent.add("dtstart").value = original_start_dt  # type: ignore[attr-defined] # vobject handles aware datetime
-    vevent.add("dtend").value = original_end_dt  # type: ignore[attr-defined]   # vobject handles aware datetime
-    vevent.add("dtstamp").value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
-    event_vcal_str = cal.serialize()  # type: ignore[attr-defined]
+    assert error_create is None, f"Error during LLM-based initial event creation: {error_create}"
+    assert final_reply_create and final_llm_response_for_add_original_content in final_reply_create, \
+        f"Expected LLM creation reply '{final_llm_response_for_add_original_content}', but got '{final_reply_create}'"
 
-    # add_event returns the caldav.objects.Event object after saving
-    created_event_object = await asyncio.to_thread(
-        target_calendar.add_event, vcal=event_vcal_str
+    # --- Retrieve UID of the event created by the LLM tool ---
+    original_radicale_event = await get_event_by_summary_from_radicale(
+        radicale_server, original_summary
     )
-    # Ensure UID is accessible from the created event object if needed, or use the one we generated
-    event_uid = created_event_object.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
-    assert event_uid == event_uid_val  # Verify UID consistency
-    logger.info(
-        f"Directly created event '{original_summary}' with UID {event_uid} in Radicale using vobject."
+    assert original_radicale_event is not None, (
+        f"Event '{original_summary}' not found in Radicale after LLM tool creation."
     )
+    # Ensure event_uid is correctly typed as str for JSON serialization
+    event_uid: str = str(original_radicale_event.vobject_instance.vevent.uid.value) # type: ignore[attr-defined]
+    logger.info(f"Retrieved UID for '{original_summary}' created by LLM tool: {event_uid}")
 
-    # --- LLM Rules ---
-    # Rule 1: Search for the event (optional, LLM could "know" the UID)
-    # For simplicity, we'll assume LLM gets the UID and proceeds to modify.
-
-    # Rule 2: Modify the event
+    # --- LLM Rules for Modifying the Event (using the retrieved UID) ---
     tool_call_id_modify = f"call_mod_{uuid.uuid4()}"
 
     def modify_event_matcher(kwargs: MatcherArgs) -> bool:
         last_text = get_last_message_text(kwargs.get("messages", [])).lower()
-        return f"change event {original_summary.lower()}" in last_text
+        return f"change event {original_summary.lower()}" in last_text # User refers to original summary
 
     modify_event_response = MockLLMOutput(
-        content=f"OK, I'll modify '{original_summary}'.",
+        content=f"OK, I'll modify '{original_summary}'.", # LLM confirms based on original summary
         tool_calls=[
             ToolCallItem(
                 id=tool_call_id_modify,
@@ -451,18 +539,31 @@ async def test_modify_event(
                 function=ToolCallFunction(
                     name="modify_calendar_event",
                     arguments=json.dumps({
-                        "uid": event_uid,
-                        "calendar_url": test_calendar_direct_url,  # Tool needs the direct calendar URL
+                        "uid": event_uid, # Use the UID from the LLM-created event
+                        "calendar_url": test_calendar_direct_url,
                         "new_summary": modified_summary,
                         "new_start_time": modified_start_dt.isoformat(),
+                        "new_end_time": modified_end_dt.isoformat(), # Ensure end time is included
                     }),
                 ),
             )
         ],
     )
-    llm_client: LLMInterface = RuleBasedMockLLMClient(
-        rules=[(modify_event_matcher, modify_event_response)]
+    # This llm_client is for the MODIFICATION step
+    llm_client_for_modify: LLMInterface = RuleBasedMockLLMClient(
+        rules=[(modify_event_matcher, modify_event_response)] 
+        # Add final response matcher for modify if needed, like in add_event test
     )
+
+    # --- Setup ProcessingService for the modification step ---
+    # Re-use or re-init ProcessingService, ensuring it uses llm_client_for_modify
+    # For simplicity, we'll re-initialize parts of ProcessingService or update its LLM client.
+    # The existing ProcessingService setup from the original test structure follows this point.
+    # The key is that `llm_client` below will be `llm_client_for_modify`.
+    # The `composite_provider` and `calendar_context_provider` can be reused if their config is the same.
+    # The `service_config` might need a different ID if that's important.
+    # The following lines are from the original test structure, now using the `llm_client_for_modify`.
+    llm_client: LLMInterface = llm_client_for_modify # Ensure this is the one used by ProcessingService below
 
     # --- Setup ProcessingService (similar to add_event test) ---
     test_calendar_config = {
