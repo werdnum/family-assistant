@@ -976,55 +976,133 @@ async def test_search_events(
     event2_start = search_day.replace(hour=13, minute=0, second=0, microsecond=0)
     event2_end = event2_start + timedelta(hours=2)
 
-    # --- Create events directly in Radicale ---
-    base_url_search, r_user_search, r_pass_search, unique_calendar_url_search = (
-        radicale_server
+    # --- Setup ProcessingService (used for creating events and then searching) ---
+    test_calendar_config = {
+        "caldav": {
+            "base_url": radicale_base_url,
+            "username": r_user,
+            "password": r_pass,
+            "calendar_urls": [test_calendar_direct_url],
+        },
+        "ical": {"urls": []},
+    }
+    dummy_prompts: dict[str, Any] = {
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
+    }
+    local_provider = LocalToolsProvider(
+        definitions=local_tools_definition,
+        implementations=local_tool_implementations,
+        calendar_config=test_calendar_config,
     )
-    client = caldav.DAVClient(
-        url=base_url_search, username=r_user_search, password=r_pass_search, timeout=30
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
+    await composite_provider.get_tool_definitions()
+
+    calendar_context_provider = CalendarContextProvider(
+        calendar_config=test_calendar_config,
+        prompts=dummy_prompts,
+        timezone_str=TEST_TIMEZONE_STR,
+    )
+    service_config = ProcessingServiceConfig(
+        id="test_cal_search_profile_main", # Main profile for the test
+        prompts=dummy_prompts,
+        calendar_config=test_calendar_config,
+        timezone_str=TEST_TIMEZONE_STR,
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={"confirmation_required": []},
+        delegation_security_level="unrestricted",
+    )
+    processing_service = ProcessingService(
+        llm_client=MagicMock(),  # Will be replaced for each phase
+        tools_provider=composite_provider,
+        context_providers=[calendar_context_provider],
+        service_config=service_config,
+        server_url=None,
+        app_config={},
     )
 
-    try:
-        target_calendar = await asyncio.to_thread(
-            client.calendar, url=unique_calendar_url_search
+    # --- Phase 1: Create Event 1 using LLM Tool ---
+    tool_call_id_add_event1 = f"call_add_event1_{uuid.uuid4()}"
+
+    def add_event1_matcher(kwargs: MatcherArgs) -> bool:
+        return f"schedule {event1_summary.lower()}" in get_last_message_text(kwargs.get("messages", [])).lower()
+
+    add_event1_response = MockLLMOutput(
+        content=f"OK, I'll schedule '{event1_summary}'.",
+        tool_calls=[
+            ToolCallItem(
+                id=tool_call_id_add_event1, type="function",
+                function=ToolCallFunction(
+                    name="add_calendar_event",
+                    arguments=json.dumps({
+                        "summary": event1_summary,
+                        "start_time": event1_start.isoformat(),
+                        "end_time": event1_end.isoformat(),
+                        "all_day": False,
+                    }),
+                ),
+            )
+        ],
+    )
+    def final_response_matcher_event1(kwargs: MatcherArgs) -> bool:
+        last_msg = kwargs.get("messages", [])[-1]
+        return last_msg.get("role") == "tool" and last_msg.get("tool_call_id") == tool_call_id_add_event1 and "OK. Event '" in last_msg.get("content", "")
+    final_response_event1 = MockLLMOutput(content=f"Event '{event1_summary}' scheduled.", tool_calls=None)
+
+    processing_service.llm_client = RuleBasedMockLLMClient(rules=[(add_event1_matcher, add_event1_response), (final_response_matcher_event1, final_response_event1)])
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        _, _, _, err_add1 = await processing_service.handle_chat_interaction(
+            db_context=db_context, chat_interface=MagicMock(), new_task_event=asyncio.Event(),
+            interface_type="test_search", conversation_id=f"{TEST_CHAT_ID}_add1",
+            trigger_content_parts=[{"type": "text", "text": f"schedule {event1_summary.lower()}"}],
+            trigger_interface_message_id="msg_add_event1_for_search", user_name=TEST_USER_NAME,
         )
-        assert target_calendar is not None, (
-            f"Test calendar not found at URL '{unique_calendar_url_search}'."
-        )
-    except Exception as e_get_cal_search:
-        pytest.fail(f"Failed to get calendar for search test: {e_get_cal_search}")
+    assert err_add1 is None, f"Error creating event1 for search test: {err_add1}"
+    assert await get_event_by_summary_from_radicale(radicale_server, event1_summary) is not None, f"Event '{event1_summary}' not found in Radicale after creation for search test."
+    logger.info(f"Created '{event1_summary}' via LLM tool for search test.")
 
-    for summ, st, en in [
-        (event1_summary, event1_start, event1_end),
-        (event2_summary, event2_start, event2_end),
-    ]:
-        # Use the new_event_object() pattern for creating events
-        def create_event_sync(
-            current_summ: str = summ,
-            current_st: datetime = st,
-            current_en: datetime = en,
-        ) -> None:
-            event = target_calendar.new_event_object()  # type: ignore[attr-defined]
-            # new_event_object creates a shell with PRODID "-//python-caldav//caldav//en_DK"
-            # We need to populate its vevent component.
-            vevent = event.vobject_instance.vevent  # type: ignore[attr-defined]
-            vevent.uid.value = str(uuid.uuid4())  # type: ignore[attr-defined]
-            vevent.summary.value = current_summ  # type: ignore[attr-defined]
-            vevent.dtstart.value = current_st  # type: ignore[attr-defined]
-            vevent.dtend.value = current_en  # type: ignore[attr-defined]
-            vevent.dtstamp.value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
-            # event.data will be updated by the setter of vobject_instance implicitly if not already.
-            # Or more explicitly:
-            event.data = event.vobject_instance.serialize()  # type: ignore[attr-defined]
-            event.save()  # type: ignore[attr-defined]
-
-        await asyncio.to_thread(create_event_sync)
-
-    logger.info(
-        f"Directly created '{event1_summary}' and '{event2_summary}' for search test using new_event_object pattern."
+    # --- Phase 2: Create Event 2 using LLM Tool ---
+    tool_call_id_add_event2 = f"call_add_event2_{uuid.uuid4()}"
+    def add_event2_matcher(kwargs: MatcherArgs) -> bool:
+        return f"schedule {event2_summary.lower()}" in get_last_message_text(kwargs.get("messages", [])).lower()
+    add_event2_response = MockLLMOutput(
+        content=f"OK, I'll schedule '{event2_summary}'.",
+        tool_calls=[
+            ToolCallItem(
+                id=tool_call_id_add_event2, type="function",
+                function=ToolCallFunction(
+                    name="add_calendar_event",
+                    arguments=json.dumps({
+                        "summary": event2_summary,
+                        "start_time": event2_start.isoformat(),
+                        "end_time": event2_end.isoformat(),
+                        "all_day": False,
+                    }),
+                ),
+            )
+        ],
     )
+    def final_response_matcher_event2(kwargs: MatcherArgs) -> bool:
+        last_msg = kwargs.get("messages", [])[-1]
+        return last_msg.get("role") == "tool" and last_msg.get("tool_call_id") == tool_call_id_add_event2 and "OK. Event '" in last_msg.get("content", "")
+    final_response_event2 = MockLLMOutput(content=f"Event '{event2_summary}' scheduled.", tool_calls=None)
 
-    # --- LLM Rules ---
+    processing_service.llm_client = RuleBasedMockLLMClient(rules=[(add_event2_matcher, add_event2_response), (final_response_matcher_event2, final_response_event2)])
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        _, _, _, err_add2 = await processing_service.handle_chat_interaction(
+            db_context=db_context, chat_interface=MagicMock(), new_task_event=asyncio.Event(),
+            interface_type="test_search", conversation_id=f"{TEST_CHAT_ID}_add2",
+            trigger_content_parts=[{"type": "text", "text": f"schedule {event2_summary.lower()}"}],
+            trigger_interface_message_id="msg_add_event2_for_search", user_name=TEST_USER_NAME,
+        )
+    assert err_add2 is None, f"Error creating event2 for search test: {err_add2}"
+    assert await get_event_by_summary_from_radicale(radicale_server, event2_summary) is not None, f"Event '{event2_summary}' not found in Radicale after creation for search test."
+    logger.info(f"Created '{event2_summary}' via LLM tool for search test.")
+
+    # --- Phase 3: LLM Rules for Searching Events ---
     tool_call_id_search = f"call_search_{uuid.uuid4()}"
     search_query_text = (
         "events for day after tomorrow plus two"  # A bit vague to test search
