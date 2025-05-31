@@ -233,6 +233,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         timezone_str=dummy_timezone_str,
         embedding_generator=mock_embedding_generator,
         clock=mock_clock,  # Inject mock_clock
+        shutdown_event_instance=test_shutdown_event, # Pass the test-specific shutdown event
     )
     # Register the necessary handler for this test
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
@@ -499,6 +500,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
+        shutdown_event_instance=test_shutdown_event, # Pass the test-specific shutdown event
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
@@ -645,7 +647,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Cleanup ---
     logger.info("--- Cleanup for Modify Test ---")
-    global_task_worker_shutdown_event.set()  # Signal worker to stop using global event
+    test_shutdown_event.set() # Use the test-specific shutdown event
     test_new_task_event.set()  # Wake up worker if it's waiting on the event
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
@@ -830,6 +832,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
+        shutdown_event_instance=test_shutdown_event, # Pass the test-specific shutdown event
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
@@ -967,7 +970,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Cleanup ---
     logger.info("--- Cleanup for Cancel Test ---")
-    global_task_worker_shutdown_event.set()  # Signal worker to stop using global event
+    test_shutdown_event.set() # Use the test-specific shutdown event
     test_new_task_event.set()  # Wake up worker if it's waiting on the event
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
@@ -1123,6 +1126,7 @@ async def test_callback_skip_behavior_on_user_response(
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
+        shutdown_event_instance=test_shutdown_event, # Pass the test-specific shutdown event
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
@@ -1242,7 +1246,7 @@ async def test_callback_skip_behavior_on_user_response(
 
     # --- Cleanup ---
     logger.info(f"--- Cleanup for {scenario_name} Test ---")
-    global_task_worker_shutdown_event.set()
+    test_shutdown_event.set() # Use the test-specific shutdown event
     test_new_task_event.set()
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
