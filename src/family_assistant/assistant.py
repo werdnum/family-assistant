@@ -458,7 +458,7 @@ class Assistant:
             ],
             timezone_str=default_profile_conf["processing_config"]["timezone"],
             embedding_generator=self.embedding_generator,
-            shutdown_event=self.shutdown_event,  # Pass the assistant's shutdown_event
+            # shutdown_event is likely handled internally by TaskWorker or passed differently
         )
         self.task_worker_instance.register_task_handler(
             "log_message", task_wrapper_handle_log_message
@@ -480,9 +480,7 @@ class Assistant:
         logger.info(
             f"Registered task handlers for worker {self.task_worker_instance.worker_id}"
         )
-        asyncio.create_task(
-            self.task_worker_instance.run()
-        )  # Removed new_task_event from run()
+        asyncio.create_task(self.task_worker_instance.run(self.new_task_event))
 
         await self.shutdown_event.wait()
         logger.info("Shutdown signal received by Assistant. Stopping services...")
