@@ -437,7 +437,7 @@ async def radicale_server(
         for attempt in range(max_retries):
             try:
                 # Attempt to fetch properties of the newly created calendar
-                props_to_fetch = [caldav.dav.DisplayName(), caldav.dav.ResourceID()]
+                props_to_fetch = [caldav.dav.DisplayName()] # Removed caldav.dav.ResourceID()
                 fetched_props = await asyncio.to_thread(
                     new_calendar.get_properties, props=props_to_fetch
                 )
