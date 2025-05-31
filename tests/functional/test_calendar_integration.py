@@ -101,7 +101,7 @@ async def get_event_by_summary_from_radicale(
 
 @pytest.mark.asyncio
 async def test_add_event_and_verify_in_system_prompt(
-    pg_vector_db_engine: AsyncEngine,  # Renamed from test_db_engine to use Postgres
+    test_db_engine: AsyncEngine,  # Changed to use SQLite
     radicale_server: tuple[str, str, str, str],
 ) -> None:
     """
@@ -217,7 +217,7 @@ async def test_add_event_and_verify_in_system_prompt(
     await composite_provider.get_tool_definitions()
 
     def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
-        return get_db_context(engine=pg_vector_db_engine)
+        return get_db_context(engine=test_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,
@@ -245,7 +245,7 @@ async def test_add_event_and_verify_in_system_prompt(
 
     # --- Simulate User Interaction to Create Event ---
     user_message_create = f"Please schedule {event_summary} for tomorrow at 10 AM."
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+    async with DatabaseContext(engine=test_db_engine) as db_context:
         (
             final_reply,
             _,
