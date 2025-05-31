@@ -395,7 +395,8 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     # Rule 3: System trigger for the MODIFIED callback
     def modified_callback_trigger_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        if not messages: return False
+        if not messages:
+            return False
         last_message = messages[-1]
         if last_message.get("role") == "user":
             content = last_message.get("content")
@@ -535,7 +536,6 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Cleanup ---
     logger.info("--- Cleanup for Modify Test ---")
-    # test_shutdown_event.set() # Task worker should stop after processing the one task
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
     except asyncio.TimeoutError:
@@ -614,7 +614,8 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     # Rule 3: System trigger for the callback (SHOULD NOT BE MATCHED if cancel works)
     def cancelled_callback_trigger_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        if not messages: return False
+        if not messages:
+            return False
         last_message = messages[-1]
         if last_message.get("role") == "user":
             content = last_message.get("content")
@@ -741,7 +742,6 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Cleanup ---
     logger.info("--- Cleanup for Cancel Test ---")
-    # test_shutdown_event.set() # Task worker should be idle
     try:
         # Give the worker a chance to finish its loop if it was polling
         test_new_task_event.set()  # Wake it up once more to ensure it sees shutdown if it was sleeping
