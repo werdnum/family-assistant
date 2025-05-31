@@ -1,53 +1,40 @@
-import asyncio  # Import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Callable
-from typing import NamedTuple, cast
+from typing import Any, NamedTuple
 from unittest.mock import AsyncMock
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
-from telegram.ext import Application
 
-from family_assistant.llm import LLMInterface  # Import LLMOutput
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.assistant import Assistant
+from family_assistant.llm import LLMInterface
+from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.telegram_bot import (
-    ConfirmationUIManager,
-    NoBatchMessageBatcher,
-    TelegramService,
-    TelegramUpdateHandler,  # Keep this as it's from telegram_bot
+    TelegramChatInterface,  # For type hinting mock_confirmation_manager
+    TelegramUpdateHandler,
 )
 from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_functions,
+    ToolsProvider,  # Changed from CompositeToolsProvider for generality
 )
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-
-# Correct imports for tools - they are in family_assistant.tools, not telegram_bot
-from family_assistant.tools import (
-    CompositeToolsProvider,
-    LocalToolsProvider,
-    calendar_integration,
-)
-from tests.mocks.mock_llm import LLMOutput as MockLLMOutput  # Import mock's LLMOutput
-
-# Mock the LLMInterface before it's imported by other modules if necessary
-# or ensure mocks are injected properly.
+from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 # Define a named tuple to hold the fixture results for easier access
 class TelegramHandlerTestFixture(NamedTuple):
+    assistant: Assistant  # Add the assistant instance
     handler: TelegramUpdateHandler
     mock_bot: AsyncMock
-    mock_telegram_service: AsyncMock  # Add the missing field
-    mock_llm: LLMInterface  # Can be AsyncMock or RuleBasedMockLLMClient
-    mock_confirmation_manager: (
-        AsyncMock  # Keep the mock for request_confirmation control
+    # mock_telegram_service is now assistant.telegram_service
+    mock_llm: LLMInterface
+    mock_confirmation_manager: AsyncMock  # This will be a mock on assistant.telegram_service.chat_interface.request_confirmation
+    processing_service: (
+        ProcessingService  # This is assistant.default_processing_service
     )
-    processing_service: ProcessingService
-    tools_provider: CompositeToolsProvider  # The main tools provider
+    tools_provider: (
+        ToolsProvider  # This is assistant.default_processing_service.tools_provider
+    )
     get_db_context_func: Callable[
         ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
     ]
@@ -55,142 +42,149 @@ class TelegramHandlerTestFixture(NamedTuple):
 
 @pytest_asyncio.fixture(scope="function")
 async def telegram_handler_fixture(
-    test_db_engine: AsyncEngine,  # Use the default SQLite engine from root conftest
+    test_db_engine: AsyncEngine,
 ) -> AsyncGenerator[TelegramHandlerTestFixture, None]:
     """
-    Sets up the environment for testing TelegramUpdateHandler end-to-end.
-
-    Provides:
-    - Real TelegramUpdateHandler instance.
-    - Real ProcessingService instance with Mock LLM.
-    - Real ToolsProvider instance (Composite/Local).
-    - Real NoBatchMessageBatcher.    - Real ConfirmingToolsProvider wrapping the CompositeProvider.
-    - Mocked telegram.Bot instance.
-    - Function to get DatabaseContext for the test DB.
+    Sets up the environment for testing TelegramUpdateHandler using the Assistant class.
     """
-    # 1. Mock External Dependencies
-    # Use RuleBasedMockLLMClient - rules will be set per-test
-    mock_llm = RuleBasedMockLLMClient(
-        rules=[],  # Start with empty rules
+    # 1. Create Mock LLM
+    mock_llm_client = RuleBasedMockLLMClient(
+        rules=[],
         default_response=MockLLMOutput(
             content="Default mock response (no rule matched)"
-        ),  # Use MockLLMOutput here
+        ),
     )
 
-    mock_bot = AsyncMock(name="MockBot")
-    mock_bot.send_message = AsyncMock()
-    mock_bot.send_chat_action = AsyncMock()
-    mock_bot.edit_message_text = AsyncMock()
-    mock_bot.edit_message_reply_markup = AsyncMock()
-    # Add other methods as needed by tests (e.g., answer_callback_query)
+    # 2. Prepare Configuration for Assistant
+    # Ensure this profile ID matches what Assistant expects or is configured as default
+    test_profile_id = "default_assistant_test_profile"
+    test_config: dict[str, Any] = {
+        "telegram_token": "test_token_123:ABC",
+        "allowed_user_ids": [123, 12345],  # Include user_id used in tests
+        "developer_chat_id": None,
+        "model": "mock-model-for-testing",  # Will be overridden
+        "embedding_model": "mock-deterministic-embedder",
+        "embedding_dimensions": 10,
+        "database_url": str(test_db_engine.url),  # Use the test DB engine
+        "server_url": "http://localhost:8123",  # Test server URL
+        "document_storage_path": "/tmp/test_docs",
+        "attachment_storage_path": "/tmp/test_attachments",
+        "default_service_profile_id": test_profile_id,
+        "service_profiles": [
+            {
+                "id": test_profile_id,
+                "description": "Test default profile",
+                "processing_config": {
+                    "prompts": {"system_prompt": "Test System Prompt"},
+                    "calendar_config": {},
+                    "timezone": "UTC",
+                    "max_history_messages": 5,
+                    "history_max_age_hours": 1,
+                    "llm_model": "mock-model-for-testing-profile",  # Will be overridden
+                    "delegation_security_level": "none",  # Allow tools for tests
+                },
+                "tools_config": {
+                    "enable_local_tools": [
+                        "add_or_update_note"
+                    ],  # Enable a common tool
+                    "confirm_tools": [],  # No confirmation for tests unless specified
+                    "mcp_initialization_timeout_seconds": 5,
+                },
+                "chat_id_to_name_map": {12345: "TestUser"},
+                "slash_commands": [],
+            }
+        ],
+        "mcp_config": {"mcpServers": {}},
+        "indexing_pipeline_config": {"processors": []},
+        "message_batching_config": {"strategy": "none"},  # Ensure NoBatchMessageBatcher
+        "llm_parameters": {},
+        # Add any other minimal required config keys by Assistant
+        "openrouter_api_key": None,
+        "gemini_api_key": None,
+        "willyweather_api_key": None,
+        "willyweather_location_id": None,
+        "litellm_debug": False,
+    }
 
-    mock_application = AsyncMock(spec=Application)
-    mock_application.bot = mock_bot
-
-    # Mock the UIManager that the *TelegramUpdateHandler* uses for requesting confirmation
-    mock_confirmation_manager = AsyncMock(spec=ConfirmationUIManager)
-    # Default confirmation to False unless overridden in a test
-    # Tests will set return_value or side_effect as needed
-    mock_confirmation_manager.request_confirmation.return_value = False
-
-    mock_telegram_service = AsyncMock(spec=TelegramService)
-    mock_telegram_service.application = mock_application  # Link mock app
-    mock_telegram_service.new_task_event = (
-        asyncio.Event()
-    )  # Add new_task_event attribute
-    # Initialize dictionary attributes expected by the tests
-    mock_telegram_service.processing_services_registry = {}
-    mock_telegram_service.slash_command_to_profile_id_map = {}
-    # Add the chat_interface attribute, using the real TelegramChatInterface with the mock application
-    from family_assistant.telegram_bot import (
-        TelegramChatInterface,  # Import locally to avoid circularity if moved
+    # 3. Instantiate Assistant with LLM Override
+    assistant_app = Assistant(
+        config=test_config,
+        llm_client_overrides={test_profile_id: mock_llm_client},
     )
 
-    mock_telegram_service.chat_interface = TelegramChatInterface(mock_application)
+    # 4. Setup Dependencies
+    # This will create TelegramService, ProcessingService, etc.
+    # The TelegramService will use a real Application with a *real* Bot,
+    # so we need to mock the bot *after* setup_dependencies.
+    await assistant_app.setup_dependencies()
 
-    # 2. Instantiate Real Components with Mocks
-    # Configure ToolsProvider (using Local for simplicity initially)
-    # Ensure tools don't rely on external services not mocked
-    # Add calendar tool implementation to local functions if not already there
-    test_local_tool_functions = local_tool_functions.copy()
-    if "delete_calendar_event" not in test_local_tool_functions:
-        test_local_tool_functions["delete_calendar_event"] = (
-            calendar_integration.delete_calendar_event_tool
-        )
-        # Add others if needed: modify_calendar_event, add_calendar_event, search_calendar_events
+    # Ensure TelegramService and its application are created
+    assert assistant_app.telegram_service is not None
+    assert assistant_app.telegram_service.application is not None
 
-    # --- Modify Tool Definitions for Test ---
-    # Create a deep copy to avoid modifying the original definition list
-    import copy
+    # Mock the bot instance within the real Telegram Application
+    # This bot is used by TelegramChatInterface and other parts of TelegramService
+    mock_bot_instance = AsyncMock(name="MockBotInstance")
+    mock_bot_instance.send_message = AsyncMock()
+    mock_bot_instance.send_chat_action = AsyncMock()
+    mock_bot_instance.edit_message_text = AsyncMock()
+    mock_bot_instance.edit_message_reply_markup = AsyncMock()
+    assistant_app.telegram_service.application.bot = mock_bot_instance
 
-    test_local_tools_definition = copy.deepcopy(local_tools_definition)
-
-    # Instantiate with actual local tools
-    local_tools_provider = LocalToolsProvider(
-        definitions=test_local_tools_definition,  # Use the UNMODIFIED definitions for this fixture
-        implementations=test_local_tool_functions,  # Use potentially extended functions
-        embedding_generator=None,  # Add mock/real embedding generator if needed by tools
-        calendar_config=None,  # Add accepted calendar_config argument
-    )
-    composite_provider = CompositeToolsProvider([local_tools_provider])
-
-    # Create a ProcessingServiceConfig instance for the test
-    test_service_config_obj = ProcessingServiceConfig(
-        prompts={},  # Add mock/real prompts if needed
-        calendar_config={},
-        timezone_str="UTC",
-        max_history_messages=10,
-        history_max_age_hours=24,
-        tools_config={},  # Added missing tools_config
-        delegation_security_level="confirm",  # Added
-        id="telegram_conftest_profile",  # Added
+    # Mock the ConfirmationUIManager's request_confirmation method
+    # The ConfirmationUIManager is now part of TelegramChatInterface
+    assert assistant_app.telegram_service.chat_interface is not None
+    # Ensure the chat_interface is indeed a TelegramChatInterface for this mock
+    assert isinstance(
+        assistant_app.telegram_service.chat_interface, TelegramChatInterface
     )
 
-    # Define a separate app_config for the test
-    test_app_config = {}
+    # Create an AsyncMock for the method itself
+    mock_request_confirmation_method = AsyncMock(
+        return_value=False
+    )  # Default to no confirmation
 
-    processing_service = ProcessingService(
-        llm_client=cast("LLMInterface", mock_llm),
-        # Initialize with the non-confirming provider by default
-        tools_provider=composite_provider,
-        service_config=test_service_config_obj,  # Pass the ProcessingServiceConfig instance
-        app_config=test_app_config,  # Pass the separate app_config
-        context_providers=[],
-        server_url="http://test-server:8000",  # Placeholder URL for tests
+    # Patch the method on the actual chat_interface instance
+    original_request_confirmation = (
+        assistant_app.telegram_service.chat_interface.request_confirmation
+    )
+    assistant_app.telegram_service.chat_interface.request_confirmation = (
+        mock_request_confirmation_method
     )
 
     # Function to get DB context for the specific test engine
     def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
         DatabaseContext
     ]:
-        # get_db_context uses the globally patched engine by default
-        return get_db_context()
+        return get_db_context(engine=test_db_engine)  # Explicitly pass test engine
 
-    # Instantiate Handler (Batcher needs processor, Handler needs batcher)
-    # Handler will be assigned as the processor to the batcher after instantiation
-    handler = TelegramUpdateHandler(
-        telegram_service=mock_telegram_service,  # Pass the mock service
-        allowed_user_ids=[12345],  # Example allowed user ID for tests
-        developer_chat_id=None,
-        processing_service=processing_service,
+    # 5. Yield Fixture Components
+    # Ensure default_processing_service and its tools_provider are set
+    assert assistant_app.default_processing_service is not None
+    assert assistant_app.default_processing_service.tools_provider is not None
+    assert assistant_app.telegram_service.handler is not None
+
+    fixture_tuple = TelegramHandlerTestFixture(
+        assistant=assistant_app,
+        handler=assistant_app.telegram_service.handler,
+        mock_bot=mock_bot_instance,  # The bot from the real application, now mocked
+        mock_llm=mock_llm_client,
+        mock_confirmation_manager=mock_request_confirmation_method,  # The mocked method
+        processing_service=assistant_app.default_processing_service,
+        tools_provider=assistant_app.default_processing_service.tools_provider,
         get_db_context_func=get_test_db_context_func,
-        message_batcher=None,  # Will be set below
-        confirmation_manager=mock_confirmation_manager,
     )
-    batcher = NoBatchMessageBatcher(batch_processor=handler)
-    handler.message_batcher = batcher  # Assign the batcher
+    yield fixture_tuple
 
-    # 3. Yield the fixture components
-    yield TelegramHandlerTestFixture(
-        handler=handler,
-        mock_bot=mock_bot,
-        mock_telegram_service=mock_telegram_service,  # Yield the mock service
-        mock_llm=cast("LLMInterface", mock_llm),
-        mock_confirmation_manager=mock_confirmation_manager,
-        processing_service=processing_service,
-        tools_provider=composite_provider,  # Yield the composite provider
-        get_db_context_func=get_test_db_context_func,  # Correct assignment
-    )
+    # 6. Teardown
+    # Restore original request_confirmation if it was patched
+    if (
+        hasattr(assistant_app.telegram_service.chat_interface, "request_confirmation")
+        and assistant_app.telegram_service.chat_interface.request_confirmation
+        is mock_request_confirmation_method
+    ):
+        assistant_app.telegram_service.chat_interface.request_confirmation = (
+            original_request_confirmation
+        )
 
-    # 4. Teardown (implicit via pytest-asyncio and fixture scope)
-    await composite_provider.close()  # Close the main provider
+    await assistant_app.stop_services()  # Gracefully stop assistant's services
