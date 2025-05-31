@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 
 import caldav
 import pytest
-import vobject  # Added import for vobject
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.calendar_integration import (
@@ -1012,8 +1011,8 @@ async def test_search_events(
             vevent.dtstamp.value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
             # event.data will be updated by the setter of vobject_instance implicitly if not already.
             # Or more explicitly:
-            event.data = event.vobject_instance.serialize() # type: ignore[attr-defined]
-            event.save() # type: ignore[attr-defined]
+            event.data = event.vobject_instance.serialize()  # type: ignore[attr-defined]
+            event.save()  # type: ignore[attr-defined]
 
         await asyncio.to_thread(create_event_sync)
 
