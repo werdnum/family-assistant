@@ -408,76 +408,45 @@ async def radicale_server(
     # Sanitize test name to be a valid URL component
     test_name_sanitized = "".join(c if c.isalnum() else "_" for c in request.node.name)
     unique_calendar_name = f"testcal_{test_name_sanitized}_{uuid.uuid4().hex[:8]}"
+    # For Radicale, cal_id is often the last path component of the calendar URL.
+    # It's safer to let make_calendar determine the final URL structure.
+    # We'll use unique_calendar_name as the display name and also suggest it for the ID.
     unique_calendar_resource_id = unique_calendar_name.lower()
-    user_url_part = f"{base_url}/{username}"
-    unique_calendar_url = f"{user_url_part}/{unique_calendar_resource_id}/"
 
     client = caldav.DAVClient(
         url=base_url, username=username, password=password, timeout=30
     )
+    principal = await asyncio.to_thread(client.principal)
+    new_calendar_obj = None  # To store the created calendar object for cleanup
 
     try:
         logger.info(
-            f"Creating unique Radicale calendar '{unique_calendar_name}' at {unique_calendar_url} for test {request.node.name}"
+            f"Creating unique Radicale calendar with name '{unique_calendar_name}' and id '{unique_calendar_resource_id}' for test {request.node.name}"
         )
-        # Create the unique calendar
-        new_calendar = caldav.Calendar(
-            client=client, url=unique_calendar_url, name=unique_calendar_name
+        # Use principal.make_calendar()
+        # This is a synchronous call, so wrap it with to_thread
+        new_calendar_obj = await asyncio.to_thread(
+            principal.make_calendar,
+            name=unique_calendar_name,
+            cal_id=unique_calendar_resource_id,
         )
-        await asyncio.to_thread(new_calendar.save)  # MKCALENDAR request
+
+        assert new_calendar_obj is not None, "make_calendar did not return a calendar object."
+        assert new_calendar_obj.url is not None, "Created calendar has no URL."
+        unique_calendar_url = str(new_calendar_obj.url) # Ensure it's a string
         logger.info(
-            f"MKCALENDAR request sent for unique calendar '{unique_calendar_name}'."
+            f"Successfully created unique calendar '{unique_calendar_name}' with URL: {unique_calendar_url}"
         )
 
-        # Verify calendar creation by trying to fetch its properties
-        # new_calendar is the caldav.Calendar object on which .save() was called
-        calendar_verified = False
-        max_retries = 5
-        retry_delay = 1.0  # Increased delay
-        for attempt in range(max_retries):
-            try:
-                # Attempt to fetch properties of the newly created calendar
-                props_to_fetch = [
-                    caldav.dav.DisplayName()
-                ]  # Removed caldav.dav.ResourceID()
-                fetched_props = await asyncio.to_thread(
-                    new_calendar.get_properties, props=props_to_fetch
-                )
-
-                # Check if displayname is present (or any other expected prop)
-                if fetched_props and caldav.dav.DisplayName.tag in fetched_props:
-                    logger.info(
-                        f"Successfully verified creation of unique calendar '{unique_calendar_name}' by fetching properties (attempt {attempt + 1}). DisplayName: {fetched_props[caldav.dav.DisplayName.tag]}"
-                    )
-                    calendar_verified = True
-                    break
-                else:
-                    logger.warning(
-                        f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}': fetched properties missing displayname or None. Props: {fetched_props}"
-                    )
-            except caldav_error.NotFoundError:  # Catch specific NotFoundError
-                logger.warning(
-                    f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}' by fetching properties: Not found yet."
-                )
-            except Exception as e_verify_props:
-                logger.warning(
-                    f"Attempt {attempt + 1} to verify calendar '{unique_calendar_name}' by fetching properties failed with error: {e_verify_props}"
-                )
-
-            if attempt < max_retries - 1:
-                await asyncio.sleep(retry_delay)
-            else:
-                logger.error(
-                    f"Failed to verify creation of unique calendar '{unique_calendar_name}' by fetching properties after {max_retries} attempts."
-                )
-                pytest.fail(
-                    f"Radicale unique calendar '{unique_calendar_name}' could not be verified after creation by fetching properties."
-                )
-
-        if not calendar_verified:  # Should be caught by pytest.fail above
-            pytest.fail(
-                f"Failed to create and verify unique calendar '{unique_calendar_name}' by fetching properties."
-            )
+        # Verification: Check if the calendar is listable or has events (should be 0)
+        # This also implicitly checks if the calendar exists on the server.
+        events = await asyncio.to_thread(new_calendar_obj.events)
+        assert (
+            len(events) == 0
+        ), f"Newly created calendar '{unique_calendar_name}' should have 0 events, found {len(events)}."
+        logger.info(
+            f"Verified newly created calendar '{unique_calendar_name}' exists and has 0 events."
+        )
 
         yield base_url, username, password, unique_calendar_url
 
@@ -490,32 +459,30 @@ async def radicale_server(
             f"Radicale unique calendar creation failed for test {request.node.name}: {e_create}"
         )
     finally:
-        # Attempt to delete the uniquely created calendar
-        try:
-            logger.info(
-                f"Cleaning up: Deleting unique Radicale calendar '{unique_calendar_name}' at {unique_calendar_url}"
-            )
-            # Need to get the calendar object again to delete it
-            # It's safer to fetch it by URL before attempting deletion
-            calendar_to_delete = await asyncio.to_thread(
-                client.calendar, url=unique_calendar_url
-            )
-            if calendar_to_delete:
-                await asyncio.to_thread(calendar_to_delete.delete)
+        # Attempt to delete the uniquely created calendar using the object if available
+        if new_calendar_obj:
+            try:
+                logger.info(
+                    f"Cleaning up: Deleting unique Radicale calendar '{unique_calendar_name}' using its object."
+                )
+                await asyncio.to_thread(new_calendar_obj.delete)
                 logger.info(
                     f"Successfully deleted unique calendar '{unique_calendar_name}'."
                 )
-            else:
-                logger.warning(
-                    f"Could not find unique calendar '{unique_calendar_name}' at {unique_calendar_url} for deletion. It might have been already deleted or never created."
+            except caldav_error.NotFoundError:
+                logger.info(
+                    f"Unique calendar '{unique_calendar_name}' (URL: {getattr(new_calendar_obj, 'url', 'N/A')}) was not found during cleanup (already deleted)."
                 )
-        except caldav_error.NotFoundError:
-            logger.info(
-                f"Unique calendar '{unique_calendar_name}' at {unique_calendar_url} was not found during cleanup (already deleted)."
+            except Exception as e_delete:
+                logger.error(
+                    f"Error deleting unique Radicale calendar '{unique_calendar_name}' (URL: {getattr(new_calendar_obj, 'url', 'N/A')}): {e_delete}",
+                    exc_info=True,
+                )
+                # Don't fail the test run for cleanup errors, but log them.
+        else:
+            # Fallback if new_calendar_obj was not created (e.g., error before assignment)
+            # This part might be less reliable if the URL wasn't successfully determined.
+            # However, the primary cleanup relies on new_calendar_obj.
+            logger.warning(
+                f"Calendar object for '{unique_calendar_name}' was not available for direct deletion. Cleanup might be incomplete if creation failed early."
             )
-        except Exception as e_delete:
-            logger.error(
-                f"Error deleting unique Radicale calendar '{unique_calendar_name}': {e_delete}",
-                exc_info=True,
-            )
-            # Don't fail the test run for cleanup errors, but log them.
