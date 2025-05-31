@@ -1218,57 +1218,8 @@ async def test_search_events(
             (present_search_results_matcher, present_search_results_response),
         ]
     )
-
-    # --- Setup ProcessingService (similar to other tests) ---
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_base_url,  # Add base_url
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
-        },
-        "ical": {"urls": []},
-    }
-    dummy_prompts: dict[str, Any] = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
-    }
-    local_provider = LocalToolsProvider(
-        definitions=local_tools_definition,
-        implementations=local_tool_implementations,
-        calendar_config=test_calendar_config,
-    )
-    mcp_provider = MCPToolsProvider(mcp_server_configs={})
-    composite_provider = CompositeToolsProvider(
-        providers=[local_provider, mcp_provider]
-    )
-    await composite_provider.get_tool_definitions()
-
-    def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
-        return get_db_context(engine=pg_vector_db_engine)
-
-    calendar_context_provider = CalendarContextProvider(
-        calendar_config=test_calendar_config,
-        prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
-    )
-    service_config = ProcessingServiceConfig(
-        id="test_cal_search_profile",
-        prompts=dummy_prompts,
-        calendar_config=test_calendar_config,
-        timezone_str=TEST_TIMEZONE_STR,
-        max_history_messages=5,
-        history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
-        delegation_security_level="unrestricted",
-    )
-    processing_service = ProcessingService(
-        llm_client=llm_client,
-        tools_provider=composite_provider,
-        context_providers=[calendar_context_provider],
-        service_config=service_config,
-        server_url=None,
-        app_config={},
-    )
+    # Assign the new LLM client with search rules to the existing processing_service
+    processing_service.llm_client = llm_client
 
     # --- Simulate User Interaction ---
     user_message_search = f"What are my events for {search_query_text}?"
