@@ -1165,7 +1165,10 @@ async def test_search_events(
     def search_intent_matcher(kwargs: MatcherArgs) -> bool:
         last_text = get_last_message_text(kwargs.get("messages", [])).lower()
         # User might ask generally, LLM decides to search for "Search Event"
-        return "what are my events" in last_text and "day after tomorrow plus two" in last_text
+        return (
+            "what are my events" in last_text
+            and "day after tomorrow plus two" in last_text
+        )
 
     search_intent_response = MockLLMOutput(
         content="Let me check your calendar...",
