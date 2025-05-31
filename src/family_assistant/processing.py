@@ -73,7 +73,7 @@ class ProcessingService:
         context_providers: list[ContextProvider],  # NEW: List of context providers
         server_url: str | None,
         app_config: dict[str, Any],  # Keep app_config for now
-        clock: Clock = SystemClock(),
+        clock: Clock | None = None,
     ) -> None:
         """
         Initializes the ProcessingService.
@@ -94,7 +94,7 @@ class ProcessingService:
             server_url or "http://localhost:8000"
         )  # Default if not provided
         self.app_config = app_config  # Store app_config
-        self.clock = clock  # Store the clock instance
+        self.clock = clock if clock is not None else SystemClock()  # Store the clock instance
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
 
