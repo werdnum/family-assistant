@@ -973,10 +973,11 @@ async def test_callback_skip_behavior_on_user_response(
 
     # Rule 1: Schedule callback
     def schedule_matcher_for_skip_test(kwargs: MatcherArgs) -> bool:
-        return (
-            f"schedule for skip_if_user_responded={skip_if_user_responded_flag}"
-            in get_last_message_text(kwargs.get("messages", [])).lower()
-        )
+        # Ensure the boolean part of the f-string is also lowercased for comparison
+        # with the lowercased message content.
+        expected_substring = f"schedule for skip_if_user_responded={str(skip_if_user_responded_flag).lower()}"
+        message_content = get_last_message_text(kwargs.get("messages", [])).lower()
+        return expected_substring in message_content
 
     schedule_response_for_skip_test = MockLLMOutput(
         content=f"OK, scheduling callback with skip_flag={skip_if_user_responded_flag}.",
