@@ -184,7 +184,8 @@ async def test_add_event_and_verify_in_system_prompt(
         content=final_llm_response_content, tool_calls=None
     )
 
-    llm_client: LLMInterface = RuleBasedMockLLMClient(
+    # This is the correct LLM client for this test
+    llm_client_for_add_test: LLMInterface = RuleBasedMockLLMClient(
         rules=[
             (add_event_matcher, add_event_response),
             (final_response_matcher, final_response_llm_output),
@@ -225,7 +226,7 @@ async def test_add_event_and_verify_in_system_prompt(
         timezone_str=TEST_TIMEZONE_STR,
     )
     service_config = ProcessingServiceConfig(
-        id="test_cal_mod_profile",
+        id="test_cal_add_profile",  # Changed profile ID for clarity
         prompts=dummy_prompts,
         calendar_config=test_calendar_config,
         timezone_str=TEST_TIMEZONE_STR,
@@ -235,7 +236,7 @@ async def test_add_event_and_verify_in_system_prompt(
         delegation_security_level="unrestricted",
     )
     processing_service = ProcessingService(
-        llm_client=MagicMock(),  # Will be replaced after initial creation
+        llm_client=llm_client_for_add_test,  # Use the correctly defined LLM client
         tools_provider=composite_provider,
         context_providers=[calendar_context_provider],
         service_config=service_config,
@@ -243,102 +244,42 @@ async def test_add_event_and_verify_in_system_prompt(
         app_config={},
     )
 
-    # --- Simulate User Interaction to Create Initial Event ---
-    processing_service.llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (add_original_event_matcher, add_original_event_response),
-            (final_response_matcher_for_add_original, final_llm_response_for_add_original),
-        ]
-    )
-    user_message_create_original = f"Please schedule {original_summary} for day after tomorrow at 2 PM."
+    # --- Simulate User Interaction to Create Event ---
+    user_message_create = f"Please schedule {event_summary} for tomorrow at 10 AM."
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
         (
-            final_reply_create,
+            final_reply,
             _,
             _,
             error_create,
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
+            new_task_event=asyncio.Event(), # Added missing new_task_event
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message_create_original}],
-            trigger_interface_message_id="msg_create_orig",
+            trigger_content_parts=[{"type": "text", "text": user_message_create}],
+            trigger_interface_message_id="msg_add_event_prompt_test", # Unique message ID
             user_name=TEST_USER_NAME,
         )
 
-    assert error_create is None, f"Error during initial event creation: {error_create}"
-    assert final_reply_create and final_llm_response_for_add_original_content in final_reply_create, \
-        f"Expected creation reply '{final_llm_response_for_add_original_content}', but got '{final_reply_create}'"
+    assert error_create is None, f"Error during event creation: {error_create}"
+    assert final_reply and final_llm_response_content in final_reply, \
+        f"Expected creation reply '{final_llm_response_content}', but got '{final_reply}'"
 
-    # --- Retrieve UID of the created event ---
-    original_radicale_event = await get_event_by_summary_from_radicale(
-        radicale_server, original_summary
+    # --- Verify Event in Radicale ---
+    radicale_event_check = await get_event_by_summary_from_radicale(
+        radicale_server, event_summary
     )
-    assert original_radicale_event is not None, (
-        f"Event '{original_summary}' not found in Radicale after tool creation."
+    assert radicale_event_check is not None, (
+        f"Event '{event_summary}' not found in Radicale {test_calendar_direct_url} after tool execution."
     )
-    event_uid = original_radicale_event.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
-    logger.info(f"Retrieved UID for '{original_summary}': {event_uid}")
+    # event_uid = radicale_event_check.vobject_instance.vevent.uid.value # Not strictly needed for this test
 
-    # --- LLM Rules for Modifying the Event ---
-    tool_call_id_modify = f"call_mod_{uuid.uuid4()}"
-
-    def modify_event_matcher(kwargs: MatcherArgs) -> bool:
-        last_text = get_last_message_text(kwargs.get("messages", [])).lower()
-        # Match based on the original summary, as the user would refer to it
-        return f"change event {original_summary.lower()}" in last_text
-
-    modify_event_response = MockLLMOutput(
-        content=f"OK, I'll modify '{original_summary}'.",
-        tool_calls=[
-            ToolCallItem(
-                id=tool_call_id_modify,
-                type="function",
-                function=ToolCallFunction(
-                    name="modify_calendar_event",
-                    arguments=json.dumps({
-                        "uid": event_uid,  # Use the retrieved UID
-                        "calendar_url": test_calendar_direct_url,
-                        "new_summary": modified_summary,
-                        "new_start_time": modified_start_dt.isoformat(),
-                        "new_end_time": modified_end_dt.isoformat(),  # Add end time
-                    }),
-                ),
-            )
-        ],
-    )
-
-    def final_response_matcher_for_modify(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        if not messages or len(messages) < 2: return False
-        last_message = messages[-1]
-        return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id_modify
-            and "OK. Event '" in last_message.get("content", "")
-            and f"'{modified_summary}' updated" in last_message.get("content", "")  # Tool returns new summary
-        )
-
-    final_llm_response_for_modify_content = f"Alright, '{modified_summary}' has been updated."
-    final_llm_response_for_modify = MockLLMOutput(
-        content=final_llm_response_for_modify_content, tool_calls=None
-    )
-
-    # Update LLM client in ProcessingService for the modification part
-    processing_service.llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (modify_event_matcher, modify_event_response),
-            (final_response_matcher_for_modify, final_llm_response_for_modify),
-        ]
-    )
-
-    # --- Simulate User Interaction to Modify ---
+    # --- Verify Event in System Prompt ---
     # Allow some time for Radicale to process and for our app to potentially cache/fetch
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.5) # Keep sleep if necessary for cache/propagation
 
-    # _aggregate_context_from_providers returns a single string
     aggregated_context_str = (
         await processing_service._aggregate_context_from_providers()
     )
@@ -419,7 +360,8 @@ async def test_modify_event(
 
     def final_response_matcher_for_add_original(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        if not messages or len(messages) < 2: return False
+        if not messages or len(messages) < 2:
+            return False
         last_message = messages[-1]
         return (
             last_message.get("role") == "tool"
@@ -733,7 +675,8 @@ async def test_delete_event(
 
     def final_response_matcher_for_add_to_delete(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        if not messages or len(messages) < 2: return False
+        if not messages or len(messages) < 2:
+            return False
         last_message = messages[-1]
         return (
             last_message.get("role") == "tool"
@@ -863,7 +806,8 @@ async def test_delete_event(
 
     def final_response_matcher_for_delete(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        if not messages or len(messages) < 2: return False
+        if not messages or len(messages) < 2:
+            return False
         last_message = messages[-1]
         return (
             last_message.get("role") == "tool"
