@@ -938,7 +938,7 @@ async def search_calendar_events_tool(
                             start=start_date_obj,
                             end=end_date_obj,
                             event=True,
-                            expand=False,  # expand=False is fine, data is fetched below
+                            expand=True,  # Changed to True to align with working fetch
                         )
                     )
 
