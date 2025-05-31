@@ -285,7 +285,7 @@ class TaskWorker:
         processing_service: ProcessingService,
         chat_interface: ChatInterface,
         new_task_event: asyncio.Event,  # Add new_task_event
-        shutdown_event_instance: asyncio.Event, # Added shutdown_event_instance
+        shutdown_event_instance: asyncio.Event,  # Added shutdown_event_instance
         calendar_config: dict[str, Any],
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
@@ -295,7 +295,7 @@ class TaskWorker:
         self.processing_service = processing_service
         self.chat_interface = chat_interface
         self.new_task_event = new_task_event  # Store the event
-        self.shutdown_event = shutdown_event_instance # Store the shutdown event
+        self.shutdown_event = shutdown_event_instance  # Store the shutdown event
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.embedding_generator = embedding_generator
@@ -601,7 +601,7 @@ class TaskWorker:
             )
             return
 
-        while not self.shutdown_event.is_set(): # Use self.shutdown_event
+        while not self.shutdown_event.is_set():  # Use self.shutdown_event
             try:
                 task = None  # Initialize task variable for the outer scope
                 # Database context per iteration (starts a transaction)

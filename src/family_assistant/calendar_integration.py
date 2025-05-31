@@ -960,7 +960,8 @@ async def search_calendar_events_tool(
                             try:
                                 event_data_str: str = event_resource.data  # type: ignore # It's a string
                                 parsed = parse_event(
-                                    event_data_str, timezone_str=exec_context.timezone_str
+                                    event_data_str,
+                                    timezone_str=exec_context.timezone_str,
                                 )
 
                                 if not parsed or not parsed.get("start"):
@@ -977,7 +978,9 @@ async def search_calendar_events_tool(
                                     else event_start_val
                                 )
 
-                                if not (start_date_obj <= event_start_date < end_date_obj):
+                                if not (
+                                    start_date_obj <= event_start_date < end_date_obj
+                                ):
                                     logger.debug(
                                         f"  -> Excluded (manual filter): Event UID {parsed.get('uid')} start date {event_start_date} outside range [{start_date_obj}, {end_date_obj})."
                                     )
