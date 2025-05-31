@@ -17,7 +17,11 @@ The system will provide a conversational interface primarily through Telegram, w
 Family members who need a centralized way to manage shared information and receive timely updates.
 
 ### 2.2 Interfaces
-*   **Telegram (Primary):** A Telegram bot will serve as the main interaction point for direct requests, receiving updates, and potentially some forms of information ingestion (e.g., forwarding messages).
+*   **Telegram (Primary):** A Telegram bot will serve as the main interaction point.
+    *   Handles direct requests, receiving updates, and information ingestion.
+    *   Supports **slash commands** (e.g., `/browse`, `/k8s`, `/research`) to route requests to specific **Service Profiles** (e.g., `browser_profile`, `kubernetes_debug`, `research`), each with potentially different LLMs, tools, and system prompts.
+    *   Responds with a "command not recognized" message for unknown slash commands.
+    *   Automatically splits long messages into multiple chunks if they exceed Telegram's character limit.
 *   **Email (Secondary):**
     *   Users can forward emails (e.g., confirmations, invites) to a dedicated address for ingestion.
     *   The assistant might send certain notifications or summaries via email (TBD).
@@ -28,7 +32,7 @@ Family members who need a centralized way to manage shared information and recei
     *   A vector search interface (`/vector-search`) to query indexed documents, view results grouped by document, and access a detailed document view (`/vector-search/document/{document_id}`).
     *   A UI for document upload (`/documents/upload`).
     *   A UI for API Token Management (`/settings/tokens`).
-    *   A chat interface (`/v1/chat/send_message` endpoint) for direct conversational interaction via HTTP requests.
+    *   A chat interface (`/v1/chat/send_message` endpoint) for direct conversational interaction via HTTP requests. This endpoint accepts an optional `profile_id` to target a specific Service Profile.
     *   (Future) A dashboard view of upcoming events, reminders, etc.
     *   (Future) Configuration options.
 *   **Email (Webhook):** Receives emails via a webhook (e.g., from Mailgun) at `/webhook/mail`. Parsed email data and attachments are stored, and an `index_email` task is enqueued for further processing by the indexing pipeline, which includes LLM-based primary link extraction.
@@ -45,7 +49,7 @@ graph TD
 
     subgraph Core Application
         Interaction[Interaction Layer]
-        Processing[Processing Layer (LLM, Tools)]
+        Processing[Processing Layer (LLM, Tools, Service Profiles)]
         DataStore[Data Store (SQLAlchemy + DB)]
         MCP[MCP Integration Layer]
         TaskWorker[Task Worker (DB Queue)]
@@ -93,9 +97,10 @@ graph TD
 
 *   **Interaction Layer:** Manages communication across Telegram, Email, and Web interfaces. It receives user input, forwards it for processing, and delivers responses/updates back to the user via the appropriate channel.
 *   **Processing Layer:**
-    *   Utilizes a Large Language Model (LLM) (e.g., Claude, GPT) via LiteLLM to understand natural language requests, extract information from ingested data, generate summaries/briefs, and formulate responses.
-    *   Manages the definition and execution logic for tools (like `add_or_update_note`) that the LLM can use.
-    *   Leverages MCP tools provided by connected servers to perform actions or retrieve external context (Future).
+    *   Utilizes a Large Language Model (LLM) (e.g., Claude, GPT) via LiteLLM to understand natural language requests, extract information from ingested data, generate summaries/briefs, and formulate responses. The system supports multiple **Service Profiles**, each potentially configured with a different LLM model, system prompt, and set of enabled tools.
+    *   Manages the definition and execution logic for tools (like `add_or_update_note` or `delegate_to_service`) that the LLM can use.
+    *   Supports **delegation** between Service Profiles using the `delegate_to_service` tool. Profiles can be configured with a `delegation_security_level` (`blocked`, `confirm`, `unrestricted`) to control how they can be targeted for delegation. The `delegate_to_service` tool will error if confirmation is required by policy but no confirmation UI callback is available.
+    *   Leverages MCP tools provided by connected servers to perform actions or retrieve external context.
     *   Includes specific logic for parsing structured data where possible (e.g., calendar invites, specific email formats) to complement LLM extraction (Future).
 *   **Data Store:** A central repository (a structured database, e.g., PostgreSQL or SQLite, accessed via **SQLAlchemy**) storing:
     *   Events (calendar items, deadlines)
@@ -173,14 +178,25 @@ graph TD
     *   Store notes provided by users via the `add_or_update_note` tool or the Web UI into the `notes` table.
     *   Provide notes as context to the LLM.
     *   Answer questions based on stored notes.
-*   **Message History:** Store conversation history per chat in the `message_history` table and use recent history as context for the LLM.
-*   **MCP Tool Integration:** Leverage connected MCP servers (Time, Browser, Fetch, Brave Search) to perform actions requested by the LLM based on user prompts.
-*   **Calendar Integration (Read-Only):**
+*   **Message History:** Store conversation history per chat in the `message_history` table. Recent history is used as context for the LLM, filtered by the active **Service Profile**. Replies to messages attempt to use the processing profile of the original message.
+*   **Service Profiles and Delegation:**
+    *   Supports multiple **Service Profiles** (e.g., `default`, `browser_profile`, `kubernetes_debug`, `research`), each configurable with its own LLM model, tools, system prompts, delegation security level, and other settings.
+    *   Users can invoke specific profiles via Telegram **slash commands** (e.g., `/browse`, `/k8s`, `/research`).
+    *   The `delegate_to_service` tool allows one profile to delegate tasks to another.
+    *   Profiles have a `delegation_security_level` (`blocked`, `confirm`, `unrestricted`) controlling delegation.
+*   **MCP Tool Integration:** Leverage connected MCP servers (e.g., Time, Browser, Fetch, Brave Search, Google Maps, Kubernetes) to perform actions requested by the LLM based on user prompts. MCP server initialization has a configurable timeout (default 1 minute).
+*   **Calendar Integration (Read & Write):**
     *   Reads upcoming events (today, tomorrow, next 14 days) from configured calendar sources.
-    *   Supports **CalDAV** calendars via direct URLs. Configuration via `.env`: Requires `CALDAV_USERNAME`, `CALDAV_PASSWORD`, and `CALDAV_CALENDAR_URLS` (comma-separated list of direct URLs). `CALDAV_URL` is optional.
+    *   Supports **CalDAV** calendars via direct URLs. Configuration via `.env`: Requires `CALDAV_USERNAME`, `CALDAV_PASSWORD`, and `CALDAV_CALENDAR_URLS` (comma-separated list of direct URLs). An optional `CALDAV_BASE_URL` can be configured.
     *   Supports **iCalendar** URLs (`.ics`). Configuration via `.env`: Requires `ICAL_URLS` (comma-separated list of URLs).
     *   Provides a combined, sorted list of events as context within the system prompt to the LLM.
-*   **Task Queue:** Uses the database (`tasks` table) for background processing. Supports scheduled tasks, immediate notification via `asyncio.Event`, and task retries with exponential backoff. Handles `log_message`, `llm_callback`, `index_email`, and `embed_and_store_batch` task types. Users can manually retry failed tasks via the Web UI. (See Section 10 for details).
+    *   Supports adding, modifying, and deleting calendar events via tools like `add_calendar_event_tool`, `modify_calendar_event_tool`, and `delete_calendar_event_tool`.
+*   **Task Queue & Callback Management:** Uses the database (`tasks` table) for background processing.
+    *   Supports scheduled tasks, immediate notification via `asyncio.Event`, and task retries with exponential backoff.
+    *   Handles `log_message`, `llm_callback`, `index_email`, and `embed_and_store_batch` task types.
+    *   Users can manually retry failed tasks via the Web UI.
+    *   The `schedule_future_callback_tool` now defaults `skip_if_user_responded` to `False` (callbacks run even if user responded) and includes `scheduling_timestamp` in the payload.
+    *   New tools `list_pending_callbacks_tool`, `modify_pending_callback_tool`, and `cancel_pending_callback_tool` allow LLM to manage its scheduled callbacks. (See Section 10 for general task queue details).
 *   **Document Ingestion and Vector Search:**
     *   Upload documents (including PDFs and web URLs) via API or Web UI.
     *   Indexing pipeline extracts text (e.g., from PDFs, fetched web pages), chunks content, generates embeddings, and stores them.
@@ -194,16 +210,12 @@ graph TD
     *   The system fully supports API authentication using these tokens.
 *   **Send Message to User Tool:** A tool (`send_message_to_user`) allowing the LLM to send messages to other configured users via Telegram.
 *   **Known Users Context:** Context about configured known users (chat ID to name mapping) provided by `KnownUsersContextProvider`.
-*   **(Future) Calendar Integration (Write):**
-    *   Introduce tools allowing the LLM to add or update events on specific calendars.
-    *   This will require a more robust configuration system for calendars, allowing administrators to define multiple calendars with distinct purposes (e.g., "Main Family Calendar", "Work Calendar", "Kids Activities", "Reminders").
-    *   The LLM will need context about these available calendars (names, descriptions of purpose) to choose the correct one when a user requests adding an event (e.g., "Add dentist appointment..." vs. "Remind me to...").
+*   **Weather Context Provider:** Fetches and formats weather information from the WillyWeather API (requires `WILLYWEATHER_API_KEY` and `WILLYWEATHER_LOCATION_ID` in `.env`).
 *   **(Future) Reminders:**
     *   Set reminders via natural language (stored on a dedicated 'Reminders' calendar, requiring write access and configuration as described above).
     *   Receive notifications for due reminders (likely requires a scheduled task to check the calendar).
 *   **(Future) Email Ingestion:** Process information from forwarded emails.
 *   **Email Storage:** Incoming emails received via webhook are parsed and stored in the database (basic storage, deeper processing/ingestion is Future).
-*   **(Future) External Data Integration:** Fetch data like weather forecasts directly or via MCP.
 ## 6. Data Store Design Considerations
 
 *   A structured relational database (e.g., SQLite, PostgreSQL) is recommended for easier querying and management.
@@ -221,7 +233,7 @@ graph TD
     *   `timestamp`: DateTime(timezone=True), non-nullable, indexed. Time the message was recorded.
     *   `role`: String(50), non-nullable. 'user', 'assistant', 'system', 'tool'.
     *   `content`: Text, nullable. Message content.
-
+    *   `processing_profile_id`: String(255), nullable, indexed. Identifies the service profile used for this message.
     *   `tool_calls`: JSONB, nullable. For 'assistant' role messages requesting tool execution (structured list of calls).
     *   `tool_call_id`: String(255), nullable, indexed. For 'tool' role messages, linking the response back to the specific `tool_calls` entry ID requested by the assistant.
     *   `reasoning_info`: JSONB, nullable. For 'assistant' role messages, storing LLM reasoning/usage data.
@@ -271,16 +283,16 @@ graph TD
 
 ## 8. Technology Considerations (High-Level)
 
-*   **LLM:** Configurable model via command-line argument, accessed through **LiteLLM** and **OpenRouter**. Supports tool use (function calling). Supports configurable LLM models per processing profile, enabling optimization of model selection based on task complexity and cost.
+*   **LLM:** Configurable model via command-line argument, accessed through **LiteLLM** and **OpenRouter**. Supports tool use (function calling). Supports configurable LLM models per **Service Profile**, enabling optimization of model selection based on task complexity and cost. The system prompt philosophy encourages proactivity from the assistant.
 *   **Backend:** **Python** using `python-telegram-bot` for Telegram interaction, `FastAPI` and `uvicorn` for the web server. Leverages a `ChatInterface` protocol for abstracting message sending across different platforms (e.g., Telegram, Web).
 *   **Database & ORM:** **SQLite** (default) or **PostgreSQL** (supported via connection string), accessed via **SQLAlchemy** (async).
-*   **Configuration:** Environment variables (`.env`), YAML (`prompts.yaml`), JSON (`mcp_config.json`).
+*   **Configuration:** Environment variables (`.env`), YAML (`config.yaml` for main settings including service profiles, `prompts.yaml`), JSON (`mcp_config.json`). Telegram message batching strategy and delay are configurable via `config.yaml`.
 *   **Timezone:** Configurable via `TIMEZONE` environment variable, uses **pytz**.
-*   **MCP:** Uses the `mcp` Python SDK to connect to and interact with MCP servers defined in `mcp_config.json`.
+*   **MCP:** Uses the `mcp` Python SDK to connect to and interact with MCP servers defined in `mcp_config.json`. MCP server initialization has a configurable timeout (default 1 minute).
 *   **Containerization:** **Docker** with `uv` for Python package management and `npm` for Node.js-based MCP tools. Includes Playwright browser for web scraping.
-*   **Calendar Libraries:** `caldav` for CalDAV interaction, `vobject` for parsing VCALENDAR data (used by both CalDAV and iCal), `httpx` for fetching iCal URLs.
+*   **Calendar Libraries:** `caldav` for CalDAV interaction, `vobject` for parsing VCALENDAR data (used by both CalDAV and iCal), `httpx` for fetching iCal URLs. CalDAV configuration can include an optional `base_url`.
 *   **Formatting:** Uses `telegramify-markdown` for converting LLM output to Telegram MarkdownV2.
-*   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used.
+*   **Task Scheduling (Future):** `APScheduler` is included in requirements but not yet actively used for user-facing scheduled tasks like daily briefs. The internal task queue handles recurring system tasks.
 *   **Utilities:** `uuid` for generating unique IDs (e.g., task IDs).
 
 ## 9. Current Implementation Status (as of 2025-05-28)
@@ -288,70 +300,76 @@ graph TD
 The following features from the specification are currently implemented:
 
 *   **Telegram Interface:** Primary interaction point using `python-telegram-bot`.
-*   **Processing Layer:**
+    *   Supports slash commands for routing to specific **Service Profiles** (e.g., `/browse`, `/k8s`, `/research`).
+    *   Responds to unrecognized slash commands.
+    *   Automatically splits long messages.
+*   **Processing Layer & Service Profiles:**
     *   LLM interaction via **LiteLLM** and **OpenRouter**.
-    *   LLM model configurable via command-line argument.
+    *   Supports multiple **Service Profiles**, each configurable with its own LLM model, tools, system prompts, delegation security level (`blocked`, `confirm`, `unrestricted`), and associated Telegram slash commands.
     *   Handles LLM tool calls (function calling).
+    *   Supports delegation between profiles via the `delegate_to_service` tool. The `delegate_to_service` tool will error if confirmation is required by policy but no confirmation UI callback is available.
 *   **Configuration:**
-    *   API keys, chat IDs, DB URL via environment variables (`.env`).
+    *   API keys, chat IDs, DB URL, WillyWeather API key/location ID via environment variables (`.env`).
+    *   Main application settings, service profiles (e.g., `default`, `browser_profile`, `kubernetes_debug`, `research`), default profile settings (including LLM model, prompts, tool configs, calendar configs, timezone, history settings, delegation security, slash commands) via `config.yaml`.
     *   Prompts via `prompts.yaml`.
-    *   MCP server definitions via `mcp_config.json`.
+    *   MCP server definitions via `mcp_config.json`. MCP initialization has a configurable timeout (default 1 minute).
     *   Timezone via `TIMEZONE` environment variable.
+    *   Telegram message batching strategy and delay via `config.yaml`.
 *   **Access Control:** Based on `ALLOWED_CHAT_IDS`.
-*   **Error Handling:** Logging and optional notification to `DEVELOPER_CHAT_ID`.
+*   **Error Handling:** Logging. Developer notification via Telegram has been removed.
 *   **Lifecycle Management:** Graceful shutdown (`SIGINT`/`SIGTERM`), placeholder config reload (`SIGHUP`).
 *   **Data Storage (SQLAlchemy with SQLite/PostgreSQL):** Database operations include retry logic.
-    *   `notes` table for storing notes (id, title, content, timestamps).
-    *   `message_history` table for storing conversation history (chat\_id, message\_id, timestamp, role, content, tool\_calls\_info JSON).
-    *   `tasks` table for the background task queue (see Section 10), supporting `log_message`, `llm_callback`, `index_email`, and `embed_and_store_batch` task types.
-    *   `received_emails` table for storing incoming email details. Emails received via webhook are parsed, attachments stored, and an `index_email` task is enqueued.
-    *   `api_tokens` table for storing hashed API tokens, enabling API-based authentication.
+    *   `notes` table for storing notes.
+    *   `message_history` table for storing conversation history, now including `processing_profile_id`.
+    *   `tasks` table for the background task queue (see Section 10).
+    *   `received_emails` table for storing incoming email details.
+    *   `api_tokens` table for storing hashed API tokens.
 *   **LLM Context:**
     *   System prompt includes:
-        *   Current time (timezone-aware via `TIMEZONE` env var).
-        *   Upcoming calendar events fetched from configured CalDAV and iCal sources (today, tomorrow, next 14 days).
+        *   Current time (timezone-aware).
+        *   Upcoming calendar events (CalDAV/iCal, optional CalDAV `base_url`).
         *   Context from the `notes` table.
-    *   Recent message history (from `message_history`, including basic tool call info if available) is included.
-    *   Replied-to messages (fetched from `message_history`) are included if the current message is a reply.
-*   **Web UI:** Basic interface using **FastAPI** and **Jinja2** for viewing, adding, editing, and deleting notes.
-    *   An interface to view message history grouped by conversation (`/history`).
-    *   An interface to view recent tasks from the database task queue (`/tasks`), including a button to manually retry failed tasks.
-    *   A vector search interface (`/vector-search`) that groups results by document and links to a document detail view (`/vector-search/document/{document_id}`).
-    *   An interface for API Token Management (`/settings/tokens`) allowing users to create, view, and revoke API tokens.
-    *   A document upload UI (`/documents/upload`) for ingesting files.
+        *   Context from `KnownUsersContextProvider`.
+        *   Context from `WeatherContextProvider` (WillyWeather API).
+    *   Recent message history is filtered by the active **Service Profile**.
+    *   Replied-to messages attempt to use the processing profile of the original message.
+*   **Web UI:** Basic interface using **FastAPI** and **Jinja2**.
+    *   Notes management, message history, task queue view (with manual retry), vector search (with document detail view), API token management, document upload.
 *   **Tools:**
     *   Local Tools:
-        *   `add_or_update_note`: Saves/updates notes in the database. Accepts `title` and `content`.
-        *   `schedule_future_callback`: Allows the LLM to schedule a task (`llm_callback`) to re-engage itself in the current chat at a future time with provided context. Accepts `callback_time` (ISO 8601 with timezone) and `context` (string). The `chat_id` (or equivalent interface/conversation ID) is automatically inferred from the conversation context. Task is created in the `tasks` table.
-        *   `ingest_document_from_url`: Submits a URL for ingestion and indexing. Accepts `url`, an optional `title` (if not provided, title will be extracted automatically), `source_type`, `source_id`, and optional `metadata`.
-        *   `send_message_to_user`: A tool allowing the LLM to send messages to other configured users via Telegram.
+        *   `add_or_update_note`.
+        *   `schedule_future_callback`: `skip_if_user_responded` defaults to `False`. Payload includes `scheduling_timestamp`.
+        *   `list_pending_callbacks_tool`, `modify_pending_callback_tool`, `cancel_pending_callback_tool`: New tools to manage scheduled callbacks.
+        *   `ingest_document_from_url`.
+        *   `send_message_to_user`.
+        *   `delegate_to_service`: New tool for cross-profile delegation.
+        *   Calendar tools: `add_calendar_event_tool`, `search_calendar_events_tool`, `modify_calendar_event_tool`, `delete_calendar_event_tool`.
     *   **MCP Integration:**
-        *   Loads server configurations from `mcp_config.json` (resolves environment variables like `$API_KEY`).
-        *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search) using the `mcp` library (connections established in parallel on startup).
-        *   Discovers tools provided by connected MCP servers.
-        *   Makes both local and MCP tools available to the LLM.
-        *   Executes MCP tool calls requested by the LLM.
-*   **Image Handling:** Processes the first photo attached to Telegram messages (in a batch) and sends it (base64 encoded) to the LLM along with the text.
-*   **Markdown Formatting:** Uses `telegramify-markdown` to convert LLM responses to Telegram's MarkdownV2 format, with fallback to escaped text.
-*   **Message Batching:** Buffers incoming messages received close together and processes them as a single batch to avoid overwhelming the LLM and ensure context.
-*   **Containerization:** **Dockerfile** provided for building an image with all dependencies (Python via `uv`, Deno/npm for MCP tools, Playwright browser). Uses cache mounts for faster builds.
-*   **Task Queue:** Implemented using the `tasks` database table, `asyncio.Event` for immediate notification, and a worker loop. Includes retry logic with exponential backoff and supports manual retry via the UI. (See Section 10).
-*   **Email Ingestion & Processing:** Emails received via webhook are parsed, attachments stored, and an `index_email` task is enqueued. The indexing pipeline for emails includes an `LLMPrimaryLinkExtractorProcessor` to identify and extract primary URLs from email content for further processing (e.g., web fetching).
-*   **Document Indexing & Vector Search:** Supports document uploads via API and UI. The indexing pipeline processes content (including PDF text extraction and URL fetching with automatic title extraction), chunks it, generates embeddings, and stores them. The vector search UI allows querying and displays results grouped by document, with links to a detailed document view.
-*   **API Token Management:** Users can create, view, and revoke API tokens via the Web UI. The system fully supports API authentication using these tokens.
-*   **API Chat Endpoint (`/v1/chat/send_message`):** Allows programmatic interaction with the assistant, with history persistence.
-*   **Tool Filtering for Non-Interactive Contexts:** Tools requiring confirmation are filtered out in non-interactive contexts.
-*   **Known Users Context Provider (`KnownUsersContextProvider`):** Provides user mapping to LLM context.
-*   **Processing Profiles with LLM Models:** Supports configuring different LLM models per processing profile.
-*   **ChatInterface Abstraction:** Core message sending logic refactored to use a generic `ChatInterface` protocol.
-*   **Type-safe Tool Call Representation:** Internal LLM tool calls use `ToolCallFunction` and `ToolCallItem` dataclasses.
-*   **Playwright:** Added as a core dependency for web scraping.
+        *   Connects to defined MCP servers (e.g., Time, Browser, Fetch, Brave Search, Google Maps, Kubernetes).
+        *   Makes both local and MCP tools available to the LLM based on Service Profile configuration.
+*   **Image Handling:** Processes first photo in Telegram messages.
+*   **Markdown Formatting:** Uses `telegramify-markdown`.
+*   **Message Batching:** Configurable strategy and delay for Telegram.
+*   **Containerization:** **Dockerfile** provided.
+*   **Task Queue:** Implemented using `tasks` table. (See Section 10).
+    *   `schedule_future_callback_tool`: `skip_if_user_responded` defaults to `False`. Payload includes `scheduling_timestamp`.
+    *   New tools `list_pending_callbacks_tool`, `modify_pending_callback_tool`, `cancel_pending_callback_tool` allow LLM to manage its scheduled callbacks.
+*   **Email Ingestion & Processing:** As previously specified.
+*   **Document Indexing & Vector Search:** As previously specified.
+*   **API Token Management:** As previously specified.
+*   **API Chat Endpoint (`/v1/chat/send_message`):** Allows programmatic interaction, now accepts optional `profile_id`.
+*   **Tool Filtering for Non-Interactive Contexts:** As previously specified.
+*   **Known Users Context Provider (`KnownUsersContextProvider`):** As previously specified.
+*   **Weather Context Provider (`WeatherContextProvider`):** New provider using WillyWeather API.
+*   **Processing Profiles with LLM Models:** As previously specified.
+*   **ChatInterface Abstraction:** As previously specified.
+*   **Type-safe Tool Call Representation:** As previously specified.
+*   **Playwright:** As previously specified.
 
 **Features Not Yet Implemented:**
 
-*   Calendar Integration (writing events via CalDAV): Requires implementing write tools and enhanced configuration to specify target calendars.
 *   Reminders (setting/notifying): Dependent on calendar write access and configuration for a dedicated reminders calendar.
-*   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks): `APScheduler` is present but not integrated into the main loop for these types of user-facing scheduled tasks (recurring tasks for system operations like re-indexing are supported by the current task queue).
+*   Scheduled Tasks / Cron Jobs (e.g., daily brief, reminder checks): `APScheduler` is present but not integrated into the main loop for these types of user-facing scheduled tasks.
 *   Advanced Web UI features (dashboard, chat).
 *   User profiles/preferences table.
 
@@ -372,7 +390,7 @@ The queue is managed via the `tasks` table with the following columns:
 *   `id`: Integer, primary key, auto-incrementing internal ID.
 *   `task_id`: String, **caller-provided unique ID** for the task. Ensures idempotency if a task is accidentally enqueued multiple times. Unique constraint enforced.
 *   `task_type`: String, indicates the kind of task (e.g., `send_notification`, `process_email_ingestion`, `llm_callback`). Used to route the task to the correct handler function. Indexed.
-*   `payload`: JSON (or Text), stores arbitrary data needed by the task handler. For `llm_callback`, this includes `chat_id` and `callback_context`.
+*   `payload`: JSON (or Text), stores arbitrary data needed by the task handler. For `llm_callback`, this includes `chat_id`, `callback_context`, `scheduling_timestamp`, and the `skip_if_user_responded` flag.
 *   `scheduled_at`: DateTime (timezone-aware), optional timestamp indicating the earliest time the task should be processed. If NULL, the task can be processed immediately. Indexed.
 *   `created_at`: DateTime (timezone-aware), timestamp when the task was enqueued.
 *   `status`: String, current state of the task (e.g., `pending`, `processing`, `done`, `failed`). Indexed. Default is `pending`.
@@ -422,7 +440,7 @@ The task system supports recurring tasks using RRULE strings and a duplication a
 *   **Execution:** When a task is dequeued, the worker looks up the handler based on `task_type` and executes it with the task's `payload`.
 *   **Implemented Handlers:**
     *   `handle_log_message`: Logs the task payload (example).
-    *   `handle_llm_callback`: Extracts `interface_type`, `conversation_id`, and `callback_context` from payload, constructs a trigger message ("System Callback Trigger:..."), sends it to the LLM via `generate_llm_response_for_chat`, sends the LLM's response back to the specified chat *as the bot*, and stores both the trigger and response in message history.
+    *   `handle_llm_callback`: Extracts `interface_type`, `conversation_id`, `callback_context`, `scheduling_timestamp`, and `skip_if_user_responded` from payload. Checks for intervening user messages based on `scheduling_timestamp` and the `skip_if_user_responded` flag (defaulting to `True` - skip if user responded). If not skipped, constructs a trigger message ("System Callback Trigger:..."), sends it to the LLM via `generate_llm_response_for_chat`, sends the LLM's response back to the specified chat *as the bot*, and stores both the trigger and response in message history.
     *   `handle_index_email`: Processes a stored email for indexing using the `IndexingPipeline`.
     *   `handle_embed_and_store_batch`: Generates and stores embeddings for a batch of text content.
 *   **Completion/Failure/Retry:** Based on the handler's outcome:
