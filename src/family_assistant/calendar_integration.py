@@ -940,9 +940,9 @@ async def search_calendar_events_tool(
                         f"Fetched {len(all_event_resources_in_calendar)} total events from {cal_url_item} for manual filtering."
                     )
 
-                    for (
-                        event_resource
-                    ) in all_event_resources_in_calendar:  # event_resource is CalendarObjectResource
+                    for event_resource in (
+                        all_event_resources_in_calendar
+                    ):  # event_resource is CalendarObjectResource
                         events_checked += 1
                         event_url_attr = getattr(
                             event_resource, "url", "N/A"
@@ -974,9 +974,7 @@ async def search_calendar_events_tool(
                                 else event_start_val
                             )
 
-                            if not (
-                                start_date_obj <= event_start_date < end_date_obj
-                            ):
+                            if not (start_date_obj <= event_start_date < end_date_obj):
                                 logger.debug(
                                     f"  -> Excluded (manual filter): Event UID {parsed.get('uid')} start date {event_start_date} outside range [{start_date_obj}, {end_date_obj})."
                                 )
