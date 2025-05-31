@@ -97,7 +97,10 @@ async def telegram_handler_fixture(
         ],
         "mcp_config": {"mcpServers": {}},
         "indexing_pipeline_config": {"processors": []},
-        "message_batching_config": {"strategy": "none"},  # Ensure NoBatchMessageBatcher
+        "message_batching_config": {
+            "strategy": "none",  # This *should* pick NoBatchMessageBatcher
+            "delay_seconds": 0,  # If DefaultMessageBatcher is picked, make delay 0
+        },
         "llm_parameters": {},
         # Add any other minimal required config keys by Assistant
         "openrouter_api_key": None,
