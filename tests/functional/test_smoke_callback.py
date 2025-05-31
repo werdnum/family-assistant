@@ -14,11 +14,11 @@ if TYPE_CHECKING:
 # Import select for direct DB queries
 from sqlalchemy.sql import select
 
+# Import necessary components from the application
+from family_assistant import storage  # Import storage module
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-
-# Import necessary components from the application
 from family_assistant.storage.context import DatabaseContext
 
 # Import tasks_table for querying
@@ -1123,9 +1123,9 @@ async def test_callback_skip_behavior_on_user_response(
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         await db_context.execute_with_retry(
-            select("pg_sleep(0.01)")
+            text("SELECT pg_sleep(0.01)")  # Use text() for raw SQL functions
         )  # Small delay to ensure timestamps differ
-        await processing_service.message_history_storage.add_message_to_history(
+        await storage.add_message_to_history(  # Call storage.add_message_to_history directly
             db_context=db_context,
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
