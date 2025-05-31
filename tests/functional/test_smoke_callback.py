@@ -485,6 +485,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         app_config={},
         context_providers=[],
         server_url=None,
+        clock=mock_clock, # Inject mock_clock into ProcessingService
     )
 
     mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
@@ -820,6 +821,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         app_config={},
         context_providers=[],
         server_url=None,
+        clock=mock_clock, # Inject mock_clock into ProcessingService
     )
 
     mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
@@ -1120,6 +1122,7 @@ async def test_callback_skip_behavior_on_user_response(
         app_config={},
         context_providers=[],
         server_url=None,
+        clock=mock_clock, # Inject mock_clock into ProcessingService
     )
 
     mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
