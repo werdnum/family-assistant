@@ -1174,9 +1174,12 @@ async def test_callback_skip_behavior_on_user_response(
         logger.info(
             f"Verified: Callback EXECUTED for {scenario_name} (skip_flag=False), send_message called with context."
         )
-        # LLM calls: 2 for scheduling, 2 for callback execution.
-        assert len(llm_client.get_calls()) == 4, (  # type: ignore
-            f"LLM calls for {scenario_name} (skip=False) was {len(llm_client.get_calls())}, expected 4."  # type: ignore
+        # LLM calls:
+        # 1. Initial user request -> LLM requests tool call (schedule_future_callback).
+        # 2. Tool result for scheduling -> LLM gives final response for the scheduling interaction.
+        # 3. Task worker triggers callback -> LLM processes "System Callback Trigger" and gives final response for callback.
+        assert len(llm_client.get_calls()) == 3, (  # type: ignore
+            f"LLM calls for {scenario_name} (skip=False) was {len(llm_client.get_calls())}, expected 3."  # type: ignore
         )
 
     # --- Cleanup ---
