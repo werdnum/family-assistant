@@ -38,11 +38,11 @@ from family_assistant.storage import get_recent_history
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
 
+from ..utils.clock import SystemClock  # Import SystemClock
 from .mcp import MCPToolsProvider
 
 # Import the context from the new types file
 from .types import ToolExecutionContext, ToolNotFoundError
-from ..utils.clock import SystemClock # Import SystemClock
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ async def schedule_future_callback_tool(
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
     db_context = exec_context.db_context
-    clock = exec_context.clock or SystemClock() # Use context's clock or default to SystemClock
+    clock = exec_context.clock or SystemClock()  # Use context's clock or default to SystemClock
 
     try:
         # Parse the ISO 8601 string, ensuring it's timezone-aware
@@ -253,7 +253,7 @@ async def schedule_future_callback_tool(
             )
 
         # Ensure it's in the future (optional, but good practice)
-        if scheduled_dt <= clock.now(): # Compare against the potentially mocked clock's now
+        if scheduled_dt <= clock.now():  # Compare against the potentially mocked clock's now
             raise ValueError("Callback time must be in the future.")
 
         task_id = f"llm_callback_{uuid.uuid4()}"
