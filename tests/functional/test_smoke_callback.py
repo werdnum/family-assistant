@@ -43,7 +43,8 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-from tests.helpers import wait_for_tasks_to_complete
+# from tests.helpers import wait_for_tasks_to_complete # wait_for_tasks_to_complete will be replaced
+from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
 )
