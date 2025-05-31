@@ -1006,10 +1006,10 @@ async def test_search_events(
         vevent_search.add("dtstart").value = st  # type: ignore[attr-defined]
         vevent_search.add("dtend").value = en  # type: ignore[attr-defined]
         vevent_search.add("dtstamp").value = datetime.now(ZoneInfo("UTC"))  # type: ignore[attr-defined]
-        event_vcal_search_str = cal_search.serialize()  # type: ignore[attr-defined]
-        await asyncio.to_thread(target_calendar.add_event, vcal=event_vcal_search_str)
+        # Pass the vobject.iCalendar component directly, let caldav handle serialization
+        await asyncio.to_thread(target_calendar.add_event, vcal=cal_search)
     logger.info(
-        f"Directly created '{event1_summary}' and '{event2_summary}' for search test using vobject."
+        f"Directly created '{event1_summary}' and '{event2_summary}' for search test using vobject component."
     )
 
     # --- LLM Rules ---
