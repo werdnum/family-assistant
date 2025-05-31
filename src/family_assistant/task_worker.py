@@ -116,12 +116,14 @@ async def handle_llm_callback(
     try:
         scheduling_timestamp_dt = isoparse(scheduling_timestamp_str)
         if scheduling_timestamp_dt.tzinfo is None:  # Ensure it's offset-aware
-            scheduling_timestamp_dt = scheduling_timestamp_dt.replace(tzinfo=timezone.utc)
-    except ValueError:
+            scheduling_timestamp_dt = scheduling_timestamp_dt.replace(
+                tzinfo=timezone.utc
+            )
+    except ValueError as e:
         logger.error(
             f"Invalid scheduling_timestamp format in llm_callback task: {scheduling_timestamp_str}"
         )
-        raise ValueError("Invalid scheduling_timestamp format")
+        raise ValueError("Invalid scheduling_timestamp format") from e
 
     # Check for intervening user messages
     stmt = (
