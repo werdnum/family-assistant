@@ -999,7 +999,11 @@ async def test_search_events(
         (event2_summary, event2_start, event2_end),
     ]:
         # Use the new_event_object() pattern for creating events
-        def create_event_sync(current_summ: str = summ, current_st: datetime = st, current_en: datetime = en) -> None:
+        def create_event_sync(
+            current_summ: str = summ,
+            current_st: datetime = st,
+            current_en: datetime = en,
+        ) -> None:
             event = target_calendar.new_event_object()  # type: ignore[attr-defined]
             # new_event_object creates a shell with PRODID "-//python-caldav//caldav//en_DK"
             # We need to populate its vevent component.
