@@ -18,14 +18,42 @@ The core architecture consists of:
 
 ## File-by-File Reference
 
+### `src/family_assistant/assistant.py`
+
+**Description:** Orchestrates the Family Assistant application's lifecycle, including dependency setup, service initialization, and graceful shutdown. It manages the complex wiring of LLM clients, tool providers, processing services, Telegram bot, web server, and task worker.
+
+**Major Symbols:**
+- `Assistant`: Main class for the application's core logic and lifecycle management.
+- `setup_dependencies()`: Initializes and wires up all core application components.
+- `start_services()`: Starts all long-running services and waits for shutdown.
+- `stop_services()`: Gracefully stops all managed services.
+- `initiate_shutdown()`: Sets the shutdown event to begin graceful shutdown.
+- `is_shutdown_complete()`: Checks if the shutdown process has completed.
+
+**Internal Dependencies:**
+- `family_assistant.embeddings`
+- `family_assistant.indexing.document_indexer`
+- `family_assistant.indexing.email_indexer`
+- `family_assistant.indexing.tasks`
+- `family_assistant.llm`
+- `family_assistant.processing`
+- `family_assistant.storage`
+- `family_assistant.storage.context`
+- `family_assistant.task_worker`
+- `family_assistant.telegram_bot`
+- `family_assistant.tools`
+- `family_assistant.tools.types`
+- `family_assistant.utils.scraping`
+- `family_assistant.web.app_creator`
+- `family_assistant.context_providers`
+
 ### `src/family_assistant/__main__.py`
 
-**Description:** The main entry point for the Family Assistant application. It handles configuration loading, argument parsing, service initialization (LLM, embedding, database, Telegram, web server, task worker), and graceful shutdown.
+**Description:** The main entry point for the Family Assistant application. It handles configuration loading, argument parsing, and orchestrates the lifecycle of the `Assistant` class, which encapsulates service initialization (LLM, embedding, database, Telegram, web server, task worker) and graceful shutdown.
 
 **Major Symbols:**
 - `load_config()`: Loads configuration from defaults, `config.yaml`, and environment variables.
-- `main_async()`: Asynchronously initializes and runs all core services (Telegram, FastAPI, Task Worker, LLM/Embedding clients, Tool Providers).
-- `main()`: Synchronous entry point that calls `load_config` and `main_async`.
+- `main()`: Synchronous entry point that calls `load_config` and runs the `Assistant`.
 - `shutdown_handler()`: Gracefully shuts down services upon receiving signals.
 - `reload_config_handler()`: Placeholder for SIGHUP to reload config.
 
@@ -45,6 +73,7 @@ The core architecture consists of:
 - `family_assistant.web.app_creator` (app)
 - `family_assistant.telegram_bot` (TelegramService)
 - `family_assistant.context_providers` (CalendarContextProvider, KnownUsersContextProvider, NotesContextProvider)
+- `family_assistant.assistant`
 
 ### `src/family_assistant/__init__.py`
 
@@ -76,18 +105,20 @@ The core architecture consists of:
 
 ### `src/family_assistant/context_providers.py`
 
-**Description:** Defines the `ContextProvider` protocol and provides concrete implementations for injecting dynamic context (like notes, calendar events, known users) into the LLM's system prompt.
+**Description:** Defines the `ContextProvider` protocol and provides concrete implementations for injecting dynamic context (like notes, calendar events, known users, and weather information) into the LLM's system prompt.
 
 **Major Symbols:**
 - `ContextProvider` (Protocol): Interface for context providers.
 - `NotesContextProvider`: Provides context from stored notes.
 - `CalendarContextProvider`: Provides context from calendar events.
 - `KnownUsersContextProvider`: Provides context about configured known users.
+- `WeatherContextProvider`: Provides context from the WillyWeather API.
 
 **Internal Dependencies:**
 - `family_assistant.calendar_integration`
 - `family_assistant.storage`
 - `family_assistant.storage.context` (DatabaseContext)
+- `httpx`
 
 ### `src/family_assistant/embeddings.py`
 
@@ -130,11 +161,12 @@ The core architecture consists of:
 
 ### `src/family_assistant/processing.py`
 
-**Description:** The core processing service that orchestrates LLM interactions, manages conversation history, aggregates context, and executes tool calls.
+**Description:** The core processing service that orchestrates LLM interactions, manages conversation history (filtered by processing profile), aggregates context, and executes tool calls. It supports multiple service profiles and can be configured with an injected clock for time-sensitive operations.
 
 **Major Symbols:**
-- `ProcessingServiceConfig`: Dataclass for service-specific configuration.
-- `ProcessingService`: Main class for handling chat interactions.
+- `ProcessingServiceConfig`: Dataclass for service-specific configuration, including `id` and `delegation_security_level`.
+- `ProcessingService`: Main class for handling chat interactions. Includes a `clock` attribute.
+- `set_processing_services_registry()`: Sets the registry of all processing services.
 - `_aggregate_context_from_providers()`: Gathers context from all registered providers.
 - `process_message()`: Sends messages to the LLM, handles tool calls, and returns generated messages.
 - `_format_history_for_llm()`: Formats database message history for the LLM.
@@ -147,18 +179,20 @@ The core architecture consists of:
 - `family_assistant.storage`
 - `family_assistant.storage.context` (DatabaseContext)
 - `family_assistant.tools` (ToolExecutionContext, ToolNotFoundError, ToolsProvider)
+- `family_assistant.utils.clock` (SystemClock)
 
 ### `src/family_assistant/task_worker.py`
 
-**Description:** Implements a background task worker that processes tasks from a database queue. It includes retry logic, recurrence handling, and dispatches tasks to registered handlers.
+**Description:** Implements a background task worker that processes tasks from a database queue. It includes retry logic, recurrence handling, and dispatches tasks to registered handlers. It uses an injected `Clock` for time-sensitive operations and supports skipping `llm_callback` tasks if the user has responded.
 
 **Major Symbols:**
 - `shutdown_event`: `asyncio.Event` to signal worker shutdown.
 - `new_task_event`: `asyncio.Event` to notify worker of immediate tasks.
 - `handle_log_message()`: Example task handler for logging.
-- `handle_llm_callback()`: Task handler for LLM-scheduled callbacks.
-- `TaskWorker`: Manages the task processing loop and handler registry.
+- `handle_llm_callback()`: Task handler for LLM-scheduled callbacks, handling `skip_if_user_responded` and `scheduling_timestamp`.
+- `TaskWorker`: Manages the task processing loop and handler registry. Its constructor accepts `shutdown_event_instance` and `clock`.
 - `register_task_handler()`: Registers a handler for a specific task type.
+- `get_task_handlers()`: Returns the current task handlers dictionary for this worker.
 - `_process_task()`: Executes a dequeued task.
 - `_handle_task_failure()`: Manages task retries and status updates on failure.
 - `run()`: The main asynchronous loop for the task worker.
@@ -170,10 +204,11 @@ The core architecture consists of:
 - `family_assistant.interfaces` (ChatInterface)
 - `family_assistant.processing` (ProcessingService)
 - `family_assistant.tools` (ToolExecutionContext)
+- `family_assistant.utils.clock` (Clock, SystemClock)
 
 ### `src/family_assistant/telegram_bot.py`
 
-**Description:** Manages the Telegram bot's lifecycle, handles incoming updates, and provides a Telegram-specific implementation of the `ChatInterface`. Includes message batching and confirmation UI.
+**Description:** Manages the Telegram bot's lifecycle, handles incoming updates (including slash commands and message splitting), and provides a Telegram-specific implementation of the `ChatInterface`. Includes message batching and confirmation UI. Developer error notifications via Telegram have been removed.
 
 **Major Symbols:**
 - `BatchProcessor` (Protocol): Interface for processing message batches.
@@ -181,9 +216,9 @@ The core architecture consists of:
 - `ConfirmationUIManager` (Protocol): Interface for requesting user confirmation.
 - `DefaultMessageBatcher`: Buffers messages and processes them after a delay.
 - `NoBatchMessageBatcher`: Processes messages immediately.
-- `TelegramUpdateHandler`: Handles Telegram messages and commands, delegates to batcher.
+- `TelegramUpdateHandler`: Handles Telegram messages and commands, delegates to batcher. Includes `_send_message_chunks()`, `handle_unknown_command()`, and `handle_generic_slash_command()`.
 - `TelegramConfirmationUIManager`: Implements `ConfirmationUIManager` using Telegram inline keyboards.
-- `TelegramService`: Main class managing the Telegram bot application.
+- `TelegramService`: Main class managing the Telegram bot application. Its constructor accepts `processing_services_registry` and `app_config`. Includes `_set_bot_commands()`.
 - `TelegramChatInterface`: Implements `ChatInterface` for Telegram.
 
 **Internal Dependencies:**
@@ -192,6 +227,7 @@ The core architecture consists of:
 - `family_assistant.storage`
 - `family_assistant.storage.context` (DatabaseContext)
 - `family_assistant.tools` (ToolConfirmationRequired, ToolConfirmationFailed)
+- `telegramify_markdown`
 
 ### `src/family_assistant/web_server.py`
 
@@ -463,17 +499,17 @@ The core architecture consists of:
 
 ### `src/family_assistant/storage/message_history.py`
 
-**Description:** Manages storage and retrieval of conversation message history, including user messages, assistant replies, tool calls, and error tracebacks.
+**Description:** Manages storage and retrieval of conversation message history, including user messages, assistant replies, tool calls, error tracebacks, and the processing profile used for each message.
 
 **Major Symbols:**
-- `message_history_table`: SQLAlchemy `Table` definition for message history.
-- `add_message_to_history()`: Adds a message record to history.
+- `message_history_table`: SQLAlchemy `Table` definition for message history, including `processing_profile_id`.
+- `add_message_to_history()`: Adds a message record to history, accepting `processing_profile_id`.
 - `update_message_interface_id()`: Updates the interface-specific ID of a message.
 - `update_message_error_traceback()`: Updates error traceback for a message.
-- `get_recent_history()`: Retrieves recent messages for a conversation, expanding turns.
+- `get_recent_history()`: Retrieves recent messages for a conversation, expanding turns, and filtering by `processing_profile_id`.
 - `get_message_by_interface_id()`: Retrieves a message by its interface ID.
 - `get_messages_by_turn_id()`: Retrieves all messages for a specific turn.
-- `get_messages_by_thread_id()`: Retrieves all messages for a specific conversation thread.
+- `get_messages_by_thread_id()`: Retrieves all messages for a specific conversation thread, filtering by `processing_profile_id`.
 - `get_grouped_message_history()`: Retrieves all history grouped by conversation.
 
 **Internal Dependencies:**
@@ -497,12 +533,12 @@ The core architecture consists of:
 
 ### `src/family_assistant/storage/tasks.py`
 
-**Description:** Implements the database-backed task queue, providing functions for enqueuing, dequeuing, updating status, and rescheduling tasks.
+**Description:** Implements the database-backed task queue, providing functions for enqueuing, dequeuing (with injected current time for testability), updating status, and rescheduling tasks.
 
 **Major Symbols:**
 - `tasks_table`: SQLAlchemy `Table` definition for tasks.
 - `enqueue_task()`: Adds a task to the queue.
-- `dequeue_task()`: Atomically retrieves and locks the next available task.
+- `dequeue_task()`: Atomically retrieves and locks the next available task, accepting `current_time`.
 - `update_task_status()`: Updates a task's status.
 - `reschedule_task_for_retry()`: Reschedules a failed task for retry.
 - `manually_retry_task()`: Allows manual retry of failed tasks via UI.
@@ -548,7 +584,7 @@ The core architecture consists of:
 
 ### `src/family_assistant/tools/__init__.py`
 
-**Description:** The main tools module. It defines tool provider interfaces, implements local Python tools, and orchestrates tool confirmation logic.
+**Description:** The main tools module. It defines tool provider interfaces, implements local Python tools (including new callback management and cross-profile delegation tools), and orchestrates tool confirmation logic.
 
 **Major Symbols:**
 - `ConfirmationCallbackProtocol` (Protocol): Interface for confirmation callbacks.
@@ -556,7 +592,10 @@ The core architecture consists of:
 - `ToolConfirmationFailed`: Exception raised when confirmation fails.
 - `ToolsProvider` (Protocol): Interface for tool providers.
 - `schedule_recurring_task_tool()`: Local tool to schedule recurring tasks.
-- `schedule_future_callback_tool()`: Local tool to schedule LLM callbacks.
+- `schedule_future_callback_tool()`: Local tool to schedule LLM callbacks, accepting `skip_if_user_responded` and `scheduling_timestamp`, and using the injected `clock`.
+- `list_pending_callbacks_tool()`: Local tool to list pending LLM callback tasks.
+- `modify_pending_callback_tool()`: Local tool to modify a pending LLM callback task.
+- `cancel_pending_callback_tool()`: Local tool to cancel a pending LLM callback task.
 - `search_documents_tool()`: Local tool to search indexed documents.
 - `get_full_document_content_tool()`: Local tool to retrieve full document content.
 - `ingest_document_from_url_tool()`: Local tool to ingest documents from URLs.
@@ -564,10 +603,11 @@ The core architecture consists of:
 - `_scan_user_docs()`: Helper to scan for user documentation files.
 - `get_user_documentation_content_tool()`: Local tool to retrieve user documentation.
 - `send_message_to_user_tool()`: Local tool to send messages to other users.
+- `delegate_to_service_tool()`: Local tool to delegate a user request to another specialized assistant profile.
 - `AVAILABLE_FUNCTIONS`: Dictionary mapping tool names to their implementations.
 - `TOOLS_DEFINITION`: List of OpenAI-compatible tool definitions (schema).
 - `TOOL_CONFIRMATION_RENDERERS`: Dictionary mapping tool names to confirmation prompt renderers.
-- `LocalToolsProvider`: Implements `ToolsProvider` for local Python functions.
+- `LocalToolsProvider`: Implements `ToolsProvider` for local Python functions, with improved dependency injection.
 - `CompositeToolsProvider`: Combines multiple `ToolsProvider` instances.
 - `ConfirmingToolsProvider`: Wraps another provider to add user confirmation for sensitive tools.
 
@@ -580,14 +620,15 @@ The core architecture consists of:
 - `family_assistant.storage.vector_search` (VectorSearchQuery, query_vector_store)
 - `family_assistant.tools.mcp` (MCPToolsProvider)
 - `family_assistant.tools.types` (ToolExecutionContext, ToolNotFoundError)
+- `family_assistant.utils.clock` (SystemClock)
 
 ### `src/family_assistant/tools/mcp.py`
 
-**Description:** Implements a `ToolsProvider` for integrating with MCP (Model Context Protocol) servers, allowing the LLM to call external tools.
+**Description:** Implements a `ToolsProvider` for integrating with MCP (Model Context Protocol) servers, allowing the LLM to call external tools. It includes configurable timeouts and per-server status tracking during initialization.
 
 **Major Symbols:**
 - `MCPToolsProvider`: Implements `ToolsProvider` for MCP servers.
-- `initialize()`: Connects to MCP servers and discovers tools.
+- `initialize()`: Connects to MCP servers and discovers tools, with configurable timeout and per-server status tracking.
 - `_format_mcp_definitions_to_dicts()`: Converts MCP tool definitions to OpenAI format.
 - `execute_tool()`: Executes an MCP tool call.
 
@@ -605,10 +646,10 @@ The core architecture consists of:
 
 ### `src/family_assistant/tools/types.py`
 
-**Description:** Defines common types and protocols used by the tool system, particularly the `ToolExecutionContext` dataclass.
+**Description:** Defines common types and protocols used by the tool system, particularly the `ToolExecutionContext` dataclass, which now includes `user_name` and an injected `clock` instance.
 
 **Major Symbols:**
-- `ToolExecutionContext`: Dataclass containing context for tool execution.
+- `ToolExecutionContext`: Dataclass containing context for tool execution, including `user_name` and `clock` attributes.
 - `ToolNotFoundError`: Custom exception for when a tool is not found.
 
 **Internal Dependencies:**
@@ -616,6 +657,7 @@ The core architecture consists of:
 - `family_assistant.interfaces` (ChatInterface)
 - `family_assistant.processing` (ProcessingService)
 - `family_assistant.storage.context` (DatabaseContext)
+- `family_assistant.utils.clock`
 
 ### `src/family_assistant/utils/__init__.py`
 
@@ -718,7 +760,7 @@ The core architecture consists of:
 - `DocumentUploadResponse`: Pydantic model for document upload API response.
 - `ApiTokenCreateRequest`: Pydantic model for API token creation request.
 - `ApiTokenCreateResponse`: Pydantic model for API token creation response.
-- `ChatPromptRequest`: Pydantic model for chat prompt request.
+- `ChatPromptRequest`: Pydantic model for chat prompt request, including `profile_id`.
 - `ChatMessageResponse`: Pydantic model for chat message response.
 
 **Internal Dependencies:** None (only `pydantic`).
@@ -763,7 +805,7 @@ The core architecture consists of:
 
 **Major Symbols:**
 - `chat_api_router`: FastAPI router for chat API.
-- `api_chat_send_message()`: API endpoint to send a message to the assistant.
+- `api_chat_send_message()`: API endpoint to send a message to the assistant, accepting `profile_id`.
 
 **Internal Dependencies:**
 - `family_assistant.processing` (ProcessingService)
