@@ -609,14 +609,22 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Cleanup ---
     logger.info("--- Cleanup for Modify Test ---")
+    task_worker_instance._shutdown_event.set()  # Signal worker to stop
+    test_new_task_event.set()  # Wake up worker if it's waiting on the event
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
+        logger.info(f"TaskWorker-Modify-{test_run_id} task finished.")
     except asyncio.TimeoutError:
         logger.warning(
-            "TaskWorker task did not finish within timeout during modify test cleanup."
+            f"TaskWorker-Modify-{test_run_id} task did not finish within timeout. Cancelling."
         )
         worker_task.cancel()
-        await asyncio.sleep(0.1)
+        try:
+            await worker_task  # Allow cancellation to propagate
+        except asyncio.CancelledError:
+            logger.info(f"TaskWorker-Modify-{test_run_id} task was cancelled.")
+    except Exception as e:
+        logger.error(f"Error during TaskWorker-Modify-{test_run_id} cleanup: {e}", exc_info=True)
     logger.info(f"--- Modify Callback Test ({test_run_id}) Passed ---")
 
 
@@ -897,20 +905,26 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     )
 
     # Check LLM client calls to ensure the "cancelled_callback_trigger_matcher" was not hit
-    assert len(llm_client.recorded_calls) == 2, (
-        f"LLM was called {len(llm_client.recorded_calls)} times, expected 2 (schedule, cancel)"
+    assert len(llm_client.get_calls()) == 2, (  # type: ignore[attr-defined]
+        f"LLM was called {len(llm_client.get_calls())} times, expected 2 (schedule, cancel)"  # type: ignore[attr-defined]
     )
 
     # --- Cleanup ---
     logger.info("--- Cleanup for Cancel Test ---")
+    task_worker_instance._shutdown_event.set()  # Signal worker to stop
+    test_new_task_event.set()  # Wake up worker if it's waiting on the event
     try:
-        # Give the worker a chance to finish its loop if it was polling
-        test_new_task_event.set()  # Wake it up once more to ensure it sees shutdown if it was sleeping
         await asyncio.wait_for(worker_task, timeout=5.0)
+        logger.info(f"TaskWorker-Cancel-{test_run_id} task finished.")
     except asyncio.TimeoutError:
         logger.warning(
-            "TaskWorker task did not finish within timeout during cancel test cleanup."
+            f"TaskWorker-Cancel-{test_run_id} task did not finish within timeout. Cancelling."
         )
         worker_task.cancel()
-        await asyncio.sleep(0.1)
+        try:
+            await worker_task  # Allow cancellation to propagate
+        except asyncio.CancelledError:
+            logger.info(f"TaskWorker-Cancel-{test_run_id} task was cancelled.")
+    except Exception as e:
+        logger.error(f"Error during TaskWorker-Cancel-{test_run_id} cleanup: {e}", exc_info=True)
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
