@@ -1588,7 +1588,6 @@ class TelegramService:
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
         new_task_event: asyncio.Event,
-        use_batching: bool = True,  # Added use_batching here to match previous logic if needed
     ) -> None:
         """
         Initializes the Telegram Service.
@@ -1602,7 +1601,6 @@ class TelegramService:
             app_config: The main application configuration dictionary.
             get_db_context_func: Async context manager function to get a DatabaseContext.
             new_task_event: asyncio.Event for task worker notification.
-            use_batching: If True (default), use DefaultMessageBatcher. Otherwise, use NoBatchMessageBatcher.
         """
         logger.info("Initializing TelegramService...")
         self.application = ApplicationBuilder().token(telegram_token).build()
@@ -1662,13 +1660,24 @@ class TelegramService:
             confirmation_manager=self.confirmation_manager,
         )
 
-        if use_batching:
-            self.message_batcher = DefaultMessageBatcher(
-                batch_processor=self.update_handler
-            )
-        else:
+        batching_config = self.app_config.get("message_batching_config", {})
+        batching_strategy = batching_config.get(
+            "strategy", "default"
+        )  # Default to 'default' (which means DefaultMessageBatcher)
+        batch_delay_seconds = batching_config.get("delay_seconds", 0.5)
+
+        if batching_strategy == "none":
             self.message_batcher = NoBatchMessageBatcher(
                 batch_processor=self.update_handler
+            )
+            logger.info("Using NoBatchMessageBatcher strategy.")
+        else:  # Default to DefaultMessageBatcher
+            self.message_batcher = DefaultMessageBatcher(
+                batch_processor=self.update_handler,
+                batch_delay_seconds=batch_delay_seconds,
+            )
+            logger.info(
+                f"Using DefaultMessageBatcher strategy with delay: {batch_delay_seconds}s."
             )
         self.update_handler.message_batcher = self.message_batcher
 

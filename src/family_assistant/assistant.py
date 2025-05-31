@@ -446,6 +446,7 @@ class Assistant:
             app_config=self.config,
             get_db_context_func=get_db_context,
             new_task_event=self.new_task_event,
+            # use_batching argument removed
         )
         fastapi_app.state.telegram_service = self.telegram_service
         logger.info(
