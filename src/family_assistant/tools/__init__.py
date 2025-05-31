@@ -221,7 +221,7 @@ async def schedule_future_callback_tool(
     exec_context: ToolExecutionContext,  # Use execution context
     callback_time: str,
     context: str,  # This is the LLM context string
-    skip_if_user_responded: bool = True,  # New parameter for "nag" behavior
+    skip_if_user_responded: bool = False,  # Default changed to False
 ) -> str | None:
     """
     Schedules a task to trigger an LLM callback in a specific chat at a future time.
@@ -230,7 +230,7 @@ async def schedule_future_callback_tool(
         exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback.
-        skip_if_user_responded: If True (default), the callback will be skipped if the user sends any message after this callback was scheduled. Set to False to ensure the callback always runs.
+        skip_if_user_responded: If True, the callback will be skipped if the user sends any message after this callback was scheduled. Defaults to False (callback always runs).
     """
     # Get interface_type, conversation_id, and db_context from the execution context object
     # application instance is no longer directly needed here.
@@ -1412,9 +1412,9 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
                     "skip_if_user_responded": {
                         "type": "boolean",
                         "description": (
-                            "Optional. If true (default), the callback will be skipped if the user sends any message after this callback was scheduled. Set to false to ensure the callback always runs, regardless of user activity."
+                            "Optional. If true, the callback will be skipped if the user sends any message after this callback was scheduled. Set to false (default) to ensure the callback always runs, regardless of user activity."
                         ),
-                        "default": True,
+                        "default": False,
                     },
                 },
                 "required": ["callback_time", "context"],
