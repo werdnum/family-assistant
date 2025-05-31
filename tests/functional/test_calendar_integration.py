@@ -274,7 +274,6 @@ async def test_add_event_and_verify_in_system_prompt(
     assert radicale_event_check is not None, (
         f"Event '{event_summary}' not found in Radicale {test_calendar_direct_url} after tool execution."
     )
-    # event_uid = radicale_event_check.vobject_instance.vevent.uid.value # Not strictly needed for this test
 
     # --- Verify Event in System Prompt ---
     # Allow some time for Radicale to process and for our app to potentially cache/fetch
