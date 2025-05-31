@@ -531,19 +531,20 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
             "new_context": modified_context,
         })
         new_function = ToolCallFunction(
-            name=original_tool_call_item.function.name,
-            arguments=new_function_args
+            name=original_tool_call_item.function.name, arguments=new_function_args
         )
         new_tool_call_item = ToolCallItem(
             id=original_tool_call_item.id,
             type=original_tool_call_item.type,
-            function=new_function
+            function=new_function,
         )
         modify_response.tool_calls = [new_tool_call_item]
     else:
         # This case should not happen based on how modify_response is constructed,
         # but handle defensively.
-        logger.error("modify_response.tool_calls is None or empty, cannot update arguments.")
+        logger.error(
+            "modify_response.tool_calls is None or empty, cannot update arguments."
+        )
         # Optionally, raise an error or handle as appropriate for the test.
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
@@ -830,23 +831,21 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     )
     if cancel_response.tool_calls and len(cancel_response.tool_calls) > 0:
         original_tool_call_item = cancel_response.tool_calls[0]
-        new_function_args = json.dumps({
-            "task_id": scheduled_task_id_for_cancel
-        })
+        new_function_args = json.dumps({"task_id": scheduled_task_id_for_cancel})
         new_function = ToolCallFunction(
-            name=original_tool_call_item.function.name,
-            arguments=new_function_args
+            name=original_tool_call_item.function.name, arguments=new_function_args
         )
         new_tool_call_item = ToolCallItem(
             id=original_tool_call_item.id,
             type=original_tool_call_item.type,
-            function=new_function
+            function=new_function,
         )
         cancel_response.tool_calls = [new_tool_call_item]
     else:
-        logger.error("cancel_response.tool_calls is None or empty, cannot update arguments.")
+        logger.error(
+            "cancel_response.tool_calls is None or empty, cannot update arguments."
+        )
         # Optionally, raise an error or handle as appropriate for the test.
-
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         _resp, _, _, cancel_error = await processing_service.handle_chat_interaction(
