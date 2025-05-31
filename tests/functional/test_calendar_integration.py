@@ -491,9 +491,30 @@ async def test_modify_event(
         ],
     )
     # This llm_client is for the MODIFICATION step
+
+    # --- Define final response matcher and output for modify step ---
+    def final_response_matcher_for_modify(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages or len(messages) < 2:
+            return False
+        last_message = messages[-1]
+        return (
+            last_message.get("role") == "tool"
+            and last_message.get("tool_call_id") == tool_call_id_modify
+            and "OK. Event '" in last_message.get("content", "")
+            and f"'{modified_summary}' updated" in last_message.get("content", "")
+        )
+
+    final_llm_response_for_modify_content = f"Alright, '{modified_summary}' has been updated."
+    final_llm_response_for_modify = MockLLMOutput(
+        content=final_llm_response_for_modify_content, tool_calls=None
+    )
+
     llm_client_for_modify: LLMInterface = RuleBasedMockLLMClient(
-        rules=[(modify_event_matcher, modify_event_response)] 
-        # Add final response matcher for modify if needed, like in add_event test
+        rules=[
+            (modify_event_matcher, modify_event_response),
+            (final_response_matcher_for_modify, final_llm_response_for_modify),
+        ]
     )
 
     # --- Setup ProcessingService for the modification step ---
