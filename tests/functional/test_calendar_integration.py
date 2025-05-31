@@ -255,11 +255,11 @@ async def test_add_event_and_verify_in_system_prompt(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(), # Added missing new_task_event
+            new_task_event=asyncio.Event(),  # Added missing new_task_event
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message_create}],
-            trigger_interface_message_id="msg_add_event_prompt_test", # Unique message ID
+            trigger_interface_message_id="msg_add_event_prompt_test",  # Unique message ID
             user_name=TEST_USER_NAME,
         )
 
@@ -278,7 +278,7 @@ async def test_add_event_and_verify_in_system_prompt(
 
     # --- Verify Event in System Prompt ---
     # Allow some time for Radicale to process and for our app to potentially cache/fetch
-    await asyncio.sleep(0.5) # Keep sleep if necessary for cache/propagation
+    await asyncio.sleep(0.5)  # Keep sleep if necessary for cache/propagation
 
     aggregated_context_str = (
         await processing_service._aggregate_context_from_providers()
