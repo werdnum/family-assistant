@@ -666,7 +666,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
             f"Error during TaskWorker-Modify-{test_run_id} cleanup: {e}", exc_info=True
         )
     finally:
-        global_task_worker_shutdown_event.clear()  # Ensure global event is reset
+        test_shutdown_event.clear() # Clear the test-specific event
     logger.info(f"--- Modify Callback Test ({test_run_id}) Passed ---")
 
 
@@ -989,7 +989,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
             f"Error during TaskWorker-Cancel-{test_run_id} cleanup: {e}", exc_info=True
         )
     finally:
-        global_task_worker_shutdown_event.clear()  # Ensure global event is reset
+        test_shutdown_event.clear() # Clear the test-specific event
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
 
 
@@ -1266,5 +1266,5 @@ async def test_callback_skip_behavior_on_user_response(
             exc_info=True,
         )
     finally:
-        global_task_worker_shutdown_event.clear()
+        test_shutdown_event.clear() # Clear the test-specific event
     logger.info(f"--- {scenario_name} Test ({test_run_id}) Passed ---")
