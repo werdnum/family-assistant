@@ -1181,9 +1181,9 @@ async def test_search_events(
                     arguments=json.dumps({
                         "query_text": search_query_text,  # Tool will search for "Search Event"
                         "start_date_str": search_day.strftime("%Y-%m-%d"),
-                        "end_date_str": (search_day + timedelta(days=1)).strftime(
+                        "end_date_str": (search_day + timedelta(days=2)).strftime(
                             "%Y-%m-%d"
-                        ),  # Search for one day
+                        ),  # Search for two days to be safe
                     }),
                 ),
             )
