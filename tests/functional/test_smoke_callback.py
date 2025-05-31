@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # LLMOutput removed
 # Import select for direct DB queries
-from sqlalchemy.sql import select, text  # Import text
+from sqlalchemy.sql import select  # Import text
 
 # Import necessary components from the application
 from family_assistant import storage  # Import storage module
