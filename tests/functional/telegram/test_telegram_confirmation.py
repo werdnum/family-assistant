@@ -120,7 +120,8 @@ async def test_confirmation_accepted(
 
     # --- Mock Confirmation Manager ---
     # Simulate user ACCEPTING the confirmation prompt
-    fix.mock_confirmation_manager.request_confirmation.return_value = True
+    # fix.mock_confirmation_manager is the AsyncMock that replaced request_confirmation
+    fix.mock_confirmation_manager.return_value = True
 
     # --- Mock Tool Execution ---
     # Mock the *wrapped* provider's execute_tool to simulate success *after* confirmation
@@ -165,11 +166,10 @@ async def test_confirmation_accepted(
             # to ensure mocks are checked correctly.
             with soft_assertions():  # type: ignore[attr-defined]
                 # 1. Confirmation Manager was called because the tool was configured to require it
-                fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+                fix.mock_confirmation_manager.assert_awaited_once()
                 # Check args
-                conf_args, conf_kwargs = (
-                    fix.mock_confirmation_manager.request_confirmation.call_args
-                )  # noqa: F841
+                # Access call_args directly from fix.mock_confirmation_manager
+                conf_args, conf_kwargs = fix.mock_confirmation_manager.call_args  # noqa: F841
                 assert_that(conf_kwargs.get("tool_name")).is_equal_to(
                     TOOL_NAME_SENSITIVE
                 )
@@ -296,7 +296,7 @@ async def test_confirmation_rejected(
 
     # --- Mock Confirmation Manager ---
     # Simulate user REJECTING the confirmation prompt
-    fix.mock_confirmation_manager.request_confirmation.return_value = False
+    fix.mock_confirmation_manager.return_value = False
 
     # --- Mock Bot Response ---
     mock_cancel_message = AsyncMock(
@@ -336,7 +336,7 @@ async def test_confirmation_rejected(
             # Assert
             with soft_assertions():  # type: ignore[attr-defined]
                 # 1. Confirmation Manager was called
-                fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+                fix.mock_confirmation_manager.assert_awaited_once()
 
                 # 2. Original tool provider was NOT called
                 mock_execute_original.assert_not_awaited()
@@ -434,9 +434,7 @@ async def test_confirmation_timed_out(
 
     # --- Mock Confirmation Manager ---
     # Simulate TIMEOUT during the confirmation request
-    fix.mock_confirmation_manager.request_confirmation.side_effect = (
-        asyncio.TimeoutError
-    )
+    fix.mock_confirmation_manager.side_effect = asyncio.TimeoutError
 
     # --- Mock Bot Response ---
     mock_timeout_message = AsyncMock(
@@ -476,7 +474,7 @@ async def test_confirmation_timed_out(
             # Assert
             with soft_assertions():  # type: ignore[attr-defined]
                 # 1. Confirmation Manager was called (and raised TimeoutError)
-                fix.mock_confirmation_manager.request_confirmation.assert_awaited_once()
+                fix.mock_confirmation_manager.assert_awaited_once()
                 # 2. Original tool provider was NOT called
                 mock_execute_original.assert_not_awaited()
 
