@@ -264,8 +264,9 @@ async def test_add_event_and_verify_in_system_prompt(
         )
 
     assert error_create is None, f"Error during event creation: {error_create}"
-    assert final_reply and final_llm_response_content in final_reply, \
+    assert final_reply and final_llm_response_content in final_reply, (
         f"Expected creation reply '{final_llm_response_content}', but got '{final_reply}'"
+    )
 
     # --- Verify Event in Radicale ---
     radicale_event_check = await get_event_by_summary_from_radicale(
@@ -329,7 +330,9 @@ async def test_modify_event(
     )
     original_end_dt = original_start_dt + timedelta(hours=1)
     modified_start_dt = original_start_dt.replace(hour=15)  # Change to 3 PM
-    modified_end_dt = modified_start_dt + timedelta(hours=1)  # Ensure end time is also set for modification
+    modified_end_dt = modified_start_dt + timedelta(
+        hours=1
+    )  # Ensure end time is also set for modification
 
     # --- LLM Rules for Initial Event Creation ---
     tool_call_id_add_original = f"call_add_orig_{uuid.uuid4()}"
@@ -369,7 +372,9 @@ async def test_modify_event(
             and f"'{original_summary}' added" in last_message.get("content", "")
         )
 
-    final_llm_response_for_add_original_content = f"Alright, '{original_summary}' is scheduled."
+    final_llm_response_for_add_original_content = (
+        f"Alright, '{original_summary}' is scheduled."
+    )
     final_llm_response_for_add_original = MockLLMOutput(
         content=final_llm_response_for_add_original_content, tool_calls=None
     )
@@ -419,7 +424,10 @@ async def test_modify_event(
         llm_client=RuleBasedMockLLMClient(
             rules=[
                 (add_original_event_matcher, add_original_event_response),
-                (final_response_matcher_for_add_original, final_llm_response_for_add_original),
+                (
+                    final_response_matcher_for_add_original,
+                    final_llm_response_for_add_original,
+                ),
             ]
         ),
         tools_provider=composite_provider_for_add,
@@ -430,7 +438,9 @@ async def test_modify_event(
     )
 
     # --- Simulate User Interaction to Create Initial Event ---
-    user_message_create_original = f"Please schedule {original_summary} for day after tomorrow at 2 PM."
+    user_message_create_original = (
+        f"Please schedule {original_summary} for day after tomorrow at 2 PM."
+    )
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
         (
             final_reply_create,
@@ -443,14 +453,22 @@ async def test_modify_event(
             new_task_event=asyncio.Event(),
             interface_type="test_initial_add",  # Distinguish interface type
             conversation_id=f"{TEST_CHAT_ID}_initial_add",  # Distinguish conversation
-            trigger_content_parts=[{"type": "text", "text": user_message_create_original}],
+            trigger_content_parts=[
+                {"type": "text", "text": user_message_create_original}
+            ],
             trigger_interface_message_id="msg_create_orig_for_modify",
             user_name=TEST_USER_NAME,
         )
 
-    assert error_create is None, f"Error during LLM-based initial event creation: {error_create}"
-    assert final_reply_create and final_llm_response_for_add_original_content in final_reply_create, \
+    assert error_create is None, (
+        f"Error during LLM-based initial event creation: {error_create}"
+    )
+    assert (
+        final_reply_create
+        and final_llm_response_for_add_original_content in final_reply_create
+    ), (
         f"Expected LLM creation reply '{final_llm_response_for_add_original_content}', but got '{final_reply_create}'"
+    )
 
     # --- Retrieve UID of the event created by the LLM tool ---
     original_radicale_event = await get_event_by_summary_from_radicale(
@@ -461,14 +479,18 @@ async def test_modify_event(
     )
     # Ensure event_uid is correctly typed as str for JSON serialization
     event_uid: str = str(original_radicale_event.vobject_instance.vevent.uid.value)  # type: ignore[attr-defined]
-    logger.info(f"Retrieved UID for '{original_summary}' created by LLM tool: {event_uid}")
+    logger.info(
+        f"Retrieved UID for '{original_summary}' created by LLM tool: {event_uid}"
+    )
 
     # --- LLM Rules for Modifying the Event (using the retrieved UID) ---
     tool_call_id_modify = f"call_mod_{uuid.uuid4()}"
 
     def modify_event_matcher(kwargs: MatcherArgs) -> bool:
         last_text = get_last_message_text(kwargs.get("messages", [])).lower()
-        return f"change event {original_summary.lower()}" in last_text  # User refers to original summary
+        return (
+            f"change event {original_summary.lower()}" in last_text
+        )  # User refers to original summary
 
     modify_event_response = MockLLMOutput(
         content=f"OK, I'll modify '{original_summary}'.",  # LLM confirms based on original summary
@@ -504,7 +526,9 @@ async def test_modify_event(
             and f"'{modified_summary}' updated" in last_message.get("content", "")
         )
 
-    final_llm_response_for_modify_content = f"Alright, '{modified_summary}' has been updated."
+    final_llm_response_for_modify_content = (
+        f"Alright, '{modified_summary}' has been updated."
+    )
     final_llm_response_for_modify = MockLLMOutput(
         content=final_llm_response_for_modify_content, tool_calls=None
     )
@@ -524,7 +548,9 @@ async def test_modify_event(
     # The `composite_provider` and `calendar_context_provider` can be reused if their config is the same.
     # The `service_config` might need a different ID if that's important.
     # The following lines are from the original test structure, now using the `llm_client_for_modify`.
-    llm_client: LLMInterface = llm_client_for_modify  # Ensure this is the one used by ProcessingService below
+    llm_client: LLMInterface = (
+        llm_client_for_modify  # Ensure this is the one used by ProcessingService below
+    )
 
     # --- Setup ProcessingService (similar to add_event test) ---
     test_calendar_config = {
@@ -597,8 +623,12 @@ async def test_modify_event(
         )
 
     assert error_modify is None, f"Error during modify chat interaction: {error_modify}"
-    assert final_reply_modify and final_llm_response_for_modify_content in final_reply_modify, \
+    assert (
+        final_reply_modify
+        and final_llm_response_for_modify_content in final_reply_modify
+    ), (
         f"Expected modify reply '{final_llm_response_for_modify_content}', but got '{final_reply_modify}'"
+    )
 
     # --- Verify Event in Radicale ---
     modified_radicale_event = await get_event_by_summary_from_radicale(
@@ -705,7 +735,9 @@ async def test_delete_event(
             and f"'{event_to_delete_summary}' added" in last_message.get("content", "")
         )
 
-    final_llm_response_for_add_to_delete_content = f"Alright, '{event_to_delete_summary}' is scheduled."
+    final_llm_response_for_add_to_delete_content = (
+        f"Alright, '{event_to_delete_summary}' is scheduled."
+    )
     final_llm_response_for_add_to_delete = MockLLMOutput(
         content=final_llm_response_for_add_to_delete_content, tool_calls=None
     )
@@ -765,10 +797,15 @@ async def test_delete_event(
     processing_service.llm_client = RuleBasedMockLLMClient(
         rules=[
             (add_event_to_delete_matcher, add_event_to_delete_response),
-            (final_response_matcher_for_add_to_delete, final_llm_response_for_add_to_delete),
+            (
+                final_response_matcher_for_add_to_delete,
+                final_llm_response_for_add_to_delete,
+            ),
         ]
     )
-    user_message_create_to_delete = f"Please schedule {event_to_delete_summary} for 3 days from now at 11 AM."
+    user_message_create_to_delete = (
+        f"Please schedule {event_to_delete_summary} for 3 days from now at 11 AM."
+    )
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
         (
             final_reply_create_del,
@@ -781,14 +818,22 @@ async def test_delete_event(
             new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message_create_to_delete}],
+            trigger_content_parts=[
+                {"type": "text", "text": user_message_create_to_delete}
+            ],
             trigger_interface_message_id="msg_create_del",
             user_name=TEST_USER_NAME,
         )
 
-    assert error_create_del is None, f"Error during creation of event to delete: {error_create_del}"
-    assert final_reply_create_del and final_llm_response_for_add_to_delete_content in final_reply_create_del, \
+    assert error_create_del is None, (
+        f"Error during creation of event to delete: {error_create_del}"
+    )
+    assert (
+        final_reply_create_del
+        and final_llm_response_for_add_to_delete_content in final_reply_create_del
+    ), (
         f"Expected creation reply '{final_llm_response_for_add_to_delete_content}', but got '{final_reply_create_del}'"
+    )
 
     # --- Retrieve UID of the created event ---
     radicale_event_to_delete = await get_event_by_summary_from_radicale(
@@ -833,10 +878,13 @@ async def test_delete_event(
             last_message.get("role") == "tool"
             and last_message.get("tool_call_id") == tool_call_id_delete
             and "OK. Event '" in last_message.get("content", "")
-            and f"'{event_to_delete_summary}' deleted" in last_message.get("content", "")
+            and f"'{event_to_delete_summary}' deleted"
+            in last_message.get("content", "")
         )
 
-    final_llm_response_for_delete_content = f"Alright, '{event_to_delete_summary}' has been deleted."
+    final_llm_response_for_delete_content = (
+        f"Alright, '{event_to_delete_summary}' has been deleted."
+    )
     final_llm_response_for_delete = MockLLMOutput(
         content=final_llm_response_for_delete_content, tool_calls=None
     )
@@ -869,8 +917,12 @@ async def test_delete_event(
         )
 
     assert error_delete is None, f"Error during delete chat interaction: {error_delete}"
-    assert final_reply_delete and final_llm_response_for_delete_content in final_reply_delete, \
+    assert (
+        final_reply_delete
+        and final_llm_response_for_delete_content in final_reply_delete
+    ), (
         f"Expected delete reply '{final_llm_response_for_delete_content}', but got '{final_reply_delete}'"
+    )
 
     # --- Verify Event in Radicale ---
     deleted_radicale_event = await get_event_by_summary_from_radicale(
