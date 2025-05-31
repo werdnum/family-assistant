@@ -216,31 +216,8 @@ async def test_send_message_to_user_tool(
                 "Bot send_message call count"
             ).is_equal_to(3)
 
-            # Call 1: Intermediate response to Alice
-            args_intermediate_alice, kwargs_intermediate_alice = (
-                fix.mock_bot.send_message.call_args_list[0]
-            )
-            assert_that(kwargs_intermediate_alice["chat_id"]).described_as(
-                "Chat ID for intermediate response to Alice"
-            ).is_equal_to(alice_chat_id)
-            expected_intermediate_escaped_text = telegramify_markdown.markdownify(
-                llm_intermediate_response_to_alice
-            )
-            assert_that(kwargs_intermediate_alice["text"]).described_as(
-                "Text for intermediate response to Alice"
-            ).is_equal_to(expected_intermediate_escaped_text)
-            assert_that(kwargs_intermediate_alice["reply_to_message_id"]).described_as(
-                "Reply ID for intermediate response to Alice"
-            ).is_equal_to(alice_message_id)
-            assert_that(kwargs_intermediate_alice["parse_mode"].value).described_as(
-                "Parse mode for intermediate response to Alice"
-            ).is_equal_to("MarkdownV2")
-            assert_that(kwargs_intermediate_alice["reply_markup"]).described_as(
-                "Reply markup for intermediate response to Alice"
-            ).is_not_none()  # ForceReply
-
-            # Call 2: Message sent to Bob by the tool
-            args_to_bob, kwargs_to_bob = fix.mock_bot.send_message.call_args_list[1]
+            # Call 1: Message sent to Bob by the tool (via ChatInterface)
+            args_to_bob, kwargs_to_bob = fix.mock_bot.send_message.call_args_list[0]
             assert_that(kwargs_to_bob["chat_id"]).described_as(
                 "Chat ID for message to Bob"
             ).is_equal_to(bob_chat_id)
@@ -252,12 +229,34 @@ async def test_send_message_to_user_tool(
             ).is_none()
             assert_that(kwargs_to_bob.get("parse_mode")).described_as(
                 "Parse mode for message to Bob"
-            ).is_none()
+            ).is_none()  # Tool sends plain text via ChatInterface
             assert_that(kwargs_to_bob.get("reply_markup")).described_as(
                 "Reply markup for message to Bob"
             ).is_none()
 
-            # Call 3: Final confirmation sent to Alice by the handler
+            # Call 2: Intermediate response to Alice (from ProcessingService via ChatInterface)
+            args_intermediate_alice, kwargs_intermediate_alice = (
+                fix.mock_bot.send_message.call_args_list[1]
+            )
+            assert_that(kwargs_intermediate_alice["chat_id"]).described_as(
+                "Chat ID for intermediate response to Alice"
+            ).is_equal_to(alice_chat_id)
+            # ProcessingService sends raw LLM content with parse_mode="MarkdownV2"
+            # TelegramChatInterface passes this text and ParseMode.MARKDOWN_V2 directly.
+            assert_that(kwargs_intermediate_alice["text"]).described_as(
+                "Text for intermediate response to Alice"
+            ).is_equal_to(llm_intermediate_response_to_alice)
+            assert_that(kwargs_intermediate_alice["reply_to_message_id"]).described_as(
+                "Reply ID for intermediate response to Alice"
+            ).is_equal_to(alice_message_id)
+            assert_that(kwargs_intermediate_alice["parse_mode"].value).described_as(
+                "Parse mode for intermediate response to Alice"
+            ).is_equal_to("MarkdownV2")
+            assert_that(kwargs_intermediate_alice.get("reply_markup")).described_as(
+                "Reply markup for intermediate response to Alice"
+            ).is_none()  # ProcessingService doesn't add ForceReply here
+
+            # Call 3: Final confirmation sent to Alice by the handler (TelegramUpdateHandler)
             args_final_alice, kwargs_final_alice = (
                 fix.mock_bot.send_message.call_args_list[2]
             )
