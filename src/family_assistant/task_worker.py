@@ -285,10 +285,10 @@ class TaskWorker:
         processing_service: ProcessingService,
         chat_interface: ChatInterface,
         new_task_event: asyncio.Event,  # Add new_task_event
-        shutdown_event_instance: asyncio.Event | None = None,  # Made optional
         calendar_config: dict[str, Any],
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
+        shutdown_event_instance: asyncio.Event | None = None,  # Made optional
         clock: Clock | None = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
@@ -296,7 +296,11 @@ class TaskWorker:
         self.chat_interface = chat_interface
         self.new_task_event = new_task_event  # Store the event
         # Use provided shutdown_event_instance or default to global shutdown_event
-        self.shutdown_event = shutdown_event_instance if shutdown_event_instance is not None else shutdown_event
+        self.shutdown_event = (
+            shutdown_event_instance
+            if shutdown_event_instance is not None
+            else shutdown_event
+        )
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.embedding_generator = embedding_generator
