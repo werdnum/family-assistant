@@ -99,6 +99,8 @@ async def handle_llm_callback(
     # chat_id is now from context
     callback_context = payload.get("callback_context")
     scheduling_timestamp_str = payload.get("scheduling_timestamp")
+    # Default to True if not present for backward compatibility
+    skip_if_user_responded = payload.get("skip_if_user_responded", True)
 
     # Validate payload content
     if not callback_context:
@@ -125,25 +127,30 @@ async def handle_llm_callback(
         )
         raise ValueError("Invalid scheduling_timestamp format") from e
 
-    # Check for intervening user messages
-    stmt = (
-        select(storage.message_history_table.c.internal_id)
-        .where(storage.message_history_table.c.interface_type == interface_type)
-        .where(storage.message_history_table.c.conversation_id == conversation_id)
-        .where(storage.message_history_table.c.role == "user")
-        .where(storage.message_history_table.c.timestamp > scheduling_timestamp_dt)
-        .limit(1)
-    )
-    intervening_messages = await db_context.fetch_all(stmt)
-
-    if intervening_messages:
-        logger.info(
-            f"User has responded since callback/nag was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}. Skipping callback."
+    if skip_if_user_responded:
+        # Check for intervening user messages only if the flag is True
+        stmt = (
+            select(storage.message_history_table.c.internal_id)
+            .where(storage.message_history_table.c.interface_type == interface_type)
+            .where(storage.message_history_table.c.conversation_id == conversation_id)
+            .where(storage.message_history_table.c.role == "user")
+            .where(storage.message_history_table.c.timestamp > scheduling_timestamp_dt)
+            .limit(1)
         )
-        return  # Abort the callback
+        intervening_messages = await db_context.fetch_all(stmt)
+
+        if intervening_messages:
+            logger.info(
+                f"User has responded since callback was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}, and skip_if_user_responded is True. Skipping callback."
+            )
+            return  # Abort the callback
+    else:
+        logger.info(
+            f"Callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}) has skip_if_user_responded=False. Proceeding regardless of intervening messages."
+        )
 
     logger.info(
-        f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str})"
+        f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}, skip_if_user_responded={skip_if_user_responded})"
     )
     current_time_str = datetime.now(
         zoneinfo.ZoneInfo(exec_context.timezone_str)
