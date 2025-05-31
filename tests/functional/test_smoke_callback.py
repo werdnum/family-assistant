@@ -624,7 +624,9 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         except asyncio.CancelledError:
             logger.info(f"TaskWorker-Modify-{test_run_id} task was cancelled.")
     except Exception as e:
-        logger.error(f"Error during TaskWorker-Modify-{test_run_id} cleanup: {e}", exc_info=True)
+        logger.error(
+            f"Error during TaskWorker-Modify-{test_run_id} cleanup: {e}", exc_info=True
+        )
     logger.info(f"--- Modify Callback Test ({test_run_id}) Passed ---")
 
 
@@ -926,5 +928,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         except asyncio.CancelledError:
             logger.info(f"TaskWorker-Cancel-{test_run_id} task was cancelled.")
     except Exception as e:
-        logger.error(f"Error during TaskWorker-Cancel-{test_run_id} cleanup: {e}", exc_info=True)
+        logger.error(
+            f"Error during TaskWorker-Cancel-{test_run_id} cleanup: {e}", exc_info=True
+        )
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
