@@ -128,7 +128,7 @@ async def test_simple_text_message(
     )
     # Pass the mock_application associated with the mock_telegram_service from the fixture
     context = create_mock_context(
-        fix.mock_telegram_service.application,
+        fix.mock_application,  # Use the mock_application from the fixture
         bot_data={"processing_service": fix.processing_service},
     )
 
@@ -273,7 +273,7 @@ async def test_add_note_tool_usage(
         user_text, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id
     )
     context = create_mock_context(
-        fix.mock_telegram_service.application,
+        fix.mock_application,  # Use the mock_application from the fixture
         bot_data={"processing_service": fix.processing_service},
     )
 
@@ -429,7 +429,7 @@ async def test_tool_result_in_subsequent_history(
     # --- Context ---
     # Same context object can be reused if state doesn't need to be reset between turns
     context = create_mock_context(
-        fix.mock_telegram_service.application,
+        fix.mock_application,  # Use the mock_application from the fixture
         bot_data={"processing_service": fix.processing_service},
     )
 
