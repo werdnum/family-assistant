@@ -1,126 +1,41 @@
 import argparse
 import asyncio
-import copy
-import json
+import copy  # Keep for deep_merge_dicts
+import json  # Keep for config logging and mcp_config.json
 import logging
 import os
 import signal
 import sys
-import types  # Add import for types
-import zoneinfo
+import zoneinfo  # Keep for timezone validation in load_config
 from typing import Any
 
-import httpx  # Import httpx
-import uvicorn
-import yaml
-from dotenv import load_dotenv
+import yaml  # Keep for config.yaml and prompts.yaml
+from dotenv import load_dotenv  # Keep for .env loading
 
-# Import Embedding interface/clients
-import family_assistant.embeddings as embeddings
-
-# Import the whole storage module for task queue functions etc.
-from family_assistant import storage
-
-# --- NEW: Import ContextProvider and its implementations ---
-from family_assistant.context_providers import (
-    CalendarContextProvider,
-    KnownUsersContextProvider,  # Added
-    NotesContextProvider,
-    WeatherContextProvider,  # Added WeatherContextProvider
-)
-from family_assistant.embeddings import (
-    # --- Embedding Imports ---
-    EmbeddingGenerator,
-    LiteLLMEmbeddingGenerator,  # For testing
-)
-from family_assistant.indexing.document_indexer import (
-    DocumentIndexer,
-)  # Import the class
-
-# Import indexing components
-from family_assistant.indexing.email_indexer import (
-    EmailIndexer,  # Changed this import
-)
-
-# Import the specific task handler for embedding
-from family_assistant.indexing.tasks import handle_embed_and_store_batch
-from family_assistant.llm import (
-    LiteLLMClient,
-    LLMInterface,
-)
-
-# Import the ProcessingService and LLM interface/clients
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-
-# Import storage functions
-# Import facade for primary access
-from family_assistant.storage import (
-    init_db,
-    # get_all_notes, # Will be called with context
-    # add_message_to_history, # Will be called with context
-    # get_recent_history, # Will be called with context
-    # get_message_by_id, # Will be called with context
-    # add_or_update_note, # Called via tools provider
-)
-
-# Import items specifically from storage.context
-from family_assistant.storage.context import (
-    DatabaseContext,  # Added for type hinting and wrapper
-    get_db_context,  # Add back get_db_context
-)
-
-# Import task worker CLASS, handlers, and events
-from family_assistant.task_worker import (
-    TaskWorker,
-    handle_llm_callback,
-    new_task_event,
-    shutdown_event,
-)
-from family_assistant.task_worker import (
-    handle_log_message as original_handle_log_message,  # Aliased
-)
-from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
-)
-
-# Import tool definitions from the new tools module
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
-    CompositeToolsProvider,
-    ConfirmingToolsProvider,  # Import the class directly
-    LocalToolsProvider,
-    MCPToolsProvider,
-    ToolsProvider,  # Import protocol for type hinting
-    _scan_user_docs,  # Import the scanner function
-)
-from family_assistant.tools.types import ToolExecutionContext  # Added for wrapper
-from family_assistant.utils.scraping import PlaywrightScraper  # Added
-
-# Import the FastAPI app
+# Import the FastAPI app (needed for app.state)
 from family_assistant.web.app_creator import app as fastapi_app
 
-# Import calendar functions
-# Import the Telegram service class
-from .telegram_bot import TelegramService
+# Import the new Assistant class
+from .assistant import (  # Import helpers too
+    Assistant,
+)
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-# Keep external libraries less verbose unless needed
+# Keep external libraries less verbose
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("telegram").setLevel(logging.INFO)
+logging.getLogger("telegram").setLevel(logging.INFO)  # Or as configured by TelegramService
 logging.getLogger("apscheduler").setLevel(logging.INFO)
-logging.getLogger("caldav").setLevel(
-    logging.INFO
-)  # Keep caldav at INFO unless specific issues arise
+logging.getLogger("caldav").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# --- Helper Functions ---
+# --- Configuration Loading and Helper Functions ---
+# These functions remain in __main__.py as they deal with environment interaction
+# before the Assistant class is instantiated or are utility.
 def deep_merge_dicts(base_dict: dict, merge_dict: dict) -> dict:
     """Deeply merges merge_dict into base_dict."""
     result = copy.deepcopy(base_dict)  # Start with a deep copy of the base
@@ -739,797 +654,115 @@ parser.add_argument(
     help="Path to store email attachments (overrides config file and environment variable)",
 )
 
+# reload_config_handler and other helpers like load_config, deep_merge_dicts remain here.
+# async_get_db_context_for_provider and task_wrapper_handle_log_message are imported from assistant.py
+# if they are defined there, or could be defined here if they are purely __main__ utilities.
+# For this refactor, I've moved them to assistant.py as they are closely tied to its setup.
 
-# --- Signal Handlers ---
-# Define handlers before main() where they are registered
-# Add mcp_provider argument
-async def shutdown_handler(
-    signal_name: str,
-    telegram_service: TelegramService | None,
-    tools_provider: ToolsProvider | None,  # Use generic ToolsProvider and correct name
-    httpx_client: httpx.AsyncClient | None,  # Add httpx_client
-) -> None:
-    """Initiates graceful shutdown."""
-    logger.warning(f"Received signal {signal_name}. Initiating shutdown...")
-    # Ensure the event is set to signal other parts of the application
-    if not shutdown_event.is_set():  # Check before setting
-        shutdown_event.set()
 
-    # --- Graceful Task Cancellation ---
-    # Get the current loop *before* it might be stopped
-    loop = asyncio.get_running_loop()
-    tasks = [t for t in asyncio.all_tasks(loop=loop) if t is not asyncio.current_task()]
-    if tasks:
-        logger.info(f"Cancelling {len(tasks)} outstanding tasks...")
-        for task in tasks:
-            task.cancel()
-        # Wait for tasks to finish cancelling
-        await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info("Outstanding tasks cancelled.")
-    else:
-        logger.info("No outstanding tasks to cancel.")
-
-    # --- Stop Services (Order might matter) ---
-    # Stop Telegram polling via the service
-    # Need access to the telegram_service instance created in main_async
-    # Option 1: Make telegram_service global (less ideal)
-    # Stop Telegram polling via the passed service instance
-    if telegram_service:
-        await telegram_service.stop_polling()
-    else:
-        logger.warning("TelegramService instance was None during shutdown.")
-
-    # Uvicorn server shutdown is handled in main_async when shutdown_event is set
-
-    # Close tool providers from all services in the registry
-    if fastapi_app.state.processing_services and isinstance(
-        fastapi_app.state.processing_services, dict
-    ):
-        logger.info(
-            f"Closing tool providers for {len(fastapi_app.state.processing_services)} services..."
-        )
-        for (
-            profile_id,
-            service_instance,
-        ) in fastapi_app.state.processing_services.items():
-            if (
-                hasattr(service_instance, "tools_provider")
-                and service_instance.tools_provider
-            ):
-                try:
-                    logger.info(f"Closing tools_provider for profile '{profile_id}'...")
-                    await service_instance.tools_provider.close()
-                    logger.info(f"Tools_provider for profile '{profile_id}' closed.")
-                except Exception as e:
-                    logger.error(
-                        f"Error closing tools_provider for profile '{profile_id}': {e}",
-                        exc_info=True,
-                    )
-            else:
-                logger.warning(
-                    f"No tools_provider found for profile '{profile_id}' to close."
-                )
-        logger.info("All registered tool providers closed.")
-    elif (
-        tools_provider
-    ):  # Fallback for old logic if registry not populated (should not happen)
-        logger.warning(
-            "Processing services registry not found or not a dict, attempting to close single tools_provider."
-        )
-        await tools_provider.close()
-        logger.info("Single tools_provider closed.")
-    else:
-        logger.warning("No ToolProviders found to close during shutdown.")
-
-    # Close httpx client
-    if httpx_client:
-        logger.info("Closing httpx client...")
-        await httpx_client.aclose()
-        logger.info("Httpx client closed.")
-    else:
-        logger.warning("No httpx client instance to close during shutdown.")
-
-    # Telegram application shutdown is now handled within telegram_service.stop_polling()
-
-
-def reload_config_handler(signum: int, frame: types.FrameType | None) -> None:
-    """Handles SIGHUP for config reloading (placeholder)."""
-    logger.info("Received SIGHUP signal. Reloading configuration...")
-    load_config()
-    # Potentially restart parts of the application if needed,
-    # but be careful with state. For now, just log and reload vars.
-
-
-# --- Wrapper Functions for Type Compatibility ---
-async def async_get_db_context_for_provider() -> DatabaseContext:
-    """Wraps get_db_context to be an awaitable returning DatabaseContext for providers."""
-    return get_db_context()
-
-
-async def task_wrapper_handle_log_message(
-    exec_context: ToolExecutionContext, payload: Any
-) -> None:
-    """
-    Wrapper for the original handle_log_message to match TaskWorker's expected handler signature.
-    It extracts db_context from ToolExecutionContext and ensures payload is a dict.
-    """
-    if not isinstance(payload, dict):
-        logger.error(
-            f"Payload for handle_log_message task is not a dict: {type(payload)}. Content: {payload}"
-        )
-        return  # Or raise an error, depending on desired behavior
-    await original_handle_log_message(exec_context.db_context, payload)
-
-
-# --- Main Application Setup & Run ---
-# Return tuple: (TelegramService, ToolsProvider) or (None, None)
-async def main_async(
-    config: dict[str, Any],  # Accept the resolved config dictionary
-) -> tuple[
-    TelegramService | None, ToolsProvider | None, httpx.AsyncClient | None
-]:  # Update return signature
-    """Initializes and runs the bot application using the provided configuration."""
-    logger.info(f"Using model: {config['model']}")
-
-    # --- Create shared httpx client ---
-    # This client will be used by providers that need to make HTTP requests (e.g., Weather)
-    # and closed gracefully on shutdown.
-    shared_httpx_client = httpx.AsyncClient()
-    logger.info("Shared httpx.AsyncClient created.")
-
-    # --- Validate Essential Config ---
-    if not config.get("telegram_token"):
-        raise ValueError(
-            "Telegram Bot Token is missing (check env var TELEGRAM_BOT_TOKEN)."
-        )
-
-    # API Key Validation based on selected model
-    selected_model = config.get("model", "")
-    if selected_model.startswith("gemini/"):
-        # For Gemini, litellm primarily uses GEMINI_API_KEY from the environment.
-        # config.get("gemini_api_key") would be if it was loaded into config_data and intended for direct use.
-        if not os.getenv("GEMINI_API_KEY"):
-            raise ValueError(
-                "Gemini API Key is missing. Please set the GEMINI_API_KEY environment variable."
-            )
-        logger.info(
-            "Gemini model selected. Will use GEMINI_API_KEY from environment for LiteLLM."
-        )
-    elif selected_model.startswith("openrouter/"):
-        if not config.get("openrouter_api_key"):
-            raise ValueError(
-                "OpenRouter API Key is missing (check env var OPENROUTER_API_KEY or config file)."
-            )
-        # Set OpenRouter API key for LiteLLM if it's managed via config_data.
-        # LiteLLM also checks for OPENROUTER_API_KEY env var independently.
-        if config.get("openrouter_api_key"):
-            os.environ["OPENROUTER_API_KEY"] = config["openrouter_api_key"]
-        logger.info(
-            "OpenRouter model selected. OPENROUTER_API_KEY will be used by LiteLLM."
-        )
-    # Add elif blocks for other providers like "openai/" -> OPENAI_API_KEY if needed
-    else:
-        logger.warning(
-            f"No specific API key validation implemented for model: {selected_model}. "
-            "Ensure necessary API keys (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY) are set in the environment if required by the model provider for LiteLLM."
-        )
-
-    # --- Embedding Generator Instantiation (Global for now) ---
-    # TODO: Consider if embedding generator should also be per-profile if models differ significantly
-    embedding_generator: EmbeddingGenerator
-    embedding_model_name = config["embedding_model"]
-    embedding_dimensions = config["embedding_dimensions"]
-
-    if embedding_model_name == "mock-deterministic-embedder":
-        logger.info(
-            f"Using MockEmbeddingGenerator (deterministic) for model: {embedding_model_name}"
-        )
-        # Ensure MockEmbeddingGenerator is imported from family_assistant.embeddings
-        embedding_generator = embeddings.MockEmbeddingGenerator(
-            model_name=embedding_model_name,
-            dimensions=embedding_dimensions,
-            default_embedding_behavior="generate",  # Generate deterministic vectors for unknown texts
-        )
-    # Example check for local model (adjust condition as needed)
-    elif embedding_model_name.startswith("/") or embedding_model_name in [
-        "all-MiniLM-L6-v2",
-        "other-local-model-name",
-    ]:
-        try:
-            if "SentenceTransformerEmbeddingGenerator" not in dir(embeddings):
-                raise ImportError(
-                    "sentence-transformers library not installed, cannot use local embedding model."
-                )
-            embedding_generator = embeddings.SentenceTransformerEmbeddingGenerator(
-                model_name_or_path=embedding_model_name
-                # Pass dimensions if the local model class supports it? Check SentenceTransformer docs.
-            )
-        except (ImportError, ValueError, RuntimeError) as local_embed_err:
-            logger.critical(
-                f"Failed to initialize local embedding model '{embedding_model_name}': {local_embed_err}"
-            )
-            raise SystemExit(
-                f"Local embedding model initialization failed: {local_embed_err}"
-            ) from local_embed_err
-    else:
-        # Assume API-based model via LiteLLM
-        embedding_generator = LiteLLMEmbeddingGenerator(
-            model=embedding_model_name,
-            dimensions=embedding_dimensions,  # Pass dimensions from config
-        )
-
-    logger.info(
-        f"Using embedding generator: {type(embedding_generator).__name__} with model: {embedding_generator.model_name}"
-    )
-
-    # --- Store generator in app state for web server access ---
-    fastapi_app.state.embedding_generator = embedding_generator
-    logger.info("Stored embedding generator in FastAPI app state.")
-    # fastapi_app.state.llm_client will be set to the default profile's LLM client later
-
-    # Initialize database schema first
-    # init_db uses the engine configured in storage/base.py, which reads DATABASE_URL env var.
-    # No need to pass database_url here.
-    await init_db()
-    # Initialize vector DB components (extension, indexes)
-    # get_db_context uses the engine configured in storage/base.py by default.
-    async with get_db_context() as db_ctx:
-        await storage.init_vector_db(db_ctx)  # Initialize vector specific parts
-
-    # --- Instantiate Processing Services based on Profiles ---
-    resolved_profiles = config.get("service_profiles", [])
-    default_service_profile_id = config.get(
-        "default_service_profile_id", "default_assistant"
-    )
-    processing_services_registry: dict[str, ProcessingService] = {}
-
-    # Scan for documentation files once, globally.
-    # The description will be formatted for each LocalToolsProvider instance if the tool is enabled.
-    available_doc_files = _scan_user_docs()
-    formatted_doc_list_for_tool_desc = ", ".join(available_doc_files) or "None"
-
-    # Global tool definitions and implementations (to be filtered per profile)
-    # Make a deepcopy of the global definitions to avoid modifying it in place during formatting.
-    base_local_tools_definition = copy.deepcopy(local_tools_definition)
-
-    for profile_conf in resolved_profiles:
-        profile_id = profile_conf["id"]
-        logger.info(f"Initializing ProcessingService for profile ID: '{profile_id}'")
-
-        profile_proc_conf_dict = profile_conf["processing_config"]
-        profile_tools_conf_dict = profile_conf["tools_config"]
-        profile_chat_id_map = profile_conf.get("chat_id_to_name_map", {})
-
-        # LLM Client for this profile
-        profile_llm_model = profile_proc_conf_dict.get("llm_model", config["model"])
-        llm_client_for_profile: LLMInterface = LiteLLMClient(
-            model=profile_llm_model,
-            model_parameters=config.get(
-                "llm_parameters", {}
-            ),  # Global LLM params for now
-        )
-        logger.info(f"Profile '{profile_id}' using LLM model: {profile_llm_model}")
-
-        # ToolsProvider stack for this profile
-        # Filter local tools
-        # If 'enable_local_tools' is not in tools_config, default to all tools.
-        # If it is present, use its value (e.g., an empty list means no local tools).
-        local_tools_list_from_config = profile_tools_conf_dict.get("enable_local_tools")
-        if local_tools_list_from_config is None:  # Key was not present
-            enabled_local_tool_names = set(local_tool_implementations.keys())
-            logger.info(
-                f"Profile '{profile_id}': 'enable_local_tools' not specified, defaulting to all {len(enabled_local_tool_names)} local tools."
-            )
-        else:  # Key was present, respect its value (even if empty list)
-            enabled_local_tool_names = set(local_tools_list_from_config)
-            logger.info(
-                f"Profile '{profile_id}': 'enable_local_tools' specified, enabling {len(enabled_local_tool_names)} local tools: {enabled_local_tool_names if enabled_local_tool_names else 'None'}."
-            )
-
-        profile_specific_local_definitions = []
-        for (
-            tool_def_template
-        ) in base_local_tools_definition:  # Iterate over the global template
-            tool_name = tool_def_template.get("function", {}).get("name")
-            if tool_name in enabled_local_tool_names:
-                # Create a copy to modify description for this profile's provider
-                current_tool_def = copy.deepcopy(tool_def_template)
-                if tool_name == "get_user_documentation_content":
-                    try:
-                        current_tool_def["function"]["description"] = current_tool_def[
-                            "function"
-                        ]["description"].format(
-                            available_doc_files=formatted_doc_list_for_tool_desc
-                        )
-                    except KeyError as e:
-                        logger.error(
-                            f"Failed to format doc tool description for profile {profile_id}: {e}"
-                        )
-                profile_specific_local_definitions.append(current_tool_def)
-
-        profile_local_implementations = {
-            name: func
-            for name, func in local_tool_implementations.items()
-            if name in enabled_local_tool_names
-        }
-
-        local_provider_for_profile = LocalToolsProvider(
-            definitions=profile_specific_local_definitions,
-            implementations=profile_local_implementations,
-            embedding_generator=embedding_generator,  # Global embedding generator
-            calendar_config=profile_proc_conf_dict["calendar_config"],
-        )
-
-        # Filter MCP tools
-        # If 'enable_mcp_server_ids' is not in tools_config, default to all configured MCP servers.
-        # If it is present, use its value (e.g., an empty list means no MCP tools).
-        all_mcp_servers_config = config.get("mcp_config", {}).get("mcpServers", {})
-        mcp_server_ids_from_config = profile_tools_conf_dict.get(
-            "enable_mcp_server_ids"
-        )
-
-        if mcp_server_ids_from_config is None:  # Key was not present
-            if all_mcp_servers_config:
-                enabled_mcp_server_ids = set(all_mcp_servers_config.keys())
-                logger.info(
-                    f"Profile '{profile_id}': 'enable_mcp_server_ids' not specified, defaulting to all {len(enabled_mcp_server_ids)} globally configured MCP servers: {enabled_mcp_server_ids if enabled_mcp_server_ids else 'None'}."
-                )
-            else:
-                enabled_mcp_server_ids = set()
-                logger.info(
-                    f"Profile '{profile_id}': 'enable_mcp_server_ids' not specified, and no MCP servers globally configured."
-                )
-        else:  # Key was present, respect its value (even if empty list)
-            enabled_mcp_server_ids = set(mcp_server_ids_from_config)
-            logger.info(
-                f"Profile '{profile_id}': 'enable_mcp_server_ids' specified, enabling {len(enabled_mcp_server_ids)} MCP servers: {enabled_mcp_server_ids if enabled_mcp_server_ids else 'None'}."
-            )
-
-        profile_mcp_servers_config = {
-            server_id: server_conf
-            for server_id, server_conf in all_mcp_servers_config.items()
-            if server_id in enabled_mcp_server_ids
-        }
-        mcp_timeout_seconds = profile_tools_conf_dict.get(
-            "mcp_initialization_timeout_seconds", 60
-        )  # Default to 60 if not in profile config
-        mcp_provider_for_profile = MCPToolsProvider(
-            mcp_server_configs=profile_mcp_servers_config,
-            initialization_timeout_seconds=mcp_timeout_seconds,
-        )
-
-        composite_provider_for_profile = CompositeToolsProvider(
-            providers=[local_provider_for_profile, mcp_provider_for_profile]
-        )
-        # Validate composite provider for this profile
-        try:
-            await (
-                composite_provider_for_profile.get_tool_definitions()
-            )  # This also validates
-        except ValueError as provider_err:
-            logger.critical(
-                f"Failed to initialize CompositeToolsProvider for profile '{profile_id}': {provider_err}",
-                exc_info=True,
-            )
-            raise SystemExit(
-                f"Tool provider initialization failed for profile '{profile_id}': {provider_err}"
-            ) from provider_err
-
-        profile_confirm_tools_set = set(
-            profile_tools_conf_dict.get("confirm_tools", [])
-        )
-        confirming_provider_for_profile = ConfirmingToolsProvider(
-            wrapped_provider=composite_provider_for_profile,
-            tools_requiring_confirmation=profile_confirm_tools_set,
-            calendar_config=profile_proc_conf_dict["calendar_config"],
-        )
-        # Ensure definitions are loaded for the confirming provider
-        await confirming_provider_for_profile.get_tool_definitions()
-
-        # Context Providers for this profile
-        notes_provider_for_profile = NotesContextProvider(
-            get_db_context_func=async_get_db_context_for_provider,
-            prompts=profile_proc_conf_dict["prompts"],
-        )
-        calendar_provider_for_profile = CalendarContextProvider(
-            calendar_config=profile_proc_conf_dict["calendar_config"],
-            timezone_str=profile_proc_conf_dict["timezone"],
-            prompts=profile_proc_conf_dict["prompts"],
-        )
-        known_users_provider_for_profile = KnownUsersContextProvider(
-            chat_id_to_name_map=profile_chat_id_map,
-            prompts=profile_proc_conf_dict["prompts"],
-        )
-        context_providers_for_profile = [
-            notes_provider_for_profile,
-            calendar_provider_for_profile,
-            known_users_provider_for_profile,
-        ]
-
-        # Weather Context Provider for this profile (if configured)
-        willyweather_api_key = config.get("willyweather_api_key")
-        willyweather_location_id = config.get("willyweather_location_id")
-        if willyweather_api_key and willyweather_location_id:
-            weather_provider_for_profile = WeatherContextProvider(
-                location_id=willyweather_location_id,
-                api_key=willyweather_api_key,
-                prompts=profile_proc_conf_dict["prompts"],
-                timezone_str=profile_proc_conf_dict["timezone"],
-                httpx_client=shared_httpx_client,  # Use shared client
-            )
-            context_providers_for_profile.append(weather_provider_for_profile)
-            logger.info(
-                f"WeatherContextProvider added for profile '{profile_id}' (Location: {willyweather_location_id})."
-            )
-        else:
-            logger.info(
-                f"WeatherContextProvider not added for profile '{profile_id}' due to missing API key or location ID in global config."
-            )
-
-        # ProcessingServiceConfig for this profile
-        service_config_for_profile = ProcessingServiceConfig(
-            prompts=profile_proc_conf_dict["prompts"],
-            calendar_config=profile_proc_conf_dict["calendar_config"],
-            timezone_str=profile_proc_conf_dict["timezone"],
-            max_history_messages=profile_proc_conf_dict["max_history_messages"],
-            history_max_age_hours=profile_proc_conf_dict["history_max_age_hours"],
-            tools_config=profile_tools_conf_dict,  # Pass the whole tools_config for this profile
-            delegation_security_level=profile_proc_conf_dict.get(
-                "delegation_security_level", "confirm"
-            ),  # Get with a default
-            id=profile_id,  # Pass the profile_id
-        )
-
-        # ProcessingService instance for this profile
-        processing_service_instance = ProcessingService(
-            llm_client=llm_client_for_profile,
-            tools_provider=confirming_provider_for_profile,
-            service_config=service_config_for_profile,
-            context_providers=context_providers_for_profile,
-            server_url=config["server_url"],  # Global server URL
-            app_config=config,  # Global app config
-        )
-        processing_services_registry[profile_id] = processing_service_instance
-        logger.info(
-            f"ProcessingService for profile '{profile_id}' initialized successfully."
-        )
-
-    if not processing_services_registry:
-        logger.critical("No processing service profiles could be initialized. Exiting.")
-        raise SystemExit("No processing service profiles initialized.")
-
-    # Inject the full registry into each service instance
-    for service_instance_in_registry in processing_services_registry.values():
-        service_instance_in_registry.set_processing_services_registry(
-            processing_services_registry
-        )
-    logger.info("Injected full service registry into each ProcessingService instance.")
-
-    fastapi_app.state.processing_services = processing_services_registry
-    logger.info(
-        f"Stored {len(processing_services_registry)} processing services in FastAPI app state."
-    )
-
-    # Get the default processing service
-    default_processing_service = processing_services_registry.get(
-        default_service_profile_id
-    )
-    if not default_processing_service:
-        # Fallback to the first available profile if default_service_profile_id is not found
-        logger.warning(
-            f"Default service profile ID '{default_service_profile_id}' not found in registry. "
-            f"Falling back to the first available profile: '{next(iter(processing_services_registry.keys()))}'."
-        )
-        default_processing_service = next(iter(processing_services_registry.values()))
-        # Update default_service_profile_id to the one actually being used as default
-        default_service_profile_id = next(iter(processing_services_registry.keys()))
-
-    # Store default service, its LLM client, tools provider and definitions in app state for general access
-    fastapi_app.state.processing_service = default_processing_service
-    fastapi_app.state.llm_client = (
-        default_processing_service.llm_client
-    )  # LLM client of default service
-    fastapi_app.state.tools_provider = (
-        default_processing_service.tools_provider
-    )  # Tools provider of default service
-    fastapi_app.state.tool_definitions = (
-        await default_processing_service.tools_provider.get_tool_definitions()
-    )
-    logger.info(
-        f"Default processing service set to profile ID: '{default_service_profile_id}'. Its components stored in app state."
-    )
-
-    # --- Instantiate Scraper ---
-    # For now, PlaywrightScraper is instantiated directly.
-    # Future: Could be made configurable (e.g. httpx scraper vs playwright)
-    scraper_instance = PlaywrightScraper()  # Default user agent
-    fastapi_app.state.scraper = scraper_instance  # Store scraper for DocumentIndexer
-    logger.info(
-        f"Scraper instance ({type(scraper_instance).__name__}) created and stored in app state."
-    )
-
-    # --- Instantiate Document Indexer ---
-    # Load pipeline config from the main config dictionary
-    pipeline_config_for_indexer = config.get("indexing_pipeline_config", {})
-    if not pipeline_config_for_indexer.get("processors"):  # Basic validation
-        logger.warning(
-            "No processors defined in 'indexing_pipeline_config'. Document indexing might be limited."
-        )
-
-    # DocumentIndexer uses the LLM client from the default processing service for now
-    # TODO: Consider if DocumentIndexer needs a specific LLM profile or if default is fine.
-    document_indexer = DocumentIndexer(
-        pipeline_config=pipeline_config_for_indexer,
-        llm_client=default_processing_service.llm_client,
-        embedding_generator=embedding_generator,  # Pass the main embedding generator
-        scraper=scraper_instance,  # Pass the scraper instance
-    )
-    logger.info(
-        "DocumentIndexer initialized using 'indexing_pipeline_config' from application configuration."
-    )
-
-    # --- Instantiate Email Indexer ---
-    email_indexer = EmailIndexer(pipeline=document_indexer.pipeline)
-    logger.info("EmailIndexer initialized with the main indexing pipeline.")
-
-    # --- Instantiate Telegram Service ---
-    telegram_service = TelegramService(
-        telegram_token=config["telegram_token"],
-        allowed_user_ids=config["allowed_user_ids"],
-        developer_chat_id=config["developer_chat_id"],
-        processing_service=default_processing_service,  # Default service for non-slash command interactions
-        processing_services_registry=processing_services_registry,  # Pass the full registry
-        app_config=config,  # Pass the main application config for slash command mapping
-        get_db_context_func=get_db_context,
-        new_task_event=new_task_event,  # Pass the global event
-    )
-
-    # Start polling using the service method
-    await telegram_service.start_polling()
-
-    # --- Store service in app state for web server access ---
-    fastapi_app.state.telegram_service = telegram_service
-    logger.info("Stored TelegramService instance in FastAPI app state.")
-
-    # --- Uvicorn Server Setup ---
-    uvicorn_config = uvicorn.Config(
-        fastapi_app, host="0.0.0.0", port=8000, log_level="info"
-    )
-    server = uvicorn.Server(uvicorn_config)
-
-    # Run Uvicorn server concurrently (polling is already running)
-    web_server_task = asyncio.create_task(server.serve())
-    logger.info("Web server running on http://0.0.0.0:8000")
-
-    # --- Instantiate Task Worker ---
-    # Ensure telegram_service and application are initialized before this
-    if not telegram_service or not hasattr(telegram_service, "application"):
-        logger.critical(
-            "Telegram service or application not initialized before TaskWorker creation."
-        )
-        raise SystemExit(
-            "Critical error: Cannot create TaskWorker without Telegram application."
-        )
-
-    # Task worker uses the default processing service and its config for callbacks etc.
-    # TODO: LLM Callbacks might need to specify a profile_id if they are not meant for default.
-    default_profile_for_worker_conf = None
-    for prof in resolved_profiles:
-        if prof["id"] == default_service_profile_id:
-            default_profile_for_worker_conf = prof
-            break
-    if (
-        not default_profile_for_worker_conf
-    ):  # Should not happen if default_processing_service was found
-        raise SystemExit(
-            f"Could not find configuration for default profile ID '{default_service_profile_id}' for TaskWorker."
-        )
-
-    task_worker_instance = TaskWorker(
-        processing_service=default_processing_service,
-        chat_interface=telegram_service.chat_interface,
-        new_task_event=new_task_event,  # Pass the global event
-        calendar_config=default_profile_for_worker_conf["processing_config"][
-            "calendar_config"
-        ],
-        timezone_str=default_profile_for_worker_conf["processing_config"]["timezone"],
-        embedding_generator=embedding_generator,
-    )
-
-    # --- Register Task Handlers with the Worker Instance ---
-    task_worker_instance.register_task_handler(
-        "log_message",
-        task_wrapper_handle_log_message,  # Use wrapper
-    )
-    # Register document processing handler from the indexer instance
-    task_worker_instance.register_task_handler(
-        "process_uploaded_document", document_indexer.process_document
-    )
-    # Register email indexing handler from the EmailIndexer instance
-    task_worker_instance.register_task_handler(
-        "index_email", email_indexer.handle_index_email
-    )
-    # Register LLM callback handler directly (dependencies passed via context by worker)
-    task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-
-    # --- Register Indexing Task Handlers ---
-    task_worker_instance.register_task_handler(
-        "embed_and_store_batch", handle_embed_and_store_batch
-    )
-    logger.info(
-        f"Registered task handlers for worker {task_worker_instance.worker_id}: {list(task_worker_instance.get_task_handlers().keys())}"
-    )
-
-    # Start the task queue worker using the instance's run method
-    asyncio.create_task(
-        task_worker_instance.run(new_task_event)  # Pass the event to the run method
-    )
-
-    # Wait until shutdown signal is received
-    await shutdown_event.wait()
-
-    logger.info("Shutdown signal received. Stopping services...")
-
-    # Signal Uvicorn to shut down gracefully
-    server.should_exit = True
-    # Wait for Uvicorn to finish
-    await web_server_task
-    logger.info("Web server stopped.")
-
-    # Polling task cancellation is handled by application.updater.stop() and application.shutdown()
-    # Task worker cancellation is handled by the main shutdown_handler.
-    # No need to manually cancel task_worker anymore (handled by shutdown_handler).
-
-    logger.info("All services stopped. Final shutdown.")
-    # Telegram application shutdown is handled by telegram_service.stop_polling() called from shutdown_handler
-    # MCP provider cleanup is handled by shutdown_handler calling tools_provider.close()
-
-    # Return the telegram service, ToolsProvider of the default service, and the httpx client
-    return (
-        telegram_service,
-        default_processing_service.tools_provider,
-        shared_httpx_client,
-    )
-
-
-def main() -> int:  # Return an exit code
+def main() -> int:
     """Loads config, parses args, sets up event loop, and runs the application."""
-
-    # 1. Load Configuration (Defaults -> YAML -> Env Vars)
     config_data = load_config()
-
-    # 2. Parse CLI Arguments
     args = parser.parse_args()
 
-    # 3. Apply CLI Overrides (CLI > Env > YAML > Defaults)
+    # Apply CLI Overrides to config_data
     if args.telegram_token is not None:
         config_data["telegram_token"] = args.telegram_token
-        logger.info("Overriding Telegram token with CLI argument.")
     if args.openrouter_api_key is not None:
         config_data["openrouter_api_key"] = args.openrouter_api_key
-        logger.info("Overriding OpenRouter API key with CLI argument.")
     if args.model is not None:
         config_data["model"] = args.model
-        logger.info(f"Overriding LLM model with CLI argument: {args.model}")
     if args.embedding_model is not None:
         config_data["embedding_model"] = args.embedding_model
-        logger.info(
-            f"Overriding embedding model with CLI argument: {args.embedding_model}"
-        )
     if args.embedding_dimensions is not None:
         config_data["embedding_dimensions"] = args.embedding_dimensions
-        logger.info(
-            f"Overriding embedding dimensions with CLI argument: {args.embedding_dimensions}"
-        )
     if args.document_storage_path is not None:
         config_data["document_storage_path"] = args.document_storage_path
-        logger.info(
-            f"Overriding document storage path with CLI argument: {args.document_storage_path}"
-        )
     if args.attachment_storage_path is not None:
         config_data["attachment_storage_path"] = args.attachment_storage_path
-        logger.info(
-            f"Overriding attachment storage path with CLI argument: {args.attachment_storage_path}"
-        )
-    # Add overrides for other CLI args if introduced (e.g., --config)
 
-    # --- Store final config in app state for web server access ---
     fastapi_app.state.config = config_data
     logger.info("Stored final configuration dictionary in FastAPI app state.")
 
-    # --- Event Loop and Signal Handlers ---
+    assistant_app = Assistant(config_data)
     loop = asyncio.get_event_loop()
-    telegram_service_instance = None  # Initialize
-    tools_provider_instance = None  # Use generic name
-    httpx_client_instance = None  # Initialize httpx_client
+
+    # Setup Signal Handlers
+    signal_map = {signal.SIGINT: "SIGINT", signal.SIGTERM: "SIGTERM"}
+    for sig_num, sig_name in signal_map.items():
+        loop.add_signal_handler(
+            sig_num,
+            lambda name=sig_name, app_instance=assistant_app: app_instance.initiate_shutdown(name)
+        )
+
+    if hasattr(signal, "SIGHUP"):
+        try:
+            # reload_config_handler needs to be adapted if it re-initializes parts of assistant_app
+            # For now, it just reloads config_data which isn't automatically re-read by a running Assistant instance.
+            # A more robust reload would involve assistant_app.reload_config(new_config_data) or similar.
+            loop.add_signal_handler(signal.SIGHUP, reload_config_handler, signal.SIGHUP, None)
+            logger.info("SIGHUP handler registered for config reload (basic).")
+        except NotImplementedError:
+            logger.warning("SIGHUP signal handler not supported on this platform.")
+        except Exception as e:
+            logger.error(f"Failed to set SIGHUP handler: {e}")
 
     try:
-        logger.info("Starting application...")
-        # Pass the final resolved config dictionary to main_async
-        # Capture all returned instances
-        (
-            telegram_service_instance,
-            tools_provider_instance,
-            httpx_client_instance,
-        ) = loop.run_until_complete(main_async(config_data))  # Assign to generic name
+        logger.info("Starting application via Assistant class...")
+        loop.run_until_complete(assistant_app.setup_dependencies())
+        loop.run_until_complete(assistant_app.start_services())  # This will block until shutdown
+        
+        # After start_services() completes (meaning shutdown_event was set and initial stop began)
+        # we ensure full stop_services logic runs.
+        if not assistant_app.is_shutdown_complete():
+             logger.info("Ensuring all services are stopped post-start_services completion...")
+             loop.run_until_complete(assistant_app.stop_services())
 
-        # --- Setup Signal Handlers *after* service creation ---
-        # Pass the service and client instances to the shutdown handler lambda
-        # Always set up signal handlers, but pass None for instances if creation failed
-        signal_map = {
-            signal.SIGINT: "SIGINT",
-            signal.SIGTERM: "SIGTERM",
-        }
-        # Need mcp_provider_instance here, which was returned by main_async
-        # Let's assume main_async was correctly modified to return it,
-        # and we need to capture it earlier in the 'try' block.
-        # The previous block failed because the call to main_async wasn't updated first.
-        # Assuming main_async now returns (service, mcp_provider), the call should be:
-
-        # Corrected signal handler setup using both instances:
-        for sig_num, sig_name in signal_map.items():
-            # Pass service and generic tools provider instances (which might be None)
-            loop.add_signal_handler(
-                sig_num,
-                lambda name=sig_name,
-                service=telegram_service_instance,
-                tools=tools_provider_instance,
-                client=httpx_client_instance: asyncio.create_task(
-                    shutdown_handler(name, service, tools, client)  # Pass client
-                ),
-            )
-        if not telegram_service_instance:
-            logger.error(
-                "TelegramService instance creation failed, shutdown might be incomplete."
-            )
-        if not tools_provider_instance:  # Check generic instance
-            logger.warning(
-                "ToolsProvider instance creation failed or not configured."
-            )  # Warning if top-level provider is None
-        if not httpx_client_instance:  # Check httpx client
-            logger.warning(
-                "Httpx client instance creation failed or not returned from main_async."
-            )
-
-        # --- Setup SIGHUP Handler (Inside the main try block, after other signals) ---
-        if hasattr(signal, "SIGHUP"):
-            try:
-                loop.add_signal_handler(
-                    signal.SIGHUP, reload_config_handler, signal.SIGHUP, None
-                )
-                logger.info("SIGHUP handler registered for config reload.")
-            except NotImplementedError:
-                logger.warning("SIGHUP signal handler not supported on this platform.")
-
-        # The main loop implicitly runs after this point, waiting for signals or KeyboardInterrupt within the outer try block.
-
-    # The except and finally blocks corresponding to the *outer* try block remain below.
-    except ValueError as config_err:  # Catch config validation errors from main_async
+    except ValueError as config_err:
         logger.critical(f"Configuration error during startup: {config_err}")
-        return 1  # Return non-zero exit code
+        return 1
     except (KeyboardInterrupt, SystemExit) as ex:
-        logger.warning(f"Received {type(ex).__name__}, initiating shutdown.")
-        # Ensure shutdown runs if loop was interrupted directly
-        if not shutdown_event.is_set():
-            # Run the async shutdown handler within the loop, passing both instances
-            loop.run_until_complete(
-                shutdown_handler(
-                    type(ex).__name__,
-                    telegram_service_instance,
-                    tools_provider_instance,
-                    httpx_client_instance,  # Pass httpx_client
-                )
-            )
+        logger.warning(f"Received {type(ex).__name__} in main, initiating shutdown sequence.")
+        if not assistant_app.is_shutdown_complete():
+            if not assistant_app.shutdown_event.is_set():
+                 assistant_app.initiate_shutdown(type(ex).__name__)
+            # Wait for start_services to react to shutdown_event or call stop_services directly
+            # This ensures that if start_services was interrupted before its own shutdown logic,
+            # stop_services is still called.
+            logger.info(f"Ensuring stop_services is called due to {type(ex).__name__}")
+            loop.run_until_complete(assistant_app.stop_services())
+    except Exception as e:
+        logger.critical(f"Unhandled exception in main: {e}", exc_info=True)
+        if not assistant_app.is_shutdown_complete():
+            logger.error("Attempting emergency shutdown due to unhandled exception.")
+            if not assistant_app.shutdown_event.is_set():
+                 assistant_app.initiate_shutdown(f"UnhandledException: {type(e).__name__}")
+            loop.run_until_complete(assistant_app.stop_services())
+        return 1
     finally:
-        # Task cleanup is handled within shutdown_handler
+        # Ensure event loop cleanup happens after all async operations
+        # including those in stop_services.
+        # Cancel any remaining tasks that might have been spawned outside of Assistant's control
+        # or if stop_services was interrupted.
+        remaining_tasks = [t for t in asyncio.all_tasks(loop=loop) if not t.done()]
+        if remaining_tasks:
+            logger.info(f"Cancelling {len(remaining_tasks)} remaining tasks in main finally block...")
+            for task in remaining_tasks:
+                task.cancel()
+            loop.run_until_complete(asyncio.gather(*remaining_tasks, return_exceptions=True))
+            logger.info("Remaining tasks cancelled.")
+
         logger.info("Closing event loop.")
-        # Ensure loop is closed only if it's running
-        # Removing loop.close() as it can cause issues if called incorrectly.
+        # loop.close() # Be cautious with loop.close() if it's managed elsewhere or in tests.
+        # For a standalone script, it's usually fine.
+        # If loop is already closed, this will error.
+        if not loop.is_closed():
+            loop.close()
 
         logger.info("Application finished.")
-
-    return 0  # Return 0 on successful shutdown
+    
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())  # Exit with the return code from main()
+    sys.exit(main())
