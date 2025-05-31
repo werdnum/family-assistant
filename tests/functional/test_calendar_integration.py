@@ -1158,14 +1158,14 @@ async def test_search_events(
 
     # --- Phase 3: LLM Rules for Searching Events ---
     tool_call_id_search = f"call_search_{uuid.uuid4()}"
-    search_query_text = (
-        "events for day after tomorrow plus two"  # A bit vague to test search
-    )
+    # Use a query text that will actually match the event summaries
+    search_query_text = "Search Event"
 
     # Rule 1: LLM decides to search
     def search_intent_matcher(kwargs: MatcherArgs) -> bool:
         last_text = get_last_message_text(kwargs.get("messages", [])).lower()
-        return "what are my events" in last_text and search_query_text in last_text
+        # User might ask generally, LLM decides to search for "Search Event"
+        return "what are my events" in last_text and "day after tomorrow plus two" in last_text
 
     search_intent_response = MockLLMOutput(
         content="Let me check your calendar...",
@@ -1176,7 +1176,7 @@ async def test_search_events(
                 function=ToolCallFunction(
                     name="search_calendar_events",
                     arguments=json.dumps({
-                        "query_text": search_query_text,  # LLM might use a more specific query
+                        "query_text": search_query_text,  # Tool will search for "Search Event"
                         "start_date_str": search_day.strftime("%Y-%m-%d"),
                         "end_date_str": (search_day + timedelta(days=1)).strftime(
                             "%Y-%m-%d"
@@ -1256,7 +1256,8 @@ async def test_search_events(
     processing_service.llm_client = llm_client
 
     # --- Simulate User Interaction ---
-    user_message_search = f"What are my events for {search_query_text}?"
+    # User asks a general question, LLM will refine it to search_query_text ("Search Event")
+    user_message_search = "What are my events for day after tomorrow plus two?"
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
         (
             final_reply_search,
