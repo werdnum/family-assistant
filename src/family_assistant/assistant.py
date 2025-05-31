@@ -431,10 +431,11 @@ class Assistant:
         self.email_indexer = EmailIndexer(pipeline=self.document_indexer.pipeline)
         logger.info("DocumentIndexer and EmailIndexer initialized.")
 
-    async def start_services(self) -> None:
-        """Starts all long-running services and waits for shutdown."""
-        if not self.default_processing_service or not self.embedding_generator:
-            raise RuntimeError("Dependencies not set up before starting services.")
+        # Instantiate TelegramService in setup_dependencies but don't start polling yet
+        if not self.default_processing_service:  # Should be set by now
+            raise RuntimeError(
+                "Default processing service not available for TelegramService setup."
+            )
 
         self.telegram_service = TelegramService(
             telegram_token=self.config["telegram_token"],
@@ -443,12 +444,25 @@ class Assistant:
             processing_service=self.default_processing_service,
             processing_services_registry=self.processing_services_registry,
             app_config=self.config,
-            get_db_context_func=get_db_context,  # Direct function, not wrapped one
+            get_db_context_func=get_db_context,
             new_task_event=self.new_task_event,
         )
-        await self.telegram_service.start_polling()
         fastapi_app.state.telegram_service = self.telegram_service
-        logger.info("TelegramService started and stored in FastAPI app state.")
+        logger.info(
+            "TelegramService instantiated and stored in FastAPI app state during setup_dependencies."
+        )
+
+    async def start_services(self) -> None:
+        """Starts all long-running services and waits for shutdown."""
+        if not self.default_processing_service or not self.embedding_generator:
+            raise RuntimeError("Dependencies not set up before starting services.")
+        if not self.telegram_service:
+            raise RuntimeError(
+                "TelegramService not initialized before starting services."
+            )
+
+        await self.telegram_service.start_polling()
+        logger.info("TelegramService polling started.")
 
         uvicorn_config = uvicorn.Config(
             fastapi_app, host="0.0.0.0", port=8000, log_level="info"
