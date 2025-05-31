@@ -253,10 +253,12 @@ async def schedule_future_callback_tool(
             raise ValueError("Callback time must be in the future.")
 
         task_id = f"llm_callback_{uuid.uuid4()}"
+        scheduling_time = datetime.now(timezone.utc)  # Get current UTC time
         payload = {
             "interface_type": interface_type,  # Store interface type
             "conversation_id": conversation_id,  # Store conversation ID
             "callback_context": context,
+            "scheduling_timestamp": scheduling_time.isoformat(),  # Add scheduling timestamp
             # Application instance should not be stored in payload.
             # It will be injected into the task handler at runtime.
         }
