@@ -78,9 +78,7 @@ async def handle_llm_callback(
 
     # Basic validation of dependencies from context
     if not clock:
-        logger.error(
-            "Clock not found in ToolExecutionContext for handle_llm_callback."
-        )
+        logger.error("Clock not found in ToolExecutionContext for handle_llm_callback.")
         raise ValueError("Missing Clock dependency in context.")
     if not processing_service:
         logger.error(
@@ -160,9 +158,11 @@ async def handle_llm_callback(
     logger.info(
         f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}, skip_if_user_responded={skip_if_user_responded})"
     )
-    current_time_str = clock.now().astimezone(
-        zoneinfo.ZoneInfo(exec_context.timezone_str)
-    ).strftime("%Y-%m-%d %H:%M:%S %Z")  # Use timezone from context
+    current_time_str = (
+        clock.now()
+        .astimezone(zoneinfo.ZoneInfo(exec_context.timezone_str))
+        .strftime("%Y-%m-%d %H:%M:%S %Z")
+    )  # Use timezone from context
 
     try:
         # Construct the trigger message content for the LLM
@@ -289,7 +289,7 @@ class TaskWorker:
         calendar_config: dict[str, Any],
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
-        clock: Clock = SystemClock(),
+        clock: Clock | None = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -299,7 +299,9 @@ class TaskWorker:
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
         self.embedding_generator = embedding_generator
-        self.clock = clock  # Store the clock instance
+        self.clock = (
+            clock if clock is not None else SystemClock()
+        )  # Store the clock instance
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
         self.task_handlers: dict[
@@ -533,9 +535,7 @@ class TaskWorker:
         if current_retry < max_retries:
             # Calculate exponential backoff with jitter
             backoff_delay = (5 * (2**current_retry)) + random.uniform(0, 2)
-            next_attempt_time = self.clock.now() + timedelta(
-                seconds=backoff_delay
-            )
+            next_attempt_time = self.clock.now() + timedelta(seconds=backoff_delay)
             logger.info(
                 f"Scheduling retry {current_retry + 1} for task {task['task_id']} at {next_attempt_time} (delay: {backoff_delay:.2f}s)"
             )
@@ -582,7 +582,6 @@ class TaskWorker:
             # If wait_for completes without timeout, the event was set
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
             wake_up_event.clear()  # Reset the event for the next notification
-            # Removed: await asyncio.sleep(0.1)
         except asyncio.TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
             logger.debug(
