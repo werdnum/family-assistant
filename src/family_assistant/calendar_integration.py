@@ -930,92 +930,94 @@ async def search_calendar_events_tool(
                     )
                     continue
 
-                    # Fetch events in the range
-                    # Note: This fetches *all* events in the range first.
-                    # More advanced filtering might be possible with specific CalDAV servers/queries.
-                    caldav_results: list[caldav.objects.CalendarObjectResource] = (
-                        target_calendar_obj.search(  # type: ignore
-                            start=start_date_obj,
-                            end=end_date_obj,
-                            event=True,
-                            expand=True,  # Changed to True to align with working fetch
-                        )
+                    # Fetch all events from the calendar and filter them in Python
+                    # This is a workaround for potential issues with server-side time-range filtering on narrow ranges.
+                    all_event_resources_in_calendar: list[
+                        caldav.objects.CalendarObjectResource
+                    ] = target_calendar_obj.events()  # type: ignore
+
+                    logger.info(
+                        f"Fetched {len(all_event_resources_in_calendar)} total events from {cal_url_item} for manual filtering."
                     )
 
                     for (
                         event_resource
-                    ) in caldav_results:  # event_resource is CalendarObjectResource
+                    ) in all_event_resources_in_calendar:  # event_resource is CalendarObjectResource
                         events_checked += 1
                         event_url_attr = getattr(
                             event_resource, "url", "N/A"
                         )  # Get URL for logging
-                        logger.info(
-                            f"Processing event: URL={event_url_attr}"
-                        )  # Log first
+                        logger.debug(
+                            f"Processing event for manual filter: URL={event_url_attr}"
+                        )
 
                         parsed: dict[str, Any] | None = (
                             None  # Initialize parsed to None
                         )
                         try:
-                            # --- Access and parse event data ---
-                            logger.debug("  -> Accessing and parsing event.data...")
                             event_data_str: str = event_resource.data  # type: ignore # It's a string
-                            # Pass timezone_str when parsing within the tool context
-                            # Use the parse_event function defined within this module
                             parsed = parse_event(
                                 event_data_str, timezone_str=exec_context.timezone_str
                             )
 
-                            if not parsed:
-                                # parse_event logs details if it fails or lacks essential fields
-                                logger.info(
-                                    f"  -> Excluded: Failed to parse event data or missing essential fields. URL={event_url_attr}"
+                            if not parsed or not parsed.get("start"):
+                                logger.debug(
+                                    f"  -> Excluded (manual filter): Failed to parse event data or missing start time. URL={event_url_attr}"
                                 )
-                                continue  # Skip to next event
+                                continue
 
-                            # --- We now have parsed data including the UID ---
-                            parsed_uid = parsed.get("uid")  # Get UID from parsed data
+                            # Date filtering
+                            event_start_val = parsed["start"]
+                            event_start_date = (
+                                event_start_val.date()
+                                if isinstance(event_start_val, datetime)
+                                else event_start_val
+                            )
+
+                            if not (
+                                start_date_obj <= event_start_date < end_date_obj
+                            ):
+                                logger.debug(
+                                    f"  -> Excluded (manual filter): Event UID {parsed.get('uid')} start date {event_start_date} outside range [{start_date_obj}, {end_date_obj})."
+                                )
+                                continue
+
+                            # Text filtering
                             summary = parsed.get("summary", "")
-                            summary_lower = summary.lower()  # summary is str
-                            logger.info(
-                                f"  -> Parsed event details (UID: {parsed_uid}): {repr(parsed)}"
-                            )  # Log parsed details with UID
+                            summary_lower = summary.lower()
+                            parsed_uid = parsed.get("uid", "UnknownUID")
 
-                            # --- Basic substring matching ---
                             if query_lower in summary_lower:
                                 events_matched += 1
                                 logger.info(
-                                    f"  -> Matched: Query '{query_lower}' found in summary '{summary}'. UID={parsed_uid}"
-                                )  # Use parsed_uid
+                                    f"  -> Matched (manual filter): Query '{query_lower}' in summary '{summary}'. UID={parsed_uid}"
+                                )
                                 found_details.append({
-                                    "uid": str(parsed_uid),  # Use UID from parsed data
+                                    "uid": str(parsed_uid),
                                     "summary": summary,
                                     "start": parsed.get("start"),
                                     "end": parsed.get("end"),
                                     "all_day": parsed.get("all_day"),
-                                    "calendar_url": (
-                                        cal_url_item
-                                    ),  # Include the source calendar URL
+                                    "calendar_url": cal_url_item,
                                 })
                                 if len(found_details) >= limit:
                                     logger.info(
-                                        f"Reached search limit ({limit}). Stopping search in calendar {cal_url_item}."
+                                        f"Reached search limit ({limit}) during manual filter in calendar {cal_url_item}."
                                     )
-                                    break  # Stop searching this calendar if limit reached
+                                    break
                             else:
-                                # Log why it didn't match
-                                logger.info(
-                                    f"  -> Excluded: Query text '{query_lower}' not found in summary '{summary}'. UID={parsed_uid}"
-                                )  # Use parsed_uid
+                                logger.debug(
+                                    f"  -> Excluded (manual filter): Query '{query_lower}' not in summary '{summary}'. UID={parsed_uid}"
+                                )
 
                         except Exception as process_err:
                             logger.warning(
-                                f"Error processing event {event_url_attr} in {cal_url_item}: {process_err}",
+                                f"Error processing event {event_url_attr} during manual filter in {cal_url_item}: {process_err}",
                                 exc_info=True,
                             )
                     if len(found_details) >= limit:
                         logger.info(
-                            f"Reached search limit ({limit}). Stopping search across remaining calendars."
+                            f"Reached search limit ({limit}) during manual filter. Stopping search across remaining calendars."
                         )
                         break
 
