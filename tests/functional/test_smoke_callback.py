@@ -196,6 +196,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         app_config=dummy_app_config,  # Pass dummy app_config directly
         context_providers=[],
         server_url=None,
+        clock=mock_clock, # Inject mock_clock into ProcessingService
     )
 
     # Mock Telegram Application and Bot
