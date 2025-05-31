@@ -932,9 +932,17 @@ async def search_calendar_events_tool(
 
                     # Fetch all events from the calendar and filter them in Python
                     # This is a workaround for potential issues with server-side time-range filtering on narrow ranges.
+                    logger.info(
+                        f"Searching calendar {cal_url_item} with server-side date range: {start_date_obj} to {end_date_obj}"
+                    )
                     all_event_resources_in_calendar: list[
                         caldav.objects.CalendarObjectResource
-                    ] = target_calendar_obj.events()  # type: ignore
+                    ] = target_calendar_obj.search(  # type: ignore
+                        start=start_date_obj,
+                        end=end_date_obj,
+                        event=True,
+                        expand=True,  # Fetches full data
+                    )
 
                     logger.info(
                         f"Fetched {len(all_event_resources_in_calendar)} total events from {cal_url_item} for manual filtering."
