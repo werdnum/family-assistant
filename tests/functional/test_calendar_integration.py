@@ -157,8 +157,35 @@ async def test_add_event_and_verify_in_system_prompt(
             )
         ],
     )
+
+    # Rule for LLM to generate final response after successful tool call
+    def final_response_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages or len(messages) < 2: # Need at least user, assistant (tool_call), tool_result
+            return False
+        # Second to last message should be assistant's tool call
+        # Last message should be the tool's result
+        last_message = messages[-1] # This is the tool result
+        # Penultimate message is the assistant's request for tool call, not needed for this matcher.
+        # The actual last message *passed to the LLM for this turn* is the tool result.
+        return (
+            last_message.get("role") == "tool" and
+            last_message.get("tool_call_id") == tool_call_id and
+            "OK. Event '" in last_message.get("content", "") and
+            f"'{event_summary}' added" in last_message.get("content", "")
+        )
+
+    final_llm_response_content = f"Alright, the event '{event_summary}' has been scheduled successfully."
+    final_response_llm_output = MockLLMOutput(
+        content=final_llm_response_content,
+        tool_calls=None
+    )
+
     llm_client: LLMInterface = RuleBasedMockLLMClient(
-        rules=[(add_event_matcher, add_event_response)]
+        rules=[
+            (add_event_matcher, add_event_response),
+            (final_response_matcher, final_response_llm_output)
+        ]
     )
 
     # --- Setup ProcessingService ---
@@ -230,7 +257,8 @@ async def test_add_event_and_verify_in_system_prompt(
         )
 
     assert error is None, f"Error during chat interaction: {error}"
-    assert final_reply and f"OK, I'll schedule '{event_summary}'." in final_reply
+    assert final_reply and final_llm_response_content in final_reply, \
+        f"Expected final reply '{final_llm_response_content}', but got '{final_reply}'"
 
     # --- Verify Event in Radicale ---
     # radicale_server now contains the direct calendar URL as the 4th element
