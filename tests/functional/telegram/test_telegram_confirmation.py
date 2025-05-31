@@ -144,7 +144,7 @@ async def test_confirmation_accepted(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
         )  # noqa: E501
         context = create_mock_context(
-            fix.mock_telegram_service.application,
+            fix.mock_application,
             bot_data={"processing_service": fix.processing_service},
         )  # noqa: E501
 
@@ -316,7 +316,7 @@ async def test_confirmation_rejected(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
         )  # noqa: E501
         context = create_mock_context(
-            fix.mock_telegram_service.application,
+            fix.mock_application,
             bot_data={"processing_service": fix.processing_service},
         )  # noqa: E501
 
@@ -456,7 +456,7 @@ async def test_confirmation_timed_out(
             user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
         )  # noqa: E501
         context = create_mock_context(
-            fix.mock_telegram_service.application,
+            fix.mock_application,
             bot_data={"processing_service": fix.processing_service},
         )  # noqa: E501
 
