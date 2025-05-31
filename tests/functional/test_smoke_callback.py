@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import uuid  # Added for turn_id
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from typing import TYPE_CHECKING  # Added TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
@@ -43,6 +43,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
+
 # from tests.helpers import wait_for_tasks_to_complete # wait_for_tasks_to_complete will be replaced
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
@@ -83,7 +84,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
 
     # --- Setup Mock Clock ---
     mock_clock = MockClock()
-    initial_time = mock_clock.now() # Use clock's initial time
+    initial_time = mock_clock.now()  # Use clock's initial time
 
     # --- Calculate future callback time ---
     user_message_id_schedule = 401  # Added user message ID for the scheduling request
@@ -244,7 +245,6 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # Allow worker to start up and potentially process initial tasks if any (though none expected here)
     await asyncio.sleep(0.01)
 
-
     # --- Part 1: Schedule the callback ---
     logger.info("--- Part 1: Scheduling Callback ---")
     schedule_request_text = (
@@ -280,9 +280,9 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
 
     # --- Part 2: Advance time and let worker process the callback ---
     logger.info(f"--- Part 2: Advancing clock by {CALLBACK_DELAY_SECONDS + 1} seconds and letting worker run ---")
-    mock_clock.advance(timedelta(seconds=CALLBACK_DELAY_SECONDS + 1)) # Advance past callback time
-    test_new_task_event.set() # Notify worker to check for tasks
-    await asyncio.sleep(0.1) # Allow worker to process the task
+    mock_clock.advance(timedelta(seconds=CALLBACK_DELAY_SECONDS + 1))  # Advance past callback time
+    test_new_task_event.set()  # Notify worker to check for tasks
+    await asyncio.sleep(0.1)  # Allow worker to process the task
 
     # --- Part 3: Verify Callback Execution ---
     logger.info("--- Part 3: Verifying Callback Execution ---")
@@ -347,7 +347,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     initial_context = "Initial context for modification test"
 
     modified_callback_delay_seconds = (
-        initial_callback_delay_seconds + 10 # Ensure it's later than initial, relative to initial_time
+        initial_callback_delay_seconds + 10  # Ensure it's later than initial, relative to initial_time
     )
     modified_callback_dt = initial_time + timedelta(seconds=modified_callback_delay_seconds)
     modified_callback_time_iso = modified_callback_dt.isoformat()
@@ -490,14 +490,14 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
-        clock=mock_clock, # Inject mock_clock
+        clock=mock_clock,  # Inject mock_clock
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
         task_worker_instance.run(test_new_task_event),
         name=f"TaskWorker-Modify-{test_run_id}",
     )
-    await asyncio.sleep(0.01) # Allow worker to start
+    await asyncio.sleep(0.01)  # Allow worker to start
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for modification test ---")
@@ -609,11 +609,11 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     if duration_to_advance.total_seconds() > 0:
         logger.info(f"Advancing clock by {duration_to_advance.total_seconds()}s to trigger modified callback.")
         mock_clock.advance(duration_to_advance)
-    else: # If modify tool call took "longer" than the difference, clock might already be past
+    else:  # If modify tool call took "longer" than the difference, clock might already be past
         logger.info(f"Clock already at or past modified callback time. Current: {mock_clock.now()}, Target: {modified_callback_dt}")
 
-    test_new_task_event.set() # Notify worker
-    await asyncio.sleep(0.1) # Allow worker to process
+    test_new_task_event.set()  # Notify worker
+    await asyncio.sleep(0.1)  # Allow worker to process
 
     # --- Part 4: Verify MODIFIED Callback Execution ---
     logger.info("--- Part 4: Verifying MODIFIED Callback Execution ---")
@@ -813,14 +813,14 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
-        clock=mock_clock, # Inject mock_clock
+        clock=mock_clock,  # Inject mock_clock
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
         task_worker_instance.run(test_new_task_event),
         name=f"TaskWorker-Cancel-{test_run_id}",
     )
-    await asyncio.sleep(0.01) # Allow worker to start
+    await asyncio.sleep(0.01)  # Allow worker to start
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for cancellation test ---")
@@ -926,8 +926,8 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     duration_to_advance_past_schedule = (initial_callback_dt - mock_clock.now()) + timedelta(seconds=2)
     if duration_to_advance_past_schedule.total_seconds() > 0:
         mock_clock.advance(duration_to_advance_past_schedule)
-    test_new_task_event.set() # Notify worker
-    await asyncio.sleep(0.1) # Allow worker to process (it should find nothing or a failed task)
+    test_new_task_event.set()  # Notify worker
+    await asyncio.sleep(0.1)  # Allow worker to process (it should find nothing or a failed task)
 
     # --- Part 4: Verify Callback Was NOT Executed ---
     logger.info("--- Part 4: Verifying Cancelled Callback Was NOT Executed ---")
@@ -1102,14 +1102,14 @@ async def test_callback_skip_behavior_on_user_response(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
-        clock=mock_clock, # Inject mock_clock
+        clock=mock_clock,  # Inject mock_clock
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
         task_worker_instance.run(test_new_task_event),
         name=f"TaskWorker-{scenario_name}-{test_run_id}",
     )
-    await asyncio.sleep(0.01) # Allow worker to start
+    await asyncio.sleep(0.01)  # Allow worker to start
 
     # --- Part 1: Schedule the callback ---
     logger.info(
@@ -1182,8 +1182,8 @@ async def test_callback_skip_behavior_on_user_response(
     duration_to_advance_past_schedule = (callback_dt - mock_clock.now()) + timedelta(seconds=1)
     if duration_to_advance_past_schedule.total_seconds() > 0:
         mock_clock.advance(duration_to_advance_past_schedule)
-    test_new_task_event.set() # Notify worker
-    await asyncio.sleep(0.1) # Allow worker to process
+    test_new_task_event.set()  # Notify worker
+    await asyncio.sleep(0.1)  # Allow worker to process
 
     # --- Part 4: Verify behavior ---
     logger.info(f"--- Part 4: Verifying behavior for {scenario_name} test ---")
