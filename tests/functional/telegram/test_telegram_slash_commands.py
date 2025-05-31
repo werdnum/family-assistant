@@ -152,25 +152,21 @@ async def test_slash_command_routes_to_specific_profile(
 
     # 2. Manually populate the registry and slash command map on the TelegramService instance
     # This simulates how TelegramService would be initialized with multiple profiles from app_config
-    fix.mock_telegram_service.processing_services_registry[
-        focused_profile_id
-    ] = (  # Corrected attribute
+    fix.handler.telegram_service.processing_services_registry[focused_profile_id] = (
         focused_processing_service
     )
-    fix.mock_telegram_service.slash_command_to_profile_id_map[
-        slash_command
-    ] = (  # Corrected attribute
+    fix.handler.telegram_service.slash_command_to_profile_id_map[slash_command] = (
         focused_profile_id
     )
     logger.info(
         f"Manually configured profile '{focused_profile_id}' for command '{slash_command}' in test."
     )
     logger.info(
-        f"Registry: {fix.mock_telegram_service.processing_services_registry}"
-    )  # Corrected attribute
+        f"Registry: {fix.handler.telegram_service.processing_services_registry}"
+    )
     logger.info(
-        f"Slash map: {fix.mock_telegram_service.slash_command_to_profile_id_map}"
-    )  # Corrected attribute
+        f"Slash map: {fix.handler.telegram_service.slash_command_to_profile_id_map}"
+    )
 
     # 3. Define LLM rules for the mock LLM client
     def focused_profile_matcher(kwargs: MatcherArgs) -> bool:
@@ -209,7 +205,7 @@ async def test_slash_command_routes_to_specific_profile(
     # For handle_generic_slash_command, context.args needs to be populated
     # The default processing_service in bot_data is for the batcher, not directly used by slash command handler here.
     context = create_mock_context_with_args(
-        fix.mock_telegram_service.application,
+        fix.mock_application,  # Use the mock_application from the fixture
         args=command_args,
         chat_id=user_chat_id,
         user_id=user_id,
