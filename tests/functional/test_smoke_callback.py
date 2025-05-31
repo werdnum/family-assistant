@@ -80,12 +80,16 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Callback Test ({test_run_id}) ---")
 
+    # --- Setup Mock Clock ---
+    mock_clock = MockClock()
+    initial_time = mock_clock.now() # Use clock's initial time
+
     # --- Calculate future callback time ---
     user_message_id_schedule = 401  # Added user message ID for the scheduling request
-    now_utc = datetime.now(timezone.utc)
-    callback_dt = now_utc + timedelta(seconds=CALLBACK_DELAY_SECONDS)
+    # now_utc = datetime.now(timezone.utc) # Replaced with mock_clock
+    callback_dt = initial_time + timedelta(seconds=CALLBACK_DELAY_SECONDS)
     callback_time_iso = callback_dt.isoformat()
-    logger.info(f"Scheduling callback for: {callback_time_iso}")
+    logger.info(f"Scheduling callback for: {callback_time_iso} (current mock time: {initial_time.isoformat()})")
 
     # --- Define Rules for Mock LLM ---
     schedule_tool_call_id = f"call_schedule_{test_run_id}"
@@ -227,6 +231,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         embedding_generator=mock_embedding_generator,
+        clock=mock_clock,  # Inject mock_clock
     )
     # Register the necessary handler for this test
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
@@ -235,6 +240,9 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         task_worker_instance.run(test_new_task_event),  # Pass the test event
         name=f"TaskWorker-{test_run_id}",
     )
+    # Allow worker to start up and potentially process initial tasks if any (though none expected here)
+    await asyncio.sleep(0.01)
+
 
     # --- Part 1: Schedule the callback ---
     logger.info("--- Part 1: Scheduling Callback ---")
@@ -269,16 +277,16 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         f"Schedule Request - Mock LLM Response: {schedule_final_text_reply if schedule_final_text_reply else 'No assistant message found'}"
     )
 
-    # --- Part 2: Run Worker and Wait for Callback ---
-    logger.info("--- Part 2: Waiting for task completion ---")
-
-    wait_time = CALLBACK_DELAY_SECONDS + WAIT_BUFFER_SECONDS
-    await wait_for_tasks_to_complete(engine=test_db_engine, timeout_seconds=wait_time)
+    # --- Part 2: Advance time and let worker process the callback ---
+    logger.info(f"--- Part 2: Advancing clock by {CALLBACK_DELAY_SECONDS + 1} seconds and letting worker run ---")
+    mock_clock.advance(timedelta(seconds=CALLBACK_DELAY_SECONDS + 1)) # Advance past callback time
+    test_new_task_event.set() # Notify worker to check for tasks
+    await asyncio.sleep(0.1) # Allow worker to process the task
 
     # --- Part 3: Verify Callback Execution ---
     logger.info("--- Part 3: Verifying Callback Execution ---")
 
-    # Assertion 4 (Renumbered to 2): Check if the mock_chat_interface_for_worker's send_message was called
+    # Assertion: Check if the mock_chat_interface_for_worker's send_message was called
     logger.info("Checking if mock_chat_interface_for_worker.send_message was called...")
     mock_chat_interface_for_worker.send_message.assert_awaited_once()
     call_args, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
@@ -328,17 +336,19 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     user_message_id_schedule = 501
     user_message_id_modify = 502
-    now_utc = datetime.now(timezone.utc)
+
+    mock_clock = MockClock()
+    initial_time = mock_clock.now()
 
     initial_callback_delay_seconds = 5
-    initial_callback_dt = now_utc + timedelta(seconds=initial_callback_delay_seconds)
+    initial_callback_dt = initial_time + timedelta(seconds=initial_callback_delay_seconds)
     initial_callback_time_iso = initial_callback_dt.isoformat()
     initial_context = "Initial context for modification test"
 
     modified_callback_delay_seconds = (
-        initial_callback_delay_seconds + 10
-    )  # Ensure it's later
-    modified_callback_dt = now_utc + timedelta(seconds=modified_callback_delay_seconds)
+        initial_callback_delay_seconds + 10 # Ensure it's later than initial, relative to initial_time
+    )
+    modified_callback_dt = initial_time + timedelta(seconds=modified_callback_delay_seconds)
     modified_callback_time_iso = modified_callback_dt.isoformat()
     modified_context = "This is the MODIFIED context"
 
@@ -479,16 +489,19 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
+        clock=mock_clock, # Inject mock_clock
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
         task_worker_instance.run(test_new_task_event),
         name=f"TaskWorker-Modify-{test_run_id}",
     )
+    await asyncio.sleep(0.01) # Allow worker to start
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for modification test ---")
     async with DatabaseContext(engine=test_db_engine) as db_context:
+        # mock_clock.now() is used by schedule_future_callback_tool via exec_context
         _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
@@ -589,12 +602,17 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Part 3: Wait for MODIFIED callback execution ---
     logger.info("--- Part 3: Waiting for MODIFIED task completion ---")
-    wait_time = modified_callback_delay_seconds + WAIT_BUFFER_SECONDS
-    await wait_for_tasks_to_complete(
-        engine=test_db_engine,
-        timeout_seconds=wait_time,
-        # target_task_id parameter removed
-    )
+    # Advance clock to just after the modified callback time
+    # The modified_callback_dt is absolute, so calculate duration from current mock time
+    duration_to_advance = (modified_callback_dt - mock_clock.now()) + timedelta(seconds=1)
+    if duration_to_advance.total_seconds() > 0:
+        logger.info(f"Advancing clock by {duration_to_advance.total_seconds()}s to trigger modified callback.")
+        mock_clock.advance(duration_to_advance)
+    else: # If modify tool call took "longer" than the difference, clock might already be past
+        logger.info(f"Clock already at or past modified callback time. Current: {mock_clock.now()}, Target: {modified_callback_dt}")
+
+    test_new_task_event.set() # Notify worker
+    await asyncio.sleep(0.1) # Allow worker to process
 
     # --- Part 4: Verify MODIFIED Callback Execution ---
     logger.info("--- Part 4: Verifying MODIFIED Callback Execution ---")
@@ -653,12 +671,14 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     user_message_id_schedule = 601
     user_message_id_cancel = 602
-    now_utc = datetime.now(timezone.utc)
+
+    mock_clock = MockClock()
+    initial_time = mock_clock.now()
 
     initial_callback_delay_seconds = (
         5  # Short delay, it should be cancelled before this
     )
-    initial_callback_dt = now_utc + timedelta(seconds=initial_callback_delay_seconds)
+    initial_callback_dt = initial_time + timedelta(seconds=initial_callback_delay_seconds)
     initial_callback_time_iso = initial_callback_dt.isoformat()
     initial_context_for_cancel = "Initial context for cancellation test"
     scheduled_task_id_placeholder_cancel = "task_id_to_be_cancelled"
@@ -792,16 +812,19 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
+        clock=mock_clock, # Inject mock_clock
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
         task_worker_instance.run(test_new_task_event),
         name=f"TaskWorker-Cancel-{test_run_id}",
     )
+    await asyncio.sleep(0.01) # Allow worker to start
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for cancellation test ---")
     async with DatabaseContext(engine=test_db_engine) as db_context:
+        # mock_clock.now() is used by schedule_future_callback_tool via exec_context
         _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
@@ -898,11 +921,12 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Part 3: Wait a bit to ensure worker does NOT process it ---
     logger.info("--- Part 3: Waiting to ensure cancelled task is NOT processed ---")
-    # Wait for a duration longer than the original callback delay
-    # If it was processed, the mock_chat_interface_for_worker.send_message would be called.
-    await asyncio.sleep(
-        initial_callback_delay_seconds + 2
-    )  # Wait a bit longer than original schedule
+    # Advance clock past the original schedule time
+    duration_to_advance_past_schedule = (initial_callback_dt - mock_clock.now()) + timedelta(seconds=2)
+    if duration_to_advance_past_schedule.total_seconds() > 0:
+        mock_clock.advance(duration_to_advance_past_schedule)
+    test_new_task_event.set() # Notify worker
+    await asyncio.sleep(0.1) # Allow worker to process (it should find nothing or a failed task)
 
     # --- Part 4: Verify Callback Was NOT Executed ---
     logger.info("--- Part 4: Verifying Cancelled Callback Was NOT Executed ---")
@@ -963,8 +987,9 @@ async def test_callback_skip_behavior_on_user_response(
         f"\n--- Running {scenario_name} Test ({test_run_id}, skip_flag={skip_if_user_responded_flag}) ---"
     )
 
-    now_utc = datetime.now(timezone.utc)
-    callback_dt = now_utc + timedelta(seconds=CALLBACK_DELAY_SECONDS)
+    mock_clock = MockClock()
+    initial_time = mock_clock.now()
+    callback_dt = initial_time + timedelta(seconds=CALLBACK_DELAY_SECONDS)
     callback_time_iso = callback_dt.isoformat()
     user_message_id_schedule = 701
     user_message_id_intervening = 702
@@ -1076,18 +1101,21 @@ async def test_callback_skip_behavior_on_user_response(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
+        clock=mock_clock, # Inject mock_clock
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
         task_worker_instance.run(test_new_task_event),
         name=f"TaskWorker-{scenario_name}-{test_run_id}",
     )
+    await asyncio.sleep(0.01) # Allow worker to start
 
     # --- Part 1: Schedule the callback ---
     logger.info(
         f"--- Part 1: Scheduling callback for {scenario_name} test (skip_flag={skip_if_user_responded_flag}) ---"
     )
     async with DatabaseContext(engine=test_db_engine) as db_context:
+        # mock_clock.now() is used by schedule_future_callback_tool via exec_context
         _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
@@ -1114,17 +1142,20 @@ async def test_callback_skip_behavior_on_user_response(
     )
     # Add a message directly to history *after* scheduling_timestamp but *before* callback_dt
     # The scheduling_timestamp is created inside schedule_future_callback_tool.
-    # For the test, we know it's roughly `now_utc` when the tool call happens.
-    # The callback is scheduled for `callback_dt`.
+    # For the test, we know it's roughly `initial_time` (mock_clock.now() at scheduling)
+    # when the tool call happens. The callback is scheduled for `callback_dt`.
     # We need to ensure this intervening message's timestamp is > scheduling_timestamp and < callback_dt.
     # Let's place it halfway.
-    intervening_message_timestamp = now_utc + timedelta(
+    # The scheduling_timestamp is set by schedule_future_callback_tool using exec_context.clock.now()
+    # So, it will be initial_time.
+    intervening_message_timestamp = initial_time + timedelta(
         seconds=CALLBACK_DELAY_SECONDS / 2
     )
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        # Small delay to ensure timestamps differ, pg_sleep is not available in SQLite
-        await asyncio.sleep(0.01)
+        # No need for asyncio.sleep(0.01) here as mock_clock controls time precisely.
+        # The important part is that intervening_message_timestamp is correctly set relative to
+        # the scheduling_timestamp that will be recorded by the tool.
         await storage.add_message_to_history(  # Call storage.add_message_to_history directly
             db_context=db_context,
             interface_type="test",
@@ -1146,8 +1177,12 @@ async def test_callback_skip_behavior_on_user_response(
 
     # --- Part 3: Wait for potential callback execution ---
     logger.info(f"--- Part 3: Waiting for task completion for {scenario_name} test ---")
-    wait_time = CALLBACK_DELAY_SECONDS + WAIT_BUFFER_SECONDS
-    await wait_for_tasks_to_complete(engine=test_db_engine, timeout_seconds=wait_time)
+    # Advance clock past callback time
+    duration_to_advance_past_schedule = (callback_dt - mock_clock.now()) + timedelta(seconds=1)
+    if duration_to_advance_past_schedule.total_seconds() > 0:
+        mock_clock.advance(duration_to_advance_past_schedule)
+    test_new_task_event.set() # Notify worker
+    await asyncio.sleep(0.1) # Allow worker to process
 
     # --- Part 4: Verify behavior ---
     logger.info(f"--- Part 4: Verifying behavior for {scenario_name} test ---")

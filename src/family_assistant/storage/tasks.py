@@ -122,9 +122,10 @@ async def dequeue_task(
     db_context: DatabaseContext,
     worker_id: str,
     task_types: list[str],  # Added context
+    current_time: datetime,  # Added current_time parameter
 ) -> dict[str, Any] | None:
     """Atomically dequeues the next available task."""
-    now = datetime.now(timezone.utc)
+    # now = datetime.now(timezone.utc) # Replaced with current_time
 
     assert db_context.conn is not None  # Ensure conn is available in this context
 
@@ -140,7 +141,7 @@ async def dequeue_task(
             .where(
                 or_(
                     tasks_table.c.scheduled_at.is_(None),
-                    tasks_table.c.scheduled_at <= now,
+                    tasks_table.c.scheduled_at <= current_time,  # Use passed current_time
                 )
             )
             .where(
@@ -282,7 +283,9 @@ async def manually_retry_task(
     Manually retries a task that has failed or exhausted its retries.
     Increments max_retries, sets status to pending, and schedules for immediate run.
     """
-    now = datetime.now(timezone.utc)
+    # For manual retry, using actual current time is acceptable as it's a user-triggered action
+    # not part of the automated time-sensitive worker loop.
+    current_real_time = datetime.now(timezone.utc)
     try:
         # Fetch the task by its internal ID
         select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)
@@ -311,7 +314,7 @@ async def manually_retry_task(
         update_values = {
             "status": "pending",
             "max_retries": task_row["max_retries"] + 1,
-            "scheduled_at": now,
+            "scheduled_at": current_real_time,  # Use current real time for immediate retry
             "error": None,  # Clear previous error
             "locked_by": None,
             "locked_at": None,

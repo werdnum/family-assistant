@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.utils.clock import Clock
 
 
 @dataclass
@@ -36,6 +37,7 @@ class ToolExecutionContext:
         processing_service: Optional service for core processing logic.
         embedding_generator: Optional generator for creating text embeddings.
         new_task_event: Optional event to notify the task worker of new tasks.
+        clock: Optional clock instance for managing time.
     """
 
     interface_type: str  # e.g., 'telegram', 'web', 'email'
@@ -67,6 +69,7 @@ class ToolExecutionContext:
         None  # Add embedding_generator
     )
     new_task_event: asyncio.Event | None = None  # Add new_task_event
+    clock: Optional["Clock"] = None  # Add clock
 
 
 class ToolNotFoundError(LookupError):
