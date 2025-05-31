@@ -689,7 +689,7 @@ async def test_delete_event(
 ) -> None:
     """
     Test:
-    1. Create an event directly in Radicale.
+    1. Create an event using the LLM `add_calendar_event` tool.
     2. LLM decides to delete this event.
     3. ProcessingService executes delete_calendar_event_tool.
     4. Verify event is deleted from Radicale.
