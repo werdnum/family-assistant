@@ -140,7 +140,8 @@ async def dequeue_task(
             .where(
                 or_(
                     tasks_table.c.scheduled_at.is_(None),
-                    tasks_table.c.scheduled_at <= current_time,  # Use passed current_time
+                    tasks_table.c.scheduled_at
+                    <= current_time,  # Use passed current_time
                 )
             )
             .where(
@@ -164,7 +165,9 @@ async def dequeue_task(
                 .where(
                     tasks_table.c.status == "pending"
                 )  # Ensure status hasn't changed
-                .values(status="processing", locked_by=worker_id, locked_at=current_time)  # Use passed current_time
+                .values(
+                    status="processing", locked_by=worker_id, locked_at=current_time
+                )  # Use passed current_time
             )
             # Execute update directly on the connection
             update_result = await db_context.conn.execute(update_stmt)
