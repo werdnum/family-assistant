@@ -239,6 +239,10 @@ async def handle_llm_callback(
                 logger.error(
                     f"Failed to send LLM callback response to {interface_type}:{conversation_id}"
                 )
+                # Raise an exception to mark the task as failed
+                raise RuntimeError(
+                    f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
+                )
         else:
             # Case: No final_llm_content_to_send.
             interface_type = exec_context.interface_type
