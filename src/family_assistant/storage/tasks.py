@@ -126,6 +126,9 @@ async def dequeue_task(
 ) -> dict[str, Any] | None:
     """Atomically dequeues the next available task."""
 
+    logger.debug(
+        f"Attempting to dequeue task. Worker: {worker_id}, Types: {task_types}, Current Time: {current_time.isoformat()}"
+    )
     assert db_context.conn is not None  # Ensure conn is available in this context
 
     # This operation needs to be atomic (SELECT FOR UPDATE + UPDATE)
@@ -154,11 +157,17 @@ async def dequeue_task(
             .limit(1)
             .with_for_update(skip_locked=True)  # Lock the selected row
         )
+        logger.debug(
+            f"Dequeue task SQL query: {stmt.compile(compile_kwargs={'literal_binds': True})}"
+        )
         # Execute directly on the connection within the existing transaction
         result = await db_context.conn.execute(stmt)
         task_row = result.fetchone()  # Use fetchone directly on the result proxy
 
         if task_row:
+            logger.debug(
+                f"Task found by {worker_id}: {task_row.task_id} (Internal ID: {task_row.id})"
+            )
             update_stmt = (
                 update(tasks_table)
                 .where(tasks_table.c.id == task_row.id)
@@ -179,11 +188,14 @@ async def dequeue_task(
             else:
                 # This means the row was locked or status changed between select and update
                 logger.warning(
-                    f"Worker {worker_id} failed to lock task {task_row.task_id} after selection (rowcount={update_result.rowcount}). Rolling back."
+                    f"Worker {worker_id} failed to lock task {task_row.task_id} after selection (rowcount={update_result.rowcount}). Task might have been picked up by another worker."
                 )
                 # No need to call db_context.rollback() here, context manager handles it on exit if error occurred
                 return None
         else:
+            logger.debug(
+                f"No suitable task found for worker {worker_id} with types {task_types} at {current_time.isoformat()}."
+            )
             # No need to call db_context.rollback() here, context manager handles it on exit
             return None  # No suitable task found
 
