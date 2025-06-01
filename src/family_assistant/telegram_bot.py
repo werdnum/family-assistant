@@ -1867,8 +1867,20 @@ class TelegramChatInterface(ChatInterface):
         # The function `format_llm_response_for_telegram` (currently in task_worker.py)
         # and its `telegramify_markdown` import should ideally be moved here or be a
         # helper used by this method if complex pre-formatting is needed before this point.
-        # For now, this implementation assumes `text` is either pre-formatted
-        # according to `parse_mode` or is plain text.
+
+        text_to_send = text
+        final_parse_mode = tg_parse_mode
+
+        if final_parse_mode == ParseMode.MARKDOWN_V2:
+            try:
+                text_to_send = telegramify_markdown.markdownify(text)
+            except Exception as md_err:
+                logger.error(
+                    f"Failed to convert text to MarkdownV2 for chat {conversation_id}: {md_err}. Sending as plain text.",
+                    exc_info=True,
+                )
+                text_to_send = text  # Send original text
+                final_parse_mode = None  # Send as plain text
 
         try:
             # Telegram chat_id is an integer, conversation_id is passed as string.
@@ -1879,8 +1891,8 @@ class TelegramChatInterface(ChatInterface):
 
             sent_msg = await self.application.bot.send_message(
                 chat_id=chat_id_int,
-                text=text,
-                parse_mode=tg_parse_mode,
+                text=text_to_send,
+                parse_mode=final_parse_mode,
                 reply_to_message_id=reply_to_msg_id_int,
             )
             return str(sent_msg.message_id)
