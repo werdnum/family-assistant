@@ -15,6 +15,7 @@ Welcome to your personal family assistant! This guide explains how to interact w
 *   **Telegram (Primary):**
     *   Find the bot contact in your Telegram app (the person who set it up will tell you its name).
     *   Start a chat and simply send messages with your questions or requests.
+    *   You can also use **slash commands** to activate specialized modes for certain tasks. For example, typing `/browse` before your query tells the assistant to use its web browsing capabilities, or `/research` for in-depth research questions.
 
 *   **Web Interface (Secondary):**
     *   There's also a web page you can use for certain tasks:
@@ -41,10 +42,12 @@ You can ask the assistant a wide variety of things:
         *   **Modify:** "Change the 'Team Lunch' to 12:30 PM." (Requires finding the event first. You will be asked to confirm the change.)
         *   **Delete:** "Delete the 'Dentist Appointment' on June 5th." (Requires finding the event first. You will be asked to confirm the deletion.)
     *   **About the current time/date:** "What time is it?", "What day is it today?" (Uses its built-in time service.)
-    *   **About web content:** "Can you summarize this article: [Full URL]?", "What's the main point of this webpage: [Full URL]?" (Provide the complete web address starting with `http://` or `https://`. Uses its web fetching service.)
+    *   **About the weather:** "What's the weather like today?", "Will it rain tomorrow in London?"
+    *   **About locations or directions:** "Find coffee shops near me.", "How do I get to the Eiffel Tower?" (If enabled, uses Google Maps.)
+    *   **About web content:** "Can you summarize this article: `[Full URL]`?", "What's the main point of this webpage: `[Full URL]`?" (You can preface your request with `/browse` for these types of questions. Provide the complete web address starting with `http://` or `https://`.)
     *   **Search Your Documents:** "Search my notes for 'plumber number'.", "Find emails about the flight booking.", "Look for PDF documents related to 'insurance policy'." (The assistant can search through notes, indexed emails, PDFs, and other documents it has access to. Search results will be grouped by document, showing relevant snippets.)
     *   **Retrieve Full Documents:** After a search, if the assistant finds a document (e.g., "Document ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document 123." You can also click on search results in the Web UI to see a detailed view of the document and its content.
-    *   **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won the game last night?", "Find me a recipe for banana bread." (Uses the Brave Search service to find information online.)
+    *   **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won the game last night?", "Find me a recipe for banana bread." (You can use the `/browse` command for general web searches. Uses the Brave Search service to find information online.)
 
 *   **Remember Things (Notes):**
     *   Tell it to save information permanently:
@@ -58,7 +61,7 @@ You can ask the assistant a wide variety of things:
     *   **From Files:** You can upload files (like PDFs, text files, etc.) directly through the Web Interface on the "Upload Document" page. The assistant will then process and index these files so you can search their content later.
 
 *   **Schedule Follow-ups & Recurring Actions:**
-    *   If you're discussing something and want the assistant to bring it up again later, you can ask: "Remind me about this tomorrow morning.", "Check back with me on this topic in 3 hours." The assistant will send a message back to the chat at the specified time to continue the conversation.
+    *   If you're discussing something and want the assistant to bring it up again later, you can ask: "Remind me about this tomorrow morning.", "Check back with me on this topic in 3 hours." The assistant will generally send a message back to the chat at the specified time to continue the conversation, even if you've sent other messages in the meantime.
     *   Beyond simple follow-ups, the assistant can schedule tasks to happen regularly. For example, you could ask it to "Send a reminder every Sunday evening to take out the bins."
     *   If a scheduled task fails, you can often retry it manually from the "Tasks" page in the Web Interface.
 
@@ -110,13 +113,16 @@ While most interaction happens via Telegram, the web interface is useful for spe
 
 *   **Be Clear:** The more specific your request, the better the assistant can understand and help.
 *   **Use "Remember" for Facts:** For specific pieces of information you want recalled later (like numbers, addresses, instructions), use the "Remember:" or "Add Note:" command.
-*   **Reply Directly:** If you're responding to something the assistant just said, use Telegram's "Reply" feature so it knows exactly what message you're referring to.
+*   **Reply Directly:** If you're responding to something the assistant just said, use Telegram's "Reply" feature so it knows exactly what message you're referring to. This is especially helpful if the assistant was using a special mode (activated by a slash command), as it helps keep the conversation in that mode.
 *   **Provide Full URLs:** When asking about web content, always include the full address (e.g., `https://www.example.com/article`).
 *   **Use Correct Smart Home Names:** For controlling Home Assistant devices, use the exact names configured in your Home Assistant setup (e.g., "Living Room Lamp", "Downstairs Thermostat"). If you're unsure, ask the person who manages your Home Assistant setup.
+*   **Use Slash Commands:** For specialized tasks like web browsing (e.g., `/browse What's the weather like?`) or in-depth research (e.g., `/research Tell me about the history of Python`), using the appropriate slash command can provide more focused and effective responses.
 
 ## 8. Troubleshooting & Help
 
 *   **Calendar Modifications:** If you ask to modify or delete an event, the assistant might first ask you to clarify which event using a search ("Find the dentist appointment") and will then ask you to confirm the action via buttons in the chat.
+*   **Unknown Commands:** If you type a command the assistant doesn't recognize (e.g., `/someunknowncommand`), it will now reply with a "command not recognized" message.
+*   **Switching Modes or Asking for Confirmation:** To best handle your request, the assistant might sometimes switch to a different specialized mode or ask for your permission to use one (e.g., "Is it okay to use the web browser for this?"). This is normal and helps it use the most appropriate tools.
 *   **If it doesn't understand:** Try rephrasing your request. Sometimes slightly different wording makes a big difference.
 *   **If it makes a mistake or gives wrong information:** You can often correct it by giving it the right information ("Actually, the appointment is at 3 PM") or by updating a relevant note via the Web UI or a command ("Update the note 'Plumber Number' with content '555-9876'").
 *   **If you need more help:** Contact the family member who set up and manages the assistant for your family. They can help with configuration issues or more complex problems.
