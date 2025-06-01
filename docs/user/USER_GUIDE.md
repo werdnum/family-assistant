@@ -15,7 +15,7 @@ Welcome to your personal family assistant! This guide explains how to interact w
 *   **Telegram (Primary):**
     *   Find the bot contact in your Telegram app (the person who set it up will tell you its name).
     *   Start a chat and simply send messages with your questions or requests.
-    *   You can also use **slash commands** to activate specialized modes for certain tasks. For example, typing `/browse` before your query tells the assistant to use its web browsing capabilities, or `/research` for in-depth research questions.
+    *   You can also use **slash commands** to activate specialized modes for certain tasks. For example, typing `/browse` before your query activates a powerful web browsing mode for complex web tasks or research, while `/research` focuses the assistant on in-depth research questions.
 
 *   **Web Interface (Secondary):**
     *   There's also a web page you can use for certain tasks:
@@ -44,10 +44,10 @@ You can ask the assistant a wide variety of things:
     *   **About the current time/date:** "What time is it?", "What day is it today?" (Uses its built-in time service.)
     *   **About the weather:** "What's the weather like today?", "Will it rain tomorrow in London?"
     *   **About locations or directions:** "Find coffee shops near me.", "How do I get to the Eiffel Tower?" (If enabled, uses Google Maps.)
-    *   **About web content:** "Can you summarize this article: `[Full URL]`?", "What's the main point of this webpage: `[Full URL]`?" (You can preface your request with `/browse` for these types of questions. Provide the complete web address starting with `http://` or `https://`.)
+    *   **About web content:** "Can you summarize this article: `[Full URL]`?", "What's the main point of this webpage: `[Full URL]`?" (For simple page summaries, the assistant can often fetch the content directly. If it has trouble or if the page is very complex (e.g., requires logins or interactions), you can try prefacing your request with `/browse`. Always provide the complete web address starting with `http://` or `https://`.)
     *   **Search Your Documents:** "Search my notes for 'plumber number'.", "Find emails about the flight booking.", "Look for PDF documents related to 'insurance policy'." (The assistant can search through notes, indexed emails, PDFs, and other documents it has access to. Search results will be grouped by document, showing relevant snippets.)
     *   **Retrieve Full Documents:** After a search, if the assistant finds a document (e.g., "Document ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document 123." You can also click on search results in the Web UI to see a detailed view of the document and its content.
-    *   **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won the game last night?", "Find me a recipe for banana bread." (You can use the `/browse` command for general web searches. Uses the Brave Search service to find information online.)
+    *   **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won the game last night?", "Find me a recipe for banana bread." (The assistant can search the web for information using its default search capabilities. For more complex web research that might involve navigating multiple pages or interacting with sites, you can use the `/browse` command followed by your research query, e.g., `/browse find recent reviews for the XZ-100 camera and compare its features to the YZ-200`. Uses the Brave Search service for some searches.)
 
 *   **Remember Things (Notes):**
     *   Tell it to save information permanently:
@@ -116,7 +116,7 @@ While most interaction happens via Telegram, the web interface is useful for spe
 *   **Reply Directly:** If you're responding to something the assistant just said, use Telegram's "Reply" feature so it knows exactly what message you're referring to. This is especially helpful if the assistant was using a special mode (activated by a slash command), as it helps keep the conversation in that mode.
 *   **Provide Full URLs:** When asking about web content, always include the full address (e.g., `https://www.example.com/article`).
 *   **Use Correct Smart Home Names:** For controlling Home Assistant devices, use the exact names configured in your Home Assistant setup (e.g., "Living Room Lamp", "Downstairs Thermostat"). If you're unsure, ask the person who manages your Home Assistant setup.
-*   **Use Slash Commands:** For specialized tasks like web browsing (e.g., `/browse What's the weather like?`) or in-depth research (e.g., `/research Tell me about the history of Python`), using the appropriate slash command can provide more focused and effective responses.
+*   **Use Slash Commands:** For specialized tasks like complex web browsing (e.g., `/browse find travel options to Paris for next June`) or in-depth research (e.g., `/research Tell me about the history of Python`), using the appropriate slash command can provide more focused and effective responses.
 
 ## 8. Troubleshooting & Help
 
