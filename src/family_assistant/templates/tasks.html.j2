@@ -60,6 +60,7 @@
         let content = { json: jsonData };
 
         try {
+            target.textContent = ''; // Clear the target before initializing the editor
             new createJSONEditor({
                 target: target,
                 props: {
@@ -71,7 +72,6 @@
                     mode: 'tree'
                 }
             });
-            target.textContent = '';
         } catch (error) {
              console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
              target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`;
