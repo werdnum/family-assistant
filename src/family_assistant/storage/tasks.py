@@ -69,8 +69,16 @@ async def enqueue_task(
     notify_event: asyncio.Event | None = None,
 ) -> None:  # noqa: PLR0913
     """Adds a task to the queue, optional notification."""
-    if scheduled_at and scheduled_at.tzinfo is None:
-        raise ValueError("scheduled_at must be timezone-aware")
+    processed_scheduled_at = scheduled_at
+    if processed_scheduled_at:
+        if processed_scheduled_at.tzinfo is None:
+            raise ValueError("scheduled_at must be timezone-aware")
+        # Convert to UTC if it's aware and not already UTC
+        if processed_scheduled_at.tzinfo != timezone.utc:
+            logger.debug(
+                f"Converting scheduled_at for task {task_id} from {processed_scheduled_at.tzinfo} to UTC."
+            )
+            processed_scheduled_at = processed_scheduled_at.astimezone(timezone.utc)
 
     max_task_retries = max_retries_override if max_retries_override is not None else 3
 
@@ -78,7 +86,7 @@ async def enqueue_task(
         "task_id": task_id,
         "task_type": task_type,
         "payload": payload,
-        "scheduled_at": scheduled_at,
+        "scheduled_at": processed_scheduled_at,  # Use the processed version
         "status": "pending",
         "retry_count": 0,
         "max_retries": max_task_retries,
