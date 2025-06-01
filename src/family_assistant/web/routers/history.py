@@ -96,6 +96,8 @@ async def view_message_history(
                 if turn_id not in grouped_by_turn_id:
                     grouped_by_turn_id[turn_id] = []
                 grouped_by_turn_id[turn_id].append(msg)
+            
+            # Sort turn_ids by the timestamp of their first message, in reverse order (newest first)
             sorted_turn_ids = sorted(
                 grouped_by_turn_id.keys(),
                 key=lambda tid: (
@@ -109,8 +111,9 @@ async def view_message_history(
                         )(grouped_by_turn_id[tid][0]["timestamp"])
                     )
                     if tid is not None and grouped_by_turn_id[tid]
-                    else datetime.min.replace(tzinfo=config_tz)
+                    else datetime.min.replace(tzinfo=config_tz) # Treat None/empty turns as oldest
                 ),
+                reverse=True, # Newest turns first
             )
 
             for turn_id in sorted_turn_ids:
@@ -160,21 +163,39 @@ async def view_message_history(
                 })
             turns_by_chat[conversation_key] = conversation_turns
 
+        # Helper function to get the latest timestamp of a conversation
+        def get_conversation_latest_timestamp(turns_list: list[dict]) -> datetime:
+            latest_ts = datetime.min.replace(tzinfo=config_tz)
+            if not turns_list: # Should not happen if conversation_key exists
+                return latest_ts
+            # turns_list is already sorted with the newest turn at index 0
+            most_recent_turn = turns_list[0]
+            most_recent_turn_messages = most_recent_turn.get("all_messages_in_group")
+            if most_recent_turn_messages:
+                # Messages in all_messages_in_group are sorted oldest to newest by DB query,
+                # but then displayed within the turn trace.
+                # The timestamp of the *last* message in the *most recent turn's group*
+                # (which is the first turn in turns_list due to reverse sort)
+                # should give a good proxy for the conversation's latest activity.
+                # If all_messages_in_group is sorted chronologically, its last item is newest.
+                ts = most_recent_turn_messages[-1]["timestamp"]
+                ts_aware = ts.replace(tzinfo=config_tz) if ts.tzinfo is None else ts.astimezone(config_tz)
+                if ts_aware > latest_ts:
+                    latest_ts = ts_aware
+            return latest_ts
+
+        # Sort conversations by their latest timestamp, newest first.
+        all_items_list = list(turns_by_chat.items())
+        all_items_list.sort(key=lambda item: get_conversation_latest_timestamp(item[1]), reverse=True)
+
         # --- Pagination Logic ---
-        # Convert dict items to a list for slicing. Note: Dict order is not guaranteed
-        # before Python 3.7, but generally insertion order from 3.7+.
-        # If a specific order of *conversations* is needed (e.g., by most recent message),
-        # more complex sorting would be required here *before* pagination.
-        # Paginate based on the processed turns_by_chat
-        all_items = list(turns_by_chat.items())
-        total_conversations = len(all_items)
+        total_conversations = len(all_items_list)
         total_pages = (total_conversations + per_page - 1) // per_page
 
-        # Ensure page number is valid
         current_page = min(page, total_pages) if total_pages > 0 else 1
         start_index = (current_page - 1) * per_page
         end_index = start_index + per_page
-        paged_items = all_items[start_index:end_index]
+        paged_items = all_items_list[start_index:end_index]
 
         # Pagination metadata for the template
         pagination_info = {
