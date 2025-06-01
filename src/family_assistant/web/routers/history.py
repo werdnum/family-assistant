@@ -96,7 +96,7 @@ async def view_message_history(
                 if turn_id not in grouped_by_turn_id:
                     grouped_by_turn_id[turn_id] = []
                 grouped_by_turn_id[turn_id].append(msg)
-            
+
             # Sort turn_ids by the timestamp of their first message, in reverse order (newest first)
             sorted_turn_ids = sorted(
                 grouped_by_turn_id.keys(),
@@ -111,9 +111,11 @@ async def view_message_history(
                         )(grouped_by_turn_id[tid][0]["timestamp"])
                     )
                     if tid is not None and grouped_by_turn_id[tid]
-                    else datetime.min.replace(tzinfo=config_tz) # Treat None/empty turns as oldest
+                    else datetime.min.replace(
+                        tzinfo=config_tz
+                    )  # Treat None/empty turns as oldest
                 ),
-                reverse=True, # Newest turns first
+                reverse=True,  # Newest turns first
             )
 
             for turn_id in sorted_turn_ids:
@@ -166,7 +168,7 @@ async def view_message_history(
         # Helper function to get the latest timestamp of a conversation
         def get_conversation_latest_timestamp(turns_list: list[dict]) -> datetime:
             latest_ts = datetime.min.replace(tzinfo=config_tz)
-            if not turns_list: # Should not happen if conversation_key exists
+            if not turns_list:  # Should not happen if conversation_key exists
                 return latest_ts
             # turns_list is already sorted with the newest turn at index 0
             most_recent_turn = turns_list[0]
@@ -179,14 +181,20 @@ async def view_message_history(
                 # should give a good proxy for the conversation's latest activity.
                 # If all_messages_in_group is sorted chronologically, its last item is newest.
                 ts = most_recent_turn_messages[-1]["timestamp"]
-                ts_aware = ts.replace(tzinfo=config_tz) if ts.tzinfo is None else ts.astimezone(config_tz)
+                ts_aware = (
+                    ts.replace(tzinfo=config_tz)
+                    if ts.tzinfo is None
+                    else ts.astimezone(config_tz)
+                )
                 if ts_aware > latest_ts:
                     latest_ts = ts_aware
             return latest_ts
 
         # Sort conversations by their latest timestamp, newest first.
         all_items_list = list(turns_by_chat.items())
-        all_items_list.sort(key=lambda item: get_conversation_latest_timestamp(item[1]), reverse=True)
+        all_items_list.sort(
+            key=lambda item: get_conversation_latest_timestamp(item[1]), reverse=True
+        )
 
         # --- Pagination Logic ---
         total_conversations = len(all_items_list)
