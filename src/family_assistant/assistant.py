@@ -359,9 +359,7 @@ class Assistant:
             # --- Home Assistant Context Provider ---
             ha_api_url = profile_proc_conf_dict.get("home_assistant_api_url")
             ha_token = profile_proc_conf_dict.get("home_assistant_token")
-            ha_template = profile_proc_conf_dict.get(
-                "home_assistant_context_template"
-            )
+            ha_template = profile_proc_conf_dict.get("home_assistant_context_template")
             ha_verify_ssl = profile_proc_conf_dict.get(
                 "home_assistant_verify_ssl", True
             )
@@ -370,7 +368,10 @@ class Assistant:
                 try:
                     # Local import to ensure homeassistant_api is only required if configured
                     # The main import is already guarded in context_providers.py
-                    if HomeAssistantContextProvider.__module__ == "family_assistant.context_providers": # Check it's our class
+                    if (
+                        HomeAssistantContextProvider.__module__
+                        == "family_assistant.context_providers"
+                    ):  # Check it's our class
                         home_assistant_provider = HomeAssistantContextProvider(
                             api_url=ha_api_url,
                             token=ha_token,
@@ -382,7 +383,7 @@ class Assistant:
                         logger.info(
                             f"HomeAssistantContextProvider added for profile '{profile_id}'."
                         )
-                except ImportError: # This case should ideally be handled by the check in context_providers.py
+                except ImportError:  # This case should ideally be handled by the check in context_providers.py
                     logger.warning(
                         "homeassistant_api library is not installed, but Home Assistant context provider is configured. Skipping."
                     )

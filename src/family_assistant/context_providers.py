@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 try:
     import homeassistant_api
 except ImportError:
-    homeassistant_api = None # type: ignore[assignment]
+    homeassistant_api = None  # type: ignore[assignment]
     logger.info(
         "homeassistant_api library not found. HomeAssistantContextProvider will not be available."
     )
@@ -185,7 +185,7 @@ class HomeAssistantContextProvider(ContextProvider):
             logger.warning(f"[{self.name}] No context template configured.")
             return []
 
-        if homeassistant_api is None: # Should have been caught in __init__, but defensive
+        if homeassistant_api is None:  # Should have been caught in __init__, but defensive
             logger.error(f"[{self.name}] homeassistant_api library not available.")
             return []
 
@@ -215,7 +215,7 @@ class HomeAssistantContextProvider(ContextProvider):
                 if empty_message:
                     fragments.append(empty_message)
 
-        except homeassistant_api.errors.ApiError as ha_api_err: # Specific error for HA API issues
+        except homeassistant_api.errors.ApiError as ha_api_err:  # Specific error for HA API issues
             logger.error(f"[{self.name}] Home Assistant API error: {ha_api_err}", exc_info=True)
             error_message = self._prompts.get("home_assistant_api_error", "Error retrieving data from Home Assistant.").strip()
             if error_message:
