@@ -24,15 +24,15 @@ logger = logging.getLogger(__name__)
 # Attempt to import homeassistant_api and its specific exception
 try:
     import homeassistant_api
-    from homeassistant_api.exceptions import HomeassistantAPIError
+    from homeassistant_api.errors import HomeassistantAPIError
 except ImportError:
     homeassistant_api = None  # type: ignore[assignment]
     # Define HomeassistantAPIError as a base Exception if the specific import fails,
     # so the except block doesn't cause a NameError if homeassistant_api was found
-    # but its exceptions module or class was not.
+    # but its errors module or class was not.
     HomeassistantAPIError = Exception  # type: ignore[misc,assignment]
     logger.info(
-        "homeassistant_api library or its HomeassistantAPIError exception not found. "
+        "homeassistant_api library or its HomeassistantAPIError from homeassistant_api.errors not found. "
         "HomeAssistantContextProvider may have limited error handling or not be available."
     )
 
