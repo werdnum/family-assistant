@@ -21,13 +21,19 @@ PromptsType = dict[str, str]
 logger = logging.getLogger(__name__)
 
 
+# Attempt to import homeassistant_api and its specific exception
 try:
     import homeassistant_api
+    from homeassistant_api.exceptions import HomeassistantAPIError
 except ImportError:
     homeassistant_api = None  # type: ignore[assignment]
+    # Define HomeassistantAPIError as a base Exception if the specific import fails,
+    # so the except block doesn't cause a NameError if homeassistant_api was found
+    # but its exceptions module or class was not.
+    HomeassistantAPIError = Exception  # type: ignore[misc,assignment]
     logger.info(
-        "homeassistant_api library not found. "
-        "HomeAssistantContextProvider will not be available."
+        "homeassistant_api library or its HomeassistantAPIError exception not found. "
+        "HomeAssistantContextProvider may have limited error handling or not be available."
     )
 
 
@@ -221,9 +227,7 @@ class HomeAssistantContextProvider(ContextProvider):
                 if empty_message:
                     fragments.append(empty_message)
 
-        except (
-            homeassistant_api.HomeassistantAPIError
-        ) as ha_api_err:  # Specific error for HA API issues
+        except HomeassistantAPIError as ha_api_err:  # Specific error for HA API issues
             logger.error(
                 f"[{self.name}] Home Assistant API error: {ha_api_err}", exc_info=True
             )
