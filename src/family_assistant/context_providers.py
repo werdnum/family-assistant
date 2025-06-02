@@ -225,9 +225,7 @@ class HomeAssistantContextProvider(ContextProvider):
                 if empty_message:
                     fragments.append(empty_message)
 
-        except (
-            homeassistant_api.errors.ApiError
-        ) as ha_api_err:  # Specific error for HA API issues
+        except HomeassistantAPIError as ha_api_err:  # Specific error for HA API issues
             logger.error(
                 f"[{self.name}] Home Assistant API error: {ha_api_err}", exc_info=True
             )
