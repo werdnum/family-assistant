@@ -81,6 +81,7 @@ dependencies = [
     # For detecting file types
     "playwright>=1.40.0",
     # For web scraping and JS rendering
+    "homeassistant-api>=5.0.0", # For Home Assistant integration
 ]
 
 [project.optional-dependencies]
