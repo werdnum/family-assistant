@@ -20,19 +20,46 @@ PromptsType = dict[str, str]
 
 logger = logging.getLogger(__name__)
 
+
+# Default definitions. These will be used if the imports below fail.
+# Typed as Any to allow for dynamic assignment of module/None and Exception/specific exception class.
+homeassistant_api: Any = None
+HomeassistantAPIError: Any = Exception  # type: ignore[misc] # Default to base Exception, retain [misc] if for pyright
+
 try:
-    import homeassistant_api
-    from homeassistant_api.exceptions import HomeassistantAPIError
-except ImportError:
-    homeassistant_api = None  # type: ignore[assignment]
-    # Define HomeassistantAPIError as a base Exception if the specific import fails,
-    # so the except block doesn't cause a NameError.
-    # This path should ideally not be hit if homeassistant_api itself is available.
-    HomeassistantAPIError = Exception  # type: ignore[misc,assignment]
-    logger.info(
-        "homeassistant_api library or its exceptions module not found. "
-        "HomeAssistantContextProvider may have limited error handling or not be available."
+    # Attempt to import the main homeassistant_api module
+    import homeassistant_api as ha_module_actual
+
+    homeassistant_api = (
+        ha_module_actual  # Assign to the variable used in the rest of the file
     )
+
+    # If the main module import was successful, now attempt to import the specific exception class
+    from homeassistant_api.exceptions import HomeassistantAPIError as SpecificErrorClass
+
+    HomeassistantAPIError = (
+        SpecificErrorClass  # Overwrite the default Exception with the specific one
+    )
+
+except ImportError:
+    # This ImportError can occur if 'import homeassistant_api' fails,
+    # or if 'from homeassistant_api.exceptions import HomeassistantAPIError' fails.
+
+    if homeassistant_api is None:
+        # This condition is true if 'import homeassistant_api' (the first import attempt) failed.
+        # 'homeassistant_api' remains None, and 'HomeassistantAPIError' remains 'Exception'.
+        logger.info(
+            "homeassistant_api library not found. "
+            "HomeAssistantContextProvider may have limited error handling or not be available."
+        )
+    else:
+        # This condition is true if 'import homeassistant_api' succeeded, but the import
+        # of 'HomeassistantAPIError' from 'homeassistant_api.exceptions' failed.
+        # 'homeassistant_api' is the imported module, but 'HomeassistantAPIError' remains 'Exception'.
+        logger.info(
+            "homeassistant_api library imported, but its 'HomeassistantAPIError' from "
+            "'homeassistant_api.exceptions' could not be imported. Using base 'Exception' for error handling."
+        )
 
 
 class ContextProvider(Protocol):
