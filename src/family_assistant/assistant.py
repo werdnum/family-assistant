@@ -16,6 +16,7 @@ from family_assistant import storage
 # --- NEW: Import ContextProvider and its implementations ---
 from family_assistant.context_providers import (
     CalendarContextProvider,
+    HomeAssistantContextProvider,  # Added
     KnownUsersContextProvider,
     NotesContextProvider,
     WeatherContextProvider,
@@ -354,6 +355,48 @@ class Assistant:
                     httpx_client=self.shared_httpx_client,
                 )
                 context_providers.append(weather_provider)
+
+            # --- Home Assistant Context Provider ---
+            ha_api_url = profile_proc_conf_dict.get("home_assistant_api_url")
+            ha_token = profile_proc_conf_dict.get("home_assistant_token")
+            ha_template = profile_proc_conf_dict.get(
+                "home_assistant_context_template"
+            )
+            ha_verify_ssl = profile_proc_conf_dict.get(
+                "home_assistant_verify_ssl", True
+            )
+
+            if ha_api_url and ha_token and ha_template:
+                try:
+                    # Local import to ensure homeassistant_api is only required if configured
+                    # The main import is already guarded in context_providers.py
+                    if HomeAssistantContextProvider.__module__ == "family_assistant.context_providers": # Check it's our class
+                        home_assistant_provider = HomeAssistantContextProvider(
+                            api_url=ha_api_url,
+                            token=ha_token,
+                            context_template=ha_template,
+                            prompts=profile_proc_conf_dict["prompts"],
+                            verify_ssl=ha_verify_ssl,
+                        )
+                        context_providers.append(home_assistant_provider)
+                        logger.info(
+                            f"HomeAssistantContextProvider added for profile '{profile_id}'."
+                        )
+                except ImportError: # This case should ideally be handled by the check in context_providers.py
+                    logger.warning(
+                        "homeassistant_api library is not installed, but Home Assistant context provider is configured. Skipping."
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to initialize HomeAssistantContextProvider for profile '{profile_id}': {e}",
+                        exc_info=True,
+                    )
+            elif ha_api_url or ha_token or ha_template:
+                logger.warning(
+                    f"Home Assistant context provider for profile '{profile_id}' is partially configured "
+                    "but missing essential settings (URL, token, or template). Skipping."
+                )
+            # --- End Home Assistant Context Provider ---
 
             service_config = ProcessingServiceConfig(
                 prompts=profile_proc_conf_dict["prompts"],

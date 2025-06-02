@@ -20,6 +20,14 @@ PromptsType = dict[str, str]
 
 logger = logging.getLogger(__name__)
 
+try:
+    import homeassistant_api
+except ImportError:
+    homeassistant_api = None # type: ignore[assignment]
+    logger.info(
+        "homeassistant_api library not found. HomeAssistantContextProvider will not be available."
+    )
+
 
 class ContextProvider(Protocol):
     """
@@ -111,6 +119,116 @@ class NotesContextProvider(ContextProvider):
             )
             # As per protocol, return empty list on error, error is logged.
             return []
+        return fragments
+
+
+class HomeAssistantContextProvider(ContextProvider):
+    """Provides context by rendering a Jinja2 template via Home Assistant."""
+
+    def __init__(
+        self,
+        api_url: str,
+        token: str,
+        context_template: str,
+        prompts: PromptsType,
+        verify_ssl: bool = True,
+        # client_kwargs: dict[str, Any] | None = None, # Optional for future use
+    ) -> None:
+        """
+        Initializes the HomeAssistantContextProvider.
+
+        Args:
+            api_url: The base URL of the Home Assistant API (e.g., "http://localhost:8123").
+            token: The long-lived access token for Home Assistant.
+            context_template: The Jinja2 template string to render.
+            prompts: A dictionary containing prompt templates for formatting headers/errors.
+            verify_ssl: Whether to verify SSL certificates for the API connection.
+            # client_kwargs: Additional keyword arguments for homeassistant_api.Client.
+        """
+        self._api_url = api_url
+        self._token = token
+        self._context_template = context_template
+        self._prompts = prompts
+        self._verify_ssl = verify_ssl
+        # self._client_kwargs = client_kwargs or {} # For future use
+
+        if homeassistant_api is None:
+            raise ImportError(
+                "homeassistant_api library is not installed. "
+                "HomeAssistantContextProvider cannot be used."
+            )
+
+        # The homeassistant_api.Client expects the URL to include /api
+        ha_api_url_with_path = self._api_url.rstrip("/") + "/api"
+        self._ha_client = homeassistant_api.Client(
+            api_url=ha_api_url_with_path,
+            token=self._token,
+            use_async=True,  # Important for async usage
+            verify_ssl=self._verify_ssl,
+            # **self._client_kwargs, # For future use
+        )
+        logger.info(
+            f"HomeAssistantContextProvider initialized for URL: {ha_api_url_with_path}"
+        )
+
+    @property
+    def name(self) -> str:
+        return "home_assistant"
+
+    async def get_context_fragments(self) -> list[str]:
+        """
+        Asynchronously retrieves and formats context by rendering a template
+        via the Home Assistant API.
+        """
+        fragments: list[str] = []
+        if not self._context_template:
+            logger.warning(f"[{self.name}] No context template configured.")
+            return []
+
+        if homeassistant_api is None: # Should have been caught in __init__, but defensive
+            logger.error(f"[{self.name}] homeassistant_api library not available.")
+            return []
+
+        try:
+            logger.debug(
+                f"[{self.name}] Rendering template from Home Assistant: '{self._context_template[:100]}...'"
+            )
+            rendered_template = await self._ha_client.async_get_rendered_template(
+                template=self._context_template
+            )
+
+            if rendered_template and rendered_template.strip():
+                header = self._prompts.get("home_assistant_context_header", "").strip()
+                # Only add header if it's not empty
+                full_context = f"{header}\n{rendered_template.strip()}" if header else rendered_template.strip()
+                fragments.append(full_context.strip())
+                logger.debug(
+                    f"[{self.name}] Successfully rendered Home Assistant template."
+                )
+            else:
+                logger.info(
+                    f"[{self.name}] Rendered Home Assistant template was empty or whitespace only."
+                )
+                empty_message = self._prompts.get(
+                    "home_assistant_template_empty", ""
+                ).strip()
+                if empty_message:
+                    fragments.append(empty_message)
+
+        except homeassistant_api.errors.ApiError as ha_api_err: # Specific error for HA API issues
+            logger.error(f"[{self.name}] Home Assistant API error: {ha_api_err}", exc_info=True)
+            error_message = self._prompts.get("home_assistant_api_error", "Error retrieving data from Home Assistant.").strip()
+            if error_message:
+                fragments.append(error_message)
+        except Exception as e:  # Catch other potential errors (network, etc.)
+            logger.error(
+                f"[{self.name}] Error rendering Home Assistant template: {e}",
+                exc_info=True,
+            )
+            error_message = self._prompts.get("home_assistant_api_error", "Error retrieving data from Home Assistant.").strip()
+            if error_message:
+                fragments.append(error_message)
+
         return fragments
 
 
