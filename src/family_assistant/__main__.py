@@ -304,7 +304,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
 
     # Load Home Assistant API URL and Token from environment variables for default profile settings
     profile_proc_config["home_assistant_api_url"] = os.getenv(
-        "HOME_ASSISTANT_API_URL", profile_proc_config.get("home_assistant_api_url")
+        "HOMEASSISTANT_URL", profile_proc_config.get("home_assistant_api_url")
     )
     profile_proc_config["home_assistant_token"] = os.getenv(
         "HOMEASSISTANT_API_KEY", profile_proc_config.get("home_assistant_token")
@@ -313,7 +313,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "home_assistant_token"
     ):
         logger.info(
-            "Loaded Home Assistant API URL/Token (using HOMEASSISTANT_API_KEY for token) from environment variables into default profile settings."
+            "Loaded Home Assistant API URL (using HOMEASSISTANT_URL) and Token (using HOMEASSISTANT_API_KEY) from environment variables into default profile settings."
         )
 
     config_data["server_url"] = os.getenv(
