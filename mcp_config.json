@@ -44,6 +44,13 @@
       "url": "https://homeassistant.andrewgarrett.dev/mcp_server/sse",
       "token": "$HOMEASSISTANT_API_KEY"
     },
+    "scrape": {
+      "command": "uv",
+      "args": [
+        "run",
+        "contrib/scrape_mcp.py"
+      ]
+    },
     "google-maps": {
       "command": "deno",
       "args": ["run", "--allow-net", "--allow-env", "npm:@modelcontextprotocol/server-google-maps"],
