@@ -8,6 +8,11 @@ This document outlines the coding style, commenting philosophy, and conventions 
 *   Aim for clarity and readability.
 *   Use type hints consistently.
 *   Keep functions and methods focused and concise.
+*   **Prevent Runtime Errors:** Ensure all variables and names are defined before use and that imports are correct to prevent `NameError` or `ImportError` (related to frequent errors like F821, E0602, E0401). Careful attention to scope and spelling is crucial.
+*   **Avoid Unused Code:** Remove unused variables, imports, and commented-out code to keep the codebase clean and reduce confusion (enforced by Pyflakes: F401, F841; eradicate: ERA001).
+*   **Mutable Default Arguments:** Do not use mutable data structures (e.g., lists, dictionaries) as default arguments to functions. Initialize them to `None` and create the mutable object inside the function body (related to flake8-bugbear: B006).
+*   **Function Calls in Defaults:** Avoid function calls in default argument values (e.g., `def func(arg=datetime.now()):`). The default is evaluated only once when the function is defined (related to flake8-bugbear: B008).
+*   **Closures and Loop Variables:** Be mindful of late binding when defining functions (e.g., lambdas) inside loops that use the loop variable. If the current value of the loop variable is needed, capture it, for instance, by passing it as a default argument to the inner function (related to flake8-bugbear: B023).
 
 
 ## Appropriate use of comments
@@ -51,13 +56,6 @@ Nothing - just remove the function.
 *   **Test Strategy Focus:** Prioritize realistic integration and functional tests that verify the behavior of components working together. Use `testcontainers` for dependencies like databases where possible. While unit tests have their place for complex, isolated logic, the primary goal is to ensure the system works correctly end-to-end.
 *   **Testable Core Logic:** Separate core application logic (e.g., processing a user request, handling a task) from interface-specific code (e.g., Telegram API interactions, FastAPI request/response handling). Test the core logic directly, making the interface layers thin wrappers.
 
-## Type safety
-
-Strongly prefer type safety at interface boundaries. In particular:
-
-* Strongly prefer typed dictionaries or named tuples instead of Dict[str, any].
-* Create types for structures accepted by third party APIs (e.g. OpenAI API `{"role": "user", "content": ...}`).
-
 ## Naming Conventions
 
 *   Use `snake_case` for variables, functions, and methods.
@@ -69,8 +67,9 @@ Strongly prefer type safety at interface boundaries. In particular:
 Strongly prefer type safety at interface boundaries. In particular:
 
 *   Create types for structures accepted by third party APIs (e.g. OpenAI API `{"role": "user", "content": ...}`).
-*   **Comprehensive Annotations:** Functions and methods should have type hints for all arguments (including `*args` and `**kwargs`) and return values. This is enforced by `flake8-annotations` (ANN rules).
-*   **`typing.Any` is Permitted:** While comprehensive typing is encouraged, the use of `typing.Any` is currently permitted (as rule `ANN401` which disallows `Any` is ignored). Use it judiciously when a more specific type is not practical.
+*   Strongly prefer typed dictionaries (e.g., `TypedDict`) or `dataclasses`/`NamedTuple` over `Dict[str, Any]` for structured data.
+*   **Comprehensive Annotations:** Functions and methods should have type hints for all arguments (including `self`, `cls`, `*args`, and `**kwargs`) and return values. This is enforced by `flake8-annotations` (ANN rules like ANN001, ANN002, ANN003, ANN201, ANN202, ANN204).
+*   **`typing.Any` is Permitted:** While comprehensive typing is encouraged, the use of `typing.Any` is currently permitted (as rule category `ANN4` which includes `ANN401` disallowing `Any` for variables and arguments is ignored). Use it judiciously when a more specific type is not practical.
 *   **Type-Only Imports:** For imports used exclusively for type annotations, place them inside a `if TYPE_CHECKING:` block to avoid runtime circular dependencies and improve startup time. This is managed by `flake8-type-checking` (TC rules).
     ```python
     from typing import TYPE_CHECKING
@@ -81,6 +80,7 @@ Strongly prefer type safety at interface boundaries. In particular:
     def my_function(param: "SomeTypeUsedForAnnotationOnly") -> None:
         # ...
     ```
+*   **Forward References:** When forward-referencing types (e.g., to avoid circular imports or use a type not yet defined), use string literals (e.g., `param: "MyClass"`). This applies to function/method signatures, variable annotations, and also within runtime type constructs like `typing.cast("MyClass", value)` or string-based unions if the type is only known during static analysis (related to TC rules like TC004, TC006, TC010).
 
 ## Imports
 
@@ -91,6 +91,8 @@ Strongly prefer type safety at interface boundaries. In particular:
     3.  Local application/library specific imports
 *   Separate groups with a blank line.
 *   Use absolute imports where possible.
+*   Module-level imports should generally be at the top of the file, after any module docstring and `__future__` imports, but before any other code (related to pycodestyle: E402).
+*   Import statements are automatically sorted and formatted by our linting tools (enforced by isort: I rules).
 
 ## Logging
 
@@ -115,7 +117,7 @@ Strongly prefer type safety at interface boundaries. In particular:
 ## Linter-Driven Coding Standards
 
 Beyond general PEP 8 and the principles outlined above, our automated linting (primarily via Ruff) enforces several specific coding standards. Adhering to these will ensure smoother contributions and fewer CI failures.
-
+*   Our linting setup (Ruff) enforces many PEP 8 guidelines, including those related to whitespace, indentation, inline comments, and multiple statements on one line (e.g., E111, E117, E261, E701, E402). While the auto-formatter (Black) handles much of this, adherence to these rules ensures consistency and helps catch potential issues.
 *   **No Commented-Out Code:** As stated in the "Appropriate use of comments" section, commented-out code is flagged by `eradicate` (ERA rules) and should be removed. Use version control to track historical code.
 *   **`zip()` with `strict=True`:** When using `zip()` on iterables that are expected to be of the same length, use the `strict=True` argument (available in Python 3.10+). This helps catch bugs early by raising a `ValueError` if a_i_d_e iterables have different lengths. This is checked by `flake8-bugbear` (`B905`).
     ```python
@@ -139,3 +141,13 @@ Beyond general PEP 8 and the principles outlined above, our automated linting (p
     ```
 *   **Line Length:** While PEP 8 suggests a line length limit, this project relies on an automatic code formatter (like Black, which is part of the pre-commit hooks) to handle line lengths. The linter rule for line length (`E501`) is therefore ignored. Focus on logical code structure, and let the formatter handle the visual layout.
 *   **Modern Python Syntax:** `pyupgrade` (UP rules) is used to automatically upgrade code to use more modern Python syntax where appropriate (e.g., `X | Y` for union types instead of `typing.Union[X, Y]` in Python 3.10+).
+
+## Code Simplification
+
+Strive for simpler, more readable code where functionality is equivalent. Our linter helps enforce this (flake8-simplify: SIM rules):
+
+*   Use ternary operators (`val = x if condition else y`) for concise conditional assignments instead of verbose if/else blocks (SIM108).
+*   Combine multiple `with` statements for context managers where possible: `with ctx1() as c1, ctx2() as c2:` instead of nested `with` statements. (SIM117)
+*   Check for dictionary key membership directly (e.g., `if key in my_dict:`) rather than `if key in my_dict.keys():`. (SIM118)
+*   Simplify `if` statements that can be collapsed into a single condition (SIM102).
+*   Use `contextlib.suppress` for concisely ignoring specific exceptions where appropriate, instead of a `try...except...pass` block (SIM105).
