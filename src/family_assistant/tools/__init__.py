@@ -1370,7 +1370,14 @@ TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "delegate_to_service",
-            "description": "Delegates a specific user request to another specialized assistant profile (service) that might have different tools or capabilities. Use this if the main assistant cannot handle a request directly or if a specialized profile is more appropriate for the task (e.g., a profile with web browsing tools for web-related queries). The target profile's 'delegation_security_level' (blocked, confirm, unrestricted) can override the 'confirm_delegation' parameter.",
+            "description": (
+                "Delegates a specific user request to another specialized assistant profile (service) "
+                "that might have different tools or capabilities. Use this if the main assistant "
+                "cannot handle a request directly or if a specialized profile is more appropriate "
+                "for the task. The target profile's 'delegation_security_level' (blocked, confirm, "
+                "unrestricted) can override the 'confirm_delegation' parameter.\n\n"
+                "Available service profiles:\n{available_service_profiles_with_descriptions}"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

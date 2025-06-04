@@ -209,6 +209,54 @@ class Assistant:
         formatted_doc_list_for_tool_desc = ", ".join(available_doc_files) or "None"
         base_local_tools_definition = copy.deepcopy(local_tools_definition)
 
+        # Prepare the string listing available service profiles and their descriptions
+        profile_descriptions_list = []
+        for profile_config_item in resolved_profiles:
+            profile_id_item = profile_config_item.get("id", "Unknown ID")
+            description_item = profile_config_item.get(
+                "description", "No description available."
+            )
+            profile_descriptions_list.append(
+                f"- ID: {profile_id_item}, Description: {description_item}"
+            )
+        available_service_profiles_with_descriptions_str = "\n".join(
+            profile_descriptions_list
+        )
+        if not available_service_profiles_with_descriptions_str:
+            available_service_profiles_with_descriptions_str = (
+                "No specific service profiles are currently described."
+            )
+
+        # Update the description of the delegate_to_service tool in the base definition list
+        # This ensures all profiles get the fully described delegate_to_service tool.
+        for tool_def_template in base_local_tools_definition:
+            if (
+                tool_def_template.get("function", {}).get("name")
+                == "delegate_to_service"
+            ):
+                original_description = tool_def_template["function"].get(
+                    "description", ""
+                )
+                if (
+                    "{available_service_profiles_with_descriptions}"
+                    in original_description
+                ):
+                    tool_def_template["function"]["description"] = (
+                        original_description.format(
+                            available_service_profiles_with_descriptions=(
+                                available_service_profiles_with_descriptions_str
+                            )
+                        )
+                    )
+                    logger.debug(
+                        "Updated delegate_to_service tool description with profile list in base_local_tools_definition."
+                    )
+                else:
+                    logger.warning(
+                        "Placeholder for service profiles not found in delegate_to_service tool description in base_local_tools_definition."
+                    )
+                break
+
         for profile_conf in resolved_profiles:
             profile_id = profile_conf["id"]
             logger.info(
