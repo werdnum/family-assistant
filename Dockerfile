@@ -96,6 +96,7 @@ RUN --mount=type=cache,target=${UV_CACHE_DIR} \
 # --- Copy Application Code ---
 # Copy the source code into the image
 COPY src/ /app/src/
+COPY docs/ /app/docs/
 
 # Copy configuration files, templates, and static assets to the WORKDIR
 # These need to be accessible relative to the WORKDIR at runtime when running the app
