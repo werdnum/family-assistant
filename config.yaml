@@ -243,13 +243,13 @@ default_profile_settings:
 # Defines specific assistant profiles with potentially different configurations.
 service_profiles:
   - id: "default_assistant"
-    description: "Main assistant using default settings, without browser tools."
+    description: "Main assistant using default settings, without browser tools. Suitable for general tasks, note-taking, calendar management, and information retrieval from stored documents."
     # This profile implicitly uses all settings from 'default_profile_settings'
     # as no specific 'processing_config' or 'tools_config' is defined here,
     # thus inheriting the tools_config that excludes the browser.
 
   - id: "browser_profile"
-    description: "Assistant profile with web browsing capabilities."
+    description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web page scraping to extract content, consider using the `ingest_document_from_url` tool or direct MCP browser tools if available."
     processing_config:
       # Optionally, use a different LLM model optimized for browsing or summarization
       # llm_model: "claude-3-sonnet-20240229"
@@ -266,7 +266,7 @@ service_profiles:
       - "/browse"
 
   - id: "kubernetes_debug"
-    description: "Assistant profile for Kubernetes debugging tasks."
+    description: "Assistant profile for Kubernetes debugging tasks. Provides tools to interact with Kubernetes clusters, search the web for solutions, and execute Python code for diagnostics."
     processing_config:
       prompts:
         system_prompt: "You are a specialized Kubernetes debugging assistant. Current time is {current_time}. Focus on diagnosing and resolving Kubernetes issues. You have access to tools for interacting with Kubernetes clusters, searching the web, and executing Python code."
@@ -298,7 +298,7 @@ service_profiles:
       - "/k8s"
 
   - id: "research"
-    description: "Assistant profile for deep research, using Perplexity Sonar."
+    description: "Assistant profile for deep research, utilizing the Perplexity Sonar model. Ideal for comprehensive information gathering and analysis when web browsing or specific tool execution is not required."
     processing_config:
       llm_model: "openrouter/perplexity/sonar-deep-research"
       prompts:
