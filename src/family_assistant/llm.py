@@ -21,7 +21,9 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
-from litellm.utils import get_valid_params  # Import for filtering kwargs
+from litellm.utils import (
+    get_valid_params,  # type: ignore[attr-defined] # Import for filtering kwargs
+)
 
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
 
@@ -289,7 +291,7 @@ class LiteLLMClient:
                 tools=sanitized_tools_arg,
                 tool_choice=tool_choice,
                 stream=False,
-                **final_completion_params,
+                **final_completion_params,  # type: ignore[reportArgumentType]
             )
             response = cast("ModelResponse", response)
         else:
@@ -301,7 +303,7 @@ class LiteLLMClient:
                 model=model_id,
                 messages=messages,
                 stream=False,
-                **final_completion_params,
+                **final_completion_params,  # type: ignore[reportArgumentType]
             )
             response = cast("ModelResponse", _response_obj)
 
