@@ -88,7 +88,7 @@ default_profile_settings:
       {%- macro find_closest_zone_data(person_obj, out_ns) -%}
         {%- set zones_with_distances = namespace(list=[]) -%}
       
-        {%- for zone_obj in states.zone -%}
+        {%- for zone_obj in states.zone | rejectattr('entity_id', 'equalto', 'zone.near_home') -%}
           {%- set current_dist = distance(zone_obj.entity_id, person_obj.entity_id) -%}
           {%- if current_dist is number -%}
             {%- set zones_with_distances.list = zones_with_distances.list + [{'zone_obj': zone_obj, 'distance': current_dist}] -%}
