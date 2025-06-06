@@ -153,4 +153,10 @@ This is a family assistant application built around a conversational LLM interfa
 - **Task worker**: `src/family_assistant/task_worker.py`
 - **Service definitions**: Service profiles in `config.yaml`
 
+## Commit Guidelines
+
+- Always commit your changes to git. Use a descriptive commit message. 
+- Explain not just what you're doing, but why, how, and why you chose to do it that way. 
+- Don't make up a rationale if you don't know why and it isn't obvious, but definitely document any context from the conversation that explains the code you wrote and the technical decisions made.
+
 When working with this codebase, always run linting and type checking before committing changes. The application supports both SQLite (development) and PostgreSQL (production) databases.
