@@ -179,28 +179,176 @@ class LiteLLMClient:
         self,
         model: str,
         model_parameters: dict[str, Any] | None = None,
+        fallback_model_id: str | None = None,
+        fallback_model_parameters: dict[str, Any] | None = None,
         **kwargs: dict[str, Any],
     ) -> None:
         """
         Initializes the LiteLLM client.
 
         Args:
-            model: The identifier of the model to use (e.g., "openrouter/google/gemini-flash-1.5").
-            model_parameters: A dictionary where keys are model names/prefixes
-                              and values are dicts of parameters specific to those models.
-            **kwargs: Additional keyword arguments to pass directly to litellm.acompletion
-                      on every call (e.g., temperature, max_tokens). These are
-                      applied *before* model-specific parameters.
+            model: The identifier of the primary model to use.
+            model_parameters: Parameters specific to the primary model.
+            fallback_model_id: Optional identifier for a fallback model.
+            fallback_model_parameters: Optional parameters for the fallback model.
+            **kwargs: Default keyword arguments for litellm.acompletion.
         """
         if not model:
             raise ValueError("LLM model identifier cannot be empty.")
         self.model = model
-        self.default_kwargs = kwargs  # Store base kwargs
-        self.model_parameters = model_parameters or {}  # Store model-specific params
+        self.default_kwargs = kwargs
+        self.model_parameters = model_parameters or {}
+        self.fallback_model_id = fallback_model_id
+        self.fallback_model_parameters = fallback_model_parameters or {}
         logger.info(
-            f"LiteLLMClient initialized for model: {self.model} "
-            f"with default kwargs: {self.default_kwargs} "
-            f"and model-specific parameters: {self.model_parameters}"
+            f"LiteLLMClient initialized for primary model: {self.model} "
+            f"with default kwargs: {self.default_kwargs}, "
+            f"model-specific parameters: {self.model_parameters}. "
+            f"Fallback model: {self.fallback_model_id}, "
+            f"fallback params: {self.fallback_model_parameters}"
+        )
+
+    async def _attempt_completion(
+        self,
+        model_id: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+        specific_model_params: dict[str, Any],
+    ) -> LLMOutput:
+        """Internal method to make a single attempt at LLM completion."""
+        completion_params = self.default_kwargs.copy()
+
+        # Find and merge model-specific parameters from config for the current model_id
+        reasoning_params_config = None
+        # Use specific_model_params directly if provided (e.g. for fallback)
+        # otherwise, lookup from self.model_parameters for the primary model.
+        current_model_config_params = specific_model_params
+        if not current_model_config_params and model_id == self.model:
+            current_model_config_params = self.model_parameters
+
+        for pattern, params in current_model_config_params.items():
+            matched = False
+            if pattern.endswith("-"):
+                if model_id.startswith(pattern[:-1]):
+                    matched = True
+            elif model_id == pattern:
+                matched = True
+
+            if matched:
+                logger.debug(
+                    f"Applying parameters for model '{model_id}' using pattern '{pattern}': {params}"
+                )
+                params_to_merge = params.copy()
+                if "reasoning" in params_to_merge and isinstance(
+                    params_to_merge["reasoning"], dict
+                ):
+                    reasoning_params_config = params_to_merge.pop("reasoning")
+                completion_params.update(params_to_merge)
+                break
+
+        if model_id.startswith("openrouter/") and reasoning_params_config:
+            completion_params["reasoning"] = reasoning_params_config
+            logger.debug(
+                f"Adding 'reasoning' parameter for OpenRouter model '{model_id}': {reasoning_params_config}"
+            )
+
+        if tools:
+            sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
+            logger.debug(
+                f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
+                f"Tools provided. Tool choice: {tool_choice}. Other params: {json.dumps(completion_params, default=str)}"
+            )
+            response = await acompletion(
+                model=model_id,
+                messages=messages,
+                tools=sanitized_tools_arg,
+                tool_choice=tool_choice,
+                stream=False,
+                **completion_params,
+            )
+            response = cast("ModelResponse", response)
+        else:
+            logger.debug(
+                f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
+                f"No tools provided. Other params: {json.dumps(completion_params, default=str)}"
+            )
+            _response_obj = await acompletion(
+                model=model_id,
+                messages=messages,
+                stream=False,
+                **completion_params,
+            )
+            response = cast("ModelResponse", _response_obj)
+
+        response_message: Message | None = None
+        if response.choices:
+            response_message = response.choices[0].message  # type: ignore[attr-defined]
+
+        if not response_message:
+            logger.warning(
+                f"LiteLLM response structure unexpected or empty for model {model_id}: {response}"
+            )
+            raise APIError(
+                message="Received empty or unexpected response from LiteLLM.",
+                llm_provider="litellm",
+                model=model_id,
+                status_code=500,
+            )
+
+        content = response_message.get("content")
+        raw_tool_calls = response_message.get("tool_calls")
+        reasoning_info = None
+        if hasattr(response, "usage") and response.usage:  # type: ignore[attr-defined]
+            try:
+                reasoning_info = response.usage.model_dump(mode="json")  # type: ignore[attr-defined]
+            except Exception as usage_err:
+                logger.warning(f"Could not serialize response.usage for model {model_id}: {usage_err}")  # type: ignore[attr-defined]
+
+        tool_calls_list = []
+        if raw_tool_calls:
+            for tc_obj in raw_tool_calls:
+                func_name: str | None = None
+                func_args: str | None = None
+                if hasattr(tc_obj, "function") and tc_obj.function:
+                    if hasattr(tc_obj.function, "name"):
+                        func_name = tc_obj.function.name
+                    if hasattr(tc_obj.function, "arguments"):
+                        func_args = tc_obj.function.arguments
+                else:
+                    logger.warning(
+                        f"ToolCall object for model {model_id} is missing function attribute or it's None: {tc_obj}"
+                    )
+
+                if not func_name or func_args is None:
+                    logger.warning(
+                        f"ToolCall's function object for model {model_id} is missing name or arguments: name='{func_name}', args_present={func_args is not None}."
+                    )
+                    tool_call_function = ToolCallFunction(
+                        name=func_name or "malformed_function_in_llm_output",
+                        arguments=func_args or "{}",
+                    )
+                else:
+                    tool_call_function = ToolCallFunction(name=func_name, arguments=func_args)
+
+                tc_id = tc_obj.id if hasattr(tc_obj, "id") else None
+                tc_type = tc_obj.type if hasattr(tc_obj, "type") else None
+                if not tc_id or not tc_type:
+                    logger.error(
+                        f"ToolCall item from LLM model {model_id} missing id ('{tc_id}') or type ('{tc_type}'). Skipping."
+                    )
+                    continue
+                tool_calls_list.append(
+                    ToolCallItem(id=tc_id, type=tc_type, function=tool_call_function)
+                )
+
+        logger.debug(
+            f"LiteLLM response received from model {model_id}. Content: {bool(content)}. Tool Calls: {len(tool_calls_list)}. Reasoning: {bool(reasoning_info)}"
+        )
+        return LLMOutput(
+            content=content,  # type: ignore
+            tool_calls=tool_calls_list if tool_calls_list else None,
+            reasoning_info=reasoning_info,
         )
 
     async def generate_response(
@@ -209,184 +357,128 @@ class LiteLLMClient:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
-        """Generates a response using LiteLLM from a pre-structured message list."""
-        model_arg: str = self.model
-        messages_arg: list[dict[str, Any]] = messages
-
-        # Start with default kwargs passed during initialization (e.g., temperature, max_tokens)
-        completion_params: dict[str, Any] = self.default_kwargs.copy()
-
-        # Find and merge model-specific parameters from config
-        reasoning_params_config = None
-        for pattern, params in self.model_parameters.items():
-            matched = False
-            if pattern.endswith("-"):  # Prefix match
-                if self.model.startswith(pattern[:-1]):
-                    matched = True
-            elif self.model == pattern:  # Exact match
-                matched = True
-
-            if matched:
-                logger.debug(f"Applying parameters for pattern '{pattern}': {params}")
-                params_to_merge = params.copy()
-                if "reasoning" in params_to_merge and isinstance(
-                    params_to_merge["reasoning"], dict
-                ):
-                    reasoning_params_config = params_to_merge.pop("reasoning")
-                completion_params.update(params_to_merge)
-                break  # Stop after first matching pattern
-
-        # Add the 'reasoning' object to completion_params for OpenRouter models if configured
-        if self.model.startswith("openrouter/") and reasoning_params_config:
-            completion_params["reasoning"] = reasoning_params_config
-            logger.debug(
-                f"Adding 'reasoning' parameter for OpenRouter: {reasoning_params_config}"
-            )
-
-        try:
-            if tools:
-                sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
-                logger.debug(
-                    f"Calling LiteLLM model {model_arg} with {len(messages_arg)} messages. "
-                    f"Tools provided. Tool choice: {tool_choice}. Other params: {json.dumps(completion_params, default=str)}"
-                )
-                response = await acompletion(
-                    model=model_arg,
-                    messages=messages_arg,
-                    tools=sanitized_tools_arg,
-                    tool_choice=tool_choice,
-                    stream=False,  # Explicitly set stream to False
-                    **completion_params,
-                )
-                response = cast("ModelResponse", response)  # Cast to ModelResponse
-            else:
-                logger.debug(
-                    f"Calling LiteLLM model {model_arg} with {len(messages_arg)} messages. "
-                    f"No tools provided. Other params: {json.dumps(completion_params, default=str)}"
-                )
-                _response_obj = await acompletion(
-                    model=model_arg,
-                    messages=messages_arg,
-                    stream=False,  # Explicitly set stream to False
-                    **completion_params,
-                )
-                response = cast("ModelResponse", _response_obj)  # Cast to ModelResponse
-
-            # Extract response message
-            # Use litellm.Message as the type for response_message
-            response_message: Message | None = None
-            if response.choices:
-                response_message = response.choices[0].message  # type: ignore[attr-defined]
-
-            if not response_message:
-                logger.warning(
-                    f"LiteLLM response structure unexpected or empty: {response}"
-                )
-                raise APIError(
-                    message="Received empty or unexpected response from LiteLLM.",
-                    llm_provider="litellm",
-                    model=self.model,
-                    status_code=500,
-                )
-
-            # Extract content, tool calls, and potentially reasoning/usage info
-            content = response_message.get("content")
-            raw_tool_calls = response_message.get("tool_calls")
-            reasoning_info = None
-
-            if hasattr(response, "usage") and response.usage:  # type: ignore[attr-defined]
-                try:
-                    reasoning_info = response.usage.model_dump(mode="json")  # type: ignore[attr-defined]
-                    logger.debug(
-                        f"Extracted usage data as reasoning_info: {reasoning_info}"
-                    )
-                except Exception as usage_err:
-                    logger.warning(f"Could not serialize response.usage: {usage_err}")  # type: ignore[attr-defined]
-
-            tool_calls_list = []
-            if raw_tool_calls:  # raw_tool_calls is likely list[litellm.types.ToolCall]
-                for tc_obj in raw_tool_calls:
-                    # tc_obj is a litellm.types.ToolCall object.
-                    # It has attributes: id, type, function.
-                    # tc_obj.function is a litellm.types.Function object with name and arguments.
-
-                    func_name: str | None = None
-                    func_args: str | None = None
-
-                    if hasattr(tc_obj, "function") and tc_obj.function:
-                        if hasattr(tc_obj.function, "name"):
-                            func_name = tc_obj.function.name
-                        if hasattr(tc_obj.function, "arguments"):
-                            func_args = (
-                                tc_obj.function.arguments
-                            )  # arguments is already a string
-                    else:
-                        logger.warning(
-                            f"ToolCall object is missing function attribute or it's None: {tc_obj}"
-                        )
-
-                    if (
-                        not func_name or func_args is None
-                    ):  # Arguments can be an empty string
-                        logger.warning(
-                            f"ToolCall's function object is missing name or arguments: name='{func_name}', args_present={func_args is not None}. Full object: {tc_obj.function if hasattr(tc_obj, 'function') else 'N/A'}"
-                        )
-                        # Create a placeholder ToolCallFunction to avoid downstream errors
-                        tool_call_function = ToolCallFunction(
-                            name=func_name or "malformed_function_in_llm_output",
-                            arguments=func_args or "{}",
-                        )
-                    else:
-                        tool_call_function = ToolCallFunction(
-                            name=func_name, arguments=func_args
-                        )
-
-                    tc_id = tc_obj.id if hasattr(tc_obj, "id") else None
-                    tc_type = tc_obj.type if hasattr(tc_obj, "type") else None
-
-                    if not tc_id or not tc_type:
-                        logger.error(
-                            f"ToolCall item from LLM missing id ('{tc_id}') or type ('{tc_type}'). Skipping."
-                        )
-                        continue
-
-                    tool_calls_list.append(
-                        ToolCallItem(
-                            id=tc_id, type=tc_type, function=tool_call_function
-                        )
-                    )
-
-            logger.debug(
-                f"LiteLLM response received. Content: {bool(content)}. Tool Calls: {len(tool_calls_list)}. Reasoning: {bool(reasoning_info)}"
-            )
-            return LLMOutput(
-                content=content,  # type: ignore # content can be str | None
-                tool_calls=tool_calls_list if tool_calls_list else None,
-                reasoning_info=reasoning_info,
-            )
-        except (
+        """Generates a response using LiteLLM, with one retry on primary model and fallback."""
+        retriable_errors = (
             APIConnectionError,
             Timeout,
             RateLimitError,
             ServiceUnavailableError,
-            APIError,
-            BadRequestError,
-        ) as e:
-            logger.error(
-                f"LiteLLM API error for model {self.model}: {e}", exc_info=True
+        )
+        last_exception: Exception | None = None
+
+        # Attempt 1: Primary model
+        try:
+            logger.info(f"Attempt 1: Primary model ({self.model})")
+            return await self._attempt_completion(
+                model_id=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                specific_model_params=self.model_parameters,
             )
-            logger.info("Input passed to model: %r", messages)
-            raise  # Re-raise the specific LiteLLM exception
+        except BadRequestError as e:
+            logger.error(f"BadRequestError with primary model {self.model}. Not retrying or falling back: {e}")
+            raise  # Do not retry or fallback on BadRequestError
+        except retriable_errors as e:
+            logger.warning(
+                f"Attempt 1 (Primary model {self.model}) failed with retriable error: {e}. Retrying primary model."
+            )
+            last_exception = e
+        except APIError as e: # Non-retriable APIError (but not BadRequestError)
+            logger.warning(
+                f"Attempt 1 (Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
+            )
+            last_exception = e
         except Exception as e:
             logger.error(
-                f"Unexpected error during LiteLLM call for model {self.model}: {e}",
+                f"Attempt 1 (Primary model {self.model}) failed with unexpected error: {e}",
                 exc_info=True,
             )
-            # Wrap unexpected errors in a generic APIError or a custom exception
+            last_exception = e # Store for potential re-raise if fallback also fails or isn't attempted
+            # For truly unexpected errors, we might still want to try fallback if configured.
+
+
+        # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
+        if isinstance(last_exception, retriable_errors):
+            try:
+                logger.info(f"Attempt 2: Retrying primary model ({self.model})")
+                return await self._attempt_completion(
+                    model_id=self.model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    specific_model_params=self.model_parameters,
+                )
+            except BadRequestError as e: # Should be rare if first attempt wasn't, but handle defensively
+                logger.error(f"BadRequestError on retry with primary model {self.model}. Not falling back: {e}")
+                raise
+            except retriable_errors as e:
+                logger.warning(
+                    f"Attempt 2 (Retry Primary model {self.model}) failed with retriable error: {e}. Proceeding to fallback."
+                )
+                last_exception = e
+            except APIError as e: # Non-retriable APIError on retry
+                logger.warning(
+                    f"Attempt 2 (Retry Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
+                )
+                last_exception = e
+            except Exception as e:
+                logger.error(
+                    f"Attempt 2 (Retry Primary model {self.model}) failed with unexpected error: {e}",
+                    exc_info=True,
+                )
+                last_exception = e
+
+
+        # Attempt 3: Fallback model
+        actual_fallback_model_id = self.fallback_model_id or "openai/o4-mini"
+        if actual_fallback_model_id == self.model:
+            logger.warning(
+                f"Fallback model '{actual_fallback_model_id}' is the same as the primary model '{self.model}'. Skipping fallback."
+            )
+            if last_exception:
+                raise last_exception
+            # This case should ideally not happen if logic is correct, means no error but no success.
+            raise APIError(message="All attempts failed without a specific error to raise.", llm_provider="litellm", model=self.model, status_code=500)
+
+
+        if last_exception: # Ensure we only fallback if there was a prior failure
+            logger.info(f"Attempt 3: Fallback model ({actual_fallback_model_id})")
+            try:
+                return await self._attempt_completion(
+                    model_id=actual_fallback_model_id,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    specific_model_params=self.fallback_model_parameters,
+                )
+            except BadRequestError as e:
+                logger.error(f"BadRequestError with fallback model {actual_fallback_model_id}. Original error (if any) will be raised: {e}")
+                # Fallthrough to raise last_exception from primary model attempts
+            except Exception as e:
+                logger.error(
+                    f"Attempt 3 (Fallback model {actual_fallback_model_id}) also failed: {e}",
+                    exc_info=True,
+                )
+                # Fallthrough to raise last_exception from primary model attempts,
+                # or this new one if last_exception was None (though it shouldn't be here).
+                if not isinstance(last_exception, BadRequestError): # Don't overwrite a BadRequest from primary with a fallback error
+                    last_exception = e
+
+
+        # If all attempts failed, raise the last significant exception
+        if last_exception:
+            logger.error(
+                f"All LLM attempts failed. Raising last recorded exception: {last_exception}"
+            )
+            raise last_exception
+        else:
+            # Should not be reached if logic is correct, but as a safeguard:
+            logger.error("All LLM attempts failed without a specific exception captured.")
             raise APIError(
-                message=f"Unexpected error: {e}",
+                message="All LLM attempts failed without a specific exception.",
                 llm_provider="litellm",
-                model=self.model,
+                model=self.model, # Or some generic indicator
                 status_code=500,
             ) from e
 

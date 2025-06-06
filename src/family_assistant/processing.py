@@ -53,6 +53,10 @@ class ProcessingServiceConfig:
     ]  # Added to hold tool configurations like 'confirm_tools'
     delegation_security_level: str  # "blocked", "confirm", "unrestricted"
     id: str  # Unique identifier for this service profile
+    fallback_model_id: str | None = None  # Added for LLM fallback
+    fallback_model_parameters: dict[str, Any] | None = (
+        None  # Added for LLM fallback
+    )
 
 
 # --- Processing Service Class ---
@@ -86,7 +90,7 @@ class ProcessingService:
             server_url: The base URL of the web server.
             app_config: The main application configuration dictionary (global settings).
         """
-        self.llm_client = llm_client
+        self.llm_client = llm_client  # This client should be instantiated with fallback info
         self.tools_provider = tools_provider
         self.service_config = service_config  # Store the config object
         self.context_providers = context_providers
@@ -99,6 +103,10 @@ class ProcessingService:
         )  # Store the clock instance
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
+
+    # The LiteLLMClient passed to __init__ should already be configured
+    # with primary and fallback model details by the caller (e.g., main.py)
+    # based on the service_config.
 
     def set_processing_services_registry(
         self, registry: dict[str, "ProcessingService"]
