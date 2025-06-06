@@ -54,7 +54,7 @@ class ProcessingServiceConfig:
     delegation_security_level: str  # "blocked", "confirm", "unrestricted"
     id: str  # Unique identifier for this service profile
     # Type hint for model_parameters should reflect pattern -> params_dict structure
-    model_parameters: dict[str, dict[str, Any]]  # Corrected type
+    model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
     fallback_model_id: str | None = None  # Added for LLM fallback
     fallback_model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
 
