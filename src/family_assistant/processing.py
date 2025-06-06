@@ -225,341 +225,330 @@ class ProcessingService:
         max_iterations = 5  # Safety limit for tool call loops
         current_iteration = 1
 
-        try:
-            # --- Get Tool Definitions ---
-            # List to store all messages generated *within this turn*
-            # This list will be returned by the function
-            turn_messages: list[dict[str, Any]] = []
-            all_tool_definitions = await self.tools_provider.get_tool_definitions()
-            tools_for_llm = all_tool_definitions
+        # --- Get Tool Definitions ---
+        # List to store all messages generated *within this turn*
+        # This list will be returned by the function
+        turn_messages: list[dict[str, Any]] = []
+        all_tool_definitions = await self.tools_provider.get_tool_definitions()
+        tools_for_llm = all_tool_definitions
 
-            if request_confirmation_callback is None:
-                # If no confirmation mechanism is available, filter out tools that require it.
-                confirmable_tool_names = self.service_config.tools_config.get(
-                    "confirm_tools", []
+        if request_confirmation_callback is None:
+            # If no confirmation mechanism is available, filter out tools that require it.
+            confirmable_tool_names = self.service_config.tools_config.get(
+                "confirm_tools", []
+            )
+            if confirmable_tool_names:
+                logger.info(
+                    f"No confirmation callback available. Filtering out tools requiring confirmation: {confirmable_tool_names}"
                 )
-                if confirmable_tool_names:
-                    logger.info(
-                        f"No confirmation callback available. Filtering out tools requiring confirmation: {confirmable_tool_names}"
-                    )
-                    tools_for_llm = [
-                        tool_def
-                        for tool_def in all_tool_definitions
-                        if tool_def.get("function", {}).get("name")
-                        not in confirmable_tool_names
-                    ]
-                    logger.info(
-                        f"Providing {len(tools_for_llm)} tools to LLM after filtering (originally {len(all_tool_definitions)})."
-                    )
-                else:
-                    logger.info(
-                        "No confirmation callback, but no tools are listed in 'confirm_tools'. All tools will be available."
-                    )
-
-            if tools_for_llm:
-                logger.info(f"Providing {len(tools_for_llm)} tools to LLM.")
+                tools_for_llm = [
+                    tool_def
+                    for tool_def in all_tool_definitions
+                    if tool_def.get("function", {}).get("name")
+                    not in confirmable_tool_names
+                ]
+                logger.info(
+                    f"Providing {len(tools_for_llm)} tools to LLM after filtering (originally {len(all_tool_definitions)})."
+                )
             else:
                 logger.info(
-                    "No tools available to provide to LLM (either none defined or all filtered out)."
+                    "No confirmation callback, but no tools are listed in 'confirm_tools'. All tools will be available."
                 )
 
-            # --- Tool Call Loop ---
-            while current_iteration <= max_iterations:
+        if tools_for_llm:
+            logger.info(f"Providing {len(tools_for_llm)} tools to LLM.")
+        else:
+            logger.info(
+                "No tools available to provide to LLM (either none defined or all filtered out)."
+            )
+
+        # --- Tool Call Loop ---
+        while current_iteration <= max_iterations:
+            logger.debug(
+                f"Starting LLM interaction loop iteration {current_iteration}/{max_iterations}"
+            )
+
+            # --- Log messages being sent to LLM at INFO level ---
+            try:
+                logger.info(
+                    f"Sending {len(messages)} messages to LLM (iteration {current_iteration}):\n{json.dumps(messages, indent=2, default=str)}"
+                )  # Use default=str for non-serializable types
+            except Exception as json_err:
+                logger.info(
+                    f"Sending {len(messages)} messages to LLM (iteration {current_iteration}) - JSON dump failed: {json_err}. Raw list snippet: {str(messages)[:1000]}..."
+                )  # Log snippet on failure
+
+            # --- LLM Call ---
+            # Any exception from generate_response (e.g., APIError after retries/fallback)
+            # will now propagate up from here.
+            llm_output: LLMOutput = await self.llm_client.generate_response(
+                messages=messages,
+                tools=tools_for_llm,  # Use the potentially filtered list
+                # Allow tools on all iterations except the last forced one?
+                # Or force 'none' if the previous call didn't request tools?
+                # Let's allow 'auto' for now, unless we hit max iterations.
+                tool_choice=(
+                    "auto"
+                    if tools_for_llm
+                    and current_iteration < max_iterations  # Check tools_for_llm
+                    else "none"
+                ),
+            )
+
+            # Store content and reasoning from the latest call
+            # Content will be overwritten in the next iteration if there are tool calls,
+            # so only the final iteration's content persists.
+            final_content = llm_output.content.strip() if llm_output.content else None
+            final_reasoning_info = (
+                llm_output.reasoning_info
+            )  # This will hold the reasoning of the *last* LLM call
+            if final_content:
                 logger.debug(
-                    f"Starting LLM interaction loop iteration {current_iteration}/{max_iterations}"
+                    f"LLM provided text content in iteration {current_iteration}: {final_content[:100]}..."
+                )
+            else:
+                logger.debug(
+                    f"LLM provided no text content in iteration {current_iteration}."
                 )
 
-                # --- Log messages being sent to LLM at INFO level ---
-                try:
-                    logger.info(
-                        f"Sending {len(messages)} messages to LLM (iteration {current_iteration}):\n{json.dumps(messages, indent=2, default=str)}"
-                    )  # Use default=str for non-serializable types
-                except Exception as json_err:
-                    logger.info(
-                        f"Sending {len(messages)} messages to LLM (iteration {current_iteration}) - JSON dump failed: {json_err}. Raw list snippet: {str(messages)[:1000]}..."
-                    )  # Log snippet on failure
+            # --- Convert ToolCallItem objects to dicts for storage/LLM API ---
+            # raw_tool_calls_from_llm is now list[ToolCallItem] | None
+            raw_tool_call_items_from_llm = llm_output.tool_calls
 
-                # --- LLM Call ---
-                llm_output: LLMOutput = await self.llm_client.generate_response(
-                    messages=messages,
-                    tools=tools_for_llm,  # Use the potentially filtered list
-                    # Allow tools on all iterations except the last forced one?
-                    # Or force 'none' if the previous call didn't request tools?
-                    # Let's allow 'auto' for now, unless we hit max iterations.
-                    tool_choice=(
-                        "auto"
-                        if tools_for_llm
-                        and current_iteration < max_iterations  # Check tools_for_llm
-                        else "none"
-                    ),
+            # serialized_tool_calls_for_turn will be list[dict[str, Any]] | None
+            # This is what gets stored in DB and sent to next LLM call.
+            serialized_tool_calls_for_turn = None
+            if raw_tool_call_items_from_llm:
+                serialized_tool_calls_for_turn = []
+                for tool_call_item in raw_tool_call_items_from_llm:
+                    # Convert ToolCallItem and its ToolCallFunction to dicts
+                    # This uses dataclasses.asdict implicitly if ToolCallItem is a dataclass
+                    # or requires manual conversion if it's a NamedTuple.
+                    # Since we chose dataclass, asdict is the way.
+                    # However, asdict is recursive. We want a specific structure.
+                    tool_call_dict = {
+                        "id": tool_call_item.id,
+                        "type": tool_call_item.type,
+                        "function": {
+                            "name": tool_call_item.function.name,
+                            "arguments": tool_call_item.function.arguments,
+                        },
+                    }
+                    serialized_tool_calls_for_turn.append(tool_call_dict)
+            # --- End of ToolCallItem to dict conversion ---
+
+            # --- Add Assistant Message to Turn History ---
+            # This includes the LLM's text response AND any tool calls it requested
+            # This message will be saved to the DB by the caller.
+            assistant_message_for_turn = {
+                # Note: turn_id, interface_type, conversation_id, timestamp, thread_root_id added by caller
+                "role": "assistant",
+                "content": final_content,  # May be None if only tool calls
+                "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
+                "reasoning_info": (
+                    final_reasoning_info
+                ),  # Include reasoning for this step
+                "tool_call_id": None,  # Not applicable for assistant role
+                "error_traceback": None,  # Not applicable for assistant role
+            }
+            turn_messages.append(assistant_message_for_turn)
+
+            # --- Add Assistant Message to Context for *Next* LLM Call ---
+            # Format for the LLM API (content + tool_calls list)
+            llm_context_assistant_message = {
+                "role": "assistant",
+                "content": final_content,
+                "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
+            }
+            # If content is None, OpenAI API might ignore it or require empty string depending on version/model.
+            # LiteLLM generally handles None content correctly for tool_calls messages.
+            messages.append(llm_context_assistant_message)
+
+            # --- Loop Condition: Break if no tool calls requested ---
+            if not serialized_tool_calls_for_turn:  # Check the serialized version
+                logger.info(
+                    "LLM response received with no further tool calls (after serialization)."
                 )
+                break  # Exit the loop
+            # --- Execute Tool Calls and Prepare Responses ---
+            # --- Execute Tool Calls and Prepare Responses ---
+            tool_response_messages_for_llm = []  # For next LLM call context
+            # Iterate over the ToolCallItem objects if they exist
+            if raw_tool_call_items_from_llm:
+                for tool_call_item_obj in raw_tool_call_items_from_llm:
+                    call_id = tool_call_item_obj.id
+                    function_name = tool_call_item_obj.function.name
+                    function_args_str = tool_call_item_obj.function.arguments
 
-                # Store content and reasoning from the latest call
-                # Content will be overwritten in the next iteration if there are tool calls,
-                # so only the final iteration's content persists.
-                final_content = (
-                    llm_output.content.strip() if llm_output.content else None
-                )
-                final_reasoning_info = (
-                    llm_output.reasoning_info
-                )  # This will hold the reasoning of the *last* LLM call
-                if final_content:
-                    logger.debug(
-                        f"LLM provided text content in iteration {current_iteration}: {final_content[:100]}..."
-                    )
-                else:
-                    logger.debug(
-                        f"LLM provided no text content in iteration {current_iteration}."
-                    )
+                    # Note: Validation for presence of id, type, function.name, function.arguments
+                    # should ideally be handled during ToolCallItem creation in LiteLLMClient.
+                    # Here, we assume they are valid if the object was created.
 
-                # --- Convert ToolCallItem objects to dicts for storage/LLM API ---
-                # raw_tool_calls_from_llm is now list[ToolCallItem] | None
-                raw_tool_call_items_from_llm = llm_output.tool_calls
+                    # The following error handling for missing call_id or function_name
+                    # might be redundant if LiteLLMClient guarantees valid objects.
+                    # However, keeping a light check for robustness.
+                    if not call_id or not function_name:
+                        logger.error(
+                            f"Skipping invalid tool call object in iteration {current_iteration}: id='{call_id}', name='{function_name}'"
+                        )
+                        # Define the error message content for invalid tool call structure
+                        error_content_invalid_struct = (
+                            "Error: Invalid tool call structure."
+                        )
+                        error_traceback_invalid_struct = (
+                            "Invalid tool call structure received from LLM."
+                        )
+                        safe_call_id = (
+                            call_id or f"missing_id_{uuid.uuid4()}"
+                        )  # Use original call_id if available
+                        safe_function_name = function_name or "unknown_function"
 
-                # serialized_tool_calls_for_turn will be list[dict[str, Any]] | None
-                # This is what gets stored in DB and sent to next LLM call.
-                serialized_tool_calls_for_turn = None
-                if raw_tool_call_items_from_llm:
-                    serialized_tool_calls_for_turn = []
-                    for tool_call_item in raw_tool_call_items_from_llm:
-                        # Convert ToolCallItem and its ToolCallFunction to dicts
-                        # This uses dataclasses.asdict implicitly if ToolCallItem is a dataclass
-                        # or requires manual conversion if it's a NamedTuple.
-                        # Since we chose dataclass, asdict is the way.
-                        # However, asdict is recursive. We want a specific structure.
-                        tool_call_dict = {
-                            "id": tool_call_item.id,
-                            "type": tool_call_item.type,
-                            "function": {
-                                "name": tool_call_item.function.name,
-                                "arguments": tool_call_item.function.arguments,
-                            },
+                        # Create the error message dictionary for the turn history
+                        tool_response_message_for_turn_invalid_struct = {
+                            "role": "tool",
+                            "tool_call_id": safe_call_id,
+                            "content": error_content_invalid_struct,
+                            "error_traceback": error_traceback_invalid_struct,
                         }
-                        serialized_tool_calls_for_turn.append(tool_call_dict)
-                # --- End of ToolCallItem to dict conversion ---
-
-                # --- Add Assistant Message to Turn History ---
-                # This includes the LLM's text response AND any tool calls it requested
-                # This message will be saved to the DB by the caller.
-                assistant_message_for_turn = {
-                    # Note: turn_id, interface_type, conversation_id, timestamp, thread_root_id added by caller
-                    "role": "assistant",
-                    "content": final_content,  # May be None if only tool calls
-                    "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
-                    "reasoning_info": (
-                        final_reasoning_info
-                    ),  # Include reasoning for this step
-                    "tool_call_id": None,  # Not applicable for assistant role
-                    "error_traceback": None,  # Not applicable for assistant role
-                }
-                turn_messages.append(assistant_message_for_turn)
-
-                # --- Add Assistant Message to Context for *Next* LLM Call ---
-                # Format for the LLM API (content + tool_calls list)
-                llm_context_assistant_message = {
-                    "role": "assistant",
-                    "content": final_content,
-                    "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
-                }
-                # If content is None, OpenAI API might ignore it or require empty string depending on version/model.
-                # LiteLLM generally handles None content correctly for tool_calls messages.
-                messages.append(llm_context_assistant_message)
-
-                # --- Loop Condition: Break if no tool calls requested ---
-                if not serialized_tool_calls_for_turn:  # Check the serialized version
-                    logger.info(
-                        "LLM response received with no further tool calls (after serialization)."
-                    )
-                    break  # Exit the loop
-                # --- Execute Tool Calls and Prepare Responses ---
-                # --- Execute Tool Calls and Prepare Responses ---
-                tool_response_messages_for_llm = []  # For next LLM call context
-                # Iterate over the ToolCallItem objects if they exist
-                if raw_tool_call_items_from_llm:
-                    for tool_call_item_obj in raw_tool_call_items_from_llm:
-                        call_id = tool_call_item_obj.id
-                        function_name = tool_call_item_obj.function.name
-                        function_args_str = tool_call_item_obj.function.arguments
-
-                        # Note: Validation for presence of id, type, function.name, function.arguments
-                        # should ideally be handled during ToolCallItem creation in LiteLLMClient.
-                        # Here, we assume they are valid if the object was created.
-
-                        # The following error handling for missing call_id or function_name
-                        # might be redundant if LiteLLMClient guarantees valid objects.
-                        # However, keeping a light check for robustness.
-                        if not call_id or not function_name:
-                            logger.error(
-                                f"Skipping invalid tool call object in iteration {current_iteration}: id='{call_id}', name='{function_name}'"
-                            )
-                            # Define the error message content for invalid tool call structure
-                            error_content_invalid_struct = (
-                                "Error: Invalid tool call structure."
-                            )
-                            error_traceback_invalid_struct = (
-                                "Invalid tool call structure received from LLM."
-                            )
-                            safe_call_id = (
-                                call_id or f"missing_id_{uuid.uuid4()}"
-                            )  # Use original call_id if available
-                            safe_function_name = function_name or "unknown_function"
-
-                            # Create the error message dictionary for the turn history
-                            tool_response_message_for_turn_invalid_struct = {
-                                "role": "tool",
-                                "tool_call_id": safe_call_id,
-                                "content": error_content_invalid_struct,
-                                "error_traceback": error_traceback_invalid_struct,
-                            }
-                            turn_messages.append(
-                                tool_response_message_for_turn_invalid_struct
-                            )
-                            # Create the error message for the *next* LLM call context
-                            llm_context_error_message_invalid_struct = {
-                                "tool_call_id": safe_call_id,
-                                "role": "tool",
-                                "name": safe_function_name,  # LLM expects name for tool role message
-                                "content": error_content_invalid_struct,
-                            }
-                            tool_response_messages_for_llm.append(
-                                llm_context_error_message_invalid_struct
-                            )
-                            continue  # Skip to the next tool_call_item_obj
-
-                        # If call_id and function_name are valid, proceed here.
-
-                        # --- Argument Parsing ---
-                        try:
-                            arguments = json.loads(function_args_str)
-                        except json.JSONDecodeError:
-                            logger.error(
-                                f"Failed to parse arguments for tool call {function_name} (call_id: {call_id}, iteration {current_iteration}): {function_args_str}"
-                            )
-                            # Prepare error response for this specific tool call
-                            error_content_args = (
-                                f"Error: Invalid arguments format for {function_name}."
-                            )
-                            error_traceback_args = (
-                                f"JSONDecodeError: {function_args_str}"
-                            )
-
-                            turn_messages.append({
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "content": error_content_args,
-                                "error_traceback": error_traceback_args,
-                            })
-                            tool_response_messages_for_llm.append({
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "content": error_content_args,
-                            })
-                            continue  # Skip to the next tool_call_item_obj
-
-                        # --- Tool Execution ---
-                        logger.info(
-                            f"Executing tool '{function_name}' with args: {arguments} (call_id: {call_id}, iteration: {current_iteration})"
+                        turn_messages.append(
+                            tool_response_message_for_turn_invalid_struct
                         )
-                        tool_execution_context = ToolExecutionContext(
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            user_name=user_name,  # Pass user_name
-                            turn_id=turn_id,
-                            db_context=db_context,
-                            chat_interface=chat_interface,
-                            new_task_event=new_task_event,  # Pass new_task_event
-                            timezone_str=self.timezone_str,
-                            request_confirmation_callback=request_confirmation_callback,
-                            processing_service=self,
-                            clock=self.clock,  # Pass the clock from ProcessingService
+                        # Create the error message for the *next* LLM call context
+                        llm_context_error_message_invalid_struct = {
+                            "tool_call_id": safe_call_id,
+                            "role": "tool",
+                            "name": safe_function_name,  # LLM expects name for tool role message
+                            "content": error_content_invalid_struct,
+                        }
+                        tool_response_messages_for_llm.append(
+                            llm_context_error_message_invalid_struct
                         )
+                        continue  # Skip to the next tool_call_item_obj
 
-                        tool_response_content_val = None  # Renamed to avoid conflict
-                        tool_error_traceback_val = None  # Renamed to avoid conflict
+                    # If call_id and function_name are valid, proceed here.
 
-                        try:
-                            tool_response_content_val = (
-                                await self.tools_provider.execute_tool(
-                                    name=function_name,
-                                    arguments=arguments,
-                                    context=tool_execution_context,
-                                )
-                            )
-                            logger.debug(
-                                f"Tool '{function_name}' (call_id: {call_id}) executed. Result type: {type(tool_response_content_val)}. Result (first 200 chars): {str(tool_response_content_val)[:200]}"
-                            )
-                        except ToolNotFoundError as tnfe:
-                            logger.error(
-                                f"Tool execution failed (iteration {current_iteration}): {tnfe}"
-                            )
-                            tool_response_content_val = f"Error: {tnfe}"
-                            tool_error_traceback_val = str(tnfe)
-                        except Exception as exec_err:
-                            logger.error(
-                                f"Unexpected error executing tool {function_name} (iteration {current_iteration}): {exec_err}",
-                                exc_info=True,
-                            )
-                            tool_response_content_val = (
-                                f"Error: Unexpected error executing {function_name}."
-                            )
-                            tool_error_traceback_val = traceback.format_exc()
+                    # --- Argument Parsing ---
+                    try:
+                        arguments = json.loads(function_args_str)
+                    except json.JSONDecodeError:
+                        logger.error(
+                            f"Failed to parse arguments for tool call {function_name} (call_id: {call_id}, iteration {current_iteration}): {function_args_str}"
+                        )
+                        # Prepare error response for this specific tool call
+                        error_content_args = (
+                            f"Error: Invalid arguments format for {function_name}."
+                        )
+                        error_traceback_args = f"JSONDecodeError: {function_args_str}"
 
-                        # Add successful or error tool response to turn history
                         turn_messages.append({
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": tool_response_content_val,
-                            "error_traceback": tool_error_traceback_val,
+                            "content": error_content_args,
+                            "error_traceback": error_traceback_args,
                         })
-                        # Add successful or error tool response to LLM context for next call
                         tool_response_messages_for_llm.append({
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": tool_response_content_val,
+                            "content": error_content_args,
                         })
-                        # End of processing for this specific tool_call_item_obj
-                # --- End of loop over raw_tool_call_items_from_llm ---
+                        continue  # Skip to the next tool_call_item_obj
 
-                # --- After processing all tool calls for this iteration (if any) ---
-                messages.extend(tool_response_messages_for_llm)
+                    # --- Tool Execution ---
+                    logger.info(
+                        f"Executing tool '{function_name}' with args: {arguments} (call_id: {call_id}, iteration: {current_iteration})"
+                    )
+                    tool_execution_context = ToolExecutionContext(
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        user_name=user_name,  # Pass user_name
+                        turn_id=turn_id,
+                        db_context=db_context,
+                        chat_interface=chat_interface,
+                        new_task_event=new_task_event,  # Pass new_task_event
+                        timezone_str=self.timezone_str,
+                        request_confirmation_callback=request_confirmation_callback,
+                        processing_service=self,
+                        clock=self.clock,  # Pass the clock from ProcessingService
+                    )
 
-                # Increment iteration counter
-                current_iteration += 1
-                # --- Loop continues to next LLM call ---
+                    tool_response_content_val = None  # Renamed to avoid conflict
+                    tool_error_traceback_val = None  # Renamed to avoid conflict
 
-            # --- After Loop ---
-            if current_iteration > max_iterations:
-                logger.warning(
-                    f"Reached maximum tool call iterations ({max_iterations}). Returning current state."
-                )
-                # The last message in turn_messages should be the final assistant response
-                # (which was forced with tool_choice='none'). We can optionally add a note to its content.
-                if turn_messages and turn_messages[-1]["role"] == "assistant":
-                    note = "\n\n(Note: Reached maximum processing depth.)"
-                    if turn_messages[-1]["content"]:
-                        turn_messages[-1]["content"] += note
-                    else:
-                        turn_messages[-1]["content"] = note.strip()
+                    try:
+                        tool_response_content_val = (
+                            await self.tools_provider.execute_tool(
+                                name=function_name,
+                                arguments=arguments,
+                                context=tool_execution_context,
+                            )
+                        )
+                        logger.debug(
+                            f"Tool '{function_name}' (call_id: {call_id}) executed. Result type: {type(tool_response_content_val)}. Result (first 200 chars): {str(tool_response_content_val)[:200]}"
+                        )
+                    except ToolNotFoundError as tnfe:
+                        logger.error(
+                            f"Tool execution failed (iteration {current_iteration}): {tnfe}"
+                        )
+                        tool_response_content_val = f"Error: {tnfe}"
+                        tool_error_traceback_val = str(tnfe)
+                    except Exception as exec_err:
+                        logger.error(
+                            f"Unexpected error executing tool {function_name} (iteration {current_iteration}): {exec_err}",
+                            exc_info=True,
+                        )
+                        tool_response_content_val = (
+                            f"Error: Unexpected error executing {function_name}."
+                        )
+                        tool_error_traceback_val = traceback.format_exc()
 
-            # Check if the *last* message generated was an assistant message with no content
-            # (This might happen if the final LLM call produced nothing, e.g., after tool errors)
-            if (
-                turn_messages
-                and turn_messages[-1]["role"] == "assistant"
-                and not turn_messages[-1].get("content")
-            ):
-                logger.warning("Final LLM response content was empty.")
+                    # Add successful or error tool response to turn history
+                    turn_messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": tool_response_content_val,
+                        "error_traceback": tool_error_traceback_val,
+                    })
+                    # Add successful or error tool response to LLM context for next call
+                    tool_response_messages_for_llm.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": tool_response_content_val,
+                    })
+                    # End of processing for this specific tool_call_item_obj
+            # --- End of loop over raw_tool_call_items_from_llm ---
 
-            # Return the complete list of messages generated in this turn, and the reasoning from the final LLM call
-            return turn_messages, final_reasoning_info
+            # --- After processing all tool calls for this iteration (if any) ---
+            messages.extend(tool_response_messages_for_llm)
 
-        except Exception as e:
-            logger.error(
-                f"Error during LLM interaction or tool handling loop in ProcessingService: {e}",
-                exc_info=True,
+            # Increment iteration counter
+            current_iteration += 1
+            # --- Loop continues to next LLM call ---
+
+        # --- After Loop ---
+        if current_iteration > max_iterations:
+            logger.warning(
+                f"Reached maximum tool call iterations ({max_iterations}). Returning current state."
             )
-            # Ensure tuple is returned even on error
-            return [], None  # Return empty list, no reasoning info
+            # The last message in turn_messages should be the final assistant response
+            # (which was forced with tool_choice='none'). We can optionally add a note to its content.
+            if turn_messages and turn_messages[-1]["role"] == "assistant":
+                note = "\n\n(Note: Reached maximum processing depth.)"
+                if turn_messages[-1]["content"]:
+                    turn_messages[-1]["content"] += note
+                else:
+                    turn_messages[-1]["content"] = note.strip()
+
+        # Check if the *last* message generated was an assistant message with no content
+        # (This might happen if the final LLM call produced nothing, e.g., after tool errors)
+        if (
+            turn_messages
+            and turn_messages[-1]["role"] == "assistant"
+            and not turn_messages[-1].get("content")
+        ):
+            logger.warning("Final LLM response content was empty.")
+
+        # Return the complete list of messages generated in this turn, and the reasoning from the final LLM call
+        return turn_messages, final_reasoning_info
 
     def _format_history_for_llm(
         self, history_messages: list[dict[str, Any]]
