@@ -143,12 +143,48 @@ This is a family assistant application built around a conversational LLM interfa
 - Each processor type defined in `src/family_assistant/indexing/processors/`
 - Pipeline configuration supports different embedding types and processing strategies
 
+## Code Structure Summary
+
+The codebase is organized into several key layers:
+
+**Core Application Layer**:
+- `assistant.py` - Main orchestrator managing application lifecycle and service coordination
+- `__main__.py` - Entry point handling configuration loading and service startup
+- `processing.py` - Core processing service managing LLM interactions and tool execution
+
+**User Interfaces**:
+- `telegram_bot.py` - Telegram interface with message handling and slash commands
+- `web/routers/` - FastAPI web interface with UI and API endpoints
+- `web/auth.py` - Authentication system supporting OIDC and API tokens
+
+**Storage & Data Management**:
+- `storage/` - Database abstraction layer with async SQLAlchemy
+- `storage/vector.py` - Vector storage for embeddings (PostgreSQL + pgvector)
+- `storage/message_history.py` - Conversation history with processing profile filtering
+
+**Document Processing**:
+- `indexing/pipeline.py` - Configurable document processing pipeline
+- `indexing/processors/` - Modular processors (file, LLM, network, text chunking)
+- `indexing/document_indexer.py` - Main indexing orchestrator
+
+**Tools & External Integration**:
+- `tools/` - Local Python tools and MCP integration
+- `tools/mcp.py` - Model Context Protocol for external tool servers
+- `calendar_integration.py` - CalDAV integration for calendar events
+
+**Supporting Infrastructure**:
+- `llm.py` - LLM client abstraction (primarily LiteLLM)
+- `embeddings.py` - Text embedding generation
+- `task_worker.py` - Background task processing with retry logic
+- `context_providers.py` - Dynamic context injection for LLM prompts
+
 ## Important Files and Locations
 
 - **Entry point**: `src/family_assistant/__main__.py`
 - **Main config**: `config.yaml`
 - **Database models**: `src/family_assistant/storage/base.py`
 - **Web routes**: `src/family_assistant/web/routers/`
+- **Web architecture**: See `src/family_assistant/web/README.md` for detailed web layer documentation
 - **Telegram bot**: `src/family_assistant/telegram_bot.py`
 - **Task worker**: `src/family_assistant/task_worker.py`
 - **Service definitions**: Service profiles in `config.yaml`

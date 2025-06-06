@@ -21,6 +21,7 @@ from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
+from family_assistant.web.routers.context_viewer import context_viewer_router
 from family_assistant.web.routers.documentation import documentation_router
 from family_assistant.web.routers.documents_ui import (  # New import for document upload UI
     router as documents_ui_router,
@@ -131,6 +132,7 @@ app.include_router(history_router, tags=["History UI"])
 app.include_router(tools_ui_router, tags=["Tools UI"])
 app.include_router(tasks_ui_router, tags=["Tasks UI"])
 app.include_router(vector_search_router, tags=["Vector Search UI"])
+app.include_router(context_viewer_router, tags=["Context Viewer UI"])
 app.include_router(
     documents_ui_router, prefix="/documents", tags=["Documents UI"]
 )  # New router

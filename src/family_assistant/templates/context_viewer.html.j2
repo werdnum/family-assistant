@@ -1,0 +1,371 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Context Viewer - Family Assistant{% endblock %}
+{% block title_header %}LLM Context Viewer{% endblock %}
+
+{% block head_extra %}
+<style>
+    /* Override Simple.css defaults for better context viewer styling */
+    .context-viewer {
+        max-width: none;
+        margin: 0;
+    }
+    
+    .context-section {
+        margin-bottom: 1.5rem;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 1rem;
+        background-color: var(--accent-bg);
+        min-height: auto;
+    }
+    
+    .context-section h3 {
+        margin: 0 0 1rem 0;
+        color: var(--text);
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 0.5rem;
+        font-size: 1.2rem;
+    }
+    
+    .provider-section {
+        margin-bottom: 1rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.75rem;
+        background-color: var(--bg);
+        min-height: auto;
+        display: block;
+    }
+    
+    .provider-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    
+    .provider-name {
+        font-weight: bold;
+        color: var(--accent);
+        font-size: 1rem;
+        margin: 0;
+    }
+    
+    .fragment-count {
+        background-color: var(--accent);
+        color: var(--bg);
+        padding: 0.2rem 0.5rem;
+        border-radius: 1rem;
+        font-size: 0.8rem;
+        white-space: nowrap;
+    }
+    
+    .fragment {
+        background-color: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+        white-space: pre-wrap;
+        font-family: monospace;
+        font-size: 0.85rem;
+        line-height: 1.4;
+        overflow-x: auto;
+        word-break: break-word;
+    }
+    
+    .fragment:last-child {
+        margin-bottom: 0;
+    }
+    
+    .error-message {
+        background-color: #fee;
+        color: #c00;
+        border: 1px solid #fcc;
+        border-radius: 4px;
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.9rem;
+    }
+    
+    .summary-stats {
+        background-color: var(--accent-bg);
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .summary-stats h3 {
+        margin: 0 0 0.75rem 0;
+        color: var(--accent);
+        border-bottom: none;
+        font-size: 1.1rem;
+    }
+    
+    .stat-item {
+        margin-bottom: 0.4rem;
+        font-size: 0.95rem;
+    }
+    
+    .stat-item strong {
+        color: var(--text);
+    }
+    
+    .no-fragments {
+        color: var(--text-light);
+        font-style: italic;
+        padding: 1rem;
+        text-align: center;
+        background-color: var(--accent-bg);
+        border-radius: 4px;
+        font-size: 0.9rem;
+    }
+    
+    .system-prompt-section {
+        background-color: #fff9e6;
+        border: 1px solid #ffd700;
+        border-radius: 6px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .system-prompt-template {
+        background-color: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.75rem;
+        font-family: monospace;
+        font-size: 0.85rem;
+        white-space: pre-wrap;
+        margin-bottom: 1rem;
+        overflow-x: auto;
+    }
+    
+    .format-args {
+        background-color: var(--accent-bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.75rem;
+        font-family: monospace;
+        font-size: 0.85rem;
+        overflow-x: auto;
+    }
+    
+    .refresh-button {
+        background-color: var(--accent);
+        color: var(--bg);
+        padding: 0.6rem 1.2rem;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+        transition: opacity 0.2s;
+    }
+    
+    .refresh-button:hover {
+        opacity: 0.8;
+    }
+    
+    .toggle-section {
+        cursor: pointer;
+        user-select: none;
+        padding: 0.2rem;
+        margin: -0.2rem;
+        border-radius: 4px;
+        transition: background-color 0.2s;
+    }
+    
+    .toggle-section:hover {
+        background-color: var(--accent-bg);
+    }
+    
+    .collapsible-content {
+        transition: all 0.3s ease-out;
+        overflow: hidden;
+    }
+    
+    .collapsed {
+        max-height: 0 !important;
+        opacity: 0;
+        margin-top: 0;
+        margin-bottom: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+    }
+    
+    .expanded {
+        max-height: none;
+        opacity: 1;
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .provider-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .fragment-count {
+            align-self: flex-start;
+        }
+        
+        .fragment {
+            font-size: 0.8rem;
+        }
+        
+        .system-prompt-template,
+        .format-args {
+            font-size: 0.8rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block main_content %}
+<div class="context-viewer">
+    <button class="refresh-button" onclick="window.location.reload()">
+        🔄 Refresh Context
+    </button>
+    
+    <!-- Summary Statistics -->
+    <div class="summary-stats">
+        <h3>📊 Context Summary</h3>
+        <div class="stat-item"><strong>Profile ID:</strong> {{ profile_id }}</div>
+        <div class="stat-item"><strong>Total Context Providers:</strong> {{ context_fragments|length }}</div>
+        <div class="stat-item"><strong>Total Fragments:</strong> {{ total_fragments }}</div>
+        {% if providers_with_errors %}
+        <div class="stat-item"><strong>Providers with Errors:</strong> {{ providers_with_errors|length }}</div>
+        {% endif %}
+        <div class="stat-item"><strong>Aggregated Context Length:</strong> {{ aggregated_context|length }} characters</div>
+    </div>
+
+    <!-- System Prompt Section -->
+    <div class="system-prompt-section">
+        <h3 class="toggle-section" onclick="toggleSection('system-prompt-content')">
+            🔧 System Prompt Template <span id="system-prompt-toggle">[−]</span>
+        </h3>
+        <div id="system-prompt-content" class="collapsible-content expanded">
+            <div class="system-prompt-template">{{ system_prompt_template }}</div>
+            <h4>Available Format Arguments:</h4>
+            <div class="format-args">
+{% for key, value in format_args.items() %}{{ key }}: {{ value }}
+{% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Aggregated Context Section -->
+    <div class="context-section">
+        <h3 class="toggle-section" onclick="toggleSection('aggregated-content')">
+            📋 Final Aggregated Context <span id="aggregated-toggle">[−]</span>
+        </h3>
+        <div id="aggregated-content" class="collapsible-content expanded">
+            {% if aggregated_context %}
+            <div class="fragment">{{ aggregated_context }}</div>
+            {% else %}
+            <div class="no-fragments">No aggregated context available</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Individual Provider Context -->
+    <div class="context-section">
+        <h3 class="toggle-section" onclick="toggleSection('providers-content')">
+            🔗 Individual Context Providers <span id="providers-toggle">[−]</span>
+        </h3>
+        <div id="providers-content" class="collapsible-content expanded">
+            {% for provider in context_fragments %}
+            <div class="provider-section">
+                <div class="provider-header">
+                    <span class="provider-name">{{ provider.provider_name }}</span>
+                    <span class="fragment-count">{{ provider.fragments|length }} fragment(s)</span>
+                </div>
+                
+                {% if provider.error %}
+                <div class="error-message">
+                    <strong>Error:</strong> {{ provider.error }}
+                </div>
+                {% endif %}
+                
+                {% if provider.fragments %}
+                    {% for fragment in provider.fragments %}
+                    <div class="fragment">{{ fragment }}</div>
+                    {% endfor %}
+                {% else %}
+                    {% if not provider.error %}
+                    <div class="no-fragments">No context fragments from this provider</div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+function toggleSection(sectionId) {
+    const content = document.getElementById(sectionId);
+    const toggle = document.getElementById(sectionId.replace('-content', '-toggle'));
+    
+    if (content.classList.contains('expanded')) {
+        // Store the current height before collapsing
+        const currentHeight = content.scrollHeight;
+        content.style.maxHeight = currentHeight + 'px';
+        
+        // Force a reflow, then collapse
+        content.offsetHeight;
+        content.style.maxHeight = '0px';
+        content.classList.remove('expanded');
+        content.classList.add('collapsed');
+        toggle.textContent = '[+]';
+        
+        // Clean up the inline style after transition
+        setTimeout(() => {
+            if (content.classList.contains('collapsed')) {
+                content.style.maxHeight = '';
+            }
+        }, 300);
+    } else {
+        // Expand
+        content.classList.remove('collapsed');
+        content.classList.add('expanded');
+        
+        // Set height to auto after a brief moment to allow natural expansion
+        setTimeout(() => {
+            if (content.classList.contains('expanded')) {
+                content.style.maxHeight = 'none';
+            }
+        }, 10);
+        
+        toggle.textContent = '[−]';
+    }
+}
+
+// Initialize all sections as expanded on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const collapsibleSections = document.querySelectorAll('.collapsible-content');
+    collapsibleSections.forEach(section => {
+        if (!section.classList.contains('collapsed')) {
+            section.style.maxHeight = 'none';
+        }
+    });
+});
+
+// Auto-refresh functionality (optional)
+function enableAutoRefresh(intervalSeconds = 30) {
+    setInterval(() => {
+        window.location.reload();
+    }, intervalSeconds * 1000);
+}
+
+// Uncomment the line below to enable auto-refresh every 30 seconds
+// enableAutoRefresh(30);
+</script>
+{% endblock %}
