@@ -21,6 +21,7 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
+from litellm.utils import get_valid_params  # Import for filtering kwargs
 
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
 
@@ -178,9 +179,11 @@ class LiteLLMClient:
     def __init__(
         self,
         model: str,
-        model_parameters: dict[str, Any] | None = None,
+        model_parameters: dict[str, dict[str, Any]] | None = None,  # Corrected type
         fallback_model_id: str | None = None,
-        fallback_model_parameters: dict[str, Any] | None = None,
+        fallback_model_parameters: dict[
+            str, dict[str, Any]
+        ] | None = None,  # Corrected type
         **kwargs: dict[str, Any],
     ) -> None:
         """
@@ -188,18 +191,22 @@ class LiteLLMClient:
 
         Args:
             model: The identifier of the primary model to use.
-            model_parameters: Parameters specific to the primary model.
+            model_parameters: Parameters specific to the primary model (pattern -> params_dict).
             fallback_model_id: Optional identifier for a fallback model.
-            fallback_model_parameters: Optional parameters for the fallback model.
+            fallback_model_parameters: Optional parameters for the fallback model (pattern -> params_dict).
             **kwargs: Default keyword arguments for litellm.acompletion.
         """
         if not model:
             raise ValueError("LLM model identifier cannot be empty.")
         self.model = model
         self.default_kwargs = kwargs
-        self.model_parameters = model_parameters or {}
+        self.model_parameters: dict[
+            str, dict[str, Any]
+        ] = model_parameters or {}  # Ensure correct type for self
         self.fallback_model_id = fallback_model_id
-        self.fallback_model_parameters = fallback_model_parameters or {}
+        self.fallback_model_parameters: dict[
+            str, dict[str, Any]
+        ] = fallback_model_parameters or {}  # Ensure correct type for self
         logger.info(
             f"LiteLLMClient initialized for primary model: {self.model} "
             f"with default kwargs: {self.default_kwargs}, "
@@ -214,20 +221,17 @@ class LiteLLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         tool_choice: str | None,
-        specific_model_params: dict[str, Any],
+        specific_model_params: dict[str, dict[str, Any]],  # Corrected type
     ) -> LLMOutput:
         """Internal method to make a single attempt at LLM completion."""
         completion_params = self.default_kwargs.copy()
 
         # Find and merge model-specific parameters from config for the current model_id
         reasoning_params_config = None
-        # Use specific_model_params directly if provided (e.g. for fallback)
-        # otherwise, lookup from self.model_parameters for the primary model.
+        # specific_model_params is the dict of (pattern -> params_dict) for the current model type
         current_model_config_params = specific_model_params
-        if not current_model_config_params and model_id == self.model:
-            current_model_config_params = self.model_parameters
 
-        for pattern, params in current_model_config_params.items():
+        for pattern, params in current_model_config_params.items():  # params is dict[str, Any]
             matched = False
             if pattern.endswith("-"):
                 if model_id.startswith(pattern[:-1]):
@@ -253,11 +257,29 @@ class LiteLLMClient:
                 f"Adding 'reasoning' parameter for OpenRouter model '{model_id}': {reasoning_params_config}"
             )
 
+        # Filter completion_params to include only valid litellm.acompletion arguments
+        # get_valid_params() returns a list of valid kwargs for litellm.completion/acompletion
+        valid_acompletion_params_set = set(get_valid_params())
+        final_completion_params = {
+            k: v
+            for k, v in completion_params.items()
+            if k in valid_acompletion_params_set
+        }
+
+        discarded_keys = set(completion_params.keys()) - set(
+            final_completion_params.keys()
+        )
+        if discarded_keys:
+            logger.warning(
+                f"For model {model_id}, discarded the following non-standard acompletion parameters: {discarded_keys}. "
+                f"Original params included: {list(completion_params.keys())}"
+            )
+
         if tools:
             sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
             logger.debug(
                 f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
-                f"Tools provided. Tool choice: {tool_choice}. Other params: {json.dumps(completion_params, default=str)}"
+                f"Tools provided. Tool choice: {tool_choice}. Filtered params: {json.dumps(final_completion_params, default=str)}"
             )
             response = await acompletion(
                 model=model_id,
@@ -265,19 +287,19 @@ class LiteLLMClient:
                 tools=sanitized_tools_arg,
                 tool_choice=tool_choice,
                 stream=False,
-                **completion_params,
+                **final_completion_params,
             )
             response = cast("ModelResponse", response)
         else:
             logger.debug(
                 f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
-                f"No tools provided. Other params: {json.dumps(completion_params, default=str)}"
+                f"No tools provided. Filtered params: {json.dumps(final_completion_params, default=str)}"
             )
             _response_obj = await acompletion(
                 model=model_id,
                 messages=messages,
                 stream=False,
-                **completion_params,
+                **final_completion_params,
             )
             response = cast("ModelResponse", _response_obj)
 
