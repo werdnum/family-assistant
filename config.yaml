@@ -70,6 +70,78 @@ indexing_pipeline_config:
 default_profile_settings:
   processing_config:
     home_assistant_context_template: |-
+      {# Macro to format a distance value (assumed to be in km by the distance() function) 
+         into a user-friendly string with 'm' or 'km'. #}
+      {%- macro get_formatted_distance_string(distance_value_km) -%}
+        {%- if distance_value_km is number and distance_value_km < 1 -%}
+          {{- (distance_value_km * 1000) | round(0) ~ " m" -}}
+        {%- elif distance_value_km is number -%}
+          {{- distance_value_km | round(1) ~ " km" -}}
+        {%- else -%}
+          {{- "" -}} {# Handle cases where distance might not be a number #}
+        {%- endif -%}
+      {%- endmacro -%}
+      
+      {# Macro to find the closest zone to a person and its distance.
+         It populates the 'out_ns.result_dict' with a dictionary 
+         containing {'zone_obj': <state_obj>, 'distance': <float>}, or sets it to none. #}
+      {%- macro find_closest_zone_data(person_obj, out_ns) -%}
+        {%- set zones_with_distances = namespace(list=[]) -%}
+      
+        {%- for zone_obj in states.zone -%}
+          {%- set current_dist = distance(zone_obj.entity_id, person_obj.entity_id) -%}
+          {%- if current_dist is number -%}
+            {%- set zones_with_distances.list = zones_with_distances.list + [{'zone_obj': zone_obj, 'distance': current_dist}] -%}
+          {%- endif -%}
+        {%- endfor -%}
+      
+        {%- if zones_with_distances.list -%}
+          {%- set out_ns.result_dict = (zones_with_distances.list | sort(attribute='distance') | first) -%}
+        {%- else -%}
+          {%- set out_ns.result_dict = none -%}
+        {%- endif -%}
+        {# This macro modifies 'out_ns' by side effect and does not render its primary data as output. #}
+      {%- endmacro -%}
+      
+      {# Macro to determine and return the detailed portion of a 'not_home' status message.
+         For example: " 1.2 km from Work" or " (location data unavailable)". #}
+      {%- macro get_not_home_status_details(person_obj) -%}
+        {%- if state_attr(person_obj.entity_id, 'latitude') is not none and state_attr(person_obj.entity_id, 'longitude') is not none -%}
+          {%- if states.zone | length > 0 -%}
+            {# Create a namespace to hold the output from the find_closest_zone_data macro #}
+            {%- set closest_zone_ns = namespace(result_dict=none) -%}
+            {# Call the macro; it will populate closest_zone_ns.result_dict by side effect. #}
+            {# Assigning to '_' signifies we're primarily interested in the side effect, not the macro's direct string output (which should be empty). #}
+            {%- set _ = find_closest_zone_data(person_obj, closest_zone_ns) -%} 
+            
+            {%- set closest_zone_data = closest_zone_ns.result_dict -%} {# Retrieve the actual dictionary #}
+      
+            {%- if closest_zone_data is not none and closest_zone_data.distance is number -%}
+              {{- " " ~ get_formatted_distance_string(closest_zone_data.distance) ~ " from " ~ closest_zone_data.zone_obj.name -}}
+            {%- elif closest_zone_data is not none -%} {# A zone was found, but distance was invalid for formatting #}
+              {{- " (could not calculate distance to " ~ closest_zone_data.zone_obj.name ~ ")" -}}
+            {%- else -%}
+              {{- " (unable to find a suitable closest zone)" -}}
+            {%- endif -%}
+          {%- else -%}
+            {{- " (no zones defined)" -}}
+          {%- endif -%}
+        {%- else -%}
+          {{- " (location data unavailable)" -}}
+        {%- endif -%}
+      {%- endmacro -%}
+      
+      {%- for person in states.person -%}
+        {%- if not loop.first %}{{ "\n" }}{% endif -%} {# Ensures each person's status starts on a new line. #}
+        
+        {{- person.name -}}
+        {%- if person.state == 'not_home' -%}
+          {{- " is not home" ~ get_not_home_status_details(person) -}}
+        {%- else -%}
+          {# If not 'not_home', the person.state is the friendly name of the zone they are in. #}
+          {{- " is at " ~ person.state -}}
+        {%- endif -%}
+      {%- endfor -%}
       {% set forecasts = state_attr("sensor.electricity_price_forecast", "forecasts") or [] %}
       {% set significant_periods = [] %}
       {# Use a namespace to allow modifying variables inside the loop #}
