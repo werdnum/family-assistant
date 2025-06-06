@@ -181,9 +181,8 @@ class LiteLLMClient:
         model: str,
         model_parameters: dict[str, dict[str, Any]] | None = None,  # Corrected type
         fallback_model_id: str | None = None,
-        fallback_model_parameters: dict[
-            str, dict[str, Any]
-        ] | None = None,  # Corrected type
+        fallback_model_parameters: dict[str, dict[str, Any]]
+        | None = None,  # Corrected type
         **kwargs: dict[str, Any],
     ) -> None:
         """
@@ -200,13 +199,13 @@ class LiteLLMClient:
             raise ValueError("LLM model identifier cannot be empty.")
         self.model = model
         self.default_kwargs = kwargs
-        self.model_parameters: dict[
-            str, dict[str, Any]
-        ] = model_parameters or {}  # Ensure correct type for self
+        self.model_parameters: dict[str, dict[str, Any]] = (
+            model_parameters or {}
+        )  # Ensure correct type for self
         self.fallback_model_id = fallback_model_id
-        self.fallback_model_parameters: dict[
-            str, dict[str, Any]
-        ] = fallback_model_parameters or {}  # Ensure correct type for self
+        self.fallback_model_parameters: dict[str, dict[str, Any]] = (
+            fallback_model_parameters or {}
+        )  # Ensure correct type for self
         logger.info(
             f"LiteLLMClient initialized for primary model: {self.model} "
             f"with default kwargs: {self.default_kwargs}, "
@@ -231,7 +230,10 @@ class LiteLLMClient:
         # specific_model_params is the dict of (pattern -> params_dict) for the current model type
         current_model_config_params = specific_model_params
 
-        for pattern, params in current_model_config_params.items():  # params is dict[str, Any]
+        for (
+            pattern,
+            params,
+        ) in current_model_config_params.items():  # params is dict[str, Any]
             matched = False
             if pattern.endswith("-"):
                 if model_id.startswith(pattern[:-1]):
