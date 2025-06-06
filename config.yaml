@@ -141,6 +141,11 @@ default_profile_settings:
           {# If not 'not_home', the person.state is the friendly name of the zone they are in. #}
           {{- " is at " ~ person.state -}}
         {%- endif -%}
+        {%- set lat = state_attr(person.entity_id, 'latitude') -%}
+        {%- set lon = state_attr(person.entity_id, 'longitude') -%}
+        {%- if lat is not none and lon is not none -%}
+          {{- " (" ~ lat ~ ", " ~ lon ~ ")" -}}
+        {%- endif -%}
       {%- endfor -%}
       {% set forecasts = state_attr("sensor.electricity_price_forecast", "forecasts") or [] %}
       {% set significant_periods = [] %}
