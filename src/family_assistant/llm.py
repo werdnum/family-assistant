@@ -476,7 +476,7 @@ class LiteLLMClient:
                 llm_provider="litellm",
                 model=self.model,  # Or some generic indicator
                 status_code=500,
-            ) from e
+            )
 
     async def format_user_message_with_file(
         self,
