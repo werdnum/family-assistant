@@ -21,9 +21,6 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
-from litellm.utils import (
-    get_valid_params,  # type: ignore[attr-defined] # Import for filtering kwargs
-)
 
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
 
@@ -261,29 +258,12 @@ class LiteLLMClient:
                 f"Adding 'reasoning' parameter for OpenRouter model '{model_id}': {reasoning_params_config}"
             )
 
-        # Filter completion_params to include only valid litellm.acompletion arguments
-        # get_valid_params() returns a list of valid kwargs for litellm.completion/acompletion
-        valid_acompletion_params_set = set(get_valid_params())
-        final_completion_params = {
-            k: v
-            for k, v in completion_params.items()
-            if k in valid_acompletion_params_set
-        }
-
-        discarded_keys = set(completion_params.keys()) - set(
-            final_completion_params.keys()
-        )
-        if discarded_keys:
-            logger.warning(
-                f"For model {model_id}, discarded the following non-standard acompletion parameters: {discarded_keys}. "
-                f"Original params included: {list(completion_params.keys())}"
-            )
-
+        # LiteLLM automatically drops unsupported parameters, so we pass them all.
         if tools:
             sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
             logger.debug(
                 f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
-                f"Tools provided. Tool choice: {tool_choice}. Filtered params: {json.dumps(final_completion_params, default=str)}"
+                f"Tools provided. Tool choice: {tool_choice}. Filtered params: {json.dumps(completion_params, default=str)}"
             )
             response = await acompletion(
                 model=model_id,
@@ -291,19 +271,19 @@ class LiteLLMClient:
                 tools=sanitized_tools_arg,
                 tool_choice=tool_choice,
                 stream=False,
-                **final_completion_params,  # type: ignore[reportArgumentType]
+                **completion_params,  # type: ignore[reportArgumentType]
             )
             response = cast("ModelResponse", response)
         else:
             logger.debug(
                 f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
-                f"No tools provided. Filtered params: {json.dumps(final_completion_params, default=str)}"
+                f"No tools provided. Filtered params: {json.dumps(completion_params, default=str)}"
             )
             _response_obj = await acompletion(
                 model=model_id,
                 messages=messages,
                 stream=False,
-                **final_completion_params,  # type: ignore[reportArgumentType]
+                **completion_params,  # type: ignore[reportArgumentType]
             )
             response = cast("ModelResponse", _response_obj)
 
