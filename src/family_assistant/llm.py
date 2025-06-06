@@ -303,7 +303,9 @@ class LiteLLMClient:
             try:
                 reasoning_info = response.usage.model_dump(mode="json")  # type: ignore[attr-defined]
             except Exception as usage_err:
-                logger.warning(f"Could not serialize response.usage for model {model_id}: {usage_err}")  # type: ignore[attr-defined]
+                logger.warning(
+                    f"Could not serialize response.usage for model {model_id}: {usage_err}"
+                )  # type: ignore[attr-defined]
 
         tool_calls_list = []
         if raw_tool_calls:
@@ -329,7 +331,9 @@ class LiteLLMClient:
                         arguments=func_args or "{}",
                     )
                 else:
-                    tool_call_function = ToolCallFunction(name=func_name, arguments=func_args)
+                    tool_call_function = ToolCallFunction(
+                        name=func_name, arguments=func_args
+                    )
 
                 tc_id = tc_obj.id if hasattr(tc_obj, "id") else None
                 tc_type = tc_obj.type if hasattr(tc_obj, "type") else None
@@ -377,7 +381,9 @@ class LiteLLMClient:
                 specific_model_params=self.model_parameters,
             )
         except BadRequestError as e:
-            logger.error(f"BadRequestError with primary model {self.model}. Not retrying or falling back: {e}")
+            logger.error(
+                f"BadRequestError with primary model {self.model}. Not retrying or falling back: {e}"
+            )
             raise  # Do not retry or fallback on BadRequestError
         except retriable_errors as e:
             logger.warning(
@@ -408,8 +414,12 @@ class LiteLLMClient:
                     tool_choice=tool_choice,
                     specific_model_params=self.model_parameters,
                 )
-            except BadRequestError as e:  # Should be rare if first attempt wasn't, but handle defensively
-                logger.error(f"BadRequestError on retry with primary model {self.model}. Not falling back: {e}")
+            except (
+                BadRequestError
+            ) as e:  # Should be rare if first attempt wasn't, but handle defensively
+                logger.error(
+                    f"BadRequestError on retry with primary model {self.model}. Not falling back: {e}"
+                )
                 raise
             except retriable_errors as e:
                 logger.warning(
@@ -437,7 +447,12 @@ class LiteLLMClient:
             if last_exception:
                 raise last_exception
             # This case should ideally not happen if logic is correct, means no error but no success.
-            raise APIError(message="All attempts failed without a specific error to raise.", llm_provider="litellm", model=self.model, status_code=500)
+            raise APIError(
+                message="All attempts failed without a specific error to raise.",
+                llm_provider="litellm",
+                model=self.model,
+                status_code=500,
+            )
 
         if last_exception:  # Ensure we only fallback if there was a prior failure
             logger.info(f"Attempt 3: Fallback model ({actual_fallback_model_id})")
@@ -450,7 +465,9 @@ class LiteLLMClient:
                     specific_model_params=self.fallback_model_parameters,
                 )
             except BadRequestError as e:
-                logger.error(f"BadRequestError with fallback model {actual_fallback_model_id}. Original error (if any) will be raised: {e}")
+                logger.error(
+                    f"BadRequestError with fallback model {actual_fallback_model_id}. Original error (if any) will be raised: {e}"
+                )
                 # Fallthrough to raise last_exception from primary model attempts
             except Exception as e:
                 logger.error(
@@ -459,7 +476,9 @@ class LiteLLMClient:
                 )
                 # Fallthrough to raise last_exception from primary model attempts,
                 # or this new one if last_exception was None (though it shouldn't be here).
-                if not isinstance(last_exception, BadRequestError):  # Don't overwrite a BadRequest from primary with a fallback error
+                if not isinstance(
+                    last_exception, BadRequestError
+                ):  # Don't overwrite a BadRequest from primary with a fallback error
                     last_exception = e
 
         # If all attempts failed, raise the last significant exception
@@ -470,7 +489,9 @@ class LiteLLMClient:
             raise last_exception
         else:
             # Should not be reached if logic is correct, but as a safeguard:
-            logger.error("All LLM attempts failed without a specific exception captured.")
+            logger.error(
+                "All LLM attempts failed without a specific exception captured."
+            )
             raise APIError(
                 message="All LLM attempts failed without a specific exception.",
                 llm_provider="litellm",
