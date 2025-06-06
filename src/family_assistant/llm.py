@@ -384,7 +384,7 @@ class LiteLLMClient:
                 f"Attempt 1 (Primary model {self.model}) failed with retriable error: {e}. Retrying primary model."
             )
             last_exception = e
-        except APIError as e: # Non-retriable APIError (but not BadRequestError)
+        except APIError as e:  # Non-retriable APIError (but not BadRequestError)
             logger.warning(
                 f"Attempt 1 (Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
             )
@@ -394,9 +394,8 @@ class LiteLLMClient:
                 f"Attempt 1 (Primary model {self.model}) failed with unexpected error: {e}",
                 exc_info=True,
             )
-            last_exception = e # Store for potential re-raise if fallback also fails or isn't attempted
+            last_exception = e  # Store for potential re-raise if fallback also fails or isn't attempted
             # For truly unexpected errors, we might still want to try fallback if configured.
-
 
         # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
         if isinstance(last_exception, retriable_errors):
@@ -409,7 +408,7 @@ class LiteLLMClient:
                     tool_choice=tool_choice,
                     specific_model_params=self.model_parameters,
                 )
-            except BadRequestError as e: # Should be rare if first attempt wasn't, but handle defensively
+            except BadRequestError as e:  # Should be rare if first attempt wasn't, but handle defensively
                 logger.error(f"BadRequestError on retry with primary model {self.model}. Not falling back: {e}")
                 raise
             except retriable_errors as e:
@@ -417,7 +416,7 @@ class LiteLLMClient:
                     f"Attempt 2 (Retry Primary model {self.model}) failed with retriable error: {e}. Proceeding to fallback."
                 )
                 last_exception = e
-            except APIError as e: # Non-retriable APIError on retry
+            except APIError as e:  # Non-retriable APIError on retry
                 logger.warning(
                     f"Attempt 2 (Retry Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
                 )
@@ -428,7 +427,6 @@ class LiteLLMClient:
                     exc_info=True,
                 )
                 last_exception = e
-
 
         # Attempt 3: Fallback model
         actual_fallback_model_id = self.fallback_model_id or "openai/o4-mini"
@@ -441,8 +439,7 @@ class LiteLLMClient:
             # This case should ideally not happen if logic is correct, means no error but no success.
             raise APIError(message="All attempts failed without a specific error to raise.", llm_provider="litellm", model=self.model, status_code=500)
 
-
-        if last_exception: # Ensure we only fallback if there was a prior failure
+        if last_exception:  # Ensure we only fallback if there was a prior failure
             logger.info(f"Attempt 3: Fallback model ({actual_fallback_model_id})")
             try:
                 return await self._attempt_completion(
@@ -462,9 +459,8 @@ class LiteLLMClient:
                 )
                 # Fallthrough to raise last_exception from primary model attempts,
                 # or this new one if last_exception was None (though it shouldn't be here).
-                if not isinstance(last_exception, BadRequestError): # Don't overwrite a BadRequest from primary with a fallback error
+                if not isinstance(last_exception, BadRequestError):  # Don't overwrite a BadRequest from primary with a fallback error
                     last_exception = e
-
 
         # If all attempts failed, raise the last significant exception
         if last_exception:
@@ -478,7 +474,7 @@ class LiteLLMClient:
             raise APIError(
                 message="All LLM attempts failed without a specific exception.",
                 llm_provider="litellm",
-                model=self.model, # Or some generic indicator
+                model=self.model,  # Or some generic indicator
                 status_code=500,
             ) from e
 

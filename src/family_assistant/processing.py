@@ -54,9 +54,7 @@ class ProcessingServiceConfig:
     delegation_security_level: str  # "blocked", "confirm", "unrestricted"
     id: str  # Unique identifier for this service profile
     fallback_model_id: str | None = None  # Added for LLM fallback
-    fallback_model_parameters: dict[str, Any] | None = (
-        None  # Added for LLM fallback
-    )
+    fallback_model_parameters: dict[str, Any] | None = None  # Added for LLM fallback
 
 
 # --- Processing Service Class ---
@@ -90,7 +88,9 @@ class ProcessingService:
             server_url: The base URL of the web server.
             app_config: The main application configuration dictionary (global settings).
         """
-        self.llm_client = llm_client  # This client should be instantiated with fallback info
+        self.llm_client = (
+            llm_client  # This client should be instantiated with fallback info
+        )
         self.tools_provider = tools_provider
         self.service_config = service_config  # Store the config object
         self.context_providers = context_providers
