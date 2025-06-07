@@ -6,7 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Linting and Type Checking
 ```bash
+# Lint entire codebase (src/ and tests/)
 scripts/format-and-lint.sh
+
+# Lint specific files only
+scripts/format-and-lint.sh path/to/file.py path/to/another.py
+
+# Lint only changed files (useful before committing)
+scripts/format-and-lint.sh $(git diff --name-only --cached)
 ```
 This script runs:
 - `ruff check --fix` (linting with auto-fixes)
