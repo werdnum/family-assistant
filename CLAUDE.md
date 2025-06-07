@@ -191,9 +191,34 @@ The codebase is organized into several key layers:
 
 ## Commit Guidelines
 
-- Always commit your changes to git. Use a descriptive commit message. 
-- Explain not just what you're doing, but why, how, and why you chose to do it that way. 
-- Don't make up a rationale if you don't know why and it isn't obvious, but definitely document any context from the conversation that explains the code you wrote and the technical decisions made.
+Always commit your changes to git following these guidelines:
+
+### Format
+- Start with a short one-line summary, followed by two line breaks and then any relevant explanation
+- Use imperative mood (e.g., "Add feature" not "Adds feature", "Added feature" or "Adding feature")
+- Never start with "This commit..."
+- Optional: Use conventional commit prefixes like 'feat:', 'fix:', 'chore:' if they add clarity
+
+### Content
+- Describe not only _what_ was changed, but _why_ and to what end
+- Document any context from the conversation that explains technical decisions
+- Briefly describe changes at a function-by-function level rather than line-by-line
+- Don't explain obvious things (e.g., why it's good to make tests pass)
+- Don't reiterate precise details of code changes that are visible in the diff
+
+### Example
+```
+feat: Add user authentication system
+
+Implement JWT-based authentication to secure API endpoints. This allows
+users to register, login, and access protected resources. Chose JWT over
+sessions for stateless operation and easier scaling.
+
+- Add User model with password hashing
+- Create auth endpoints for register/login/refresh
+- Add authentication middleware for protected routes
+- Include comprehensive test coverage
+```
 
 ## General Feature Development Process
 
