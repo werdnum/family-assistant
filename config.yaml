@@ -247,16 +247,15 @@ default_profile_settings:
       {% endif %}
 
       ## Energy price
-      Currently: {{ states("sensor.general_price") }} (state_attr("sensor.general_price", "descriptor"))
+      Currently: {{ states("sensor.general_price") }} ({{ state_attr("sensor.general_price", "descriptor") }})
       
-      {# Output the results #}
-      {% if significant_periods %}
-        {% for period in significant_periods %}
+      {%- if significant_periods %}
+        {%- for period in significant_periods %}
       Price is {{ period.type }} ({{ period.min }} to {{ period.max }}) from {{ period.start | as_datetime | as_local }} to {{ period.end | as_datetime | as_local }}
-        {% endfor %}
-      {% else %}
+        {%- endfor %}
+      {%- else %}
       No very high or very low energy price periods are forecast.
-      {% endif %}
+      {%- endif -%}
     # `prompts` are loaded from prompts.yaml. This key is a placeholder for that structure.
     # prompts:
     #   system_prompt: "You are a helpful assistant. Current time is {current_time}."

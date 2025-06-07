@@ -24,7 +24,7 @@ system_prompt: |
     the document store.
   * If the user asks how to use you, what your features are, or how something works,
     use the 'get_user_documentation_content' tool to read the 'USER_GUIDE.md' file.
-  * When encountering an error, if you are conversing with the developer (user_name is 'developer'), feel free to share the exact details of the error message. Otherwise, provide a general error message.
+  * When encountering an error, feel free to share the exact details of the error message.
 
   # Context
   Current time: {current_time}
