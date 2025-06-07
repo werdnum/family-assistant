@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Setup
+
+### Installation
+```bash
+# Install the project in development mode with all dependencies
+uv pip install -e '.[dev]'
+```
+
 ## Development Commands
 
 ### Linting and Type Checking

@@ -3,6 +3,7 @@ Handles storage and retrieval of notes.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +26,7 @@ from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+from family_assistant.storage.vector import Document  # Import Document protocol
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,52 @@ notes_table = Table(
         onupdate=lambda: datetime.now(timezone.utc),
     ),
 )
+
+
+@dataclass(frozen=True)
+class NoteDocument(Document):
+    """
+    Represents a note document conforming to the Document protocol
+    for vector storage ingestion.
+    """
+
+    _id: int | None
+    _title: str
+    _content: str
+    _created_at: datetime
+    _updated_at: datetime
+
+    @property
+    def id(self) -> int | None:
+        return self._id
+
+    @property
+    def source_type(self) -> str:
+        return "note"
+
+    @property
+    def source_id(self) -> str:
+        return self._title  # Use title as unique identifier
+
+    @property
+    def source_uri(self) -> str | None:
+        return None  # Notes don't have external URIs
+
+    @property
+    def title(self) -> str | None:
+        return self._title
+
+    @property
+    def created_at(self) -> datetime | None:
+        return self._created_at
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        return {
+            "title": self._title,
+            "created_at": self._created_at.isoformat(),
+            "updated_at": self._updated_at.isoformat(),
+        }
 
 
 async def get_all_notes(db_context: DatabaseContext) -> list[dict[str, str]]:
@@ -79,6 +127,25 @@ async def get_note_by_title(
         raise
 
 
+async def get_note_by_id(
+    db_context: DatabaseContext, note_id: int
+) -> dict[str, Any] | None:
+    """Retrieves a specific note by its ID."""
+    try:
+        stmt = select(
+            notes_table.c.id,
+            notes_table.c.title,
+            notes_table.c.content,
+            notes_table.c.created_at,
+            notes_table.c.updated_at,
+        ).where(notes_table.c.id == note_id)
+        row = await db_context.fetch_one(stmt)
+        return dict(row) if row else None
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_note_by_id({note_id}): {e}", exc_info=True)
+        raise
+
+
 async def add_or_update_note(
     db_context: DatabaseContext, title: str, content: str
 ) -> str:
@@ -105,6 +172,9 @@ async def add_or_update_note(
             # Use execute_with_retry as commit is handled by context manager
             await db_context.execute_with_retry(stmt)
             logger.info(f"Successfully added/updated note: {title} (using ON CONFLICT)")
+
+            # Enqueue indexing task
+            await _enqueue_note_indexing_task(db_context, title)
             return "Success"
         except SQLAlchemyError as e:
             logger.error(
@@ -122,6 +192,9 @@ async def add_or_update_note(
             )
             await db_context.execute_with_retry(insert_stmt)
             logger.info(f"Inserted new note: {title} (SQLite fallback)")
+
+            # Enqueue indexing task
+            await _enqueue_note_indexing_task(db_context, title)
             return "Success"
         except SQLAlchemyError as e:
             # Check specifically for unique constraint violation (IntegrityError in SQLAlchemy)
@@ -149,6 +222,9 @@ async def add_or_update_note(
                         f"Failed to update note '{title}' after insert conflict."
                     ) from e
                 logger.info(f"Updated note: {title} (SQLite fallback)")
+
+                # Enqueue indexing task
+                await _enqueue_note_indexing_task(db_context, title)
                 return "Success"
             else:
                 # Re-raise other SQLAlchemy errors
@@ -175,3 +251,33 @@ async def delete_note(db_context: DatabaseContext, title: str) -> bool:
     except SQLAlchemyError as e:
         logger.error(f"Database error in delete_note({title}): {e}", exc_info=True)
         raise
+
+
+async def _enqueue_note_indexing_task(db_context: DatabaseContext, title: str) -> None:
+    """
+    Helper function to enqueue an indexing task for a note.
+
+    Args:
+        db_context: Database context with task enqueueing capability
+        title: Title of the note to index
+    """
+    try:
+        # Fetch the note to get its ID
+        note_stmt = select(notes_table.c.id).where(notes_table.c.title == title)
+        note_row = await db_context.fetch_one(note_stmt)
+        if note_row:
+            from family_assistant import storage as storage_module
+
+            await storage_module.enqueue_task(
+                db_context=db_context,
+                task_id=f"index_note_{note_row['id']}",
+                task_type="index_note",
+                payload={"note_id": note_row["id"]},
+                notify_event=None,
+            )
+            logger.info(
+                f"Enqueued indexing task for note ID {note_row['id']} (title: {title})"
+            )
+    except Exception as e:
+        logger.error(f"Failed to enqueue indexing task for note '{title}': {e}")
+        # Don't fail the note operation if indexing task enqueueing fails

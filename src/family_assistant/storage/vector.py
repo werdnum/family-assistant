@@ -814,6 +814,33 @@ async def update_document_title_in_db(
         raise  # Re-raise to allow task retry or failure handling
 
 
+async def delete_document_embeddings(
+    db_context: DatabaseContext, document_id: int
+) -> None:
+    """
+    Delete all embeddings for a specific document (for re-indexing).
+
+    Args:
+        db_context: The DatabaseContext to use for the operation.
+        document_id: The ID of the document whose embeddings should be deleted.
+    """
+    try:
+        stmt = delete(DocumentEmbeddingRecord).where(
+            DocumentEmbeddingRecord.document_id == document_id
+        )
+        result = await db_context.execute_with_retry(stmt)
+        deleted_count = result.rowcount
+        logger.info(
+            f"Deleted {deleted_count} existing embeddings for document ID {document_id}"
+        )
+    except SQLAlchemyError as e:
+        logger.error(
+            f"Database error deleting embeddings for document {document_id}: {e}",
+            exc_info=True,
+        )
+        raise
+
+
 # Export functions explicitly for clarity when importing elsewhere
 __all__ = [
     "init_vector_db",
@@ -823,6 +850,7 @@ __all__ = [
     "get_document_by_id",
     "add_embedding",
     "delete_document",
+    "delete_document_embeddings",  # Add new function
     "query_vectors",
     "DocumentRecord",  # Export SQLAlchemy ORM model
     "DocumentEmbeddingRecord",  # Export SQLAlchemy ORM model

@@ -155,13 +155,23 @@ For notes, we'll create a dedicated **NotesIndexer** following the same pattern 
 **Implementation**:
 1. Create `NoteDocument` class in storage/notes.py that implements the Document protocol:
    ```python
+   from dataclasses import dataclass, field
+   from datetime import datetime
+   from typing import Any
+   
+   from family_assistant.storage.vector import Document
+   
    @dataclass(frozen=True)
    class NoteDocument(Document):
-       id: int
-       title: str
-       content: str
-       created_at: datetime
-       updated_at: datetime
+       _id: int | None
+       _title: str
+       _content: str
+       _created_at: datetime
+       _updated_at: datetime
+       
+       @property
+       def id(self) -> int | None:
+           return self._id
        
        @property
        def source_type(self) -> str:
@@ -169,74 +179,133 @@ For notes, we'll create a dedicated **NotesIndexer** following the same pattern 
        
        @property
        def source_id(self) -> str:
-           return self.title  # Use title as unique identifier
+           return self._title  # Use title as unique identifier
        
        @property
-       def metadata(self) -> dict[str, Any]:
+       def source_uri(self) -> str | None:
+           return None  # Notes don't have external URIs
+       
+       @property
+       def title(self) -> str | None:
+           return self._title
+       
+       @property
+       def created_at(self) -> datetime | None:
+           return self._created_at
+       
+       @property
+       def metadata(self) -> dict[str, Any] | None:
            return {
-               "title": self.title,
-               "created_at": self.created_at.isoformat(),
-               "updated_at": self.updated_at.isoformat(),
+               "title": self._title,
+               "created_at": self._created_at.isoformat(),
+               "updated_at": self._updated_at.isoformat(),
            }
    ```
 
-2. Add new storage functions:
-   - `delete_document_embeddings()` in vector.py for re-indexing support
+2. Add new storage functions in vector.py:
+   ```python
+   async def delete_document_embeddings(
+       db_context: DatabaseContext, document_id: int
+   ) -> None:
+       """Delete all embeddings for a specific document (for re-indexing)."""
+       try:
+           from family_assistant.storage.vector import document_embeddings_table
+           stmt = delete(document_embeddings_table).where(
+               document_embeddings_table.c.document_id == document_id
+           )
+           await db_context.execute_with_retry(stmt)
+           logger.info(f"Deleted existing embeddings for document ID {document_id}")
+       except SQLAlchemyError as e:
+           logger.error(f"Database error deleting embeddings for document {document_id}: {e}", exc_info=True)
+           raise
+   ```
    - `get_note_by_id()` in notes.py to fetch notes by ID (currently only get_note_by_title exists)
 
 3. Create `NotesIndexer` class following the pattern of `EmailIndexer`:
    ```python
+   import logging
+   from typing import Any, cast
+   
+   from family_assistant import storage
+   from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
+   from family_assistant.storage.notes import NoteDocument
+   from family_assistant.storage.vector import get_document_by_id
+   from family_assistant.tools import ToolExecutionContext
+   
+   logger = logging.getLogger(__name__)
+   
    class NotesIndexer:
        def __init__(self, pipeline: IndexingPipeline) -> None:
            self.pipeline = pipeline
+           logger.info("NotesIndexer initialized with an IndexingPipeline instance.")
        
        async def handle_index_note(
            self, exec_context: ToolExecutionContext, payload: dict[str, Any]
        ) -> None:
-           note_id = payload["note_id"]
+           db_context = exec_context.db_context
+           if not db_context:
+               logger.error("DatabaseContext not found in ToolExecutionContext for handle_index_note.")
+               raise ValueError("Missing DatabaseContext dependency in context.")
+           
+           note_id = payload.get("note_id")
+           if not note_id:
+               raise ValueError("Missing 'note_id' in index_note task payload.")
+           
+           logger.info(f"Starting indexing for note ID: {note_id}")
            
            # Fetch note from database
-           note = await storage.get_note_by_id(exec_context.db_context, note_id)
-           if not note:
+           note_row = await storage.get_note_by_id(db_context, note_id)
+           if not note_row:
+               logger.warning(f"Note {note_id} not found in database. Skipping indexing.")
                return
            
            # Convert to NoteDocument
            note_doc = NoteDocument(
-               id=note.id,
-               title=note.title,
-               content=note.content,
-               created_at=note.created_at,
-               updated_at=note.updated_at
+               _id=note_row["id"],
+               _title=note_row["title"],
+               _content=note_row["content"],
+               _created_at=note_row["created_at"],
+               _updated_at=note_row["updated_at"]
            )
            
            # Create/update document record
            doc_id = await storage.add_document(
-               exec_context.db_context, note_doc
+               db_context=db_context, 
+               doc=note_doc
            )
            
            # Delete existing embeddings if re-indexing
-           await storage.delete_document_embeddings(
-               exec_context.db_context, doc_id
-           )
+           await storage.delete_document_embeddings(db_context, doc_id)
+           
+           # Get the document record for pipeline
+           db_document_record = await get_document_by_id(db_context, doc_id)
+           if not db_document_record:
+               raise ValueError(f"Failed to retrieve document record for ID {doc_id} after adding/updating.")
            
            # Create IndexableContent items
-           content_parts = [
+           initial_items = [
                IndexableContent(
-                   content=f"{note.title}\n\n{note.content}",
-                   embedding_type="content",
+                   content=f"{note_doc.title}\n\n{note_doc._content}",
+                   embedding_type="raw_note_text",
                    mime_type="text/plain",
-                   metadata={"source": "note", "title": note.title}
+                   source_processor="NotesIndexer.handle_index_note",
+                   metadata={"source": "note", "title": note_doc.title}
                )
            ]
            
            # Run through pipeline
-           await self.pipeline.process(
-               exec_context, doc_id, content_parts
+           await self.pipeline.run(
+               initial_items=initial_items,
+               original_document=cast("Document", db_document_record),
+               context=exec_context
            )
+           
+           logger.info(f"Indexing pipeline successfully initiated for note {note_id} (Doc ID: {doc_id}).")
    ```
 
 4. Register the indexer and task handler in assistant.py:
    ```python
+   # In assistant.py initialization
    self.notes_indexer = NotesIndexer(pipeline=self.document_indexer.pipeline)
    self.task_worker_instance.register_task_handler(
        "index_note", self.notes_indexer.handle_index_note
@@ -251,28 +320,66 @@ For notes, we'll create a dedicated **NotesIndexer** following the same pattern 
 #### 1.2 Integrate with Note CRUD Operations
 **Files to modify**:
 - `src/family_assistant/storage/notes.py`
-- `src/family_assistant/storage/tasks.py`
 
 **Implementation**:
-1. Modify `add_or_update_note()` to enqueue indexing task:
+1. First, add the missing `get_note_by_id()` function to notes.py:
    ```python
-   # After saving note to database
-   if db_context.enqueue_task:
-       await db_context.enqueue_task(
-           task_type="index_note",
-           payload={"note_id": note.id},
-           scheduled_at=utcnow(),
-       )
+   async def get_note_by_id(
+       db_context: DatabaseContext, note_id: int
+   ) -> dict[str, Any] | None:
+       """Retrieves a specific note by its ID."""
+       try:
+           stmt = select(
+               notes_table.c.id,
+               notes_table.c.title, 
+               notes_table.c.content,
+               notes_table.c.created_at,
+               notes_table.c.updated_at
+           ).where(notes_table.c.id == note_id)
+           row = await db_context.fetch_one(stmt)
+           return dict(row) if row else None
+       except SQLAlchemyError as e:
+           logger.error(f"Database error in get_note_by_id({note_id}): {e}", exc_info=True)
+           raise
    ```
 
-2. Handle re-indexing on updates:
-   - Check if content changed
-   - If yes, delete existing embeddings before re-indexing
+2. Modify `add_or_update_note()` to return note ID and enqueue indexing task:
+   ```python
+   # After the upsert operation, fetch the note ID and enqueue indexing
+   async def add_or_update_note(
+       db_context: DatabaseContext, title: str, content: str
+   ) -> str:
+       # ... existing upsert logic ...
+       
+       # After successful insert/update, get the note ID and enqueue indexing
+       try:
+           # Fetch the note to get its ID
+           note_stmt = select(notes_table.c.id).where(notes_table.c.title == title)
+           note_row = await db_context.fetch_one(note_stmt)
+           if note_row and db_context.enqueue_task:
+               from family_assistant.utils.clock import utcnow
+               await db_context.enqueue_task(
+                   task_type="index_note",
+                   payload={"note_id": note_row["id"]},
+                   scheduled_at=utcnow(),
+               )
+               logger.info(f"Enqueued indexing task for note ID {note_row['id']} (title: {title})")
+       except Exception as e:
+           logger.error(f"Failed to enqueue indexing task for note '{title}': {e}")
+           # Don't fail the note operation if indexing task enqueueing fails
+       
+       return "Success"
+   ```
+
+3. Handle re-indexing on updates:
+   - The existing `delete_document_embeddings()` call in NotesIndexer handles re-indexing
+   - No additional logic needed since we always enqueue on note changes
 
 **Testing**:
+- Unit test: `get_note_by_id()` function works correctly
 - Unit test: Task enqueued on note creation
 - Unit test: Task enqueued on content update
-- Unit test: No task when only metadata changes
+- Unit test: Indexing task failure doesn't break note creation
 - Functional test: Create note → verify indexed
 
 #### 1.3 Index Existing Notes via Migration
@@ -280,18 +387,61 @@ For notes, we'll create a dedicated **NotesIndexer** following the same pattern 
 - `alembic/versions/xxx_index_existing_notes.py`
 
 **Implementation**:
-1. Create a data migration that:
+1. Create a data migration that enqueues indexing tasks for existing notes:
    ```python
+   """Index existing notes
+   
+   Revision ID: xxx
+   Revises: previous_revision
+   Create Date: 2025-xx-xx
+   """
+   
+   from alembic import op
+   import sqlalchemy as sa
+   from datetime import datetime, timezone
+   
    def upgrade():
        # Get database connection
+       conn = op.get_bind()
+       
        # Query all existing notes
-       # For each note:
-       #   - Enqueue an "index_note" task
-       #   - Use note.id as the payload
-       # Commit the tasks
+       notes_result = conn.execute(sa.text("SELECT id FROM notes ORDER BY id"))
+       note_ids = [row[0] for row in notes_result]
+       
+       if not note_ids:
+           print("No existing notes found to index.")
+           return
+       
+       # Enqueue indexing tasks for each note
+       now = datetime.now(timezone.utc)
+       tasks_to_insert = []
+       
+       for note_id in note_ids:
+           tasks_to_insert.append({
+               'task_type': 'index_note',
+               'payload': f'{{"note_id": {note_id}}}',
+               'status': 'pending',
+               'scheduled_at': now,
+               'created_at': now,
+               'updated_at': now
+           })
+       
+       # Batch insert tasks
+       if tasks_to_insert:
+           conn.execute(sa.text("""
+               INSERT INTO tasks (task_type, payload, status, scheduled_at, created_at, updated_at)
+               VALUES (:task_type, :payload, :status, :scheduled_at, :created_at, :updated_at)
+           """), tasks_to_insert)
+           
+           print(f"Enqueued indexing tasks for {len(note_ids)} existing notes.")
+   
+   def downgrade():
+       # Remove enqueued indexing tasks if needed
+       conn = op.get_bind()
+       conn.execute(sa.text("DELETE FROM tasks WHERE task_type = 'index_note' AND status = 'pending'"))
    ```
 
-2. Consider batching for large numbers of notes
+2. Consider batching for large numbers of notes (the migration above handles this automatically)
 
 **Testing**:
 - Migration test: Run on test database with sample notes

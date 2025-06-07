@@ -27,6 +27,7 @@ from family_assistant.embeddings import (
 )
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
+from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm import (
     LiteLLMClient,
@@ -127,6 +128,7 @@ class Assistant:
         self.scraper_instance: PlaywrightScraper | None = None
         self.document_indexer: DocumentIndexer | None = None
         self.email_indexer: EmailIndexer | None = None
+        self.notes_indexer: NotesIndexer | None = None
         self.telegram_service: TelegramService | None = None
         self.task_worker_instance: TaskWorker | None = None
         self.uvicorn_server_task: asyncio.Task | None = None
@@ -521,7 +523,8 @@ class Assistant:
             scraper=self.scraper_instance,
         )
         self.email_indexer = EmailIndexer(pipeline=self.document_indexer.pipeline)
-        logger.info("DocumentIndexer and EmailIndexer initialized.")
+        self.notes_indexer = NotesIndexer(pipeline=self.document_indexer.pipeline)
+        logger.info("DocumentIndexer, EmailIndexer, and NotesIndexer initialized.")
 
         # Instantiate TelegramService in setup_dependencies but don't start polling yet
         if not self.default_processing_service:  # Should be set by now
@@ -591,6 +594,10 @@ class Assistant:
         if self.email_indexer:
             self.task_worker_instance.register_task_handler(
                 "index_email", self.email_indexer.handle_index_email
+            )
+        if self.notes_indexer:
+            self.task_worker_instance.register_task_handler(
+                "index_note", self.notes_indexer.handle_index_note
             )
         self.task_worker_instance.register_task_handler(
             "llm_callback", handle_llm_callback
