@@ -9,16 +9,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Lint entire codebase (src/ and tests/)
 scripts/format-and-lint.sh
 
-# Lint specific files only
+# Lint specific Python files only
 scripts/format-and-lint.sh path/to/file.py path/to/another.py
 
-# Lint only changed files (useful before committing)
-scripts/format-and-lint.sh $(git diff --name-only --cached)
+# Lint only changed Python files (useful before committing)
+scripts/format-and-lint.sh $(git diff --name-only --cached | grep '\.py$')
+
+# Note: This script is for Python files only. It will error if given non-Python files.
 ```
 This script runs:
 - `ruff check --fix` (linting with auto-fixes)
 - `ruff format` (code formatting)
-- `basedpyright` (type checking)
+- `basedpyright` (type checking)  
 - `pylint` (additional linting in errors-only mode)
 
 ### Testing
