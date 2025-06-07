@@ -195,4 +195,19 @@ The codebase is organized into several key layers:
 - Explain not just what you're doing, but why, how, and why you chose to do it that way. 
 - Don't make up a rationale if you don't know why and it isn't obvious, but definitely document any context from the conversation that explains the code you wrote and the technical decisions made.
 
+## General Feature Development Process
+
+General feature development process:  
+- Clarify requirements (immediate / short term vs long term goals / aspirations / ideas)
+- Identify potential designs and their trade offs 
+- Consider any refactorings, infrastructure or abstractions that would make the task easier or more maintainable 
+- Write up the solution in docs/design 
+- Break it into milestones emphasizing incremental delivery 
+- Gather feedback on the design and iterate until everyone is happy 
+- Implement one stage at a time, starting with interfaces and refactoring 
+- Lint and git commit at every step 
+- Write tests whenever there is something to test 
+- Make sure tests pass 
+- Do a final acceptance test with the Dev server
+
 When working with this codebase, always run linting and type checking before committing changes. The application supports both SQLite (development) and PostgreSQL (production) databases.
