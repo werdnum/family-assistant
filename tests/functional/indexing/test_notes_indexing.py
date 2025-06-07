@@ -461,11 +461,22 @@ async def test_note_update_reindexing_e2e(
         "Updated content about quantum computing and entanglement phenomena."
     )
 
-    # Update mock embeddings for the updated content
+    # Set up embeddings for initial and updated content
+    combined_initial_text = f"{unique_note_title}\n\n{initial_content}"
+    initial_embedding = (
+        np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.15
+    ).tolist()
+
     combined_updated_text = f"{unique_note_title}\n\n{updated_content}"
     updated_embedding = (
         np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32) * 0.3
     ).tolist()
+
+    # Add embeddings to the mock
+    mock_embedding_generator_notes.embedding_map[initial_content] = initial_embedding
+    mock_embedding_generator_notes.embedding_map[combined_initial_text] = (
+        initial_embedding
+    )
     mock_embedding_generator_notes.embedding_map[updated_content] = updated_embedding
     mock_embedding_generator_notes.embedding_map[combined_updated_text] = (
         updated_embedding
@@ -511,6 +522,7 @@ async def test_note_update_reindexing_e2e(
 
     note_id = None
     document_db_id = None
+    initial_task_id = None
 
     try:
         # --- Step 1: Create Initial Note ---
@@ -530,11 +542,40 @@ async def test_note_update_reindexing_e2e(
             note_id = note_row["id"]
             logger.info(f"Created initial note with ID: {note_id}")
 
-        # Wait for initial indexing
+        # Wait for initial indexing task
         test_new_task_event.set()
-        await asyncio.sleep(0.5)  # Give time for initial indexing
 
-        # Get document ID
+        # Find and wait for the initial indexing task to complete
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            await asyncio.sleep(0.2)  # Wait for task to be enqueued
+            from sqlalchemy import Text
+
+            # Find the index_note task
+            select_task_stmt = (
+                select(tasks_table.c.task_id)
+                .where(
+                    tasks_table.c.task_type == "index_note",
+                    tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
+                )
+                .order_by(tasks_table.c.created_at.desc())
+                .limit(1)
+            )
+            task_info = await db.fetch_one(select_task_stmt)
+            assert task_info is not None, (
+                f"Could not find initial indexing task for note ID {note_id}"
+            )
+            initial_task_id = task_info["task_id"]
+            logger.info(f"Found initial indexing task ID: {initial_task_id}")
+
+        # Wait for initial indexing to complete
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            task_ids={initial_task_id},
+            timeout_seconds=10.0,
+        )
+        logger.info("Initial indexing completed")
+
+        # Get document ID and count embeddings
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             doc_record = await storage.get_document_by_source_id(db, unique_note_title)
             assert doc_record is not None
@@ -549,6 +590,7 @@ async def test_note_update_reindexing_e2e(
             initial_embeddings = await db.fetch_all(initial_embeddings_stmt)
             initial_count = len(initial_embeddings)
             logger.info(f"Initial embeddings count: {initial_count}")
+            assert initial_count > 0, "No embeddings created during initial indexing"
 
         # --- Step 2: Update Note Content ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
@@ -558,9 +600,40 @@ async def test_note_update_reindexing_e2e(
             assert result == "Success"
             logger.info("Updated note content")
 
-        # Wait for re-indexing
+        # Wait for re-indexing task
         test_new_task_event.set()
-        await asyncio.sleep(1.0)  # Give more time for re-indexing
+
+        # Find and wait for the re-indexing task
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            await asyncio.sleep(0.2)  # Wait for task to be enqueued
+            from sqlalchemy import Text
+
+            # Find the new index_note task (created after update)
+            select_update_task_stmt = (
+                select(tasks_table.c.task_id)
+                .where(
+                    tasks_table.c.task_type == "index_note",
+                    tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
+                    tasks_table.c.task_id
+                    != initial_task_id,  # Exclude the initial task
+                )
+                .order_by(tasks_table.c.created_at.desc())
+                .limit(1)
+            )
+            update_task_info = await db.fetch_one(select_update_task_stmt)
+            assert update_task_info is not None, (
+                f"Could not find re-indexing task for note ID {note_id}"
+            )
+            update_task_id = update_task_info["task_id"]
+            logger.info(f"Found re-indexing task ID: {update_task_id}")
+
+        # Wait for re-indexing to complete
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            task_ids={update_task_id},
+            timeout_seconds=10.0,
+        )
+        logger.info("Re-indexing completed")
 
         # --- Step 3: Verify Re-indexing Occurred ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
