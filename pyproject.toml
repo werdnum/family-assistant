@@ -81,14 +81,16 @@ dependencies = [
     # For detecting file types
     "playwright>=1.40.0",
     # For web scraping and JS rendering
-    "homeassistant-api>=5.0.0", # For Home Assistant integration
+    "homeassistant-api>=5.0.0",
+    # For Home Assistant integration
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "pytest-cov>=6.1.1",
     "pytest-asyncio",
+    "pytest-cov>=6.1.1",
+    "pytest-flakefinder>=1.1.0",
     "aiosqlite",
     "assertpy>=1.1", # Add assertpy
     "pytest-mock",
@@ -148,7 +150,7 @@ shell = "symbex -m family_assistant --docs -ni > SYMBOLS.md"
 
 [tool.poe.tasks.test]
 help = "Run pylint in errors-only mode and full pytest suite with verbose output"
-shell = "scripts/format-and-lint.sh && pytest -s -v tests"
+shell = "scripts/format-and-lint.sh && pytest tests"
 
 
 [tool.ruff.lint.isort]
