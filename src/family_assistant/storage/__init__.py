@@ -44,6 +44,7 @@ from family_assistant.storage.notes import (
     delete_note,
     get_all_notes,
     get_note_by_title,
+    get_prompt_notes,
     notes_table,
 )
 from family_assistant.storage.tasks import (
@@ -467,6 +468,7 @@ __all__ = [
     "get_db_context",
     "get_note_by_title",
     "update_message_error_traceback",
+    "get_prompt_notes",
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API
