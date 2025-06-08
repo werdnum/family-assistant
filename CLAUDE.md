@@ -41,6 +41,12 @@ pytest tests/functional/test_specific.py -v
 
 # Run with coverage
 pytest --cov=family_assistant tests/
+
+# Note: poe test may timeout when running all tests. If this happens, run tests in smaller batches:
+# pytest tests/unit/ -v
+# pytest tests/functional/indexing/ -v
+# pytest tests/functional/telegram/ -v
+# pytest tests/functional/web/ -v
 ```
 
 ### Running the Application
