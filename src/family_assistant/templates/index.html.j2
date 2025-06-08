@@ -11,6 +11,7 @@
         <thead>
             <tr>
                 <th>Title</th>
+                <th>Status</th>
                 <th>Content</th>
                 <th>Actions</th>
             </tr>
@@ -19,6 +20,13 @@
             {% for note in notes %}
             <tr>
                 <td>{{ note.title }}</td>
+                <td class="note-status">
+                    {% if note.include_in_prompt %}
+                        <span class="status-badge status-included" title="Included in system prompt">✓ In Prompt</span>
+                    {% else %}
+                        <span class="status-badge status-excluded" title="Excluded from system prompt, but searchable">◯ Searchable</span>
+                    {% endif %}
+                </td>
                 <td><pre>{{ note.content }}</pre></td>
                 <td class="note-actions">
                     <a href="{{ request.app.url_path_for('ui_edit_note', title=note.title) }}" class="button-link">Edit</a>
@@ -29,7 +37,7 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="3">No notes found.</td>
+                <td colspan="4">No notes found.</td>
             </tr>
             {% endfor %}
         </tbody>

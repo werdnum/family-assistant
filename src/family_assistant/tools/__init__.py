@@ -39,7 +39,12 @@ from family_assistant.tools.infrastructure import (
     ToolNotFoundError,
     ToolsProvider,
 )
-from family_assistant.tools.notes import NOTE_TOOLS_DEFINITION
+from family_assistant.tools.notes import (
+    NOTE_TOOLS_DEFINITION,
+    delete_note_tool,
+    get_note_tool,
+    list_notes_tool,
+)
 from family_assistant.tools.services import (
     SERVICE_TOOLS_DEFINITION,
     delegate_to_service_tool,
@@ -96,6 +101,9 @@ __all__ = [
     "_format_event_details_for_confirmation",
     "render_delete_calendar_event_confirmation",
     "render_modify_calendar_event_confirmation",
+    "delete_note_tool",
+    "get_note_tool",
+    "list_notes_tool",
 ]
 
 
@@ -112,6 +120,9 @@ except ImportError:
 # Define available functions mapping
 AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "add_or_update_note": storage.add_or_update_note,
+    "get_note": get_note_tool,
+    "list_notes": list_notes_tool,
+    "delete_note": delete_note_tool,
     "schedule_future_callback": schedule_future_callback_tool,
     "schedule_recurring_task": schedule_recurring_task_tool,
     "search_documents": search_documents_tool,

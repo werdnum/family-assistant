@@ -91,19 +91,23 @@ async def save_note(
     content: Annotated[str, Form()],
     db_context: Annotated[DatabaseContext, Depends(get_db)],
     original_title: Annotated[str | None, Form()] = None,
+    include_in_prompt: Annotated[str | None, Form()] = None,
 ) -> RedirectResponse:
     """Handles saving a new or updated note."""
+    # Convert checkbox value to boolean (checkbox sends "true" when checked, None when not)
+    include_in_prompt_bool = include_in_prompt == "true"
+
     try:
         if original_title and original_title != title:
             # To rename, we delete the old and add a new one.
             # Consider if a direct update of title is preferable if IDs are used.
             await delete_note(db_context, original_title)
-            await add_or_update_note(db_context, title, content)
+            await add_or_update_note(db_context, title, content, include_in_prompt_bool)
             logger.info(
                 f"Renamed note '{original_title}' to '{title}' and updated content."
             )
         else:
-            await add_or_update_note(db_context, title, content)
+            await add_or_update_note(db_context, title, content, include_in_prompt_bool)
             logger.info(f"Saved note: {title}")
         # Redirect to the main notes list page using its route name
         return RedirectResponse(
