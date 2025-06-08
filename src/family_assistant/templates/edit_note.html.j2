@@ -15,6 +15,12 @@
             <label for="content">Content:</label>
             <textarea id="content" name="content" required>{{ note.content if note else '' }}</textarea>
         </div>
+        <div class="checkbox-container">
+            <input type="checkbox" id="include_in_prompt" name="include_in_prompt" value="true" 
+                   {% if note and note.include_in_prompt %}checked{% elif not note %}checked{% endif %}>
+            <label for="include_in_prompt">Include in system prompt</label>
+            <p class="help-text">When checked, this note will be included in the assistant's system prompt. Uncheck to keep the note searchable but not always visible to the assistant.</p>
+        </div>
         <div class="buttons">
             <button type="submit">Save Note</button>
             <a href="{{ request.app.url_path_for('ui_list_notes') }}" class="button-link">Cancel</a>
