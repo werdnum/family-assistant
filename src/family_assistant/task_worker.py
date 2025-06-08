@@ -28,6 +28,74 @@ from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
 
+
+async def _schedule_reminder_follow_up(
+    exec_context: ToolExecutionContext,
+    original_context: str,
+    follow_up_interval: str,
+    current_attempt: int,
+    max_follow_ups: int,
+) -> None:
+    """Helper function to schedule a follow-up reminder."""
+    from family_assistant import storage
+
+    # Parse the follow-up interval
+    interval_parts = follow_up_interval.lower().split()
+    if len(interval_parts) != 2:
+        logger.error(f"Invalid follow-up interval format: {follow_up_interval}")
+        return
+
+    try:
+        amount = int(interval_parts[0])
+        unit = interval_parts[1].rstrip("s")  # Remove plural 's'
+
+        if unit == "minute":
+            delta = timedelta(minutes=amount)
+        elif unit == "hour":
+            delta = timedelta(hours=amount)
+        elif unit == "day":
+            delta = timedelta(days=amount)
+        else:
+            logger.error(f"Unknown time unit in follow-up interval: {unit}")
+            return
+    except ValueError:
+        logger.error(f"Invalid follow-up interval: {follow_up_interval}")
+        return
+
+    clock = exec_context.clock or SystemClock()
+    next_reminder_time = clock.now() + delta
+
+    task_id = f"llm_callback_{uuid.uuid4()}"
+    payload = {
+        "interface_type": exec_context.interface_type,
+        "conversation_id": exec_context.conversation_id,
+        "callback_context": original_context,
+        "scheduling_timestamp": clock.now().isoformat(),
+        "skip_if_user_responded": False,  # Reminders don't use this flag
+        "reminder_config": {
+            "is_reminder": True,
+            "follow_up": True,
+            "follow_up_interval": follow_up_interval,
+            "max_follow_ups": max_follow_ups,
+            "current_attempt": current_attempt + 1,
+        },
+    }
+
+    await storage.enqueue_task(
+        db_context=exec_context.db_context,
+        task_id=task_id,
+        task_type="llm_callback",
+        payload=payload,
+        scheduled_at=next_reminder_time,
+        notify_event=exec_context.new_task_event,
+    )
+
+    logger.info(
+        f"Scheduled follow-up reminder {task_id} for {exec_context.interface_type}:{exec_context.conversation_id} "
+        f"at {next_reminder_time} (attempt {current_attempt + 1} of {max_follow_ups + 1})"
+    )
+
+
 # --- Constants ---
 TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 
@@ -61,7 +129,7 @@ async def handle_llm_callback(
     payload: dict[str, Any],  # Payload from the task queue
 ) -> None:
     """
-    Task handler for LLM scheduled callbacks.
+    Task handler for LLM scheduled callbacks and reminders.
     Dependencies are accessed via the ToolExecutionContext.
     """
     # Access dependencies from the execution context
@@ -108,6 +176,14 @@ async def handle_llm_callback(
     # Default to False if not present (original behavior: always run callback)
     skip_if_user_responded = payload.get("skip_if_user_responded", False)
 
+    # Extract reminder configuration if present
+    reminder_config = payload.get("reminder_config", {})
+    is_reminder = reminder_config.get("is_reminder", False)
+    follow_up_enabled = reminder_config.get("follow_up", False)
+    follow_up_interval = reminder_config.get("follow_up_interval", "30 minutes")
+    max_follow_ups = reminder_config.get("max_follow_ups", 2)
+    current_attempt = reminder_config.get("current_attempt", 1)
+
     # Validate payload content
     if not callback_context:
         logger.error(
@@ -133,8 +209,11 @@ async def handle_llm_callback(
         )
         raise ValueError("Invalid scheduling_timestamp format") from e
 
-    if skip_if_user_responded:
-        # Check for intervening user messages only if the flag is True
+    # For reminders with follow-up, always check if user responded
+    check_user_response = skip_if_user_responded or (is_reminder and follow_up_enabled)
+
+    if check_user_response:
+        # Check for intervening user messages
         stmt = (
             select(storage.message_history_table.c.internal_id)
             .where(storage.message_history_table.c.interface_type == interface_type)
@@ -146,13 +225,21 @@ async def handle_llm_callback(
         intervening_messages = await db_context.fetch_all(stmt)
 
         if intervening_messages:
-            logger.info(
-                f"User has responded since callback was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}, and skip_if_user_responded is True. Skipping callback."
-            )
-            return  # Abort the callback
+            if skip_if_user_responded and not is_reminder:
+                # Regular callback with skip flag
+                logger.info(
+                    f"User has responded since callback was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}, and skip_if_user_responded is True. Skipping callback."
+                )
+                return  # Abort the callback
+            elif is_reminder and follow_up_enabled:
+                # Reminder with follow-up - user responded, so no follow-up needed
+                logger.info(
+                    f"User has responded since reminder was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}. Skipping follow-up."
+                )
+                # Note: We still proceed with the current reminder, just don't schedule follow-up
     else:
         logger.info(
-            f"Callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}) has skip_if_user_responded=False. Proceeding regardless of intervening messages."
+            f"Callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}) proceeding without checking for user response."
         )
 
     logger.info(
@@ -166,7 +253,13 @@ async def handle_llm_callback(
 
     try:
         # Construct the trigger message content for the LLM
-        trigger_text = f"System Callback Trigger:\n\nThe time is now {current_time_str}.\nYour scheduled context was:\n---\n{callback_context}\n---"
+        if is_reminder:
+            if current_attempt == 1:
+                trigger_text = f"System: Reminder triggered\n\nThe time is now {current_time_str}.\nTask: Send a reminder about: {callback_context}"
+            else:
+                trigger_text = f"System: Follow-up reminder triggered (attempt {current_attempt} of {max_follow_ups + 1})\n\nThe time is now {current_time_str}.\nOriginal reminder: {callback_context}\nNote: User has not responded to previous reminder sent at {scheduling_timestamp_str}"
+        else:
+            trigger_text = f"System Callback Trigger:\n\nThe time is now {current_time_str}.\nYour scheduled context was:\n---\n{callback_context}\n---"
 
         # Generate a turn ID for this callback execution
         callback_turn_id = str(uuid.uuid4())
@@ -218,6 +311,21 @@ async def handle_llm_callback(
             logger.info(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
             )
+
+            # Schedule follow-up reminder if needed
+            if (
+                is_reminder
+                and follow_up_enabled
+                and current_attempt < max_follow_ups + 1
+                and not (check_user_response and intervening_messages)
+            ):
+                await _schedule_reminder_follow_up(
+                    exec_context=exec_context,
+                    original_context=callback_context,
+                    follow_up_interval=follow_up_interval,
+                    current_attempt=current_attempt,
+                    max_follow_ups=max_follow_ups,
+                )
 
             if sent_message_id_str and final_assistant_message_internal_id is not None:
                 try:
