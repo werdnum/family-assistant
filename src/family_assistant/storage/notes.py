@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Integer,
@@ -37,6 +38,7 @@ notes_table = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("title", String, nullable=False, unique=True, index=True),
     Column("content", Text, nullable=False),
+    Column("include_in_prompt", Boolean, nullable=False, server_default="true"),
     Column(
         "created_at",
         DateTime(timezone=True),
@@ -97,16 +99,38 @@ class NoteDocument(Document):
         }
 
 
-async def get_all_notes(db_context: DatabaseContext) -> list[dict[str, str]]:
+async def get_all_notes(db_context: DatabaseContext) -> list[dict[str, Any]]:
     """Retrieves all notes."""
     try:
-        stmt = select(notes_table.c.title, notes_table.c.content).order_by(
-            notes_table.c.title
+        stmt = select(
+            notes_table.c.title, notes_table.c.content, notes_table.c.include_in_prompt
+        ).order_by(notes_table.c.title)
+        rows = await db_context.fetch_all(stmt)
+        return [
+            {
+                "title": row["title"],
+                "content": row["content"],
+                "include_in_prompt": row["include_in_prompt"],
+            }
+            for row in rows
+        ]
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_all_notes: {e}", exc_info=True)
+        raise  # Re-raise after logging
+
+
+async def get_prompt_notes(db_context: DatabaseContext) -> list[dict[str, str]]:
+    """Retrieves only notes that should be included in prompts."""
+    try:
+        stmt = (
+            select(notes_table.c.title, notes_table.c.content)
+            .where(notes_table.c.include_in_prompt.is_(True))
+            .order_by(notes_table.c.title)
         )
         rows = await db_context.fetch_all(stmt)
         return [{"title": row["title"], "content": row["content"]} for row in rows]
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_all_notes: {e}", exc_info=True)
+        logger.error(f"Database error in get_prompt_notes: {e}", exc_info=True)
         raise  # Re-raise after logging
 
 
@@ -115,9 +139,9 @@ async def get_note_by_title(
 ) -> dict[str, Any] | None:
     """Retrieves a specific note by its title."""
     try:
-        stmt = select(notes_table.c.title, notes_table.c.content).where(
-            notes_table.c.title == title
-        )
+        stmt = select(
+            notes_table.c.title, notes_table.c.content, notes_table.c.include_in_prompt
+        ).where(notes_table.c.title == title)
         row = await db_context.fetch_one(stmt)
         return row if row else None
     except SQLAlchemyError as e:
@@ -136,6 +160,7 @@ async def get_note_by_id(
             notes_table.c.id,
             notes_table.c.title,
             notes_table.c.content,
+            notes_table.c.include_in_prompt,
             notes_table.c.created_at,
             notes_table.c.updated_at,
         ).where(notes_table.c.id == note_id)
@@ -147,7 +172,10 @@ async def get_note_by_id(
 
 
 async def add_or_update_note(
-    db_context: DatabaseContext, title: str, content: str
+    db_context: DatabaseContext,
+    title: str,
+    content: str,
+    include_in_prompt: bool = True,
 ) -> str:
     """Adds a new note or updates an existing note with the given title (upsert)."""
     now = datetime.now(timezone.utc)
@@ -158,11 +186,16 @@ async def add_or_update_note(
             from sqlalchemy.dialects.postgresql import insert as pg_insert
 
             stmt = pg_insert(notes_table).values(
-                title=title, content=content, created_at=now, updated_at=now
+                title=title,
+                content=content,
+                include_in_prompt=include_in_prompt,
+                created_at=now,
+                updated_at=now,
             )
             # Define columns to update on conflict
             update_dict = {
                 "content": stmt.excluded.content,
+                "include_in_prompt": stmt.excluded.include_in_prompt,
                 "updated_at": stmt.excluded.updated_at,
             }
             stmt = stmt.on_conflict_do_update(
@@ -188,7 +221,11 @@ async def add_or_update_note(
         try:
             # Attempt INSERT first
             insert_stmt = insert(notes_table).values(
-                title=title, content=content, created_at=now, updated_at=now
+                title=title,
+                content=content,
+                include_in_prompt=include_in_prompt,
+                created_at=now,
+                updated_at=now,
             )
             await db_context.execute_with_retry(insert_stmt)
             logger.info(f"Inserted new note: {title} (SQLite fallback)")
@@ -208,7 +245,11 @@ async def add_or_update_note(
                 update_stmt = (
                     update(notes_table)
                     .where(notes_table.c.title == title)
-                    .values(content=content, updated_at=now)
+                    .values(
+                        content=content,
+                        include_in_prompt=include_in_prompt,
+                        updated_at=now,
+                    )
                 )
                 # Execute update within the same transaction context
                 result = await db_context.execute_with_retry(update_stmt)

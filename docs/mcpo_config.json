@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "browser": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest", "--headless", "--browser", "chromium", "--executable-path", "/root/.cache/ms-playwright/chromium_headless_shell-1161/chrome-linux/headless_shell"]
+    },
+    "time": {
+      "command": "mcp-server-time",
+      "args": ["--local-timezone=Australia/Sydney"]
+    },
+    "fetch": {
+    	"command": "mcp-server-fetch"
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/mnt/data"
+      ]
+    },
+    "brave": {
+    	"command": "npx",
+    	"args": [
+    		"-y",
+    		"@modelcontextprotocol/server-brave-search"
+    	]
+    }
+  }
+}

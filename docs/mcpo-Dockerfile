@@ -1,0 +1,49 @@
+# Build stage using the official UV image
+FROM ghcr.io/astral-sh/uv:debian-slim AS builder
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get install -y npm
+
+# Set working directory
+WORKDIR /app
+
+# Store environment variables for tool directories to ensure proper copying
+ENV UV_TOOL_BIN_DIR=/uv/bin
+ENV UV_TOOL_DIR=/uv/tools
+
+# Install Python CLI tools using uv tool install
+# Replace $TOOLS with the tools you want to install (e.g., "black ruff")
+RUN uv tool install mcp-server-time
+RUN uv tool install mcp-server-fetch
+RUN uv tool install mcpo
+
+RUN npm install -g @playwright/mcp@latest
+RUN npm install -g @modelcontextprotocol/server-brave-search
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    npx playwright install --with-deps chromium
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_TOOL_BIN_DIR=/uv/bin \
+    UV_TOOL_DIR=/uv/tools
+
+# Copy installed packages from builder stage
+#COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.11/site-packages
+#COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy UV tool directories
+#COPY --from=builder ${UV_TOOL_BIN_DIR} ${UV_TOOL_BIN_DIR}
+#COPY --from=builder ${UV_TOOL_DIR} ${UV_TOOL_DIR}
+
+# Ensure tool binaries are in PATH
+ENV PATH="${UV_TOOL_BIN_DIR}:${PATH}"
+
+# Set working directory
+WORKDIR /mcpo
+
+COPY config.json /mcpo/config.json
+
+# Replace $COMMAND with your command in array format
+# Example: ["python", "-c", "import requests; print('Hello')"]
+CMD ["mcpo", "--host", "0.0.0.0", "--port", "8000", "--config", "/mcpo/config.json"]
