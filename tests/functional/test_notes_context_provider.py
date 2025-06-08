@@ -3,11 +3,12 @@ Test the NotesContextProvider with prompt inclusion filtering.
 """
 
 import pytest
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.notes import add_or_update_note
+from family_assistant.storage.notes import add_or_update_note, notes_table
 
 
 async def get_test_db_context(engine: AsyncEngine) -> DatabaseContext:
@@ -15,11 +16,21 @@ async def get_test_db_context(engine: AsyncEngine) -> DatabaseContext:
     return DatabaseContext(engine=engine)
 
 
+async def cleanup_notes(engine: AsyncEngine) -> None:
+    """Clean up all notes from the database."""
+    async with DatabaseContext(engine=engine) as db:
+        stmt = delete(notes_table)
+        await db.execute_with_retry(stmt)
+
+
 @pytest.mark.asyncio
 async def test_notes_context_provider_respects_include_in_prompt(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
     """Test that NotesContextProvider only includes notes with include_in_prompt=True."""
+    # Clean up any existing notes
+    await cleanup_notes(pg_vector_db_engine)
+
     # Create test notes
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         await add_or_update_note(
@@ -78,6 +89,9 @@ async def test_notes_context_provider_empty_when_all_excluded(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
     """Test NotesContextProvider behavior when all notes are excluded from prompts."""
+    # Clean up any existing notes
+    await cleanup_notes(pg_vector_db_engine)
+
     # Create only excluded notes
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         await add_or_update_note(
@@ -121,6 +135,9 @@ async def test_notes_context_provider_mixed_visibility(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
     """Test NotesContextProvider with a mix of visible and hidden notes."""
+    # Clean up any existing notes
+    await cleanup_notes(pg_vector_db_engine)
+
     # Create a mix of notes
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         test_notes = [

@@ -16,12 +16,18 @@ This document outlines a phased approach to enhance the notes feature, focusing 
   - Re-indexing on updates with old embedding deletion
   - Full vector search integration
   - Comprehensive end-to-end tests
+- **Basic prompt inclusion control** (Milestone 2)
+  - `include_in_prompt` column added to notes table
+  - Storage layer updated with filtering functions
+  - `NotesContextProvider` respects inclusion flag
+  - Tool parameter exposed for control
+  - Comprehensive test coverage
 
 ### 🚧 In Progress
 - None
 
 ### ❌ Not Started
-- Profile-based prompt inclusion/exclusion (Milestones 2-3)
+- Profile-based prompt inclusion/exclusion (Milestone 3)
 - Web UI enhancements for note visibility control (Milestone 4)
 - Direct note access tool (Milestone 5)
 - Access control
@@ -132,14 +138,14 @@ This phased approach allows for incremental delivery of functionality, starting 
 ## Implementation Plan
 
 ### Next Steps
-With Milestone 1 (Basic Note Indexing) complete, the recommended next step is **Milestone 2: Basic Prompt Inclusion Control**. This provides immediate value by allowing users to mark notes as excluded from system prompts while keeping them searchable.
+With Milestones 1 and 2 complete, the recommended next step is **Milestone 3: Profile-Based Filtering**. This adds more granular control by allowing notes to be included/excluded based on the active processing profile.
 
-**Quick Start for Milestone 2:**
-1. Create database migration to add `include_in_prompt` column (default: true)
-2. Update `add_or_update_note()` in storage layer to accept the new parameter
-3. Create `get_prompt_notes()` function that filters by the flag
-4. Update `NotesContextProvider` to use the filtered function
-5. Update the `add_or_update_note` tool to expose the parameter
+**Quick Start for Milestone 3:**
+1. Create database migration to add profile list columns
+2. Update storage layer with profile-aware filtering logic
+3. Modify `get_prompt_notes()` to accept and use profile_id
+4. Update `NotesContextProvider` to pass current profile
+5. Enhance the tool to accept profile lists
 
 ### Overview
 The implementation will be reordered to deliver incremental value while maintaining system stability. We'll start with note indexing (simpler, foundation for later features), then add profile-based filtering, and finally implement access control.
@@ -504,8 +510,10 @@ For notes, we'll create a dedicated **NotesIndexer** following the same pattern 
 
 **Deliverable achieved**: Notes are fully indexed and searchable via vector search
 
-### Milestone 2: Basic Prompt Inclusion Control
+### Milestone 2: Basic Prompt Inclusion Control ✅ COMPLETE
 **Goal**: Add simple include/exclude flag for notes without profile logic.
+
+**Status**: This milestone has been fully implemented. Users can now mark notes to exclude from system prompts while keeping them searchable.
 
 #### 2.1 Database Schema Update
 **Files to create**:
@@ -699,25 +707,29 @@ Each milestone can be rolled back independently:
 ### Success Metrics
 - No regression in existing note functionality ✅
 - Notes discoverable via vector search ✅
-- Profile-based filtering reduces prompt size (Pending - Milestone 2-3)
+- Basic prompt filtering reduces context size ✅
+- Profile-based filtering reduces prompt size (Pending - Milestone 3)
 - UI provides clear visibility into note settings (Pending - Milestone 4)
 - System performance not degraded ✅
 
 ## Summary of Progress
 
-### What's Been Accomplished (Milestone 1)
-- ✅ Full note indexing infrastructure implemented
-- ✅ Automatic indexing on note creation/update
-- ✅ Re-indexing with old embedding cleanup on updates
-- ✅ Vector search integration working
-- ✅ Comprehensive test coverage
-- ✅ No performance degradation
+### What's Been Accomplished
+- ✅ **Milestone 1**: Full note indexing infrastructure
+  - Automatic indexing on note creation/update
+  - Re-indexing with old embedding cleanup
+  - Vector search integration
+- ✅ **Milestone 2**: Basic prompt inclusion control
+  - include_in_prompt flag on notes
+  - Storage layer filtering
+  - Context provider integration
+  - Tool parameter exposed
+  - Comprehensive test coverage
 
 ### What Remains
-1. **Milestone 2**: Basic prompt inclusion control (include_in_prompt flag)
-2. **Milestone 3**: Profile-based filtering (per-profile inclusion/exclusion)
-3. **Milestone 4**: Web UI enhancements for visibility control
-4. **Milestone 5**: Direct note access tool for LLM
-5. **Future**: Access control and user ownership
+1. **Milestone 3**: Profile-based filtering (per-profile inclusion/exclusion)
+2. **Milestone 4**: Web UI enhancements for visibility control
+3. **Milestone 5**: Direct note access tool for LLM
+4. **Future**: Access control and user ownership
 
-The foundation is solid, and each remaining milestone can be implemented incrementally without disrupting existing functionality.
+The core functionality is now in place. Users can control which notes appear in prompts while maintaining full searchability. Each remaining milestone adds incremental value without disrupting existing functionality.
