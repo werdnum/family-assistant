@@ -367,7 +367,6 @@ class Assistant:
             confirming_provider_for_profile = ConfirmingToolsProvider(
                 wrapped_provider=composite_provider_for_profile,
                 tools_requiring_confirmation=profile_confirm_tools_set,
-                calendar_config=profile_proc_conf_dict["calendar_config"],
             )
             await confirming_provider_for_profile.get_tool_definitions()
 

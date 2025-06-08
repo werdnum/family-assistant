@@ -125,7 +125,6 @@ async def test_tools_provider(
         tools_requiring_confirmation=set(
             mock_processing_service_config.tools_config.get("confirm_tools", [])
         ),
-        calendar_config=mock_processing_service_config.calendar_config,
     )
     await confirming_provider.get_tool_definitions()  # Initialize
     return confirming_provider

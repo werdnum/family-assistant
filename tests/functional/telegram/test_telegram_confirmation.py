@@ -115,7 +115,6 @@ async def test_confirmation_accepted(
     confirming_wrapper = ConfirmingToolsProvider(
         wrapped_provider=fix.tools_provider,  # Wrap the provider from the fixture
         tools_requiring_confirmation={TOOL_NAME_SENSITIVE},  # Pass the set during init
-        calendar_config=None,  # Not needed for this tool
     )
 
     # --- Mock Confirmation Manager ---
