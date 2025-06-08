@@ -32,9 +32,60 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "schedule_reminder",
+            "description": (
+                "Schedule a reminder to be sent at a specific time. Use this tool when users ask to be reminded of something. "
+                "Supports automatic follow-up reminders if the user doesn't respond."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reminder_time": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": (
+                            "The exact date and time (ISO 8601 format, including timezone, e.g., '2025-05-10T14:30:00+02:00') when the reminder should be sent."
+                        ),
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": (
+                            "The reminder message to send (e.g., 'Take your medication', 'Call mom', 'Submit the report')."
+                        ),
+                    },
+                    "follow_up": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, will automatically send follow-up reminders if the user doesn't respond. Use for important reminders or when user says 'don't let me forget'."
+                        ),
+                        "default": False,
+                    },
+                    "follow_up_interval": {
+                        "type": "string",
+                        "description": (
+                            "Time between follow-up reminders (e.g., '30 minutes', '1 hour'). Only used if follow_up is true."
+                        ),
+                        "default": "30 minutes",
+                    },
+                    "max_follow_ups": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of follow-up reminders to send. Only used if follow_up is true."
+                        ),
+                        "default": 2,
+                    },
+                },
+                "required": ["reminder_time", "message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "schedule_future_callback",
             "description": (
-                "Schedule a future trigger for yourself (the assistant) to continue processing or follow up on a topic at a specified time within the current chat context. Use this if the user asks you to do something later, or if a task requires waiting."
+                "Schedule a future trigger for yourself (the assistant) to continue processing or check on a task at a specified time. "
+                "Use this for continuing work or checking task status, NOT for reminders. For reminders, use schedule_reminder instead."
             ),
             "parameters": {
                 "type": "object",
@@ -49,15 +100,8 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     "context": {
                         "type": "string",
                         "description": (
-                            "The specific instructions or information you need to remember for the callback (e.g., 'Follow up on the flight booking status', 'Check if the user replied about the weekend plan')."
+                            "The specific instructions or information you need to remember for the callback (e.g., 'Check if the download finished', 'Continue analyzing the data')."
                         ),
-                    },
-                    "skip_if_user_responded": {
-                        "type": "boolean",
-                        "description": (
-                            "Optional. If true, the callback will be skipped if the user sends any message after this callback was scheduled. Set to false (default) to ensure the callback always runs, regardless of user activity."
-                        ),
-                        "default": False,
                     },
                 },
                 "required": ["callback_time", "context"],
@@ -190,6 +234,111 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
 
 
 # Tool Implementations
+async def schedule_reminder_tool(
+    exec_context: ToolExecutionContext,
+    reminder_time: str,
+    message: str,
+    follow_up: bool = False,
+    follow_up_interval: str = "30 minutes",
+    max_follow_ups: int = 2,
+) -> str | None:
+    """
+    Schedules a reminder to be sent at a specific time.
+
+    Args:
+        exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
+        reminder_time: ISO 8601 formatted datetime string (including timezone).
+        message: The reminder message to send.
+        follow_up: If True, will automatically send follow-up reminders if no response.
+        follow_up_interval: Time between follow-ups (e.g., "30 minutes", "1 hour").
+        max_follow_ups: Maximum number of follow-up reminders.
+    """
+    from family_assistant import storage
+
+    # Get interface_type, conversation_id, and db_context from the execution context object
+    interface_type = exec_context.interface_type
+    conversation_id = exec_context.conversation_id
+    db_context = exec_context.db_context
+    clock = (
+        exec_context.clock or SystemClock()
+    )  # Use context's clock or default to SystemClock
+
+    try:
+        # Parse the ISO 8601 string, ensuring it's timezone-aware
+        scheduled_dt = isoparse(reminder_time)
+        if scheduled_dt.tzinfo is None:
+            logger.warning(
+                f"Reminder time '{reminder_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+            )
+            scheduled_dt = scheduled_dt.replace(
+                tzinfo=ZoneInfo(exec_context.timezone_str)
+            )
+
+        # Ensure it's in the future
+        if scheduled_dt <= clock.now():
+            raise ValueError("Reminder time must be in the future.")
+
+        # Validate follow-up interval format if follow-up is enabled
+        if follow_up:
+            interval_parts = follow_up_interval.lower().split()
+            if len(interval_parts) != 2:
+                raise ValueError(
+                    f"Invalid follow-up interval format: {follow_up_interval}"
+                )
+            try:
+                int(interval_parts[0])  # Validate it's a number
+                unit = interval_parts[1].rstrip("s")
+                if unit not in ["minute", "hour", "day"]:
+                    raise ValueError(f"Unknown time unit: {unit}")
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid follow-up interval: {follow_up_interval}"
+                ) from e
+
+        task_id = f"llm_callback_{uuid.uuid4()}"
+        scheduling_time = clock.now()
+        payload = {
+            "interface_type": interface_type,
+            "conversation_id": conversation_id,
+            "callback_context": message,
+            "scheduling_timestamp": scheduling_time.isoformat(),
+            "skip_if_user_responded": False,  # Reminders don't use this flag
+            "reminder_config": {
+                "is_reminder": True,
+                "follow_up": follow_up,
+                "follow_up_interval": follow_up_interval,
+                "max_follow_ups": max_follow_ups,
+                "current_attempt": 1,
+            },
+        }
+
+        await storage.enqueue_task(
+            db_context=db_context,
+            task_id=task_id,
+            task_type="llm_callback",
+            payload=payload,
+            scheduled_at=scheduled_dt,
+            notify_event=exec_context.new_task_event,
+        )
+
+        logger.info(
+            f"Scheduled reminder task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
+        )
+
+        follow_up_msg = ""
+        if follow_up:
+            follow_up_msg = f" (with follow-ups every {follow_up_interval}, up to {max_follow_ups} times)"
+
+        return f"OK. Reminder scheduled for {reminder_time}{follow_up_msg}."
+
+    except ValueError as ve:
+        logger.error(f"Invalid reminder parameters: {ve}")
+        return f"Error: Invalid reminder parameters. {ve}"
+    except Exception as e:
+        logger.error(f"Failed to schedule reminder: {e}", exc_info=True)
+        return "Error: Failed to schedule the reminder."
+
+
 async def schedule_recurring_task_tool(
     exec_context: ToolExecutionContext,
     task_type: str,
@@ -281,7 +430,6 @@ async def schedule_future_callback_tool(
     exec_context: ToolExecutionContext,
     callback_time: str,
     context: str,  # This is the LLM context string
-    skip_if_user_responded: bool = False,
 ) -> str | None:
     """
     Schedules a task to trigger an LLM callback in a specific chat at a future time.
@@ -290,7 +438,6 @@ async def schedule_future_callback_tool(
         exec_context: The ToolExecutionContext containing chat_id, application instance, and db_context.
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback.
-        skip_if_user_responded: If True, the callback will be skipped if the user sends any message after this callback was scheduled. Defaults to False (callback always runs).
     """
     from family_assistant import storage
 
@@ -327,7 +474,7 @@ async def schedule_future_callback_tool(
             "conversation_id": conversation_id,  # Store conversation ID
             "callback_context": context,
             "scheduling_timestamp": scheduling_time.isoformat(),  # Add scheduling timestamp
-            "skip_if_user_responded": skip_if_user_responded,  # Add the new flag
+            "skip_if_user_responded": False,  # Always False for non-reminder callbacks
         }
 
         await storage.enqueue_task(

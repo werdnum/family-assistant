@@ -1001,66 +1001,83 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("skip_if_user_responded_flag", [True, False])
-async def test_callback_skip_behavior_on_user_response(
-    test_db_engine: AsyncEngine, skip_if_user_responded_flag: bool
-) -> None:
-    """
-    Tests the callback skipping behavior based on the `skip_if_user_responded` flag
-    when a user message is sent after scheduling but before execution.
+# NOTE: This test is commented out because skip_if_user_responded was removed from
+# schedule_future_callback in favor of using the dedicated schedule_reminder tool
+# which has built-in follow-up functionality.
+#
+# The test_schedule_reminder_with_follow_up test above covers the reminder/follow-up
+# functionality that replaced this feature.
 
-    - If skip_if_user_responded_flag is True: Callback should be skipped.
-    - If skip_if_user_responded_flag is False: Callback should execute (nag mode).
+
+@pytest.mark.asyncio
+async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> None:
+    """
+    Tests the schedule_reminder tool with follow-up functionality:
+    1. User asks to schedule a reminder with follow-up enabled.
+    2. Mock LLM calls schedule_reminder tool.
+    3. Verify task is created in DB with reminder config.
+    4. TaskWorker executes the initial reminder.
+    5. Verify follow-up reminder is automatically scheduled.
+    6. TaskWorker executes the follow-up reminder.
+    7. User responds after follow-up.
+    8. Verify no further follow-ups are scheduled.
     """
     test_run_id = uuid.uuid4()
-    scenario_name = "SkipCallback" if skip_if_user_responded_flag else "NagCallback"
-    logger.info(
-        f"\n--- Running {scenario_name} Test ({test_run_id}, skip_flag={skip_if_user_responded_flag}) ---"
-    )
+    logger.info(f"\n--- Running Reminder with Follow-up Test ({test_run_id}) ---")
 
+    # Setup
     mock_clock = MockClock()
     initial_time = mock_clock.now()
-
-    # Task Worker Events (use fresh events for each test run)
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
 
-    callback_dt = initial_time + timedelta(seconds=CALLBACK_DELAY_SECONDS)
-    callback_time_iso = callback_dt.isoformat()
-    user_message_id_schedule = 701
-    user_message_id_intervening = 702
+    # Timing configuration
+    reminder_delay_seconds = 3
+    follow_up_interval = "30 minutes"
+    follow_up_interval_seconds = 30 * 60
+    max_follow_ups = 2
 
-    schedule_tool_call_id = f"call_schedule_skip_test_{test_run_id}"
+    reminder_dt = initial_time + timedelta(seconds=reminder_delay_seconds)
+    reminder_time_iso = reminder_dt.isoformat()
+    reminder_message = "Take your medication"
 
-    # Rule 1: Schedule callback
-    def schedule_matcher_for_skip_test(kwargs: MatcherArgs) -> bool:
-        # Ensure the boolean part of the f-string is also lowercased for comparison
-        # with the lowercased message content.
-        expected_substring = f"schedule for skip_if_user_responded={str(skip_if_user_responded_flag).lower()}"
-        message_content = get_last_message_text(kwargs.get("messages", [])).lower()
-        return expected_substring in message_content
+    user_message_id_schedule = 801
+    user_message_id_response = 802
 
-    schedule_response_for_skip_test = MockLLMOutput(
-        content=f"OK, scheduling callback with skip_flag={skip_if_user_responded_flag}.",
+    # --- Define Rules for Mock LLM ---
+    # Rule 1: Schedule reminder with follow-up
+    def schedule_reminder_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        tools = kwargs.get("tools")
+        last_text = get_last_message_text(messages).lower()
+        return (
+            "don't let me forget" in last_text
+            and "medication" in last_text
+            and tools is not None
+        )
+
+    schedule_reminder_response = MockLLMOutput(
+        content=f"OK, I'll remind you to take your medication at {reminder_time_iso} and follow up if you don't respond.",
         tool_calls=[
             ToolCallItem(
-                id=schedule_tool_call_id,
+                id=f"call_schedule_reminder_{test_run_id}",
                 type="function",
                 function=ToolCallFunction(
-                    name="schedule_future_callback",
+                    name="schedule_reminder",
                     arguments=json.dumps({
-                        "callback_time": callback_time_iso,
-                        "context": CALLBACK_CONTEXT,
-                        "skip_if_user_responded": skip_if_user_responded_flag,
+                        "reminder_time": reminder_time_iso,
+                        "message": reminder_message,
+                        "follow_up": True,
+                        "follow_up_interval": follow_up_interval,
+                        "max_follow_ups": max_follow_ups,
                     }),
                 ),
             )
         ],
     )
 
-    # Rule 2: System trigger for the callback (should only be hit if not skipped)
-    def callback_trigger_matcher_for_skip_test(kwargs: MatcherArgs) -> bool:
+    # Rule 2: Initial reminder trigger
+    def initial_reminder_trigger_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         if not messages:
             return False
@@ -1069,35 +1086,52 @@ async def test_callback_skip_behavior_on_user_response(
             content = last_message.get("content")
             if isinstance(content, str):
                 return (
-                    "System Callback Trigger:" in content
-                    and CALLBACK_CONTEXT in content
+                    "System: Reminder triggered" in content
+                    and reminder_message in content
+                    and "attempt 1" not in content.lower()
                 )
         return False
 
-    callback_final_response_text_for_skip_test = f"Rule-based mock: Executing callback (skip_flag={skip_if_user_responded_flag}). Reminder: {CALLBACK_CONTEXT}"
-    callback_response_for_skip_test = MockLLMOutput(
-        content=callback_final_response_text_for_skip_test
+    initial_reminder_response = MockLLMOutput(
+        content=f"⏰ Reminder: {reminder_message}",
+        tool_calls=None,
+    )
+
+    # Rule 3: Follow-up reminder trigger
+    def follow_up_reminder_trigger_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages:
+            return False
+        last_message = messages[-1]
+        if last_message.get("role") == "user":
+            content = last_message.get("content")
+            if isinstance(content, str):
+                return (
+                    "System: Follow-up reminder triggered" in content
+                    and reminder_message in content
+                )
+        return False
+
+    follow_up_reminder_response = MockLLMOutput(
+        content=f"🔔 Just following up on my earlier reminder: {reminder_message}",
+        tool_calls=None,
     )
 
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[
-            (
-                schedule_matcher_for_skip_test,
-                schedule_response_for_skip_test,
-            ),
-            (
-                callback_trigger_matcher_for_skip_test,
-                callback_response_for_skip_test,
-            ),
+            (schedule_reminder_matcher, schedule_reminder_response),
+            (initial_reminder_trigger_matcher, initial_reminder_response),
+            (follow_up_reminder_trigger_matcher, follow_up_reminder_response),
         ],
         default_response=MockLLMOutput(
-            content=f"Default mock response for {scenario_name} test."
+            content="Default mock response for reminder test."
         ),
     )
 
-    # --- Instantiate Dependencies (similar to other tests) ---
+    # --- Setup dependencies ---
     local_provider = LocalToolsProvider(
-        definitions=local_tools_definition, implementations=local_tool_implementations
+        definitions=local_tools_definition,
+        implementations=local_tool_implementations,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
     composite_provider = CompositeToolsProvider(
@@ -1105,180 +1139,184 @@ async def test_callback_skip_behavior_on_user_response(
     )
     await composite_provider.get_tool_definitions()
 
-    dummy_prompts = {"system_prompt": f"Test system prompt for {scenario_name}."}
-    test_service_config_obj_skip = ProcessingServiceConfig(
-        prompts=dummy_prompts,
+    test_service_config = ProcessingServiceConfig(
+        prompts={"system_prompt": "Test system prompt for reminders."},
         calendar_config={},
         timezone_str="UTC",
-        max_history_messages=5,
+        max_history_messages=10,
         history_max_age_hours=24,
         tools_config={},
         delegation_security_level="confirm",
-        id=f"smoke_{scenario_name.lower()}_profile",
+        id="reminder_test_profile",
     )
+
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
-        service_config=test_service_config_obj_skip,
+        service_config=test_service_config,
         app_config={},
         context_providers=[],
         server_url=None,
-        clock=mock_clock,  # Inject mock_clock into ProcessingService
+        clock=mock_clock,
     )
 
-    mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
-    mock_chat_interface_for_worker.send_message.return_value = (
-        f"mock_message_id_{scenario_name.lower()}_callback"
-    )
+    mock_chat_interface = AsyncMock(spec=ChatInterface)
+    mock_chat_interface.send_message.return_value = "mock_reminder_message_id"
 
-    test_new_task_event = asyncio.Event()
-    task_worker_instance = TaskWorker(
+    task_worker = TaskWorker(
         processing_service=processing_service,
-        chat_interface=mock_chat_interface_for_worker,
+        chat_interface=mock_chat_interface,
         new_task_event=test_new_task_event,
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
-        clock=mock_clock,  # Inject mock_clock
-        shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
+        clock=mock_clock,
+        shutdown_event_instance=test_shutdown_event,
     )
-    task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-    worker_task = asyncio.create_task(
-        task_worker_instance.run(test_new_task_event),
-        name=f"TaskWorker-{scenario_name}-{test_run_id}",
-    )
-    await asyncio.sleep(0.01)  # Allow worker to start
+    task_worker.register_task_handler("llm_callback", handle_llm_callback)
 
-    # --- Part 1: Schedule the callback ---
-    logger.info(
-        f"--- Part 1: Scheduling callback for {scenario_name} test (skip_flag={skip_if_user_responded_flag}) ---"
+    worker_task = asyncio.create_task(
+        task_worker.run(test_new_task_event),
+        name=f"TaskWorker-Reminder-{test_run_id}",
     )
+    await asyncio.sleep(0.01)
+
+    # --- Part 1: Schedule the reminder ---
+    logger.info("--- Part 1: Scheduling reminder with follow-up ---")
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        # mock_clock.now() is used by schedule_future_callback_tool via exec_context
-        _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
+        resp, _, _, error = await processing_service.handle_chat_interaction(
             db_context=db_context,
-            chat_interface=mock_chat_interface_for_worker,
+            chat_interface=mock_chat_interface,
             new_task_event=test_new_task_event,
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             trigger_content_parts=[
-                {
-                    "type": "text",
-                    "text": f"Please schedule for skip_if_user_responded={skip_if_user_responded_flag}",
-                }
+                {"type": "text", "text": "Don't let me forget to take my medication"}
             ],
             trigger_interface_message_id=str(user_message_id_schedule),
             user_name=TEST_USER_NAME,
         )
-    assert schedule_error is None, f"Error scheduling callback: {schedule_error}"
-    logger.info(
-        f"Callback scheduled for {scenario_name} test. LLM calls: {len(llm_client.get_calls())}"  # type: ignore
-    )
+    assert error is None, f"Error scheduling reminder: {error}"
+    logger.info(f"Reminder scheduled. Response: {resp}")
 
-    # --- Part 2: Simulate an intervening user message ---
-    logger.info(
-        f"--- Part 2: Simulating intervening user message for {scenario_name} test ---"
-    )
-    # Add a message directly to history *after* scheduling_timestamp but *before* callback_dt
-    # The scheduling_timestamp is created inside schedule_future_callback_tool.
-    # For the test, we know it's roughly `initial_time` (mock_clock.now() at scheduling)
-    # when the tool call happens. The callback is scheduled for `callback_dt`.
-    # We need to ensure this intervening message's timestamp is > scheduling_timestamp and < callback_dt.
-    # Let's place it halfway.
-    # The scheduling_timestamp is set by schedule_future_callback_tool using exec_context.clock.now()
-    # So, it will be initial_time.
-    intervening_message_timestamp = initial_time + timedelta(
-        seconds=CALLBACK_DELAY_SECONDS / 2
-    )
-
+    # Verify task in DB has reminder config
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        # No need for asyncio.sleep(0.01) here as mock_clock controls time precisely.
-        # The important part is that intervening_message_timestamp is correctly set relative to
-        # the scheduling_timestamp that will be recorded by the tool.
-        await storage.add_message_to_history(  # Call storage.add_message_to_history directly
+        stmt = select(tasks_table).where(
+            tasks_table.c.task_type == "llm_callback",
+            tasks_table.c.status == "pending",
+        )
+        tasks = await db_context.fetch_all(stmt)
+        assert len(tasks) == 1, "Expected exactly one pending reminder task"
+        task = tasks[0]
+        payload = task["payload"]
+        reminder_config = payload.get("reminder_config", {})
+        assert reminder_config.get("is_reminder") is True
+        assert reminder_config.get("follow_up") is True
+        assert reminder_config.get("follow_up_interval") == follow_up_interval
+        assert reminder_config.get("max_follow_ups") == max_follow_ups
+        assert reminder_config.get("current_attempt") == 1
+        initial_task_id = task["task_id"]
+        logger.info(f"Initial reminder task {initial_task_id} verified in DB")
+
+    # --- Part 2: Execute initial reminder ---
+    logger.info("--- Part 2: Executing initial reminder ---")
+    mock_clock.advance(timedelta(seconds=reminder_delay_seconds + 1))
+    test_new_task_event.set()
+    await asyncio.sleep(0.2)  # Allow processing
+
+    # Verify initial reminder was sent
+    assert mock_chat_interface.send_message.call_count == 1
+    call_kwargs = mock_chat_interface.send_message.call_args_list[0][1]
+    assert reminder_message in call_kwargs["text"]
+    logger.info("Initial reminder sent successfully")
+
+    # Verify follow-up was scheduled
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        stmt = select(tasks_table).where(
+            tasks_table.c.task_type == "llm_callback",
+            tasks_table.c.status == "pending",
+        )
+        tasks = await db_context.fetch_all(stmt)
+        assert len(tasks) == 1, "Expected exactly one pending follow-up task"
+        follow_up_task = tasks[0]
+        follow_up_payload = follow_up_task["payload"]
+        follow_up_config = follow_up_payload.get("reminder_config", {})
+        assert follow_up_config.get("current_attempt") == 2
+        assert follow_up_config.get("is_reminder") is True
+        follow_up_task_id = follow_up_task["task_id"]
+        logger.info(f"Follow-up reminder task {follow_up_task_id} scheduled")
+
+    # --- Part 3: Execute follow-up reminder ---
+    logger.info("--- Part 3: Executing follow-up reminder ---")
+    mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
+    test_new_task_event.set()
+    await asyncio.sleep(0.2)
+
+    # Verify follow-up reminder was sent
+    assert mock_chat_interface.send_message.call_count == 2
+    call_kwargs = mock_chat_interface.send_message.call_args_list[1][1]
+    assert reminder_message in call_kwargs["text"]
+    logger.info("Follow-up reminder sent successfully")
+
+    # Verify another follow-up was scheduled (attempt 3 of 3)
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        stmt = select(tasks_table).where(
+            tasks_table.c.task_type == "llm_callback",
+            tasks_table.c.status == "pending",
+        )
+        tasks = await db_context.fetch_all(stmt)
+        assert len(tasks) == 1, "Expected exactly one pending second follow-up task"
+        second_follow_up = tasks[0]
+        second_config = second_follow_up["payload"].get("reminder_config", {})
+        assert second_config.get("current_attempt") == 3
+        logger.info("Second follow-up reminder scheduled")
+
+    # --- Part 4: User responds, preventing further follow-ups ---
+    logger.info("--- Part 4: User responds to reminder ---")
+    response_timestamp = mock_clock.now() + timedelta(seconds=5)
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        await storage.add_message_to_history(
             db_context=db_context,
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
-            interface_message_id=str(user_message_id_intervening),
-            turn_id=str(uuid.uuid4()),  # New turn for this user message
-            thread_root_id=None,  # Assuming this is a new interaction for simplicity
-            timestamp=intervening_message_timestamp,
+            interface_message_id=str(user_message_id_response),
+            turn_id=str(uuid.uuid4()),
+            thread_root_id=None,
+            timestamp=response_timestamp,
             role="user",
-            content="This is an intervening user message.",
-            tool_calls=None,
-            tool_call_id=None,
-            reasoning_info=None,
-            error_traceback=None,
+            content="OK, I took my medication!",
         )
-    logger.info(
-        f"Intervening user message added at {intervening_message_timestamp.isoformat()} for {scenario_name} test."
-    )
+    logger.info("User response recorded")
 
-    # --- Part 3: Wait for potential callback execution ---
-    logger.info(f"--- Part 3: Waiting for task completion for {scenario_name} test ---")
-    # Advance clock past callback time
-    duration_to_advance_past_schedule = (callback_dt - mock_clock.now()) + timedelta(
-        seconds=1
-    )
-    if duration_to_advance_past_schedule.total_seconds() > 0:
-        mock_clock.advance(duration_to_advance_past_schedule)
-    test_new_task_event.set()  # Notify worker
-    await asyncio.sleep(0.1)  # Allow worker to process
+    # Execute the final follow-up (should still send but not schedule more)
+    mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
+    test_new_task_event.set()
+    await asyncio.sleep(0.2)
 
-    # --- Part 4: Verify behavior ---
-    logger.info(f"--- Part 4: Verifying behavior for {scenario_name} test ---")
-    if skip_if_user_responded_flag:
-        # Callback should have been SKIPPED
-        mock_chat_interface_for_worker.send_message.assert_not_called()
-        logger.info(
-            f"Verified: Callback was SKIPPED for {scenario_name} (skip_flag=True), send_message not called."
+    # Verify final follow-up was sent
+    assert mock_chat_interface.send_message.call_count == 3
+    logger.info("Final follow-up sent")
+
+    # Verify no more follow-ups scheduled (reached max_follow_ups)
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        stmt = select(tasks_table).where(
+            tasks_table.c.task_type == "llm_callback",
+            tasks_table.c.status == "pending",
         )
-        # LLM calls: 2 for scheduling. Callback trigger rule should NOT have been hit.
-        assert len(llm_client.get_calls()) == 2, (  # type: ignore
-            f"LLM calls for {scenario_name} (skip=True) was {len(llm_client.get_calls())}, expected 2."  # type: ignore
-        )
-    else:
-        # Callback should have EXECUTED (Nag mode)
-        mock_chat_interface_for_worker.send_message.assert_awaited_once()
-        _call_args, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
-        assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
-        sent_text = call_kwargs.get("text")
-        assert sent_text is not None
-        assert CALLBACK_CONTEXT in sent_text, (
-            f"Final message for {scenario_name} (skip_flag=False) did not contain expected context. Sent: '{sent_text}'"
-        )
-        logger.info(
-            f"Verified: Callback EXECUTED for {scenario_name} (skip_flag=False), send_message called with context."
-        )
-        # LLM calls:
-        # 1. Initial user request -> LLM requests tool call (schedule_future_callback).
-        # 2. Tool result for scheduling -> LLM gives final response for the scheduling interaction.
-        # 3. Task worker triggers callback -> LLM processes "System Callback Trigger" and gives final response for callback.
-        assert len(llm_client.get_calls()) == 3, (  # type: ignore
-            f"LLM calls for {scenario_name} (skip=False) was {len(llm_client.get_calls())}, expected 3."  # type: ignore
-        )
+        tasks = await db_context.fetch_all(stmt)
+        assert len(tasks) == 0, "No more reminders should be pending"
+        logger.info("No additional follow-ups scheduled (reached max)")
 
     # --- Cleanup ---
-    logger.info(f"--- Cleanup for {scenario_name} Test ---")
-    test_shutdown_event.set()  # Use the test-specific shutdown event
+    logger.info("--- Cleanup ---")
+    test_shutdown_event.set()
     test_new_task_event.set()
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
-        logger.info(f"TaskWorker-{scenario_name}-{test_run_id} task finished.")
+        logger.info("TaskWorker finished")
     except asyncio.TimeoutError:
-        logger.warning(
-            f"TaskWorker-{scenario_name}-{test_run_id} task did not finish within timeout. Cancelling."
-        )
+        logger.warning("TaskWorker timeout, cancelling")
         worker_task.cancel()
-        try:
-            await worker_task
-        except asyncio.CancelledError:
-            logger.info(f"TaskWorker-{scenario_name}-{test_run_id} task was cancelled.")
-    except Exception as e:
-        logger.error(
-            f"Error during TaskWorker-{scenario_name}-{test_run_id} cleanup: {e}",
-            exc_info=True,
-        )
-    finally:
-        test_shutdown_event.clear()  # Clear the test-specific event
-    logger.info(f"--- {scenario_name} Test ({test_run_id}) Passed ---")
+        await asyncio.sleep(0.1)
+
+    logger.info(f"--- Reminder with Follow-up Test ({test_run_id}) Passed ---")

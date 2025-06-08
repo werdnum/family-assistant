@@ -56,6 +56,7 @@ from family_assistant.tools.tasks import (
     modify_pending_callback_tool,
     schedule_future_callback_tool,
     schedule_recurring_task_tool,
+    schedule_reminder_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -104,6 +105,7 @@ __all__ = [
     "delete_note_tool",
     "get_note_tool",
     "list_notes_tool",
+    "schedule_reminder_tool",
 ]
 
 
@@ -125,6 +127,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "delete_note": delete_note_tool,
     "schedule_future_callback": schedule_future_callback_tool,
     "schedule_recurring_task": schedule_recurring_task_tool,
+    "schedule_reminder": schedule_reminder_tool,
     "search_documents": search_documents_tool,
     "get_full_document_content": get_full_document_content_tool,
     "get_message_history": get_message_history_tool,
