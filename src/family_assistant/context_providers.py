@@ -89,14 +89,15 @@ class NotesContextProvider(ContextProvider):
             async with (
                 await self._get_db_context_func() as db_context
             ):  # Get context per call
-                all_notes = await storage.get_all_notes(db_context=db_context)
-                if all_notes:
+                # Only get notes that should be included in prompts
+                prompt_notes = await storage.get_prompt_notes(db_context=db_context)
+                if prompt_notes:
                     notes_list_str = ""
                     note_item_format = self._prompts.get(
                         "note_item_format",
                         "- {title}: {content}",  # Default format
                     )
-                    for note in all_notes:
+                    for note in prompt_notes:
                         notes_list_str += (
                             note_item_format.format(
                                 title=note["title"], content=note["content"]
@@ -119,7 +120,7 @@ class NotesContextProvider(ContextProvider):
                     if no_notes_message:  # Check if the message exists and is not empty
                         fragments.append(no_notes_message)
                 logger.debug(
-                    f"[{self.name}] Formatted {len(all_notes)} notes into {len(fragments)} fragment(s)."
+                    f"[{self.name}] Formatted {len(prompt_notes)} notes into {len(fragments)} fragment(s)."
                 )
         except Exception as e:
             logger.error(
