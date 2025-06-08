@@ -138,14 +138,36 @@ This phased approach allows for incremental delivery of functionality, starting 
 ## Implementation Plan
 
 ### Next Steps
-With Milestones 1 and 2 complete, the recommended next step is **Milestone 3: Profile-Based Filtering**. This adds more granular control by allowing notes to be included/excluded based on the active processing profile.
+With Milestones 1 and 2 complete, we'll do a refactoring phase before proceeding to Milestone 3.
 
-**Quick Start for Milestone 3:**
-1. Create database migration to add profile list columns
-2. Update storage layer with profile-aware filtering logic
-3. Modify `get_prompt_notes()` to accept and use profile_id
-4. Update `NotesContextProvider` to pass current profile
-5. Enhance the tool to accept profile lists
+**Immediate Plan:**
+1. **Refactoring Phase**: Improve existing code structure
+2. **Milestone 2.5**: Tool and UI enhancements for managing note status
+3. **Milestone 3**: Profile-Based Filtering
+
+### Refactoring Phase (NEW)
+**Goal**: Clean up and improve the existing implementation before adding more features.
+
+#### Areas to Consider:
+1. **Storage Layer**:
+   - Consolidate duplicate SQL queries
+   - Improve error handling consistency
+   - Consider adding a Note dataclass/TypedDict for type safety
+   
+2. **Tool Interface**:
+   - Separate concerns: split `add_or_update_note` into distinct operations?
+   - Add validation for parameters
+   - Improve error messages
+
+3. **Testing**:
+   - Reduce test duplication
+   - Add more edge case coverage
+   - Improve test isolation
+
+4. **Documentation**:
+   - Add docstrings to all public functions
+   - Update inline comments
+   - Create architectural decision records (ADRs) if needed
 
 ### Overview
 The implementation will be reordered to deliver incremental value while maintaining system stability. We'll start with note indexing (simpler, foundation for later features), then add profile-based filtering, and finally implement access control.
@@ -566,6 +588,70 @@ For notes, we'll create a dedicated **NotesIndexer** following the same pattern 
 
 **Deliverable**: Users can mark notes to exclude from system prompt while keeping them searchable
 
+### Milestone 2.5: Tool and UI Enhancements for Note Status Management (NEW)
+**Goal**: Improve the ability to manage note prompt inclusion status through both LLM tools and web UI.
+
+#### 2.5.1 Enhanced Note Management Tools
+**Files to modify**:
+- `src/family_assistant/tools/__init__.py`
+
+**Implementation**:
+1. Add `get_note_status` tool:
+   ```python
+   async def get_note_status(title: str) -> dict:
+       """Get note details including prompt inclusion status"""
+       # Returns: {"title": str, "content": str, "include_in_prompt": bool, "exists": bool}
+   ```
+
+2. Add `update_note_status` tool:
+   ```python
+   async def update_note_status(title: str, include_in_prompt: bool) -> str:
+       """Update only the prompt inclusion status of a note"""
+       # More focused than add_or_update_note
+   ```
+
+3. Add `list_notes` tool with filtering:
+   ```python
+   async def list_notes(include_in_prompt: bool | None = None) -> list[dict]:
+       """List all notes, optionally filtered by prompt inclusion status"""
+       # Returns: [{"title": str, "include_in_prompt": bool}, ...]
+   ```
+
+**Testing**:
+- Tool test: Get status of existing and non-existing notes
+- Tool test: Update status without changing content
+- Tool test: List notes with various filters
+
+#### 2.5.2 Web UI Note Status Management
+**Files to modify**:
+- `src/family_assistant/templates/edit_note.html.j2`
+- `src/family_assistant/templates/index.html.j2`
+- `src/family_assistant/web/routers/notes.py`
+
+**Implementation**:
+1. Update note edit form:
+   - Add checkbox for "Include in system prompt"
+   - Show current status prominently
+   - Add help text explaining the feature
+
+2. Update note list view:
+   - Add visual indicator (icon/badge) for prompt inclusion status
+   - Add filter buttons: "All", "In Prompt", "Excluded"
+   - Allow toggling status directly from list view
+
+3. Update backend routes:
+   - Modify POST handler to accept `include_in_prompt` parameter
+   - Add AJAX endpoint for status toggle from list view
+   - Add query parameter support for filtering
+
+**Testing**:
+- UI test: Edit form shows and saves status correctly
+- UI test: List view indicators are accurate
+- UI test: Filter buttons work correctly
+- UI test: Quick toggle from list view works
+
+**Deliverable**: Complete management of note prompt inclusion through both LLM tools and web UI
+
 ### Milestone 3: Profile-Based Filtering
 **Goal**: Allow profile-specific inclusion/exclusion of notes.
 
@@ -727,9 +813,11 @@ Each milestone can be rolled back independently:
   - Comprehensive test coverage
 
 ### What Remains
-1. **Milestone 3**: Profile-based filtering (per-profile inclusion/exclusion)
-2. **Milestone 4**: Web UI enhancements for visibility control
-3. **Milestone 5**: Direct note access tool for LLM
-4. **Future**: Access control and user ownership
+1. **Refactoring Phase**: Clean up existing implementation
+2. **Milestone 2.5**: Enhanced tools and UI for managing note status
+3. **Milestone 3**: Profile-based filtering (per-profile inclusion/exclusion)
+4. **Milestone 4**: Web UI enhancements for visibility control (partially addressed in 2.5)
+5. **Milestone 5**: Direct note access tool for LLM
+6. **Future**: Access control and user ownership
 
-The core functionality is now in place. Users can control which notes appear in prompts while maintaining full searchability. Each remaining milestone adds incremental value without disrupting existing functionality.
+The core functionality is now in place. Users can control which notes appear in prompts while maintaining full searchability. The immediate focus is on improving the existing implementation through refactoring and adding better management tools before proceeding with more advanced features.

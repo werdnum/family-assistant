@@ -593,15 +593,18 @@ async def test_delegation_confirm_target_granted(
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
     awaited_mock_confirmation_callback.assert_called_once()
     # Assert call args for confirmation if needed (tool_name, specific prompt text)
-    call_args = awaited_mock_confirmation_callback.call_args[1]  # kwargs of the call
-    assert call_args["tool_name"] == "delegate_to_service"
+    # The callback is called with positional args: (conversation_id, interface_type, turn_id, prompt_text, tool_name, tool_args, timeout)
+    call_args = awaited_mock_confirmation_callback.call_args[0]  # positional args
+    prompt_text = call_args[3]
+    tool_name = call_args[4]
+    assert tool_name == "delegate_to_service"
     # Compare with the escaped version of the description
     escaped_description = telegramify_markdown.escape_markdown(
         DELEGATED_TASK_DESCRIPTION
     )
-    assert escaped_description.lower() in call_args["prompt_text"].lower()
+    assert escaped_description.lower() in prompt_text.lower()
     escaped_profile_id = telegramify_markdown.escape_markdown(SPECIALIZED_PROFILE_ID)
-    assert escaped_profile_id.lower() in call_args["prompt_text"].lower()
+    assert escaped_profile_id.lower() in prompt_text.lower()
 
 
 @pytest.mark.asyncio
@@ -778,5 +781,7 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
     awaited_mock_confirmation_callback.assert_called_once()
     # Assert that the tool_args in the confirmation call reflect confirm_delegation=True
-    confirmed_tool_args = awaited_mock_confirmation_callback.call_args[1]["tool_args"]
+    # The callback is called with positional args: (conversation_id, interface_type, turn_id, prompt_text, tool_name, tool_args, timeout)
+    call_args = awaited_mock_confirmation_callback.call_args[0]  # positional args
+    confirmed_tool_args = call_args[5]  # tool_args is the 6th argument (index 5)
     assert confirmed_tool_args.get("confirm_delegation") is True
