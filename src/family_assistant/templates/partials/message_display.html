@@ -24,7 +24,12 @@
                     <strong>Call ID:</strong> {{ tool_call.get('call_id', 'N/A') }}<br>
                     <strong>Arguments:</strong>
                     {# Target div for JSON editor (matches JS) - Use turn_id + internal_id + loop index for uniqueness #}
-                    <div id="tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}" class="json-editor-container"></div>
+                    <div id="tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}" 
+                         class="json-editor-container"
+                         data-json="{{ tool_call.get('function', {}).get('arguments') | tojson | safe | e }}">
+                        {# Fallback content if JavaScript fails #}
+                        <pre>{{ tool_call.get('function', {}).get('arguments') | tojson(indent=2) }}</pre>
+                    </div>
                 </div>
                 {% if not loop.last %}<hr class="tool-separator">{% endif %}
                 {% endfor %}
@@ -35,7 +40,12 @@
         <details class="reasoning-info-details">
             <summary>Reasoning/Usage Info</summary>
              {# Target div for JSON editor (matches JS) - use turn_id + internal_id for uniqueness #}
-            <div id="reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}" class="json-editor-container reasoning-info-content"></div>
+            <div id="reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}" 
+                 class="json-editor-container reasoning-info-content"
+                 data-json="{{ message.reasoning_info | tojson | safe | e }}">
+                {# Fallback content if JavaScript fails #}
+                <pre>{{ message.reasoning_info | tojson(indent=2) }}</pre>
+            </div>
         </details>
         {% endif %}
         {% if message.error_traceback %}

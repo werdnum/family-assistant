@@ -78,6 +78,7 @@
     function initializeEditor(targetId, jsonData) {
         const target = document.getElementById(targetId);
         if (!target) {
+            console.warn(`Target element with ID '${targetId}' not found`);
             return;
         }
         let content = { json: undefined, text: undefined };
@@ -101,7 +102,7 @@
         }
 
         try {
-            new createJSONEditor({
+            const editor = createJSONEditor({
                 target: target,
                 props: {
                     content,
@@ -111,25 +112,59 @@
                     statusBar: false,
                 }
             });
+            console.log(`JSON editor initialized for ${targetId}`);
         } catch (error) {
              console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
              target.textContent = `Error loading JSON Viewer: ${error.message}. Data: ${JSON.stringify(jsonData, null, 2)}`;
         }
     }
 
-    {% for conversation_key, turns_list in paged_conversations %}
-        {% for turn_display_obj in turns_list %}
-            {% for message in turn_display_obj.all_messages_in_group %}
-            {% if message.role == 'assistant' and message.tool_calls %}
-                {% for tool_call in message.tool_calls %}
-            initializeEditor('tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.get('function', {}).get('arguments') | tojson | safe }});
+    // Initialize all JSON editors after DOM is ready
+    document.addEventListener('DOMContentLoaded', function() {
+        // Find all JSON editor containers and initialize them
+        const containers = document.querySelectorAll('.json-editor-container');
+        containers.forEach(container => {
+            const targetId = container.id;
+            if (!targetId) {
+                console.warn('JSON editor container found without ID');
+                return;
+            }
+            
+            // Extract JSON data from data attribute if present
+            const jsonDataAttr = container.getAttribute('data-json');
+            if (jsonDataAttr) {
+                try {
+                    const jsonData = JSON.parse(jsonDataAttr);
+                    initializeEditor(targetId, jsonData);
+                } catch (e) {
+                    console.error(`Failed to parse JSON data for ${targetId}:`, e);
+                    container.textContent = 'Error: Invalid JSON data';
+                }
+            } else {
+                console.warn(`No data-json attribute found for container ${targetId}`);
+                container.textContent = '(No data)';
+            }
+        });
+    });
+
+    // Template-generated initializations for specific data
+    {% if paged_conversations %}
+    document.addEventListener('DOMContentLoaded', function() {
+        {% for conversation_key, turns_list in paged_conversations %}
+            {% for turn_display_obj in turns_list %}
+                {% for message in turn_display_obj.all_messages_in_group %}
+                {% if message.role == 'assistant' and message.tool_calls %}
+                    {% for tool_call in message.tool_calls %}
+        initializeEditor('tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.get('function', {}).get('arguments') | tojson | safe }});
+                    {% endfor %}
+                {% endif %}
+                {% if message.reasoning_info %}
+        initializeEditor('reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}', {{ message.reasoning_info | tojson | safe }});
+                {% endif %}
                 {% endfor %}
-            {% endif %}
-            {% if message.reasoning_info %}
-            initializeEditor('reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}', {{ message.reasoning_info | tojson | safe }});
-            {% endif %}
             {% endfor %}
         {% endfor %}
-    {% endfor %}
+    });
+    {% endif %}
 </script>
 {% endblock %}
