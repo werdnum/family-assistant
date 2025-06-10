@@ -240,9 +240,12 @@ async def test_send_message_to_user_tool(
             assert_that(kwargs_to_bob.get("parse_mode")).described_as(
                 "Parse mode for message to Bob"
             ).is_none()  # Tool sends plain text via ChatInterface
+            # The TelegramChatInterface always adds ForceReply markup to ensure replies go to the most recent message
+            from telegram import ForceReply
+
             assert_that(kwargs_to_bob.get("reply_markup")).described_as(
                 "Reply markup for message to Bob"
-            ).is_none()
+            ).is_instance_of(ForceReply)
 
             # Call 2: Final confirmation sent to Alice by the handler (TelegramUpdateHandler)
             # Intermediate message is not sent.
