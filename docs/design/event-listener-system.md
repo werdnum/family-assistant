@@ -332,21 +332,45 @@ The primary action is to wake the LLM with event context:
 - Includes event data and listener context
 - Ensures LLM can't do anything via events that it couldn't do directly
 
-Example wake LLM task creation:
+Implementation in EventProcessor:
 ```python
-{
-    "task_type": "llm_callback",
-    "payload": {
-        "interface_type": listener['interface_type'],
-        "conversation_id": listener['conversation_id'],
-        "callback_context": f"Event listener '{listener['name']}' triggered.",
-        "event_data": event_data,  # Full event data for context
-        "listener_config": {
-            "id": listener['id'],
-            "action_config": listener['action_config']  # Flexible structure
+async def _execute_action(
+    self, 
+    listener: dict[str, Any], 
+    event_data: dict[str, Any]
+) -> None:
+    """Execute the action defined in the listener."""
+    action_type = listener["action_type"]
+    
+    if action_type == EventActionType.wake_llm:
+        # Extract configuration
+        action_config = listener.get("action_config", {})
+        include_event_data = action_config.get("include_event_data", True)
+        
+        # Prepare callback context
+        callback_context = {
+            "trigger": f"Event listener '{listener['name']}' matched",
+            "listener_id": listener["id"],
+            "source": listener["source_id"],
         }
-    }
-}
+        
+        if include_event_data:
+            callback_context["event_data"] = event_data
+            
+        # Enqueue llm_callback task
+        async with get_db_context() as db_ctx:
+            await enqueue_task(
+                db_context=db_ctx,
+                task_type="llm_callback",
+                payload={
+                    "context": callback_context,
+                    "conversation_id": listener["conversation_id"],
+                    "interface_type": listener["interface_type"],
+                },
+                conversation_id=listener["conversation_id"],
+            )
+        
+        logger.info(f"Enqueued wake_llm callback for listener {listener['id']}")
 ```
 
 The LLM receives the full event data and action_config, allowing flexible handling based on the specific configuration.
@@ -360,55 +384,73 @@ Future optimizations could include:
 
 Since there's no web UI initially, ALL interaction happens through LLM tools. The LLM handles all complexity of translating user intent to technical configuration.
 
-**Note**: Event listeners are created within a conversation context and will wake/notify in that same conversation. There's no expectation of privacy between users - list_event_listeners will show all listeners across all conversations.
+**Note**: Event listeners are created within a conversation context and will wake/notify in that same conversation. Listeners are isolated by conversation for security - you can only see and manage listeners from your own conversation.
 
 ```python
-# Create listener (uses current conversation's chat_id)
+# Create listener (uses current conversation's ID from context)
 create_event_listener(
     name: str,
-    source: str,
-    listener_config: dict,  # JSON config with entity_id, match_conditions, etc.
+    source: str,  # Must be valid EventSourceType value
+    listener_config: dict,  # Contains match_conditions and optional action_config
     one_time: bool = False
-) -> dict
+) -> str  # Returns: {"success": true, "listener_id": 123, "message": "Created listener 'name'"}
 
-# List listeners (includes rate limit status)
+# List listeners (filtered by current conversation)
 list_event_listeners(
     source: str | None = None,
     enabled: bool | None = None
-) -> list[dict]  # Shows daily_executions, last_execution_at
+) -> str  # Returns list with: id, name, source, enabled, daily_executions, last_execution_at
 
-# Delete listener
+# Delete listener (must belong to current conversation)
 delete_event_listener(
-    id: int
-) -> bool
+    listener_id: int
+) -> str  # Returns: {"success": true, "message": "Deleted listener 'name'"}
+
+# Toggle listener enabled status (must belong to current conversation)
+toggle_event_listener(
+    listener_id: int,
+    enabled: bool
+) -> str  # Returns: {"success": true, "message": "Listener 'name' is now enabled/disabled"}
 
 # Test listener configuration (dry run)
 test_event_listener(
     source_id: str,
     match_conditions: dict,
     hours: int = 24,
-    limit: int = 20  # Max events to test against
-) -> dict  # Returns: {"matched_events": [...], "total_tested": N, "explanation": "..."}
-
-# Enable/disable listener
-toggle_event_listener(
-    id: int,
-    enabled: bool
-) -> bool
+    limit: int = 10  # Max events to test against
+) -> str  # Returns JSON with matched_events, total_tested, and analysis
 
 # Query recent events (for debugging)
 query_recent_events(
     source_id: str | None = None,
-    event_type: str | None = None,
-    hours: int = 24,  # Look back period
-    limit: int = 50  # Should be plenty for debug samples
-) -> list[dict]
+    hours: int = 24,
+    limit: int = 50
+) -> str  # Returns JSON array of recent events
 
-# Explore entity events (critical for Home Assistant discovery)
-explore_entity_events(
-    entity_pattern: str,  # "person.*", "sensor.*temp*"
-    hours: int = 1
-) -> list[dict]  # Shows what entities exist and their states
+# Future: Explore entity events (for Home Assistant discovery)
+# explore_entity_events(
+#     entity_pattern: str,  # "person.*", "sensor.*temp*"
+#     hours: int = 1
+# ) -> list[dict]  # Shows what entities exist and their states
+```
+
+#### listener_config Structure
+
+The `listener_config` parameter in `create_event_listener` should contain:
+
+```python
+{
+    "match_conditions": {
+        # Required: Dictionary of conditions to match
+        "entity_id": "person.andrew",
+        "new_state.state": "Home"
+    },
+    "action_config": {
+        # Optional: Configuration for the wake_llm action
+        "include_event_data": true,  # Default: true
+        # Future fields can be added here
+    }
+}
 ```
 
 #### Tool-First Example Conversation
@@ -463,6 +505,56 @@ Assistant: Let me check what actually happened yesterday...
 I see the issue - the listener was just created now, so it wasn't active yesterday. Looking at the events from yesterday, Andrew did arrive home at 6:23 PM. The listener will trigger the next time this happens.
 ```
 
+## Storage Layer Functions
+
+The following functions should be implemented in `storage/events.py` to support the CRUD tools:
+
+```python
+async def create_event_listener(
+    db_context: DatabaseContext,
+    name: str,
+    source_id: str,
+    match_conditions: dict,
+    conversation_id: str,
+    interface_type: str = "telegram",
+    description: str | None = None,
+    action_config: dict | None = None,
+    one_time: bool = False,
+    enabled: bool = True,
+) -> int:
+    """Create a new event listener, returning its ID."""
+    
+async def get_event_listeners(
+    db_context: DatabaseContext,
+    conversation_id: str,
+    source_id: str | None = None,
+    enabled: bool | None = None,
+) -> list[dict]:
+    """Get event listeners for a conversation with optional filters."""
+    
+async def get_event_listener_by_id(
+    db_context: DatabaseContext,
+    listener_id: int,
+    conversation_id: str,
+) -> dict | None:
+    """Get a specific listener, ensuring it belongs to the conversation."""
+    
+async def update_event_listener_enabled(
+    db_context: DatabaseContext,
+    listener_id: int,
+    conversation_id: str,
+    enabled: bool,
+) -> bool:
+    """Toggle listener enabled status."""
+    
+async def delete_event_listener(
+    db_context: DatabaseContext,
+    listener_id: int,
+    conversation_id: str,
+) -> bool:
+    """Delete a listener."""
+```
+
 ## Integration Points
 
 ### Task System Integration
@@ -472,6 +564,7 @@ Event-triggered actions use the existing task queue:
 - Maintains consistency with existing infrastructure
 - Benefits from task retry/failure handling
 - Preserves conversation context
+- The `handle_llm_callback` function in `task_worker.py` already handles the callback processing
 
 ### Event Storage (Required for Testing)
 
