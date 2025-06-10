@@ -43,7 +43,7 @@ class HomeAssistantSource(EventSource):
     @property
     def source_id(self) -> str:
         """Return the source identifier."""
-        return EventSourceType.HOME_ASSISTANT.value
+        return EventSourceType.home_assistant.value
 
     async def start(self, processor: "EventProcessor") -> None:
         """Start listening for Home Assistant events."""

@@ -35,23 +35,23 @@ logger = logging.getLogger(__name__)
 class EventSourceType(str, Enum):
     """Types of event sources."""
 
-    HOME_ASSISTANT = "home_assistant"
-    INDEXING = "indexing"
-    WEBHOOK = "webhook"
+    home_assistant = "home_assistant"
+    indexing = "indexing"
+    webhook = "webhook"
 
 
 class EventActionType(str, Enum):
     """Types of actions that can be triggered by events."""
 
-    WAKE_LLM = "wake_llm"
+    wake_llm = "wake_llm"
 
 
 class InterfaceType(str, Enum):
     """Types of interfaces that can receive event notifications."""
 
-    TELEGRAM = "telegram"
-    WEB = "web"
-    EMAIL = "email"
+    telegram = "telegram"
+    web = "web"
+    email = "email"
 
 
 # Define the event listeners table
@@ -96,7 +96,7 @@ event_listeners_table = Table(
         "created_at",
         DateTime(timezone=True),
         nullable=False,
-        server_default="CURRENT_TIMESTAMP",
+        server_default=text("CURRENT_TIMESTAMP"),
     ),
     # Rate limiting fields
     Column("daily_executions", Integer, nullable=False, server_default="0"),
@@ -136,7 +136,7 @@ recent_events_table = Table(
         "created_at",
         DateTime(timezone=True),
         nullable=False,
-        server_default="CURRENT_TIMESTAMP",
+        server_default=text("CURRENT_TIMESTAMP"),
     ),
     # Indexes for efficient querying
     Index("idx_source_time", "source_id", "timestamp"),

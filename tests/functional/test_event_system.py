@@ -52,21 +52,21 @@ async def test_event_storage_sampling(test_db_engine: AsyncEngine) -> None:
 
     # First event should be stored
     await storage.store_event(
-        EventSourceType.HOME_ASSISTANT,
+        EventSourceType.home_assistant,
         {"entity_id": "light.kitchen", "state": "on"},
         None,
     )
 
     # Second event for same entity within the hour should not be stored
     await storage.store_event(
-        EventSourceType.HOME_ASSISTANT,
+        EventSourceType.home_assistant,
         {"entity_id": "light.kitchen", "state": "off"},
         None,
     )
 
     # Event for different entity should be stored
     await storage.store_event(
-        EventSourceType.HOME_ASSISTANT,
+        EventSourceType.home_assistant,
         {"entity_id": "light.bedroom", "state": "on"},
         None,
     )
@@ -161,7 +161,7 @@ async def test_event_listener_matching(test_db_engine: AsyncEngine) -> None:
                     "entity_id": "sensor.temperature",
                     "new_state.state": "26.0",  # Simple equality match
                 }),
-                "source_id": EventSourceType.HOME_ASSISTANT.value,
+                "source_id": EventSourceType.home_assistant.value,
                 "enabled": True,
                 "conversation_id": "test_conversation",
             },
