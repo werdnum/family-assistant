@@ -68,6 +68,9 @@ alembic revision --autogenerate -m "Description"
 
 # Apply migrations
 alembic upgrade head
+
+# Use DATABASE_URL="sqlite+aiosqlite:///family_assistant.db" with alembic to make a new revision
+# alembic migrations run on startup
 ```
 
 ### Code Generation
@@ -86,3 +89,4 @@ poe symbols
 - When running tests,  only use -s when you don't get the info you need without it
 - Save tokens when running tests: use pytest -q to check if a test passes, only use -s or -v if you need it
 - Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.
+```

@@ -24,6 +24,7 @@ from sqlalchemy import (
     Enum as SQLEnum,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.sql import func
 
 from family_assistant.storage.base import metadata
 from family_assistant.storage.context import DatabaseContext
@@ -96,7 +97,7 @@ event_listeners_table = Table(
         "created_at",
         DateTime(timezone=True),
         nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
+        server_default=func.now(),  # pylint: disable=not-callable
     ),
     # Rate limiting fields
     Column("daily_executions", Integer, nullable=False, server_default="0"),
@@ -136,7 +137,7 @@ recent_events_table = Table(
         "created_at",
         DateTime(timezone=True),
         nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
+        server_default=func.now(),  # pylint: disable=not-callable
     ),
     # Indexes for efficient querying
     Index("idx_source_time", "source_id", "timestamp"),

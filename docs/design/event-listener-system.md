@@ -382,11 +382,13 @@ delete_event_listener(
     id: int
 ) -> bool
 
-# Test listener (dry run)
+# Test listener configuration (dry run)
 test_event_listener(
-    id: int,
-    sample_event: dict | None = None
-) -> dict
+    source_id: str,
+    match_conditions: dict,
+    hours: int = 24,
+    limit: int = 20  # Max events to test against
+) -> dict  # Returns: {"matched_events": [...], "total_tested": N, "explanation": "..."}
 
 # Enable/disable listener
 toggle_event_listener(
@@ -414,33 +416,51 @@ explore_entity_events(
 ```
 User: "Tell me when Andrew gets home"
 
-Assistant: I'll create a listener for that. Let me first check what entities are available...
-[calls explore_entity_events("person.*")]
+Assistant: I'll create a listener for that. Let me first test what events would match...
+[calls test_event_listener(
+    source_id="home_assistant",
+    match_conditions={"entity_id": "person.andrew", "new_state.state": "home"},
+    hours=24
+)]
 
-I found person.andrew generating state events. I also have access to Home Assistant to verify the entity exists.
-[calls Home Assistant tool to get entity info]
+I see no events matched with lowercase 'home'. Let me check what events exist for Andrew...
+[calls query_recent_events(
+    source_id="home_assistant",
+    hours=24
+) and filters for person.andrew]
 
-Perfect! I'll create a listener to notify you when Andrew arrives home.
+I found that person.andrew uses states 'Home' and 'Away' (capitalized). Let me test again with the correct state value:
+[calls test_event_listener(
+    source_id="home_assistant",
+    match_conditions={"entity_id": "person.andrew", "new_state.state": "Home"},
+    hours=24
+)]
+
+Perfect! This would have matched 3 events in the last 24 hours. Now I'll create the listener:
 [calls create_event_listener(
     name="Andrew arrival notification",
     source="home_assistant",
     listener_config={
         "match_conditions": {
             "entity_id": "person.andrew",
-            "new_state.state": "home"
+            "new_state.state": "Home"
         }
-    }
+    },
+    one_time=True
 )]
 
-Created listener #1. You can test it with recent events using test_event_listener(1).
+Created listener #1. I tested it against recent events and confirmed it will trigger when Andrew's state changes to 'Home'.
 
 User: Why didn't it trigger yesterday?
 
-Assistant: Let me check recent events for that entity...
-[calls test_event_listener(1, hours_back=24)]
+Assistant: Let me check what actually happened yesterday...
+[calls test_event_listener(
+    source_id="home_assistant",
+    match_conditions={"entity_id": "person.andrew", "new_state.state": "Home"},
+    hours=48
+)]
 
-I see the issue. The entity person.andrew is using states 'Home' and 'Away' (capitalized), but the listener was looking for lowercase 'home'. Let me update it.
-[updates listener]
+I see the issue - the listener was just created now, so it wasn't active yesterday. Looking at the events from yesterday, Andrew did arrive home at 6:23 PM. The listener will trigger the next time this happens.
 ```
 
 ## Integration Points
