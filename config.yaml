@@ -294,8 +294,15 @@ default_profile_settings:
     # The application currently enables all available local tools.
     enable_local_tools:
       - "add_or_update_note"
+      - "get_note"
+      - "list_notes"
+      - "delete_note"
       - "schedule_future_callback"
       - "schedule_recurring_task"
+      - "schedule_reminder"
+      - "list_pending_callbacks"
+      - "modify_pending_callback"
+      - "cancel_pending_callback"
       - "search_documents"
       - "get_full_document_content"
       - "get_message_history"
@@ -306,7 +313,8 @@ default_profile_settings:
       - "search_calendar_events"
       - "modify_calendar_event"
       - "delete_calendar_event"
-      - "delegate_to_service" # Added the new tool
+      - "delegate_to_service"
+      - "query_recent_events" # Event system tool
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
