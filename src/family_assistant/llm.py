@@ -373,6 +373,7 @@ class LiteLLMClient:
             Timeout,
             RateLimitError,
             ServiceUnavailableError,
+            BadRequestError,
         )
         last_exception: Exception | None = None
 
@@ -386,11 +387,6 @@ class LiteLLMClient:
                 tool_choice=tool_choice,
                 specific_model_params=self.model_parameters,
             )
-        except BadRequestError as e:
-            logger.error(
-                f"BadRequestError with primary model {self.model}. Not retrying or falling back: {e}"
-            )
-            raise  # Do not retry or fallback on BadRequestError
         except retriable_errors as e:
             logger.warning(
                 f"Attempt 1 (Primary model {self.model}) failed with retriable error: {e}. Retrying primary model."
@@ -420,13 +416,6 @@ class LiteLLMClient:
                     tool_choice=tool_choice,
                     specific_model_params=self.model_parameters,
                 )
-            except (
-                BadRequestError
-            ) as e:  # Should be rare if first attempt wasn't, but handle defensively
-                logger.error(
-                    f"BadRequestError on retry with primary model {self.model}. Not falling back: {e}"
-                )
-                raise
             except retriable_errors as e:
                 logger.warning(
                     f"Attempt 2 (Retry Primary model {self.model}) failed with retriable error: {e}. Proceeding to fallback."
@@ -470,11 +459,6 @@ class LiteLLMClient:
                     tool_choice=tool_choice,
                     specific_model_params=self.fallback_model_parameters,
                 )
-            except BadRequestError as e:
-                logger.error(
-                    f"BadRequestError with fallback model {actual_fallback_model_id}. Original error (if any) will be raised: {e}"
-                )
-                # Fallthrough to raise last_exception from primary model attempts
             except Exception as e:
                 logger.error(
                     f"Attempt 3 (Fallback model {actual_fallback_model_id}) also failed: {e}",
@@ -482,10 +466,7 @@ class LiteLLMClient:
                 )
                 # Fallthrough to raise last_exception from primary model attempts,
                 # or this new one if last_exception was None (though it shouldn't be here).
-                if not isinstance(
-                    last_exception, BadRequestError
-                ):  # Don't overwrite a BadRequest from primary with a fallback error
-                    last_exception = e
+                last_exception = e
 
         # If all attempts failed, raise the last significant exception
         if last_exception:

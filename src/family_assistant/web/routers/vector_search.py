@@ -51,13 +51,10 @@ async def vector_search_form(
         q_source_types = text(
             "SELECT DISTINCT source_type FROM documents ORDER BY source_type;"
         )
-        # Query to get distinct top-level keys from the JSON metadata column
-        # Uses json_each for SQLite compatibility, assuming doc_metadata is a JSON column.
-        # For PostgreSQL, jsonb_object_keys would be more direct.
-        # This query might be less performant on very large datasets compared to jsonb_object_keys
-        # if doc_metadata is not indexed appropriately for JSON operations in SQLite.
+        # Query to get distinct top-level keys from the JSONB metadata column
+        # Uses jsonb_each for PostgreSQL compatibility, assuming doc_metadata is a JSONB column.
         q_meta_keys = text(
-            "SELECT DISTINCT j.key FROM documents d, json_each(d.doc_metadata) j ORDER BY j.key;"
+            "SELECT DISTINCT j.key FROM documents d, jsonb_each(d.doc_metadata) j ORDER BY j.key;"
         )
 
         (
@@ -392,10 +389,10 @@ async def handle_vector_search(
         q_source_types = text(
             "SELECT DISTINCT source_type FROM documents ORDER BY source_type;"
         )
-        # Query to get distinct top-level keys from the JSON metadata column
-        # Uses json_each for SQLite compatibility.
+        # Query to get distinct top-level keys from the JSONB metadata column
+        # Uses jsonb_each for PostgreSQL compatibility.
         q_meta_keys = text(
-            "SELECT DISTINCT j.key FROM documents d, json_each(d.doc_metadata) j ORDER BY j.key;"
+            "SELECT DISTINCT j.key FROM documents d, jsonb_each(d.doc_metadata) j ORDER BY j.key;"
         )
 
         # Use asyncio.gather for concurrent fetching
