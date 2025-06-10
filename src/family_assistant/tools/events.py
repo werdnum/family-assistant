@@ -145,7 +145,19 @@ async def query_recent_events_tool(
             output_lines.append(f"\n{source.upper()} ({len(events)} events):")
 
             for event in events[:10]:  # Show max 10 per source
-                timestamp_str = event["timestamp"].strftime("%Y-%m-%d %H:%M:%S UTC")
+                # Handle both datetime objects and string timestamps (SQLite returns strings)
+                timestamp = event["timestamp"]
+                if isinstance(timestamp, str):
+                    # Parse ISO format timestamp from SQLite
+                    try:
+                        timestamp = datetime.fromisoformat(
+                            timestamp.replace("Z", "+00:00")
+                        )
+                        timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+                    except ValueError:
+                        timestamp_str = str(timestamp)
+                else:
+                    timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
                 entity = event["entity_id"]
                 triggered = len(event["triggered_listeners"])
 

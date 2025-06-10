@@ -141,7 +141,7 @@ class HomeAssistantContextProvider(ContextProvider):
         context_template: str,
         prompts: PromptsType,
         verify_ssl: bool = True,
-        client: "homeassistant_api.Client | None" = None,
+        client: Any | None = None,  # homeassistant_api.Client
     ) -> None:
         """
         Initializes the HomeAssistantContextProvider.
