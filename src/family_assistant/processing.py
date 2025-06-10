@@ -605,10 +605,18 @@ class ProcessingService:
                         f"Found 'tool' role message in history without a tool_call_id: {msg}"
                     )
                     # Skip adding malformed tool message to history to avoid LLM errors
-            elif (
-                role != "error"
-            ):  # Don't include previous error messages in history sent to LLM
-                # Append other non-error messages directly
+            elif role == "error":
+                # Include error messages as assistant messages so LLM knows it responded
+                error_traceback = msg.get("error_traceback", "")
+                error_content = f"I encountered an error: {content}"
+                if error_traceback:
+                    error_content += f"\n\nError details: {error_traceback}"
+                messages.append({
+                    "role": "assistant",
+                    "content": error_content,
+                })
+            else:
+                # Append other messages directly
                 messages.append({
                     "role": role,
                     "content": content or "",
@@ -998,4 +1006,42 @@ class ProcessingService:
                         f"Failed to update user message with error traceback: {db_err_update}"
                     )
 
-            return None, None, None, processing_error_traceback
+            # Generate and store an error message in message history so LLM can see it
+            error_message = (
+                "Sorry, an unexpected error occurred while processing your request."
+            )
+            error_message_internal_id = None
+            try:
+                saved_error_msg_record = await storage.add_message_to_history(
+                    db_context=db_context,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    interface_message_id=None,  # No interface message ID for generated error
+                    turn_id=turn_id,  # Use the same turn_id
+                    thread_root_id=thread_root_id_for_turn,  # Use the same thread_root_id
+                    timestamp=datetime.now(timezone.utc),
+                    role="error",
+                    content=error_message,
+                    error_traceback=processing_error_traceback,
+                    processing_profile_id=self.service_config.id,
+                )
+                if saved_error_msg_record:
+                    error_message_internal_id = saved_error_msg_record.get(
+                        "internal_id"
+                    )
+                    logger.info(
+                        f"Stored error message in history with internal_id {error_message_internal_id}"
+                    )
+            except Exception as error_save_err:
+                logger.error(
+                    f"Failed to save error message to history: {error_save_err}",
+                    exc_info=True,
+                )
+
+            # Return the error message and its ID so the caller can send it to the user
+            return (
+                error_message,
+                error_message_internal_id,
+                None,
+                processing_error_traceback,
+            )
