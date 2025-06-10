@@ -18,6 +18,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy import (
     Enum as SQLEnum,
@@ -153,13 +154,13 @@ async def check_and_update_rate_limit(
     if not listener["daily_reset_at"] or now > listener["daily_reset_at"]:
         # Reset counter for new day
         tomorrow = now.replace(hour=0, minute=0, second=0) + timedelta(days=1)
-        await db_context.execute(
-            """UPDATE event_listeners 
+        await db_context.execute_with_retry(
+            text("""UPDATE event_listeners 
                SET daily_executions = 1, 
-                   daily_reset_at = ?, 
-                   last_execution_at = ?
-               WHERE id = ?""",
-            [tomorrow, now, listener["id"]],
+                   daily_reset_at = :tomorrow, 
+                   last_execution_at = :now
+               WHERE id = :id"""),
+            {"tomorrow": tomorrow, "now": now, "id": listener["id"]},
         )
         return True, None
 
@@ -171,12 +172,12 @@ async def check_and_update_rate_limit(
         )
 
     # Increment counter
-    await db_context.execute(
-        """UPDATE event_listeners 
+    await db_context.execute_with_retry(
+        text("""UPDATE event_listeners 
            SET daily_executions = daily_executions + 1,
-               last_execution_at = ?
-           WHERE id = ?""",
-        [now, listener["id"]],
+               last_execution_at = :now
+           WHERE id = :id"""),
+        {"now": now, "id": listener["id"]},
     )
 
     return True, None

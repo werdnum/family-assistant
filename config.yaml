@@ -1,5 +1,17 @@
 # Configuration for Family Assistant
 
+# Event system configuration
+event_system:
+  enabled: true
+  storage:
+    sample_interval_hours: 1.0  # Store 1 event per entity per hour
+    max_event_size: 100000  # 100KB max event size
+    retention_hours: 48
+  sources:
+    home_assistant:
+      enabled: true
+      # URL and token are shared with context provider
+
 # LLM provider-specific parameters
 # Keys can be full model names or prefixes (ending with '-')
 # Parameters defined here will be passed as keyword arguments to litellm.completion

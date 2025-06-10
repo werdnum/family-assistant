@@ -25,6 +25,9 @@ from family_assistant.embeddings import (
     EmbeddingGenerator,
     LiteLLMEmbeddingGenerator,
 )
+from family_assistant.events.home_assistant_source import HomeAssistantSource
+from family_assistant.events.processor import EventProcessor
+from family_assistant.home_assistant_shared import create_home_assistant_client
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.notes_indexer import NotesIndexer
@@ -133,6 +136,10 @@ class Assistant:
         self.task_worker_instance: TaskWorker | None = None
         self.uvicorn_server_task: asyncio.Task | None = None
         self._is_shutdown_complete = False
+
+        # Event system
+        self.event_processor: EventProcessor | None = None
+        self.home_assistant_clients: dict[str, Any] = {}  # profile_id -> HA client
 
     async def setup_dependencies(self) -> None:
         """Initializes and wires up all core application components."""
@@ -413,39 +420,60 @@ class Assistant:
                 "home_assistant_verify_ssl", True
             )
 
-            if ha_api_url and ha_token and ha_template:
-                try:
-                    # Local import to ensure homeassistant_api is only required if configured
-                    # The main import is already guarded in context_providers.py
-                    if (
-                        HomeAssistantContextProvider.__module__
-                        == "family_assistant.context_providers"
-                    ):  # Check it's our class
-                        home_assistant_provider = HomeAssistantContextProvider(
-                            api_url=ha_api_url,
-                            token=ha_token,
-                            context_template=ha_template,
-                            prompts=profile_proc_conf_dict["prompts"],
-                            verify_ssl=ha_verify_ssl,
+            if ha_api_url and ha_token:
+                # Create or reuse Home Assistant client
+                ha_client_key = f"{ha_api_url}:{ha_token[:8]}..."  # Key for caching
+                if ha_client_key not in self.home_assistant_clients:
+                    ha_client = create_home_assistant_client(
+                        api_url=ha_api_url,
+                        token=ha_token,
+                        verify_ssl=ha_verify_ssl,
+                    )
+                    if ha_client:
+                        self.home_assistant_clients[ha_client_key] = ha_client
+                        self.home_assistant_clients[profile_id] = (
+                            ha_client  # Also store by profile
                         )
-                        context_providers.append(home_assistant_provider)
-                        logger.info(
-                            f"HomeAssistantContextProvider added for profile '{profile_id}'."
+                else:
+                    ha_client = self.home_assistant_clients[ha_client_key]
+                    self.home_assistant_clients[profile_id] = (
+                        ha_client  # Also store by profile
+                    )
+
+                if ha_client and ha_template:
+                    try:
+                        # Local import to ensure homeassistant_api is only required if configured
+                        # The main import is already guarded in context_providers.py
+                        if (
+                            HomeAssistantContextProvider.__module__
+                            == "family_assistant.context_providers"
+                        ):  # Check it's our class
+                            home_assistant_provider = HomeAssistantContextProvider(
+                                api_url=ha_api_url,
+                                token=ha_token,
+                                context_template=ha_template,
+                                prompts=profile_proc_conf_dict["prompts"],
+                                verify_ssl=ha_verify_ssl,
+                                client=ha_client,
+                            )
+                            context_providers.append(home_assistant_provider)
+                            logger.info(
+                                f"HomeAssistantContextProvider added for profile '{profile_id}'."
+                            )
+                    except ImportError:  # This case should ideally be handled by the check in context_providers.py
+                        logger.warning(
+                            "homeassistant_api library is not installed, but Home Assistant context provider is configured. Skipping."
                         )
-                except ImportError:  # This case should ideally be handled by the check in context_providers.py
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to initialize HomeAssistantContextProvider for profile '{profile_id}': {e}",
+                            exc_info=True,
+                        )
+                elif ha_api_url or ha_token or ha_template:
                     logger.warning(
-                        "homeassistant_api library is not installed, but Home Assistant context provider is configured. Skipping."
+                        f"Home Assistant context provider for profile '{profile_id}' is partially configured "
+                        "but missing essential settings (URL, token, or template). Skipping."
                     )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to initialize HomeAssistantContextProvider for profile '{profile_id}': {e}",
-                        exc_info=True,
-                    )
-            elif ha_api_url or ha_token or ha_template:
-                logger.warning(
-                    f"Home Assistant context provider for profile '{profile_id}' is partially configured "
-                    "but missing essential settings (URL, token, or template). Skipping."
-                )
             # --- End Home Assistant Context Provider ---
 
             service_config = ProcessingServiceConfig(
@@ -547,6 +575,44 @@ class Assistant:
             "TelegramService instantiated and stored in FastAPI app state during setup_dependencies."
         )
 
+        # Initialize event system if enabled
+        event_config = self.config.get("event_system", {})
+        if event_config.get("enabled", False):
+            event_sources = {}  # Dict, not list
+
+            # Create Home Assistant event sources for configured profiles
+            if (
+                event_config.get("sources", {})
+                .get("home_assistant", {})
+                .get("enabled", False)
+            ):
+                for profile_id, ha_client in self.home_assistant_clients.items():
+                    # Skip the cache key entries (contain "...")
+                    if "..." in str(profile_id):
+                        continue
+
+                    logger.info(
+                        f"Creating HomeAssistantSource for profile '{profile_id}'"
+                    )
+                    # Since HA source has hardcoded source_id, we use profile_id as key
+                    ha_source = HomeAssistantSource(client=ha_client)
+                    event_sources[f"ha_{profile_id}"] = ha_source
+
+            if event_sources:
+                storage_config = event_config.get("storage", {})
+                sample_interval_hours = storage_config.get("sample_interval_hours", 1.0)
+
+                self.event_processor = EventProcessor(
+                    sources=event_sources,
+                    sample_interval_hours=sample_interval_hours,
+                    # db_context will be created internally if not provided
+                )
+                logger.info(
+                    f"Event processor initialized with {len(event_sources)} sources"
+                )
+            else:
+                logger.info("Event system enabled but no event sources configured")
+
     async def start_services(self) -> None:
         """Starts all long-running services and waits for shutdown."""
         if not self.default_processing_service or not self.embedding_generator:
@@ -609,6 +675,11 @@ class Assistant:
         )
         asyncio.create_task(self.task_worker_instance.run(self.new_task_event))
 
+        # Start event processor if initialized
+        if self.event_processor:
+            asyncio.create_task(self.event_processor.start())
+            logger.info("Event processor started")
+
         await self.shutdown_event.wait()
         logger.info("Shutdown signal received by Assistant. Stopping services...")
 
@@ -656,6 +727,11 @@ class Assistant:
 
         if self.telegram_service:
             await self.telegram_service.stop_polling()
+
+        # Stop event processor if running
+        if self.event_processor:
+            await self.event_processor.stop()
+            logger.info("Event processor stopped")
 
         # Uvicorn server task is awaited in start_services after shutdown_event.wait()
 
