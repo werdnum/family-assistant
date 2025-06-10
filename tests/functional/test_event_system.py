@@ -16,7 +16,10 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
 from family_assistant.storage import get_db_context
 from family_assistant.storage.events import EventSourceType
-from family_assistant.tools.events import query_recent_events_tool
+from family_assistant.tools.events import (
+    query_recent_events_tool,
+    test_event_listener_tool,
+)
 from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -259,3 +262,177 @@ async def test_websocket_connection_with_mock(test_db_engine: AsyncEngine) -> No
         assert len(processed_events) == 2
         assert processed_events[0]["entity_id"] == "light.kitchen"
         assert processed_events[1]["entity_id"] == "sensor.temperature"
+
+
+@pytest.mark.asyncio
+async def test_test_event_listener_tool_matches_person_coming_home(
+    test_db_engine: AsyncEngine,
+) -> None:
+    """Test that test_event_listener tool correctly matches person coming home."""
+    # Arrange
+    async with get_db_context() as db_ctx:
+        from sqlalchemy import text
+
+        await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
+
+        now = datetime.now(timezone.utc)
+        events_to_insert = [
+            {
+                "event_id": "test_1",
+                "source_id": EventSourceType.home_assistant.value,
+                "event_data": json.dumps({
+                    "entity_id": "person.alex",
+                    "old_state": {"state": "Away"},
+                    "new_state": {"state": "Home", "last_changed": now.isoformat()},
+                }),
+                "timestamp": now,
+            },
+            {
+                "event_id": "test_2",
+                "source_id": EventSourceType.home_assistant.value,
+                "event_data": json.dumps({
+                    "entity_id": "person.alex",
+                    "old_state": {"state": "Home"},
+                    "new_state": {"state": "Away", "last_changed": now.isoformat()},
+                }),
+                "timestamp": now,
+            },
+            {
+                "event_id": "test_3",
+                "source_id": EventSourceType.home_assistant.value,
+                "event_data": json.dumps({
+                    "entity_id": "sensor.temperature",
+                    "old_state": {"state": "20"},
+                    "new_state": {
+                        "state": "22",
+                        "attributes": {"unit_of_measurement": "°C"},
+                    },
+                }),
+                "timestamp": now,
+            },
+        ]
+
+        for event in events_to_insert:
+            await db_ctx.execute_with_retry(
+                text("""INSERT INTO recent_events 
+                       (event_id, source_id, event_data, timestamp)
+                       VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
+                event,
+            )
+
+    # Act
+    async with get_db_context() as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+        )
+
+        result = await test_event_listener_tool(
+            exec_context,
+            source_id=EventSourceType.home_assistant.value,
+            match_conditions={
+                "entity_id": "person.alex",
+                "new_state.state": "Home",
+            },
+            hours=1,
+        )
+
+    # Assert
+    data = json.loads(result)
+    assert data["matched_count"] == 1
+    assert data["total_tested"] >= 2
+    assert len(data["matched_events"]) == 1
+    assert data["matched_events"][0]["event_data"]["entity_id"] == "person.alex"
+    assert data["matched_events"][0]["event_data"]["new_state"]["state"] == "Home"
+
+
+@pytest.mark.asyncio
+async def test_test_event_listener_tool_no_match_wrong_state(
+    test_db_engine: AsyncEngine,
+) -> None:
+    """Test that test_event_listener tool provides analysis when no events match."""
+    # Arrange
+    async with get_db_context() as db_ctx:
+        from sqlalchemy import text
+
+        await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
+
+        now = datetime.now(timezone.utc)
+        await db_ctx.execute_with_retry(
+            text("""INSERT INTO recent_events 
+                   (event_id, source_id, event_data, timestamp)
+                   VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
+            {
+                "event_id": "test_1",
+                "source_id": EventSourceType.home_assistant.value,
+                "event_data": json.dumps({
+                    "entity_id": "person.alex",
+                    "old_state": {"state": "Away"},
+                    "new_state": {"state": "Home", "last_changed": now.isoformat()},
+                }),
+                "timestamp": now,
+            },
+        )
+
+    # Act
+    async with get_db_context() as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+        )
+
+        result = await test_event_listener_tool(
+            exec_context,
+            source_id=EventSourceType.home_assistant.value,
+            match_conditions={
+                "entity_id": "person.alex",
+                "new_state.state": "Vacation",  # This state doesn't exist
+            },
+            hours=1,
+        )
+
+    # Assert
+    data = json.loads(result)
+    assert data["matched_count"] == 0
+    assert data["total_tested"] >= 1
+    assert data["analysis"] is not None
+    assert len(data["analysis"]) > 0
+    # Should mention the actual state values found
+    analysis_text = " ".join(data["analysis"])
+    assert "new_state.state" in analysis_text or "Field" in analysis_text
+
+
+@pytest.mark.asyncio
+async def test_test_event_listener_tool_empty_conditions_error(
+    test_db_engine: AsyncEngine,
+) -> None:
+    """Test that test_event_listener tool returns error for empty match conditions."""
+    # Arrange - no events needed for this test
+
+    # Act
+    async with get_db_context() as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+        )
+
+        result = await test_event_listener_tool(
+            exec_context,
+            source_id=EventSourceType.home_assistant.value,
+            match_conditions={},
+            hours=1,
+        )
+
+    # Assert
+    data = json.loads(result)
+    assert "error" in data
+    assert "condition" in data["message"].lower()

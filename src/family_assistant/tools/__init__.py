@@ -32,6 +32,7 @@ from family_assistant.tools.documents import (
 from family_assistant.tools.events import (
     EVENT_TOOLS_DEFINITION,
     query_recent_events_tool,
+    test_event_listener_tool,
 )
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
@@ -112,6 +113,7 @@ __all__ = [
     "schedule_reminder_tool",
     "EVENT_TOOLS_DEFINITION",
     "query_recent_events_tool",
+    "test_event_listener_tool",
 ]
 
 
@@ -150,6 +152,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "modify_pending_callback": modify_pending_callback_tool,
     "cancel_pending_callback": cancel_pending_callback_tool,
     "query_recent_events": query_recent_events_tool,
+    "test_event_listener": test_event_listener_tool,
 }
 
 
