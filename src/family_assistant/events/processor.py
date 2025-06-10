@@ -93,7 +93,7 @@ class EventProcessor:
                 # Check and update rate limit atomically
                 async with get_db_context() as db_ctx:
                     allowed, reason = await check_and_update_rate_limit(
-                        db_ctx, listener
+                        db_ctx, listener["id"], listener["conversation_id"]
                     )
                     if allowed:
                         # For now, just log - actual action execution will come later

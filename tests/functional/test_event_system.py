@@ -16,9 +16,9 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
 from family_assistant.storage import get_db_context
 from family_assistant.storage.events import EventSourceType
+from family_assistant.tools.events import query_recent_events_tool
 from family_assistant.tools.events import (
-    query_recent_events_tool,
-    test_event_listener_tool,
+    test_event_listener_tool as event_listener_test_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -330,7 +330,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
             db_context=db_ctx,
         )
 
-        result = await test_event_listener_tool(
+        result = await event_listener_test_tool(
             exec_context,
             source_id=EventSourceType.home_assistant.value,
             match_conditions={
@@ -387,7 +387,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
             db_context=db_ctx,
         )
 
-        result = await test_event_listener_tool(
+        result = await event_listener_test_tool(
             exec_context,
             source_id=EventSourceType.home_assistant.value,
             match_conditions={
@@ -425,7 +425,7 @@ async def test_test_event_listener_tool_empty_conditions_error(
             db_context=db_ctx,
         )
 
-        result = await test_event_listener_tool(
+        result = await event_listener_test_tool(
             exec_context,
             source_id=EventSourceType.home_assistant.value,
             match_conditions={},

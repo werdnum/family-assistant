@@ -29,6 +29,13 @@ from family_assistant.tools.documents import (
     ingest_document_from_url_tool,
     search_documents_tool,
 )
+from family_assistant.tools.event_listeners import (
+    EVENT_LISTENER_TOOLS_DEFINITION,
+    create_event_listener_tool,
+    delete_event_listener_tool,
+    list_event_listeners_tool,
+    toggle_event_listener_tool,
+)
 from family_assistant.tools.events import (
     EVENT_TOOLS_DEFINITION,
     query_recent_events_tool,
@@ -114,6 +121,11 @@ __all__ = [
     "EVENT_TOOLS_DEFINITION",
     "query_recent_events_tool",
     "test_event_listener_tool",
+    "EVENT_LISTENER_TOOLS_DEFINITION",
+    "create_event_listener_tool",
+    "list_event_listeners_tool",
+    "delete_event_listener_tool",
+    "toggle_event_listener_tool",
 ]
 
 
@@ -153,6 +165,10 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "cancel_pending_callback": cancel_pending_callback_tool,
     "query_recent_events": query_recent_events_tool,
     "test_event_listener": test_event_listener_tool,
+    "create_event_listener": create_event_listener_tool,
+    "list_event_listeners": list_event_listeners_tool,
+    "delete_event_listener": delete_event_listener_tool,
+    "toggle_event_listener": toggle_event_listener_tool,
 }
 
 
@@ -163,6 +179,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + TASK_TOOLS_DEFINITION
     + DOCUMENT_TOOLS_DEFINITION
     + EVENT_TOOLS_DEFINITION
+    + EVENT_LISTENER_TOOLS_DEFINITION
     + [
         {
             "type": "function",
