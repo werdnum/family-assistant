@@ -22,8 +22,8 @@ EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "query_recent_events",
             "description": (
-                "Query recent events from the event system for debugging. "
-                "Shows what events have been captured by the system."
+                "Query recent events from the event system. Returns raw event data "
+                "in JSON format for examining event structure and content."
             ),
             "parameters": {
                 "type": "object",
@@ -37,13 +37,13 @@ EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "hours": {
                         "type": "integer",
-                        "description": "Number of hours to look back (default: 24, max: 48)",
-                        "default": 24,
+                        "description": "Number of hours to look back (default: 1, max: 48)",
+                        "default": 1,
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of events to return (default: 50)",
-                        "default": 50,
+                        "description": "Maximum number of events to return (default: 10, max: 20)",
+                        "default": 10,
                     },
                 },
                 "required": [],
@@ -56,8 +56,8 @@ EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
 async def query_recent_events_tool(
     exec_context: ToolExecutionContext,
     source_id: str | None = None,
-    hours: int = 24,
-    limit: int = 50,
+    hours: int = 1,
+    limit: int = 10,
 ) -> str:
     """
     Query recent events from the event system.
@@ -65,15 +65,15 @@ async def query_recent_events_tool(
     Args:
         exec_context: Tool execution context
         source_id: Optional filter by event source
-        hours: Number of hours to look back (max 48)
-        limit: Maximum number of events to return
+        hours: Number of hours to look back (default 1, max 48)
+        limit: Maximum number of events to return (default 10, max 20)
 
     Returns:
-        Formatted string with event information
+        JSON string containing raw event data
     """
     # Validate parameters
     hours = min(max(hours, 1), 48)  # Clamp between 1 and 48
-    limit = min(max(limit, 1), 100)  # Clamp between 1 and 100
+    limit = min(max(limit, 1), 20)  # Clamp between 1 and 20
 
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -106,83 +106,55 @@ async def query_recent_events_tool(
             result = await db_ctx.fetch_all(query, params)
 
         if not result:
-            return f"No events found in the last {hours} hours"
+            return json.dumps({
+                "events": [],
+                "message": f"No events found in the last {hours} hours",
+            })
 
-        # Format results
-        events_by_source: dict[str, list[dict]] = {}
+        # Collect raw events
+        events = []
         for row in result:
-            source = row["source_id"]
-            if source not in events_by_source:
-                events_by_source[source] = []
-
             # Parse event data
             try:
                 event_data = json.loads(row["event_data"])
             except json.JSONDecodeError:
-                event_data = {"error": "Invalid JSON"}
+                event_data = {"error": "Invalid JSON", "raw": row["event_data"]}
 
             # Parse triggered listeners
             try:
-                triggered = (
+                triggered_listeners = (
                     json.loads(row["triggered_listener_ids"])
                     if row["triggered_listener_ids"]
                     else []
                 )
             except json.JSONDecodeError:
-                triggered = []
+                triggered_listeners = []
 
-            events_by_source[source].append({
-                "timestamp": row["timestamp"],
-                "entity_id": event_data.get("entity_id", "Unknown"),
+            # Handle timestamp format (SQLite returns strings)
+            timestamp = row["timestamp"]
+            if isinstance(timestamp, str):
+                timestamp_str = timestamp
+            else:
+                timestamp_str = timestamp.isoformat()
+
+            events.append({
+                "event_id": row["event_id"],
+                "source_id": row["source_id"],
+                "timestamp": timestamp_str,
                 "event_data": event_data,
-                "triggered_listeners": triggered,
+                "triggered_listeners": triggered_listeners,
             })
 
-        # Format output
-        output_lines = [f"Recent events from the last {hours} hours:"]
-
-        for source, events in events_by_source.items():
-            output_lines.append(f"\n{source.upper()} ({len(events)} events):")
-
-            for event in events[:10]:  # Show max 10 per source
-                # Handle both datetime objects and string timestamps (SQLite returns strings)
-                timestamp = event["timestamp"]
-                if isinstance(timestamp, str):
-                    # Parse ISO format timestamp from SQLite
-                    try:
-                        timestamp = datetime.fromisoformat(
-                            timestamp.replace("Z", "+00:00")
-                        )
-                        timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
-                    except ValueError:
-                        timestamp_str = str(timestamp)
-                else:
-                    timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
-                entity = event["entity_id"]
-                triggered = len(event["triggered_listeners"])
-
-                output_lines.append(f"  - {timestamp_str}: {entity}")
-
-                # Show key event details based on source
-                if source == "home_assistant" and "new_state" in event["event_data"]:
-                    new_state = event["event_data"]["new_state"]
-                    if new_state and "state" in new_state:
-                        old_state = event["event_data"].get("old_state", {})
-                        old_state_val = (
-                            old_state.get("state") if old_state else "unknown"
-                        )
-                        output_lines.append(
-                            f"    State: {old_state_val} → {new_state['state']}"
-                        )
-
-                if triggered > 0:
-                    output_lines.append(f"    Triggered {triggered} listener(s)")
-
-            if len(events) > 10:
-                output_lines.append(f"  ... and {len(events) - 10} more")
-
-        output_lines.append(f"\nTotal events: {len(result)}")
-        return "\n".join(output_lines)
+        # Return raw JSON events
+        return json.dumps(
+            {
+                "events": events,
+                "count": len(events),
+                "hours_queried": hours,
+                "source_filter": source_id,
+            },
+            indent=2,
+        )
 
     except Exception as e:
         logger.error(f"Error querying recent events: {e}", exc_info=True)
