@@ -218,8 +218,10 @@ def test_format_history_preserves_leading_tool_and_assistant_tool_calls(
     assert actual_output == expected_output
 
 
-def test_format_history_filters_errors(processing_service: ProcessingService) -> None:
-    """Test that messages with role 'error' are filtered out."""
+def test_format_history_includes_errors_as_assistant(
+    processing_service: ProcessingService,
+) -> None:
+    """Test that messages with role 'error' are included as assistant messages."""
     history_messages = [
         {"role": "user", "content": "Try something", "tool_calls_info_raw": None},
         {
@@ -232,6 +234,10 @@ def test_format_history_filters_errors(processing_service: ProcessingService) ->
     ]
     expected_output = [
         {"role": "user", "content": "Try something"},
+        {
+            "role": "assistant",
+            "content": "I encountered an error: Something went wrong\n\nError details: Traceback...",
+        },
         {"role": "assistant", "content": "Okay"},
     ]
     actual_output = processing_service._format_history_for_llm(history_messages)
