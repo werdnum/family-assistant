@@ -791,26 +791,56 @@ Use cases:
 - Aggregate multiple events
 - Add contextual data
 
-## Implementation Phases
+## Implementation Status
 
-### Phase 1: Home Assistant MVP (2-3 days)
-- Basic Home Assistant WebSocket connection
-- Event listener CRUD tools (create, list, delete, test)
-- Event storage with 24-hour retention
-- Test listener tool using stored events
-- Natural language to dictionary configuration in create tool
-- Wake LLM action via existing callback mechanism
+### Phase 1: Home Assistant MVP ✅ COMPLETED
+- ✅ Basic Home Assistant WebSocket connection (events appearing in prod)
+- ✅ Event listener CRUD tools (create, list, delete, toggle) 
+- ✅ Event storage in recent_events table
+- ✅ Test listener tool using stored events
+- ✅ Natural language to dictionary configuration in create tool
+- ✅ Wake LLM action via existing callback mechanism (uses llm_callback)
+- ✅ Query recent events tool for debugging
+- ✅ Conversation isolation for security
+- ✅ Rate limiting using DB fields (daily_executions, daily_reset_at)
 
-### Phase 2: Production Hardening (1-2 days)
-- Rate limiting using DB fields (daily_executions, daily_reset_at)
-- Connection retry logic for Home Assistant
-- Health check and auto-reconnect
-- Basic monitoring/alerting for connection issues
+### Phase 2: Production Hardening (IN PROGRESS)
+- ✅ Rate limiting implemented in check_and_update_rate_limit()
+- ⏳ Event cleanup task scheduling (cleanup_old_events function exists but not scheduled)
+- ⏳ Connection retry logic for Home Assistant
+- ⏳ Health check and auto-reconnect
+- ⏳ Basic monitoring/alerting for connection issues
 
 ### Phase 3: Additional Sources (as needed)
 - Document indexing events (if users request)
 - Webhook endpoint (if users request)
 - Other sources based on actual user demand
+
+## Next Steps
+
+### Immediate Priority: Event Cleanup Task
+The most critical missing piece is the scheduled cleanup of old events from the `recent_events` table. Without this, the table will grow unbounded.
+
+**Implementation Steps:**
+1. Register the `system_event_cleanup` task handler in `task_worker.py`
+2. Create a system task on startup that runs daily at 3 AM
+3. Test that old events are properly cleaned up after retention period
+
+**Code locations:**
+- Handler function: Create in `task_worker.py` using existing `cleanup_old_events` from `storage/events.py`
+- Task registration: Add to task handler registration in `__main__.py` or `assistant.py`
+- System task creation: Add to startup sequence, possibly in `assistant.py`
+
+### Secondary Priority: Wake LLM Action
+While the rate limiting and event listener CRUD are complete, the actual action execution (waking the LLM when events match) needs to be implemented in the EventProcessor. Currently, the processor only logs when events match (see line 99-102 in `processor.py`).
+
+**Implementation Steps:**
+1. Replace the logging with a call to `_execute_action` method in `EventProcessor`
+2. Implement `_execute_action` to create llm_callback tasks when listeners match
+3. Test end-to-end event → listener match → LLM wake flow
+
+**Code location:**
+- `src/family_assistant/events/processor.py` lines 99-102: Replace logging with action execution
 
 ## Testing Strategy
 
@@ -1213,17 +1243,25 @@ async def handle_system_event_cleanup(
 ) -> None:
     """Clean up old events from the database."""
     retention_hours = payload.get("retention_hours", 48)
-    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
     
-    result = await exec_context.db_context.execute(
-        "DELETE FROM recent_events WHERE created_at < ?",
-        [cutoff_time]
+    # Use the existing cleanup_old_events function
+    from family_assistant.storage.events import cleanup_old_events
+    
+    deleted_count = await cleanup_old_events(
+        exec_context.db_context, 
+        retention_hours
     )
     
     logger.info(
-        f"System event cleanup completed. Deleted {result.rowcount} events older than {retention_hours} hours."
+        f"System event cleanup completed. Deleted {deleted_count} events older than {retention_hours} hours."
     )
 ```
+
+### Implementation Note
+
+The `cleanup_old_events` function already exists in `storage/events.py` (lines 423-446) but needs to be:
+1. Registered as a task handler in the task worker
+2. Scheduled as a recurring system task on startup
 
 ## Conclusion
 
