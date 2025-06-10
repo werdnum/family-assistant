@@ -166,7 +166,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
             "function": {
                 "name": "add_calendar_event",
                 "description": (
-                    "Adds a new event to the primary family calendar (requires CalDAV configuration). Can create single or recurring events. Use this to schedule appointments, reminders with duration, or block out time."
+                    "Adds a new event to the primary family calendar (requires CalDAV configuration). Can create single or recurring events. Use this to schedule appointments, reminders with duration, or block out time. IMPORTANT: Always use search_calendar_events first to check for existing similar events and avoid creating duplicates."
                 ),
                 "parameters": {
                     "type": "object",
