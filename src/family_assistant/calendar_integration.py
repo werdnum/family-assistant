@@ -1413,4 +1413,119 @@ async def delete_calendar_event_tool(
         return f"Error: An unexpected error occurred while deleting the event. {e}"
 
 
+async def fetch_event_details_for_confirmation(
+    uid: str,
+    calendar_url: str,
+    calendar_config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Fetches calendar event details by UID for use in confirmation prompts.
+
+    Args:
+        uid: The UID of the calendar event to fetch
+        calendar_url: The full URL of the calendar collection
+        calendar_config: Calendar configuration containing CalDAV settings
+
+    Returns:
+        Dict containing event details (summary, start, end, all_day, uid) or None if not found
+    """
+    logger.info(
+        f"Fetching event details for confirmation: UID={uid}, calendar={calendar_url}"
+    )
+
+    caldav_config: dict[str, Any] | None = calendar_config.get("caldav")
+    if not caldav_config:
+        logger.error("CalDAV configuration not found for event details fetch")
+        return None
+
+    username: str | None = caldav_config.get("username")
+    password: str | None = caldav_config.get("password")
+    base_url: str | None = caldav_config.get("base_url")
+
+    if not username or not password:
+        logger.error("CalDAV credentials missing for event details fetch")
+        return None
+
+    # Determine client URL
+    client_url_to_use = base_url
+    if not client_url_to_use:
+        try:
+            parsed_cal_url = httpx.URL(calendar_url)
+            client_url_to_use = (
+                f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
+            )
+            if parsed_cal_url.port is None:
+                client_url_to_use = f"{parsed_cal_url.scheme}://{parsed_cal_url.host}"
+            logger.warning(
+                f"CalDAV base_url not provided for fetch_event_details_for_confirmation, inferred '{client_url_to_use}'"
+            )
+        except Exception as e:
+            logger.error(
+                f"Could not infer CalDAV base_url for event details fetch: {e}"
+            )
+            return None
+
+    if not client_url_to_use:
+        logger.error(
+            "CalDAV client URL could not be determined for event details fetch"
+        )
+        return None
+
+    # Synchronous fetch function
+    def fetch_sync() -> dict[str, Any] | None:
+        try:
+            with caldav.DAVClient(
+                url=client_url_to_use,
+                username=username,
+                password=password,
+                timeout=30,
+            ) as client:
+                target_calendar_obj: caldav.objects.Calendar = client.calendar(
+                    url=calendar_url
+                )
+                if not target_calendar_obj:
+                    logger.error(f"Could not get calendar object for {calendar_url}")
+                    return None
+
+                logger.debug(
+                    f"Fetching event with UID {uid} from {target_calendar_obj.url}"
+                )
+                event_resource: caldav.objects.Event = target_calendar_obj.event_by_uid(
+                    uid
+                )  # type: ignore
+
+                event_data_str: str = event_resource.data  # type: ignore
+                # Use UTC as default timezone for confirmation display
+                parsed_event = parse_event(event_data_str, timezone_str="UTC")
+
+                if parsed_event:
+                    logger.info(
+                        f"Successfully fetched event details for UID {uid}: {parsed_event.get('summary', 'No Title')}"
+                    )
+                    return parsed_event
+                else:
+                    logger.warning(f"Failed to parse event data for UID {uid}")
+                    return None
+
+        except NotFoundError:
+            logger.warning(f"Event with UID {uid} not found in calendar {calendar_url}")
+            return None
+        except (DAVError, ConnectionError, Exception) as e:
+            logger.error(
+                f"Error fetching event details for UID {uid}: {e}", exc_info=True
+            )
+            return None
+
+    # Execute in thread pool
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, fetch_sync)
+        return result
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in fetch_event_details_for_confirmation: {e}",
+            exc_info=True,
+        )
+        return None
+
+
 # Removed unused function _fetch_event_details_sync

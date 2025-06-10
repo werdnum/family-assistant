@@ -412,22 +412,12 @@ class ConfirmingToolsProvider(ToolsProvider):
                     calendar_config = None
                 if calendar_config:
                     try:
-                        # Fetch event details using the fetcher function
-                        # Try to fetch event details - function might not exist
-                        fetch_func = getattr(
-                            calendar_integration,
-                            "fetch_event_details_for_confirmation",
-                            None,
+                        # Fetch event details using the dedicated function
+                        event_details = await calendar_integration.fetch_event_details_for_confirmation(
+                            uid=uid,
+                            calendar_url=calendar_url,
+                            calendar_config=calendar_config,
                         )
-                        if fetch_func and callable(fetch_func):
-                            # Work around pylint not understanding dynamic callables
-                            event_details = await fetch_func(  # type: ignore[misc]  # pylint: disable=not-callable
-                                uid=uid,
-                                calendar_url=calendar_url,
-                                calendar_config=calendar_config,
-                            )
-                        else:
-                            event_details = None
                         return event_details
                     except Exception as e:
                         logger.error(

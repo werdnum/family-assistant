@@ -78,15 +78,11 @@ poe symbols
 
 ## Architecture Overview
 
-[... rest of the existing content ...]
-
 ## Development Guidelines
-
-[... rest of the existing content ...]
 
 ## Important Notes
 
 - Always run 'poe test' when you're done to make sure all lint checks are passing and tests are passing too
 - When running tests,  only use -s when you don't get the info you need without it
-
-[... rest of the existing content ...]
+- Save tokens when running tests: use pytest -q to check if a test passes, only use -s or -v if you need it
+- Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.
