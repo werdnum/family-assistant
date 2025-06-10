@@ -1041,6 +1041,77 @@ event_system:
     cleanup_interval_hours: 24  # Daily cleanup is sufficient
 ```
 
+## System Scheduled Tasks
+
+The event system requires periodic maintenance tasks that should run reliably regardless of restarts or configuration changes. These "system tasks" are automatically upserted on startup with fixed IDs.
+
+### Design Principles
+
+1. **Fixed Task IDs**: Use predictable IDs like `system_event_cleanup_daily` to ensure idempotency
+2. **Upsert on Startup**: Tasks are created/updated every time the event system starts
+3. **Non-user-visible**: These tasks don't appear in user-facing task lists
+4. **Graceful Handling**: If a system task is already running, don't duplicate it
+
+### Implementation Pattern
+
+```python
+# In EventProcessor.__init__ or assistant.py startup
+async def setup_system_tasks(db_context: DatabaseContext):
+    """Upsert system tasks on startup."""
+    
+    # Event cleanup task
+    await storage.enqueue_task(
+        db_context=db_context,
+        task_id="system_event_cleanup_daily",
+        task_type="system_event_cleanup",
+        payload={"retention_hours": 48},
+        scheduled_at=datetime.now(timezone.utc).replace(hour=3, minute=0),  # 3 AM daily
+        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+        max_retries_override=5,  # Higher retry count for system tasks
+    )
+    
+    # Future: Event compaction, statistics, etc.
+```
+
+### System Task Types
+
+1. **Event Cleanup** (`system_event_cleanup`)
+   - Deletes events older than retention period
+   - Runs daily at 3 AM
+   - Logs cleanup statistics
+
+2. **Future System Tasks**:
+   - Event compaction (aggregate old events)
+   - Listener statistics (usage patterns)
+   - Health checks (source connectivity)
+
+### Task Handler Registration
+
+```python
+# In task worker initialization
+worker.register_task_handler(
+    "system_event_cleanup",
+    handle_system_event_cleanup
+)
+
+async def handle_system_event_cleanup(
+    exec_context: ToolExecutionContext,
+    payload: dict[str, Any]
+) -> None:
+    """Clean up old events from the database."""
+    retention_hours = payload.get("retention_hours", 48)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
+    
+    result = await exec_context.db_context.execute(
+        "DELETE FROM recent_events WHERE created_at < ?",
+        [cutoff_time]
+    )
+    
+    logger.info(
+        f"System event cleanup completed. Deleted {result.rowcount} events older than {retention_hours} hours."
+    )
+```
+
 ## Conclusion
 
 The event listener system provides a flexible, extensible way to handle automation requests that benefit from LLM intelligence and integration with the assistant's tools. By building on existing infrastructure and using safe, sandboxed filtering, it enables powerful automation scenarios while maintaining security and reliability.
