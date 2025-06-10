@@ -1889,11 +1889,17 @@ class TelegramChatInterface(ChatInterface):
                 int(reply_to_interface_id) if reply_to_interface_id else None
             )
 
+            # Always use ForceReply to ensure user replies to the most recent message
+            from telegram import ForceReply
+
+            force_reply_markup = ForceReply(selective=False)
+
             sent_msg = await self.application.bot.send_message(
                 chat_id=chat_id_int,
                 text=text_to_send,
                 parse_mode=final_parse_mode,
                 reply_to_message_id=reply_to_msg_id_int,
+                reply_markup=force_reply_markup,
             )
             return str(sent_msg.message_id)
         except ValueError:
