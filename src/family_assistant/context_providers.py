@@ -141,6 +141,7 @@ class HomeAssistantContextProvider(ContextProvider):
         context_template: str,
         prompts: PromptsType,
         verify_ssl: bool = True,
+        client: "homeassistant_api.Client | None" = None,
     ) -> None:
         """
         Initializes the HomeAssistantContextProvider.
@@ -151,7 +152,7 @@ class HomeAssistantContextProvider(ContextProvider):
             context_template: The Jinja2 template string to render.
             prompts: A dictionary containing prompt templates for formatting headers/errors.
             verify_ssl: Whether to verify SSL certificates for the API connection.
-            # client_kwargs: Additional keyword arguments for homeassistant_api.Client.
+            client: Optional pre-created Home Assistant client to share with other components.
         """
         self._api_url = api_url
         self._token = token
@@ -165,18 +166,23 @@ class HomeAssistantContextProvider(ContextProvider):
                 "HomeAssistantContextProvider cannot be used."
             )
 
-        # The homeassistant_api.Client expects the URL to include /api
-        ha_api_url_with_path = self._api_url.rstrip("/") + "/api"
-        self._ha_client = homeassistant_api.Client(
-            api_url=ha_api_url_with_path,
-            token=self._token,
-            use_async=True,  # Important for async usage
-            verify_ssl=self._verify_ssl,
-            # **self._client_kwargs, # For future use
-        )
-        logger.info(
-            f"HomeAssistantContextProvider initialized for URL: {ha_api_url_with_path}"
-        )
+        if client:
+            # Use provided client
+            self._ha_client = client
+            logger.info("HomeAssistantContextProvider using shared client")
+        else:
+            # Create new client
+            # The homeassistant_api.Client expects the URL to include /api
+            ha_api_url_with_path = self._api_url.rstrip("/") + "/api"
+            self._ha_client = homeassistant_api.Client(
+                api_url=ha_api_url_with_path,
+                token=self._token,
+                use_async=True,  # Important for async usage
+                verify_ssl=self._verify_ssl,
+            )
+            logger.info(
+                f"HomeAssistantContextProvider initialized for URL: {ha_api_url_with_path}"
+            )
 
     @property
     def name(self) -> str:

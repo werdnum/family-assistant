@@ -29,6 +29,10 @@ from family_assistant.tools.documents import (
     ingest_document_from_url_tool,
     search_documents_tool,
 )
+from family_assistant.tools.events import (
+    EVENT_TOOLS_DEFINITION,
+    query_recent_events_tool,
+)
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     ConfirmationCallbackProtocol,
@@ -106,6 +110,8 @@ __all__ = [
     "get_note_tool",
     "list_notes_tool",
     "schedule_reminder_tool",
+    "EVENT_TOOLS_DEFINITION",
+    "query_recent_events_tool",
 ]
 
 
@@ -143,6 +149,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "list_pending_callbacks": list_pending_callbacks_tool,
     "modify_pending_callback": modify_pending_callback_tool,
     "cancel_pending_callback": cancel_pending_callback_tool,
+    "query_recent_events": query_recent_events_tool,
 }
 
 
@@ -152,6 +159,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + SERVICE_TOOLS_DEFINITION
     + TASK_TOOLS_DEFINITION
     + DOCUMENT_TOOLS_DEFINITION
+    + EVENT_TOOLS_DEFINITION
     + [
         {
             "type": "function",
