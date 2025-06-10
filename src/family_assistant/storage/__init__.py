@@ -25,6 +25,14 @@ from alembic import command as alembic_command
 from family_assistant.storage.base import engine, get_engine, metadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.email import received_emails_table, store_incoming_email
+from family_assistant.storage.events import (
+    EventActionType,
+    EventSourceType,
+    InterfaceType,
+    check_and_update_rate_limit,
+    event_listeners_table,
+    recent_events_table,
+)
 from family_assistant.storage.message_history import (
     add_message_to_history,
     get_grouped_message_history,
@@ -469,6 +477,12 @@ __all__ = [
     "get_note_by_title",
     "update_message_error_traceback",
     "get_prompt_notes",
+    "EventActionType",
+    "EventSourceType",
+    "InterfaceType",
+    "check_and_update_rate_limit",
+    "event_listeners_table",
+    "recent_events_table",
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API
