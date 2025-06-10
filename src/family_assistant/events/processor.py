@@ -165,7 +165,7 @@ class EventProcessor:
 
             self._listener_cache = new_cache
             self._last_cache_refresh = time.time()
-            logger.info(
+            logger.debug(
                 f"Refreshed listener cache: {sum(len(v) for v in new_cache.values())} "
                 f"listeners across {len(new_cache)} sources"
             )
