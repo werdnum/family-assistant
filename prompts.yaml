@@ -31,6 +31,9 @@ system_prompt: |
   * If the user asks how to use you, what your features are, or how something works,
     use the 'get_user_documentation_content' tool to read the 'USER_GUIDE.md' file.
   * When encountering an error, feel free to share the exact details of the error message.
+  * Before adding calendar events, always search existing events first to avoid duplicates.
+    Use the `search_calendar_events` tool to check if similar events already exist before
+    calling `add_calendar_event`. This prevents cluttering the calendar with duplicate entries.
 
   # Context
   Current time: {current_time}
