@@ -343,7 +343,7 @@ class ProcessingService:
             assistant_message_for_turn = {
                 # Note: turn_id, interface_type, conversation_id, timestamp, thread_root_id added by caller
                 "role": "assistant",
-                "content": final_content,  # May be None if only tool calls
+                "content": final_content,  # Keep full content for storage/UI/debugging
                 "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
                 "reasoning_info": (
                     final_reasoning_info
@@ -577,7 +577,13 @@ class ProcessingService:
             if role == "assistant":
                 # Format assistant message, including content and tool_calls if they exist
                 assistant_msg_for_llm = {"role": "assistant"}
-                if content:
+                # Strip text content from messages with tool calls to avoid partial responses
+                if tool_calls and content:
+                    # If there are tool calls, don't include the text content to avoid partial responses
+                    logger.debug(
+                        f"Stripped text content from assistant message with tool calls in LLM history. Original content: {content[:100]}..."
+                    )
+                elif content:
                     assistant_msg_for_llm["content"] = content
                 # Check if tool_calls exists and is a non-empty list/dict
                 if tool_calls:
