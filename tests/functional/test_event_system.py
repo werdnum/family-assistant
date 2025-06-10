@@ -140,8 +140,27 @@ async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> N
             exec_context=exec_context, source_id="home_assistant", hours=1
         )
 
-        assert "sensor.temperature" in result
-        assert "20.5 → 21.0" in result
+        # Parse JSON result
+        result_data = json.loads(result)
+
+        assert result_data["count"] >= 1
+        assert result_data["source_filter"] == "home_assistant"
+
+        # Check event data
+        events = result_data["events"]
+        assert len(events) >= 1
+
+        # Find our temperature event
+        temp_event = None
+        for event in events:
+            if event["event_data"].get("entity_id") == "sensor.temperature":
+                temp_event = event
+                break
+
+        assert temp_event is not None
+        assert temp_event["source_id"] == "home_assistant"
+        assert temp_event["event_data"]["old_state"]["state"] == "20.5"
+        assert temp_event["event_data"]["new_state"]["state"] == "21.0"
 
 
 @pytest.mark.asyncio
