@@ -251,6 +251,8 @@ async def search_documents_tool(
         for i, res in enumerate(results):
             title = res.get("title") or "Untitled Document"
             source = res.get("source_type", "Unknown Source")
+            doc_id = res.get("document_id", "Unknown")
+            metadata = res.get("doc_metadata", {})
             # Truncate snippet for brevity
             snippet = res.get("embedding_source_content", "")
             if snippet:
@@ -259,8 +261,13 @@ async def search_documents_tool(
             else:
                 snippet_text = ""
 
+            # Format metadata for display
+            metadata_text = ""
+            if metadata:
+                metadata_text = f"\n  Metadata: {metadata}"
+
             formatted_results.append(
-                f"{i + 1}. Title: {title} (Source: {source}){snippet_text}"
+                f"{i + 1}. Title: {title} (Source: {source}, Document ID: {doc_id} - for retrieving full content){metadata_text}{snippet_text}"
             )
 
         return "\n".join(formatted_results)
