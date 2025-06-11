@@ -42,7 +42,7 @@ pytest tests/functional/test_specific.py -v
 # Run with coverage
 pytest --cov=family_assistant tests/
 
-# Note: poe test may timeout when running all tests. If this happens, run tests in smaller batches:
+# Note: poe test will timeout when running all tests. Run tests in smaller batches:
 # pytest tests/unit/ -v
 # pytest tests/functional/indexing/ -v
 # pytest tests/functional/telegram/ -v
@@ -85,7 +85,8 @@ poe symbols
 
 ## Important Notes
 
-- Always run 'poe test' when you're done to make sure all lint checks are passing and tests are passing too
+- Always make sure you start with a clean working directory. Commit any uncommitted changes.
+- Always check that linters and tests are happy when you're finished.
 - When running tests,  only use -s when you don't get the info you need without it
 - Save tokens when running tests: use pytest -q to check if a test passes, only use -s or -v if you need it
 - Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.

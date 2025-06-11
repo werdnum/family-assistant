@@ -19,13 +19,40 @@ nav {
     margin-bottom: 1.5em;
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.5em;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5em;
 }
-nav a, nav span { /* Added span for non-link text */
-    margin-right: 1em;
+
+/* Navigation groups */
+.nav-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+}
+
+.nav-label {
+    font-weight: bold;
+    color: var(--text-light);
+    font-size: 0.9em;
+}
+
+.nav-separator {
+    color: var(--text-light);
+    margin: 0 0.5em;
+}
+
+nav a {
     text-decoration: none;
+    padding: 0.2em 0.5em;
+    border-radius: 3px;
+    transition: background-color 0.2s;
 }
+
 nav a:hover {
-    text-decoration: underline;
+    background-color: var(--accent-bg);
+    text-decoration: none;
 }
 
 /* Button styling adjustments */
