@@ -819,29 +819,21 @@ Use cases:
 
 ## Next Steps
 
-### Immediate Priority: Event Cleanup Task
-The most critical missing piece is the scheduled cleanup of old events from the `recent_events` table. Without this, the table will grow unbounded.
+### Completed Tasks ✅
 
-**Implementation Steps:**
-1. Register the `system_event_cleanup` task handler in `task_worker.py`
-2. Create a system task on startup that runs daily at 3 AM
-3. Test that old events are properly cleaned up after retention period
+1. **Event Cleanup Task** - The system cleanup task handler is already registered and scheduled to run daily at 3 AM
+2. **Wake LLM Action** - The `_execute_action` method has been implemented in EventProcessor to create llm_callback tasks when listeners match
+3. **End-to-End Tests** - Tests verify the complete flow from event → listener match → LLM callback task creation
 
-**Code locations:**
-- Handler function: Create in `task_worker.py` using existing `cleanup_old_events` from `storage/events.py`
-- Task registration: Add to task handler registration in `__main__.py` or `assistant.py`
-- System task creation: Add to startup sequence, possibly in `assistant.py`
+### Remaining Tasks for Production Hardening
 
-### Secondary Priority: Wake LLM Action
-While the rate limiting and event listener CRUD are complete, the actual action execution (waking the LLM when events match) needs to be implemented in the EventProcessor. Currently, the processor only logs when events match (see line 99-102 in `processor.py`).
+The event listener system is now functionally complete for MVP. The remaining tasks for production hardening include:
 
-**Implementation Steps:**
-1. Replace the logging with a call to `_execute_action` method in `EventProcessor`
-2. Implement `_execute_action` to create llm_callback tasks when listeners match
-3. Test end-to-end event → listener match → LLM wake flow
+1. **Connection retry logic for Home Assistant** - Add reconnection logic when WebSocket connection drops
+2. **Health check and auto-reconnect** - Periodic health checks to ensure sources remain connected
+3. **Basic monitoring/alerting for connection issues** - Notify users when sources are disconnected for extended periods
 
-**Code location:**
-- `src/family_assistant/events/processor.py` lines 99-102: Replace logging with action execution
+These can be implemented as needed based on production usage patterns.
 
 ## Testing Strategy
 
