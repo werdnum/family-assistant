@@ -773,8 +773,36 @@ class TaskWorker:
         logger.info(f"Task worker {self.worker_id} stopped.")
 
 
+async def handle_system_event_cleanup(
+    exec_context: ToolExecutionContext,
+    payload: dict[str, Any],
+) -> None:
+    """
+    Task handler for cleaning up old events from the database.
+    """
+    from family_assistant.storage.events import cleanup_old_events
+
+    # Get retention hours from payload or use default
+    retention_hours = payload.get("retention_hours", 48)
+
+    logger.info(f"Starting system event cleanup (retention: {retention_hours} hours)")
+
+    try:
+        deleted_count = await cleanup_old_events(
+            exec_context.db_context, retention_hours
+        )
+
+        logger.info(
+            f"System event cleanup completed. Deleted {deleted_count} events older than {retention_hours} hours."
+        )
+    except Exception as e:
+        logger.error(f"Error during system event cleanup: {e}", exc_info=True)
+        raise
+
+
 __all__ = [
     "TaskWorker",
     "handle_log_message",
     "handle_llm_callback",
+    "handle_system_event_cleanup",
 ]  # Export class and relevant handlers
