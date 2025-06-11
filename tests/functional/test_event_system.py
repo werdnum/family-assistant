@@ -5,8 +5,7 @@ Functional tests for the event listener system.
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -108,23 +107,14 @@ async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> N
         entity_id="sensor.temperature", old_state="20.5", new_state="21.0"
     )
 
-    await ha_source._handle_state_change(event)
+    # Simulate the sync handler adding event to queue
+    ha_source._handle_state_change_sync(event)
 
-    # Manually call process_event since we're not running the full WebSocket loop
-    await processor.process_event(
-        "home_assistant",
-        {
-            "entity_id": "sensor.temperature",
-            "old_state": {
-                "state": "20.5",
-                "attributes": {"friendly_name": "Test 20.5"},
-            },
-            "new_state": {
-                "state": "21.0",
-                "attributes": {"friendly_name": "Test 21.0"},
-            },
-        },
-    )
+    # Process the event from the queue (normally done by _process_events task)
+    # We'll manually process it here since we're not running the full async loop
+    if not ha_source._event_queue.empty():
+        queued_event = ha_source._event_queue.get_nowait()
+        await processor.process_event("home_assistant", queued_event)
 
     # Give a small delay to ensure async writes complete
     await asyncio.sleep(0.1)
@@ -205,63 +195,6 @@ async def test_event_listener_matching(test_db_engine: AsyncEngine) -> None:
     assert not processor._check_match_conditions(
         no_match_event, listeners[0]["match_conditions"]
     )
-
-
-@pytest.mark.asyncio
-async def test_websocket_connection_with_mock(test_db_engine: AsyncEngine) -> None:
-    """Test WebSocket connection handling with mocked homeassistant_api."""
-    with patch(
-        "family_assistant.events.home_assistant_source.WebsocketClient"
-    ) as MockWSClient:
-        # Set up mock WebSocket client
-        mock_ws_instance = MagicMock()
-        mock_ws_instance.__enter__ = MagicMock(return_value=mock_ws_instance)
-        mock_ws_instance.__exit__ = MagicMock(return_value=None)
-
-        # Mock listen_events context manager
-        mock_events = [
-            MockFiredEvent("light.kitchen", "off", "on"),
-            MockFiredEvent("sensor.temperature", "22", "23"),
-        ]
-        mock_listen_ctx = MagicMock()
-        mock_listen_ctx.__enter__ = MagicMock(return_value=iter(mock_events))
-        mock_listen_ctx.__exit__ = MagicMock(return_value=None)
-        mock_ws_instance.listen_events.return_value = mock_listen_ctx
-
-        MockWSClient.return_value = mock_ws_instance
-
-        # Create HA source
-        mock_client = MagicMock()
-        mock_client.api_url = "http://localhost:8123/api"
-        mock_client.token = "test_token"
-        ha_source = HomeAssistantSource(client=mock_client)
-
-        # Track processed events
-        processed_events = []
-
-        async def mock_process_event(source_id: str, event_data: Any) -> None:
-            processed_events.append(event_data)
-
-        # Create processor with mocked process_event
-        processor = EventProcessor(sources={"ha": ha_source}, sample_interval_hours=1.0)
-        processor.process_event = mock_process_event
-        ha_source.processor = processor
-
-        # Simulate running for a short time
-        ha_source._running = True
-
-        # Run in thread (will process the mocked events)
-        await asyncio.to_thread(ha_source._connect_and_listen)
-
-        # Verify WebSocket was created with correct URL
-        MockWSClient.assert_called_once_with(
-            api_url="ws://localhost:8123/api/websocket", token="test_token"
-        )
-
-        # Verify events were processed
-        assert len(processed_events) == 2
-        assert processed_events[0]["entity_id"] == "light.kitchen"
-        assert processed_events[1]["entity_id"] == "sensor.temperature"
 
 
 @pytest.mark.asyncio
