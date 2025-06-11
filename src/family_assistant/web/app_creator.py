@@ -54,7 +54,18 @@ try:
 
     templates_dir = package_root_dir / "templates"
     static_dir = package_root_dir / "static"
-    docs_user_dir = _project_root / "docs" / "user"
+
+    # Allow docs directory to be configured via environment variable for Docker deployments
+    docs_user_dir_env = os.getenv("DOCS_USER_DIR")
+    if docs_user_dir_env:
+        docs_user_dir = pathlib.Path(docs_user_dir_env).resolve()
+        logger.info(f"Using DOCS_USER_DIR from environment: {docs_user_dir}")
+    else:
+        docs_user_dir = _project_root / "docs" / "user"
+        # In Docker, if the calculated path doesn't exist, try /app/docs/user
+        if not docs_user_dir.exists() and pathlib.Path("/app/docs/user").exists():
+            docs_user_dir = pathlib.Path("/app/docs/user")
+            logger.info(f"Using Docker default docs directory: {docs_user_dir}")
 
     if not templates_dir.is_dir():
         logger.warning(
@@ -62,6 +73,10 @@ try:
         )
     if not static_dir.is_dir():
         logger.warning(f"Static directory not found at expected location: {static_dir}")
+    if not docs_user_dir.is_dir():
+        logger.warning(
+            f"User docs directory not found at expected location: {docs_user_dir}"
+        )
 
     templates = Jinja2Templates(directory=templates_dir)
     templates.env.filters["tojson"] = json.dumps

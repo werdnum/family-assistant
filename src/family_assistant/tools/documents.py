@@ -158,9 +158,15 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
 
 
 # Helper function
-def _scan_user_docs() -> list[str]:
+def _scan_user_docs(docs_user_dir: pathlib.Path | None = None) -> list[str]:
     """Scans the 'docs/user/' directory for allowed documentation files."""
-    docs_user_dir = pathlib.Path("docs") / "user"
+    if docs_user_dir is None:
+        # Default path for backward compatibility
+        docs_user_dir = pathlib.Path("docs") / "user"
+        # Try Docker default if the calculated path doesn't exist
+        if not docs_user_dir.exists() and pathlib.Path("/app/docs/user").exists():
+            docs_user_dir = pathlib.Path("/app/docs/user")
+
     allowed_extensions = {".md", ".txt"}
     available_files = []
     if docs_user_dir.is_dir():
@@ -487,11 +493,19 @@ async def get_user_documentation_content_tool(
 
     # Construct the full path relative to the project root (assuming standard structure)
     # Assumes the script runs from the project root or similar context.
-    docs_user_dir = pathlib.Path("docs") / "user"
+    docs_user_dir_env = os.getenv("DOCS_USER_DIR")
+    if docs_user_dir_env:
+        docs_user_dir = pathlib.Path(docs_user_dir_env).resolve()
+    else:
+        docs_user_dir = pathlib.Path("docs") / "user"
+        # Try Docker default if the calculated path doesn't exist
+        if not docs_user_dir.exists() and pathlib.Path("/app/docs/user").exists():
+            docs_user_dir = pathlib.Path("/app/docs/user")
+
     file_path = (docs_user_dir / filename).resolve()
 
     # Security Check: Ensure the resolved path is still within the intended directory
-    if docs_user_dir.resolve() not in file_path.parents:
+    if docs_user_dir not in file_path.parents:
         logger.error(
             f"Resolved path '{file_path}' is outside the allowed directory '{docs_user_dir.resolve()}'."
         )

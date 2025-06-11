@@ -144,7 +144,7 @@ default_profile_settings:
       {%- endmacro -%}
       
       {%- for person in states.person -%}
-        {%- if not loop.first %}{{ "\n" }}{% endif -%} {# Ensures each person's status starts on a new line. #}
+        {%- if not loop.first -%}{{ "\n" }}{%- endif -%} {# Ensures each person's status starts on a new line. #}
         
         {{- person.name -}}
         {%- if person.state == 'not_home' -%}
@@ -159,113 +159,114 @@ default_profile_settings:
           {{- " (" ~ lat ~ ", " ~ lon ~ ")" -}}
         {%- endif -%}
       {%- endfor -%}
-      {% set forecasts = state_attr("sensor.electricity_price_forecast", "forecasts") or [] %}
-      {% set significant_periods = [] %}
+
+      {% set forecasts = state_attr("sensor.electricity_price_forecast", "forecasts") or [] -%}
+      {%- set significant_periods = [] -%}
       {# Use a namespace to allow modifying variables inside the loop #}
-      {% set current_period = namespace(start_time=none, end_time=none, type=none, raw_end_time_for_comparison=none) %}
+      {%- set current_period = namespace(start_time=none, end_time=none, type=none, raw_end_time_for_comparison=none) -%}
 
       {# Ensure forecasts are sorted by start_time, as processing relies on this order #}
-      {% for forecast in forecasts | sort(attribute='start_time') %}
-        {% set descriptor = forecast.descriptor %}
-        {% set f_start_time_str = forecast.start_time %}
-        {% set f_end_time_str = forecast.end_time %}
+      {%- for forecast in forecasts | sort(attribute='start_time') -%}
+        {%- set descriptor = forecast.descriptor -%}
+        {%- set f_start_time_str = forecast.start_time -%}
+        {%- set f_end_time_str = forecast.end_time -%}
       
-        {% set forecast_type = namespace(value=none) %}
-        {% if descriptor in ["extremely_low", "very_low"] %}
-          {% set forecast_type.value = "very low" %}
-        {% elif descriptor in ["high", "spike"] %}
-          {% set forecast_type.value = "very high" %}
-        {% endif %}
+        {%- set forecast_type = namespace(value=none) -%}
+        {%- if descriptor in ["extremely_low", "very_low"] -%}
+          {%- set forecast_type.value = "very low" -%}
+        {%- elif descriptor in ["high", "spike"] -%}
+          {%- set forecast_type.value = "very high" -%}
+        {%- endif -%}
 
-        {% if forecast_type.value %}
+        {%- if forecast_type.value -%}
           {# This forecast is of interest (very low or very high price) #}
-          {% if current_period.type == none %}
+          {%- if current_period.type == none -%}
             {# No active significant period, so start a new one #}
-            {% set current_period.start_time = f_start_time_str %}
-            {% set current_period.raw_end_time_for_comparison = f_end_time_str %}
-            {% set current_period.end_time = f_end_time_str %}
-            {% set current_period.type = forecast_type.value %}
-            {% set current_period.min = forecast.per_kwh %}
-            {% set current_period.max = forecast.per_kwh %}
-          {% elif current_period.type == forecast_type.value %}
+            {%- set current_period.start_time = f_start_time_str -%}
+            {%- set current_period.raw_end_time_for_comparison = f_end_time_str -%}
+            {%- set current_period.end_time = f_end_time_str -%}
+            {%- set current_period.type = forecast_type.value -%}
+            {%- set current_period.min = forecast.per_kwh -%}
+            {%- set current_period.max = forecast.per_kwh -%}
+          {%- elif current_period.type == forecast_type.value -%}
             {# Current forecast is of the same significant type as the active period. Check for adjacency. #}
             {# Adjacency condition: current forecast's start_time should be very close to the active period's end_time. #}
             {# We use as_timestamp for robust comparison, allowing for small gaps (e.g., 1 second). #}
-            {% set prev_end_ts = as_timestamp(current_period.raw_end_time_for_comparison) | default(0) %}
-            {% set curr_start_ts = as_timestamp(f_start_time_str) | default(0) %}
+            {%- set prev_end_ts = as_timestamp(current_period.raw_end_time_for_comparison) | default(0) -%}
+            {%- set curr_start_ts = as_timestamp(f_start_time_str) | default(0) -%}
 
             {# Consider adjacent if start is within ~5 seconds of previous end, and not before it. #}
             {# This threshold (5 seconds) can be adjusted based on data patterns. #}
-            {% if curr_start_ts - prev_end_ts <= 5 and curr_start_ts >= prev_end_ts %}
+            {%- if curr_start_ts - prev_end_ts <= 5 and curr_start_ts >= prev_end_ts -%}
               {# Adjacent and same type: extend the current period #}
-              {% set current_period.raw_end_time_for_comparison = f_end_time_str %}
-              {% set current_period.end_time = f_end_time_str %}
-              {% set current_period.min = [current_period.min, forecast.per_kwh]|min %}
-              {% set current_period.max = [current_period.max, forecast.per_kwh]|max %}
-            {% else %}
+              {%- set current_period.raw_end_time_for_comparison = f_end_time_str -%}
+              {%- set current_period.end_time = f_end_time_str -%}
+              {%- set current_period.min = [current_period.min, forecast.per_kwh]|min -%}
+              {%- set current_period.max = [current_period.max, forecast.per_kwh]|max -%}
+            {%- else -%}
               {# Not adjacent: finalize the old period and start a new one #}
-              {% set significant_periods = significant_periods + [{
+              {%- set significant_periods = significant_periods + [{
                   "type": current_period.type,
                   "start": current_period.start_time,
                   "end": current_period.end_time
-                }] %}
-              {% set current_period.start_time = f_start_time_str %}
-              {% set current_period.raw_end_time_for_comparison = f_end_time_str %}
-              {% set current_period.end_time = f_end_time_str %}
-              {% set current_period.type = forecast_type.value %}
-              {% set current_period.min = forecast.per_kwh %}
-              {% set current_period.max = forecast.per_kwh %}
-            {% endif %}
-          {% else %} 
+                }] -%}
+              {%- set current_period.start_time = f_start_time_str -%}
+              {%- set current_period.raw_end_time_for_comparison = f_end_time_str -%}
+              {%- set current_period.end_time = f_end_time_str -%}
+              {%- set current_period.type = forecast_type.value -%}
+              {%- set current_period.min = forecast.per_kwh -%}
+              {%- set current_period.max = forecast.per_kwh -%}
+            {%- endif -%}
+          {%- else -%} 
             {# Different significant type (e.g., was "very high", now "very low"): finalize old, start new #}
-            {% set significant_periods = significant_periods + [{
+            {%- set significant_periods = significant_periods + [{
                 "type": current_period.type,
                 "start": current_period.start_time,
                 "end": current_period.end_time
-              }] %}
-            {% set current_period.start_time = f_start_time_str %}
-            {% set current_period.raw_end_time_for_comparison = f_end_time_str %}
-            {% set current_period.end_time = f_end_time_str %}
-            {% set current_period.type = forecast_type.value %}
-            {% set current_period.min = forecast.per_kwh %}
-            {% set current_period.max = forecast.per_kwh %}
-          {% endif %}
-        {% else %}
+              }] -%}
+            {%- set current_period.start_time = f_start_time_str -%}
+            {%- set current_period.raw_end_time_for_comparison = f_end_time_str -%}
+            {%- set current_period.end_time = f_end_time_str -%}
+            {%- set current_period.type = forecast_type.value -%}
+            {%- set current_period.min = forecast.per_kwh -%}
+            {%- set current_period.max = forecast.per_kwh -%}
+          {%- endif -%}
+        {%- else -%}
           {# Forecast is not of interest (e.g., neutral, low) #}
-          {% if current_period.type != none %}
+          {%- if current_period.type != none -%}
             {# A significant period was active, finalize it #}
-            {% set significant_periods = significant_periods + [{
+            {%- set significant_periods = significant_periods + [{
                 "type": current_period.type,
                 "start": current_period.start_time,
                 "end": current_period.end_time
-              }] %}
-            {% set current_period.start_time = none %}
-            {% set current_period.raw_end_time_for_comparison = none %}
-            {% set current_period.end_time = none %}
-            {% set current_period.type = none %}
-            {% set current_period.min = none %}
-            {% set current_period.max = none %}
-          {% endif %}
-        {% endif %}
-      {% endfor %}
+              }] -%}
+            {%- set current_period.start_time = none -%}
+            {%- set current_period.raw_end_time_for_comparison = none -%}
+            {%- set current_period.end_time = none -%}
+            {%- set current_period.type = none -%}
+            {%- set current_period.min = none -%}
+            {%- set current_period.max = none -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
 
       {# After the loop, finalize any period that was still active #}
-      {% if current_period.type != none %}
-        {% set significant_periods = significant_periods + [{
+      {%- if current_period.type != none -%}
+        {%- set significant_periods = significant_periods + [{
             "type": current_period.type,
             "start": current_period.start_time,
             "end": current_period.end_time
-          }] %}
-      {% endif %}
+          }] -%}
+      {%- endif %}
 
       ## Energy price
       Currently: {{ states("sensor.general_price") }} ({{ state_attr("sensor.general_price", "descriptor") }})
       
-      {%- if significant_periods %}
+      {% if significant_periods -%}
         {%- for period in significant_periods %}
       Price is {{ period.type }} ({{ period.min }} to {{ period.max }}) from {{ period.start | as_datetime | as_local }} to {{ period.end | as_datetime | as_local }}
-        {%- endfor %}
-      {%- else %}
+        {%- endfor -%}
+      {%- else -%}
       No very high or very low energy price periods are forecast.
       {%- endif -%}
     # `prompts` are loaded from prompts.yaml. This key is a placeholder for that structure.

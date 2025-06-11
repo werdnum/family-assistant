@@ -69,13 +69,15 @@ RUN --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked \
 # - UV_TOOL_BIN_DIR/UV_TOOL_DIR: Standard locations for uv tools
 # - UV_CACHE_DIR: Explicit cache location for uv operations
 # - PATH: Ensure uv tool binaries and Deno bin directory are findable
+# - DOCS_USER_DIR: Path to user documentation directory
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_TOOL_BIN_DIR=/uv/bin \
     UV_TOOL_DIR=/uv/tools \
     UV_CACHE_DIR=/uv-cache \
     UV_HTTP_TIMEOUT=300 \
-    ALEMBIC_CONFIG=/app/alembic.ini
+    ALEMBIC_CONFIG=/app/alembic.ini \
+    DOCS_USER_DIR=/app/docs/user
 
 # Update PATH separately
 ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
@@ -103,6 +105,7 @@ COPY docs/ /app/docs/
 COPY config.yaml ./
 COPY prompts.yaml mcp_config.json ./
 COPY alembic.ini ./
+COPY logging.conf ./
 COPY alembic /app/alembic/
 
 # --- Install the Package ---
