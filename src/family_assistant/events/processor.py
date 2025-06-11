@@ -82,7 +82,7 @@ class EventProcessor:
         if not self._running:
             return
 
-        # Use lock to prevent concurrent processing
+        # Use lock to prevent concurrent cache refreshes
         async with self._process_lock:
             # Refresh cache if needed
             if time.time() - self._last_cache_refresh > self._cache_refresh_interval:
@@ -91,8 +91,10 @@ class EventProcessor:
             # Get all active listeners for this source
             listeners = self._listener_cache.get(source_id, [])
 
-        # Evaluate match conditions for relevant listeners
+        # Process all database operations in a single transaction when possible
         triggered_listener_ids = []
+
+        # Check each listener
         for listener in listeners:
             if self._check_match_conditions(event_data, listener["match_conditions"]):
                 # Check and update rate limit atomically
