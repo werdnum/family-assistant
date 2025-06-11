@@ -436,3 +436,61 @@ async def test_test_event_listener_tool_empty_conditions_error(
     data = json.loads(result)
     assert "error" in data
     assert "condition" in data["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_old_events(test_db_engine: AsyncEngine) -> None:
+    """Test that old events are cleaned up correctly."""
+    from datetime import timedelta
+
+    from family_assistant.storage.events import cleanup_old_events
+
+    # Arrange - create events with different ages
+    async with get_db_context() as db_ctx:
+        # Store events with different timestamps
+        now = datetime.now(timezone.utc)
+
+        # Use EventStorage to store events
+        storage = EventStorage(sample_interval_hours=0.01)  # Short interval for testing
+
+        # Old event (should be cleaned up)
+        old_event_data = {
+            "entity_id": "test.old",
+            "old_state": {"state": "old"},
+            "new_state": {"state": "old"},
+        }
+        await storage.store_event(
+            EventSourceType.home_assistant.value,
+            old_event_data,
+            None,
+        )
+
+        # Recent event (should NOT be cleaned up)
+        recent_event_data = {
+            "entity_id": "test.recent",
+            "old_state": {"state": "recent"},
+            "new_state": {"state": "recent"},
+        }
+        await storage.store_event(
+            EventSourceType.home_assistant.value,
+            recent_event_data,
+            None,
+        )
+
+        # Update the created_at timestamp for the old event
+        from sqlalchemy import text
+
+        await db_ctx.execute_with_retry(
+            text(
+                "UPDATE recent_events SET created_at = :old_time "
+                "WHERE json_extract(event_data, '$.entity_id') = 'test.old'"
+            ),
+            {"old_time": now - timedelta(hours=72)},
+        )
+
+    # Act - run cleanup with 48 hour retention
+    async with get_db_context() as db_ctx:
+        deleted_count = await cleanup_old_events(db_ctx, retention_hours=48)
+
+    # Assert - the cleanup function works correctly
+    assert deleted_count == 1  # Exactly one old event was deleted

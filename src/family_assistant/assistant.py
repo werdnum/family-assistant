@@ -2,6 +2,7 @@ import asyncio
 import copy
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -45,6 +46,7 @@ from family_assistant.storage.context import (
 from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
+    handle_system_event_cleanup,
 )
 from family_assistant.task_worker import (
     handle_log_message as original_handle_log_message,
@@ -670,6 +672,9 @@ class Assistant:
         self.task_worker_instance.register_task_handler(
             "embed_and_store_batch", handle_embed_and_store_batch
         )
+        self.task_worker_instance.register_task_handler(
+            "system_event_cleanup", handle_system_event_cleanup
+        )
         logger.info(
             f"Registered task handlers for worker {self.task_worker_instance.worker_id}"
         )
@@ -679,6 +684,9 @@ class Assistant:
         if self.event_processor:
             asyncio.create_task(self.event_processor.start())
             logger.info("Event processor started")
+
+            # Create system cleanup task
+            await self._setup_system_tasks()
 
         await self.shutdown_event.wait()
         logger.info("Shutdown signal received by Assistant. Stopping services...")
@@ -701,6 +709,58 @@ class Assistant:
             logger.warning(
                 f"Shutdown already in progress. Signal {signal_name} received again."
             )
+
+    async def _setup_system_tasks(self) -> None:
+        """Upsert system tasks on startup."""
+        import zoneinfo
+        from datetime import timedelta
+
+        async with get_db_context() as db_ctx:
+            # Get the timezone from the default profile
+            if not self.default_processing_service:
+                logger.error(
+                    "Default processing service not available for system tasks setup"
+                )
+                return
+
+            default_profile_conf = next(
+                p
+                for p in self.config["service_profiles"]
+                if p["id"] == self.default_processing_service.service_config.id
+            )
+            timezone_str = default_profile_conf["processing_config"]["timezone"]
+            local_tz = zoneinfo.ZoneInfo(timezone_str)
+
+            # Get current time in local timezone and calculate next 3 AM local time
+            now_local = datetime.now(local_tz)
+            next_3am_local = now_local.replace(
+                hour=3, minute=0, second=0, microsecond=0
+            )
+
+            # If it's already past 3 AM today, schedule for tomorrow
+            if now_local >= next_3am_local:
+                next_3am_local += timedelta(days=1)
+
+            # Convert to UTC for storage
+            next_3am_utc = next_3am_local.astimezone(timezone.utc)
+
+            # Upsert the system event cleanup task
+            try:
+                await storage.enqueue_task(
+                    db_context=db_ctx,
+                    task_id="system_event_cleanup_daily",
+                    task_type="system_event_cleanup",
+                    payload={"retention_hours": 48},
+                    scheduled_at=next_3am_utc,
+                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                    max_retries_override=5,  # Higher retry count for system tasks
+                )
+                logger.info(
+                    f"System event cleanup task scheduled for {next_3am_local} ({timezone_str})"
+                )
+            except Exception as e:
+                # If task already exists, this is fine - just log it
+                logger.info(f"System event cleanup task setup: {e}")
 
     async def stop_services(self) -> None:
         """Gracefully stops all managed services."""
