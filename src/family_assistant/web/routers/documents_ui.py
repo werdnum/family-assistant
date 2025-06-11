@@ -5,14 +5,98 @@ from typing import TYPE_CHECKING, Annotated
 import httpx
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
+from sqlalchemy import func, select
 
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.vector import DocumentRecord
 from family_assistant.web.auth import AUTH_ENABLED, User, get_current_user_optional
+from family_assistant.web.dependencies import get_db
 
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.get("/", response_class=HTMLResponse, name="ui_list_documents")
+async def list_documents(
+    request: Request,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    limit: int = 20,
+    offset: int = 0,
+    current_user: Annotated[User | None, Depends(get_current_user_optional)] = None,
+) -> HTMLResponse:
+    """Lists all documents with pagination."""
+    templates: Jinja2Templates = request.app.state.templates
+
+    try:
+        # Count total documents
+        count_query = select(func.count().label("count")).select_from(DocumentRecord)  # pylint: disable=not-callable
+        total_count_result = await db_context.fetch_one(count_query)
+        total_count = total_count_result["count"] if total_count_result else 0
+
+        # Get documents with pagination
+        documents_query = (
+            select(DocumentRecord)
+            .order_by(DocumentRecord.added_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+
+        # Get documents as dict-like objects
+        documents_rows = await db_context.fetch_all(documents_query)
+
+        # Convert to list of dicts for template
+        documents = []
+        for row in documents_rows:
+            doc_dict = dict(row)
+            documents.append(doc_dict)
+
+        # Calculate pagination info
+        has_next = offset + limit < total_count
+        has_prev = offset > 0
+        next_offset = offset + limit if has_next else None
+        prev_offset = max(0, offset - limit) if has_prev else None
+
+        # Calculate page numbers
+        current_page = (offset // limit) + 1
+        total_pages = (total_count + limit - 1) // limit  # Ceiling division
+
+    except Exception as e:
+        logger.error(f"Error fetching documents: {e}", exc_info=True)
+        documents = []
+        total_count = 0
+        has_next = False
+        has_prev = False
+        next_offset = None
+        prev_offset = None
+        current_page = 1
+        total_pages = 1
+        error = f"Error loading documents: {str(e)}"
+    else:
+        error = None
+
+    return templates.TemplateResponse(
+        "documents_list.html.j2",
+        {
+            "request": request,
+            "documents": documents,
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset,
+            "has_next": has_next,
+            "has_prev": has_prev,
+            "next_offset": next_offset,
+            "prev_offset": prev_offset,
+            "current_page": current_page,
+            "total_pages": total_pages,
+            "error": error,
+            "current_user": current_user,
+            "AUTH_ENABLED": AUTH_ENABLED,
+            "now_utc": datetime.now(timezone.utc),
+        },
+    )
 
 
 @router.get("/upload", response_class=HTMLResponse)

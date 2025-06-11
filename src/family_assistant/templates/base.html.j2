@@ -23,6 +23,7 @@
             <!-- Documents -->
             <div class="nav-group">
                 <span class="nav-label">Documents</span>
+                <a href="{{ request.app.url_path_for('ui_list_documents') }}">List</a>
                 <a href="{{ request.app.url_path_for('get_document_upload_form') }}">Upload</a>
                 <a href="{{ request.app.url_path_for('ui_vector_search') }}">Search</a>
             </div>
