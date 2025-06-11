@@ -434,8 +434,6 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
     """Test end-to-end flow: event triggers listener which enqueues LLM callback task."""
     from sqlalchemy import text
 
-    from family_assistant.storage.tasks import dequeue_task
-
     # Step 1: Create an event listener that watches for motion detection
     async with get_db_context() as db_ctx:
         await db_ctx.execute_with_retry(
@@ -544,19 +542,128 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
             == "binary_sensor.hallway_motion"
         )
 
-    # Step 6: Verify the task can be dequeued by a worker
-    async with get_db_context() as db_ctx:
-        dequeued_task = await dequeue_task(
-            db_ctx,
-            worker_id="test_worker",
-            task_types=["llm_callback"],
-            current_time=datetime.now(timezone.utc),
-        )
+    # Step 6: Start a task worker that will process the callback task
+    from typing import Any
+    from unittest.mock import AsyncMock, MagicMock
 
-        assert dequeued_task is not None
-        assert dequeued_task["task_type"] == "llm_callback"
-        # The task was just dequeued and is ready for processing
-        assert dequeued_task["task_id"].startswith("event_listener_")
+    from family_assistant.interfaces import ChatInterface
+    from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+    from family_assistant.task_worker import TaskWorker, handle_llm_callback
+    from family_assistant.tools import (
+        CompositeToolsProvider,
+        LocalToolsProvider,
+        MCPToolsProvider,
+    )
+    from tests.mocks.mock_llm import (
+        LLMOutput as MockLLMOutput,
+    )
+    from tests.mocks.mock_llm import (
+        RuleBasedMockLLMClient,
+    )
+
+    # Setup mock LLM that will handle the callback
+    def callback_matcher(kwargs: dict[str, Any]) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages:
+            return False
+        last_message = messages[-1]
+        if last_message.get("role") == "user":
+            content = last_message.get("content", "")
+            return (
+                "System Callback Trigger:" in content
+                and "Motion Light Automation" in content
+            )
+        return False
+
+    callback_response = MockLLMOutput(
+        content="Motion detected in hallway. I would turn on the lights now.",
+        tool_calls=None,
+    )
+
+    llm_client = RuleBasedMockLLMClient(
+        rules=[(callback_matcher, callback_response)],
+        default_response=MockLLMOutput(content="Default response"),
+    )
+
+    # Setup tools provider
+    local_provider = LocalToolsProvider(definitions=[], implementations={})
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
+    await composite_provider.get_tool_definitions()
+
+    # Setup processing service
+    test_service_config = ProcessingServiceConfig(
+        prompts={"system_prompt": "Test system prompt"},
+        calendar_config={},
+        timezone_str="UTC",
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={},
+        delegation_security_level="confirm",
+        id="test_event_listener_profile",
+    )
+
+    processing_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=composite_provider,
+        service_config=test_service_config,
+        app_config={},
+        context_providers=[],
+        server_url=None,
+        clock=None,
+    )
+
+    # Setup mock chat interface
+    mock_chat_interface = AsyncMock(spec=ChatInterface)
+    mock_chat_interface.send_message.return_value = "mock_message_id"
+
+    # Create events for worker coordination
+    shutdown_event = asyncio.Event()
+    new_task_event = asyncio.Event()
+
+    # Create and start task worker
+    task_worker = TaskWorker(
+        processing_service=processing_service,
+        chat_interface=mock_chat_interface,
+        new_task_event=new_task_event,
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=MagicMock(),
+        clock=None,
+        shutdown_event_instance=shutdown_event,
+    )
+    task_worker.register_task_handler("llm_callback", handle_llm_callback)
+
+    worker_task = asyncio.create_task(
+        task_worker.run(new_task_event),
+        name="TestEventListenerWorker",
+    )
+
+    # Give worker time to start
+    await asyncio.sleep(0.1)
+
+    # Signal that there's a new task to process
+    new_task_event.set()
+
+    # Give worker time to process the task (this will fail if timestamp is wrong)
+    await asyncio.sleep(0.5)
+
+    # Verify the message was sent (proves the task was processed successfully)
+    mock_chat_interface.send_message.assert_called_once()
+    call_kwargs = mock_chat_interface.send_message.call_args[1]
+    assert call_kwargs["conversation_id"] == "test_chat_123"
+    assert "Motion detected" in call_kwargs["text"]
+
+    # Cleanup
+    shutdown_event.set()
+    new_task_event.set()  # Wake up worker if waiting
+    try:
+        await asyncio.wait_for(worker_task, timeout=2.0)
+    except asyncio.TimeoutError:
+        worker_task.cancel()
+        await asyncio.sleep(0.1)
 
 
 @pytest.mark.asyncio
