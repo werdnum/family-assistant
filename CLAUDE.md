@@ -83,6 +83,25 @@ poe symbols
 
 ## Development Guidelines
 
+### Adding New Tools
+
+When implementing a new tool for the assistant, follow these steps:
+
+1. **Create the tool implementation** in `src/family_assistant/tools/something.py`
+   - Define the tool function(s) with proper type hints
+   - Add tool definition(s) to the `SOMETHING_TOOLS_DEFINITION` list
+
+2. **Export the tool** in `src/family_assistant/tools/__init__.py`
+   - Import the tool function(s) and definition(s)
+   - Add them to the appropriate exports
+
+3. **Register the tool** in the same `__init__.py` file
+   - Add an entry to the `TOOL_REGISTRY` dictionary mapping tool name to implementation
+   - Add the tool definition to `ALL_TOOLS_DEFINITION` list
+
+4. **Enable the tool** in `config.yaml`
+   - Add the tool name to the `enable_local_tools` list under the appropriate profile
+
 ## Important Notes
 
 - Always make sure you start with a clean working directory. Commit any uncommitted changes.
