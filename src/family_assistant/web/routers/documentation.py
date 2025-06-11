@@ -61,7 +61,7 @@ async def serve_documentation(request: Request, filename: str) -> HTMLResponse:
 
         content_md_processed = content_md.replace("{{ SERVER_URL }}", server_url)
         content_html = md_renderer.render(content_md_processed)
-        available_docs = _scan_user_docs()
+        available_docs = _scan_user_docs(docs_user_dir)
 
         return templates.TemplateResponse(
             "doc_page.html.j2",

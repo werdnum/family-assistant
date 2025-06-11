@@ -152,21 +152,23 @@ async def query_recent_events_tool(
         # Collect raw events
         events = []
         for row in result:
-            # Parse event data
-            try:
-                event_data = json.loads(row["event_data"])
-            except json.JSONDecodeError:
-                event_data = {"error": "Invalid JSON", "raw": row["event_data"]}
+            # Parse event data - handle both string and dict (some DB drivers auto-parse JSON)
+            event_data = row["event_data"]
+            if isinstance(event_data, str):
+                try:
+                    event_data = json.loads(event_data)
+                except json.JSONDecodeError:
+                    event_data = {"error": "Invalid JSON", "raw": event_data}
 
-            # Parse triggered listeners
-            try:
-                triggered_listeners = (
-                    json.loads(row["triggered_listener_ids"])
-                    if row["triggered_listener_ids"]
-                    else []
-                )
-            except json.JSONDecodeError:
+            # Parse triggered listeners - handle both string and list
+            triggered_listeners = row["triggered_listener_ids"]
+            if triggered_listeners is None:
                 triggered_listeners = []
+            elif isinstance(triggered_listeners, str):
+                try:
+                    triggered_listeners = json.loads(triggered_listeners)
+                except json.JSONDecodeError:
+                    triggered_listeners = []
 
             # Handle timestamp format (SQLite returns strings)
             timestamp = row["timestamp"]
