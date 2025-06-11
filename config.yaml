@@ -316,6 +316,11 @@ default_profile_settings:
       - "delete_calendar_event"
       - "delegate_to_service"
       - "query_recent_events" # Event system tool
+      - "create_event_listener" # Event system tool
+      - "list_event_listeners" # Event system tool
+      - "delete_event_listener" # Event system tool
+      - "toggle_event_listener" # Event system tool
+      - "test_event_listener" # Event system tool
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
