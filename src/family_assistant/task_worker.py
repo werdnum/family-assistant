@@ -10,7 +10,7 @@ import uuid
 import zoneinfo  # Add this import
 from collections.abc import Awaitable, Callable  # Import Union
 from datetime import datetime, timedelta, timezone  # Added Union
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dateutil import rrule
 from dateutil.parser import isoparse
@@ -19,6 +19,9 @@ from sqlalchemy import select
 from family_assistant import storage
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
+
+if TYPE_CHECKING:
+    from family_assistant.events.indexing_source import IndexingSource
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
@@ -402,6 +405,7 @@ class TaskWorker:
         embedding_generator: EmbeddingGenerator,
         shutdown_event_instance: asyncio.Event | None = None,  # Made optional
         clock: Clock | None = None,
+        indexing_source: "IndexingSource | None" = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -419,6 +423,7 @@ class TaskWorker:
         self.clock = (
             clock if clock is not None else SystemClock()
         )  # Store the clock instance
+        self.indexing_source = indexing_source
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
         self.task_handlers: dict[
@@ -526,6 +531,7 @@ class TaskWorker:
                 processing_service=self.processing_service,
                 embedding_generator=self.embedding_generator,
                 clock=self.clock,  # Pass the clock instance
+                indexing_source=self.indexing_source,  # Pass the indexing source
             )
             # --- Execute Handler with Context ---
             logger.debug(

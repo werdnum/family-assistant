@@ -5,12 +5,53 @@ Task handlers related to the document indexing pipeline.
 import logging
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.storage.vector import add_embedding
+from sqlalchemy import and_, select
+
+from family_assistant.events.indexing_source import IndexingEventType
+from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.vector import add_embedding, get_document_by_id
 
 if TYPE_CHECKING:
+    from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+async def check_document_completion(
+    db_context: "DatabaseContext",
+    document_id: int,
+) -> int:
+    """
+    Check if there are any pending indexing or embedding tasks for a document.
+
+    Returns:
+        Number of pending tasks for the document
+    """
+    # For SQLite compatibility, fetch all pending tasks and filter in Python
+    results = await db_context.fetch_all(
+        select(tasks_table.c.payload).where(
+            and_(
+                tasks_table.c.task_type.in_([
+                    "index_document",
+                    "index_email",
+                    "index_note",
+                    "embed_and_store_batch",
+                    "process_uploaded_document",
+                ]),
+                tasks_table.c.status.in_(["pending", "locked"]),
+            )
+        )
+    )
+
+    # Count tasks that match our document_id
+    pending_count = 0
+    for row in results:
+        payload = row["payload"]
+        if payload and payload.get("document_id") == document_id:
+            pending_count += 1
+
+    return pending_count
 
 
 async def handle_embed_and_store_batch(
@@ -108,3 +149,69 @@ async def handle_embed_and_store_batch(
     logger.info(
         f"Successfully stored {len(texts_to_embed)} embeddings for document_id {document_id}."
     )
+
+    # Check if all tasks for this document are complete
+    if indexing_source := exec_context.indexing_source:
+        try:
+            pending_count = await check_document_completion(db_context, document_id)
+        except Exception as e:
+            logger.error(
+                f"Failed to check document completion for document_id {document_id}: {e}",
+                exc_info=True,
+            )
+            return
+
+        if pending_count == 0:
+            logger.info(
+                f"All tasks complete for document_id {document_id}. Emitting DOCUMENT_READY event."
+            )
+
+            # Get document information for the event
+            try:
+                doc_info = await get_document_by_id(db_context, document_id)
+
+                # Count embeddings for metadata
+                from sqlalchemy import func, select
+
+                from family_assistant.storage.vector import DocumentEmbeddingRecord
+
+                embeddings_result = await db_context.fetch_one(
+                    select(
+                        func.count().label("total_embeddings"),
+                        func.count(
+                            func.distinct(DocumentEmbeddingRecord.embedding_type)
+                        ).label("embedding_types"),
+                    ).where(DocumentEmbeddingRecord.document_id == document_id)
+                )
+                embeddings_data = embeddings_result
+
+                # Emit the document ready event
+                if doc_info:
+                    await indexing_source.emit_event({
+                        "event_type": IndexingEventType.DOCUMENT_READY.value,
+                        "document_id": document_id,
+                        "document_type": doc_info.source_type,
+                        "document_title": doc_info.title,
+                        "metadata": {
+                            "total_embeddings": embeddings_data["total_embeddings"]
+                            if embeddings_data
+                            else 0,
+                            "embedding_types": embeddings_data["embedding_types"]
+                            if embeddings_data
+                            else 0,
+                            "source_id": doc_info.source_id,
+                        },
+                    })
+                else:
+                    logger.warning(
+                        f"Document {document_id} not found when emitting DOCUMENT_READY event"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Failed to emit DOCUMENT_READY event for document {document_id}: {e}",
+                    exc_info=True,
+                )
+        else:
+            logger.debug(
+                f"Document {document_id} still has {pending_count} pending tasks."
+            )
