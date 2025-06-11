@@ -96,10 +96,7 @@ class EventProcessor:
                         db_ctx, listener["id"], listener["conversation_id"]
                     )
                     if allowed:
-                        # For now, just log - actual action execution will come later
-                        logger.info(
-                            f"Listener {listener['id']} ({listener['name']}) triggered by event"
-                        )
+                        await self._execute_action(listener, event_data)
                         triggered_listener_ids.append(listener["id"])
 
                         # Handle one-time listeners
@@ -168,6 +165,53 @@ class EventProcessor:
             logger.debug(
                 f"Refreshed listener cache: {sum(len(v) for v in new_cache.values())} "
                 f"listeners across {len(new_cache)} sources"
+            )
+
+    async def _execute_action(
+        self, listener: dict[str, Any], event_data: dict[str, Any]
+    ) -> None:
+        """Execute the action defined in the listener."""
+        from family_assistant.storage.tasks import enqueue_task
+
+        action_type = listener["action_type"]
+
+        if action_type == "wake_llm":
+            # Extract configuration
+            action_config = listener.get("action_config", {})
+            include_event_data = action_config.get("include_event_data", True)
+
+            # Prepare callback context
+            callback_context = {
+                "trigger": f"Event listener '{listener['name']}' matched",
+                "listener_id": listener["id"],
+                "source": listener["source_id"],
+            }
+
+            if include_event_data:
+                callback_context["event_data"] = event_data
+
+            # Generate task ID
+            task_id = f"event_listener_{listener['id']}_{int(time.time() * 1000)}"
+
+            # Enqueue llm_callback task
+            async with get_db_context() as db_ctx:
+                await enqueue_task(
+                    db_context=db_ctx,
+                    task_id=task_id,
+                    task_type="llm_callback",
+                    payload={
+                        "interface_type": listener.get("interface_type", "telegram"),
+                        "conversation_id": listener["conversation_id"],
+                        "callback_context": callback_context,
+                        "scheduling_timestamp": time.time(),
+                        "skip_if_user_responded": False,
+                    },
+                )
+
+            logger.info(f"Enqueued wake_llm callback for listener {listener['id']}")
+        else:
+            logger.warning(
+                f"Unknown action type '{action_type}' for listener {listener['id']}"
             )
 
     async def _disable_listener(self, listener_id: int) -> None:
