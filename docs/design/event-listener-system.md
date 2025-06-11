@@ -804,14 +804,14 @@ Use cases:
 - ✅ Conversation isolation for security
 - ✅ Rate limiting using DB fields (daily_executions, daily_reset_at)
 
-### Phase 2: Production Hardening (IN PROGRESS)
+### Phase 2: Production Hardening ✅ COMPLETED
 - ✅ Rate limiting implemented in check_and_update_rate_limit()
 - ✅ Event cleanup task scheduling (system_event_cleanup handler registered and scheduled)
 - ✅ Wake LLM action execution (EventProcessor._execute_action implemented)
 - ✅ Concurrent processing fix - Queue-based event handling prevents database conflicts
-- ⏳ Connection retry logic for Home Assistant
-- ⏳ Health check and auto-reconnect
-- ⏳ Basic monitoring/alerting for connection issues
+- ✅ Connection retry logic for Home Assistant - Exponential backoff with max 5 minute delay
+- ✅ Health check and auto-reconnect - Periodic health checks every 30 seconds, reconnects if no events for 5 minutes
+- ⏳ Basic monitoring/alerting for connection issues (deferred)
 
 ### Phase 3: Additional Sources (as needed)
 - Document indexing events (if users request)
@@ -827,15 +827,16 @@ Use cases:
 3. **End-to-End Tests** - Tests verify the complete flow from event → listener match → LLM callback task creation
 4. **Concurrent Processing Fix** - Implemented queue-based event processing to prevent database connection conflicts
 
-### Remaining Tasks for Production Hardening
+### Production Hardening Complete
 
-The event listener system is now functionally complete for MVP. The remaining tasks for production hardening include:
+The event listener system now includes comprehensive production hardening features:
 
-1. **Connection retry logic for Home Assistant** - Add reconnection logic when WebSocket connection drops
-2. **Health check and auto-reconnect** - Periodic health checks to ensure sources remain connected
-3. **Basic monitoring/alerting for connection issues** - Notify users when sources are disconnected for extended periods
+1. **Connection retry logic** - Exponential backoff starting at 5 seconds, capping at 5 minutes
+2. **Health check system** - Checks every 30 seconds, triggers reconnection if no events for 5 minutes
+3. **Connection state tracking** - Tracks connection health, reconnection attempts, and last event time
+4. **Graceful error handling** - Queue-based processing prevents concurrent database conflicts
 
-These can be implemented as needed based on production usage patterns.
+The only deferred feature is monitoring/alerting for connection issues, which can be added later based on operational needs.
 
 ## Testing Strategy
 

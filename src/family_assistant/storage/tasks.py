@@ -101,11 +101,67 @@ async def enqueue_task(
     }
 
     try:
-        stmt = insert(tasks_table).values(**values_to_insert)
+        # Check if this is a system task (starts with "system_")
+        is_system_task = task_id.startswith("system_")
+
+        if is_system_task:
+            # For system tasks, do an upsert to handle re-scheduling
+            if db_context.engine.dialect.name == "postgresql":
+                # PostgreSQL: Use ON CONFLICT DO UPDATE
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                stmt = pg_insert(tasks_table).values(**values_to_insert)
+                # Only update fields that might change for system tasks
+                update_dict = {
+                    "scheduled_at": stmt.excluded.scheduled_at,
+                    "payload": stmt.excluded.payload,
+                    "max_retries": stmt.excluded.max_retries,
+                    "recurrence_rule": stmt.excluded.recurrence_rule,
+                }
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["task_id"],
+                    set_=update_dict,
+                    where=(
+                        tasks_table.c.status != "processing"
+                    ),  # Don't update if currently processing
+                )
+            else:
+                # SQLite: Check if exists first, then update or insert
+                existing = await db_context.fetch_one(
+                    select(tasks_table.c.id, tasks_table.c.status).where(
+                        tasks_table.c.task_id == task_id
+                    )
+                )
+                if existing and existing["status"] != "processing":
+                    # Update existing task
+                    stmt = (
+                        update(tasks_table)
+                        .where(tasks_table.c.task_id == task_id)
+                        .where(tasks_table.c.status != "processing")
+                        .values(
+                            scheduled_at=processed_scheduled_at,
+                            payload=payload,
+                            max_retries=max_task_retries,
+                            recurrence_rule=recurrence_rule,
+                        )
+                    )
+                elif not existing:
+                    # Insert new task
+                    stmt = insert(tasks_table).values(**values_to_insert)
+                else:
+                    # Task is currently processing, skip update
+                    logger.info(
+                        f"System task {task_id} is currently processing, skipping update"
+                    )
+                    return
+        else:
+            # For regular tasks, do normal insert
+            stmt = insert(tasks_table).values(**values_to_insert)
+
         # Use execute_with_retry as commit is handled by context manager
         await db_context.execute_with_retry(stmt)
         logger.info(
-            f"Enqueued task {task_id} (Type: {task_type}, Original: {values_to_insert.get('original_task_id')}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
+            f"{'Updated' if is_system_task else 'Enqueued'} task {task_id} (Type: {task_type}, Original: {values_to_insert.get('original_task_id')}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
         )
         is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
             timezone.utc
