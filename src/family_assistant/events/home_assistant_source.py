@@ -39,6 +39,9 @@ class HomeAssistantSource(EventSource):
         self._websocket_task: asyncio.Task | None = None
         self._running = False
         self._reconnect_delay = 5.0  # seconds
+        # Queue for thread-safe event passing (limit to prevent memory issues)
+        self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+        self._processor_task: asyncio.Task | None = None
 
     @property
     def source_id(self) -> str:
@@ -50,6 +53,7 @@ class HomeAssistantSource(EventSource):
         self.processor = processor
         self._running = True
         self._websocket_task = asyncio.create_task(self._websocket_loop())
+        self._processor_task = asyncio.create_task(self._process_events())
         logger.info("Started Home Assistant event source")
 
     async def stop(self) -> None:
@@ -59,6 +63,10 @@ class HomeAssistantSource(EventSource):
             self._websocket_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._websocket_task
+        if self._processor_task:
+            self._processor_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._processor_task
         logger.info("Stopped Home Assistant event source")
 
     async def _websocket_loop(self) -> None:
@@ -103,14 +111,14 @@ class HomeAssistantSource(EventSource):
                             break
 
                         # Process the state change event
-                        asyncio.run(self._handle_state_change(event))
+                        self._handle_state_change_sync(event)
 
         except Exception as e:
             logger.error(f"WebSocket connection error: {e}")
             raise
 
-    async def _handle_state_change(self, event: Any) -> None:
-        """Handle a state change event."""
+    def _handle_state_change_sync(self, event: Any) -> None:
+        """Handle a state change event synchronously from the thread."""
         try:
             # FiredEvent object may have attributes instead of dict access
             # Try to access as attributes first, fall back to dict access
@@ -158,9 +166,29 @@ class HomeAssistantSource(EventSource):
                 "new_state": extract_state_info(new_state),
             }
 
-            # Send to processor
-            if self.processor:
-                await self.processor.process_event(self.source_id, processed_event)
+            # Add to queue for async processing
+            # Use thread-safe put_nowait since we're in a thread
+            try:
+                self._event_queue.put_nowait(processed_event)
+            except asyncio.QueueFull:
+                logger.warning(f"Event queue full, dropping event for {entity_id}")
 
         except Exception as e:
             logger.error(f"Error processing state change event: {e}", exc_info=True)
+
+    async def _process_events(self) -> None:
+        """Process events from the queue asynchronously."""
+        while self._running:
+            try:
+                # Wait for events with timeout to allow checking _running flag
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
+
+                # Send to processor
+                if self.processor:
+                    await self.processor.process_event(self.source_id, event)
+
+            except asyncio.TimeoutError:
+                # No event within timeout, continue loop to check _running
+                continue
+            except Exception as e:
+                logger.error(f"Error processing queued event: {e}", exc_info=True)

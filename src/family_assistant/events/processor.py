@@ -2,6 +2,7 @@
 Event processor that routes events to storage and listeners.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -41,6 +42,8 @@ class EventProcessor:
         self._cache_refresh_interval = 60  # Refresh from DB every minute
         self._last_cache_refresh = 0
         self._running = False
+        # Lock to prevent concurrent database operations
+        self._process_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start all event sources."""
@@ -79,12 +82,14 @@ class EventProcessor:
         if not self._running:
             return
 
-        # Refresh cache if needed
-        if time.time() - self._last_cache_refresh > self._cache_refresh_interval:
-            await self._refresh_listener_cache()
+        # Use lock to prevent concurrent processing
+        async with self._process_lock:
+            # Refresh cache if needed
+            if time.time() - self._last_cache_refresh > self._cache_refresh_interval:
+                await self._refresh_listener_cache()
 
-        # Get all active listeners for this source
-        listeners = self._listener_cache.get(source_id, [])
+            # Get all active listeners for this source
+            listeners = self._listener_cache.get(source_id, [])
 
         # Evaluate match conditions for relevant listeners
         triggered_listener_ids = []
