@@ -808,6 +808,7 @@ Use cases:
 - ✅ Rate limiting implemented in check_and_update_rate_limit()
 - ✅ Event cleanup task scheduling (system_event_cleanup handler registered and scheduled)
 - ✅ Wake LLM action execution (EventProcessor._execute_action implemented)
+- ✅ Concurrent processing fix - Queue-based event handling prevents database conflicts
 - ⏳ Connection retry logic for Home Assistant
 - ⏳ Health check and auto-reconnect
 - ⏳ Basic monitoring/alerting for connection issues
@@ -1350,6 +1351,47 @@ SELECT * FROM recent_events
 WHERE source_id = 'home_assistant' 
   AND json_extract(event_data, '$.entity_id') = 'sensor.hallway_motion';
 ```
+
+## Concurrent Processing Architecture
+
+### Problem: Database Connection Conflicts
+
+When processing high-volume events from Home Assistant WebSocket, the initial implementation encountered `asyncpg.exceptions.InterfaceError: cannot perform operation: another operation is in progress` errors. This occurred because:
+
+1. WebSocket events arrive in a blocking thread (homeassistant_api limitation)
+2. Each event was processed with `asyncio.run()`, creating new event loops
+3. Multiple concurrent database operations conflicted on shared connections
+
+### Solution: Queue-Based Event Processing
+
+The event processing architecture now uses a producer-consumer pattern:
+
+1. **Producer Thread**: WebSocket connection runs in a thread and adds events to an asyncio.Queue
+2. **Consumer Task**: Dedicated async task processes events sequentially from the queue
+3. **Process Lock**: EventProcessor uses asyncio.Lock to serialize database operations
+4. **Bounded Queue**: Maximum queue size (1000) prevents memory issues during event storms
+
+```python
+# In HomeAssistantSource
+self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+
+# Thread adds events to queue
+def _handle_state_change_sync(self, event):
+    processed_event = self._process_event(event)
+    self._event_queue.put_nowait(processed_event)
+
+# Async task processes queue
+async def _process_events(self):
+    while self._running:
+        event = await self._event_queue.get()
+        await self.processor.process_event(self.source_id, event)
+```
+
+This architecture ensures:
+- No concurrent database operations
+- Events are processed in order
+- Thread safety between sync WebSocket and async processing
+- Graceful handling of event bursts
 
 ## Key Design Principles
 
