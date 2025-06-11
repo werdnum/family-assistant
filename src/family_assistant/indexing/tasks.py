@@ -5,7 +5,8 @@ Task handlers related to the document indexing pipeline.
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, select
+import sqlalchemy as sa
+from sqlalchemy import and_, func, select
 
 from family_assistant.events.indexing_source import IndexingEventType
 from family_assistant.storage.tasks import tasks_table
@@ -28,9 +29,22 @@ async def check_document_completion(
     Returns:
         Number of pending tasks for the document
     """
-    # For SQLite compatibility, fetch all pending tasks and filter in Python
-    results = await db_context.fetch_all(
-        select(tasks_table.c.payload).where(
+    # Use JSON extraction that works with both SQLite and PostgreSQL
+    if db_context.engine.dialect.name == "postgresql":
+        # PostgreSQL: Use ->> operator for JSON text extraction
+        # Cast to integer for proper comparison
+        json_extract_expr = sa.cast(
+            tasks_table.c.payload.op("->>")(sa.text("'document_id'")), sa.Integer
+        )
+    else:
+        # SQLite: Use json_extract function (returns actual INTEGER)
+        json_extract_expr = func.json_extract(tasks_table.c.payload, "$.document_id")
+
+    # Query for pending tasks with matching document_id
+    result = await db_context.fetch_one(
+        select(func.count().label("count"))  # pylint: disable=not-callable
+        .select_from(tasks_table)
+        .where(
             and_(
                 tasks_table.c.task_type.in_([
                     "index_document",
@@ -40,17 +54,13 @@ async def check_document_completion(
                     "process_uploaded_document",
                 ]),
                 tasks_table.c.status.in_(["pending", "locked"]),
+                # Now both expressions return integers for proper comparison
+                json_extract_expr == document_id,
             )
         )
     )
-
-    # Count tasks that match our document_id
-    pending_count = 0
-    for row in results:
-        payload = row["payload"]
-        if payload and payload.get("document_id") == document_id:
-            pending_count += 1
-
+    # fetch_one returns a Row object (dict-like), get the count value
+    pending_count = result["count"] if result else 0
     return pending_count
 
 
@@ -177,8 +187,8 @@ async def handle_embed_and_store_batch(
 
                 embeddings_result = await db_context.fetch_one(
                     select(
-                        func.count().label("total_embeddings"),
-                        func.count(
+                        func.count().label("total_embeddings"),  # pylint: disable=not-callable
+                        func.count(  # pylint: disable=not-callable
                             func.distinct(DocumentEmbeddingRecord.embedding_type)
                         ).label("embedding_types"),
                     ).where(DocumentEmbeddingRecord.document_id == document_id)

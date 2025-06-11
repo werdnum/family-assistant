@@ -488,3 +488,86 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
                 processor_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await processor_task
+
+
+@pytest.mark.asyncio
+async def test_json_extraction_compatibility(test_db_engine: AsyncEngine) -> None:
+    """Test that JSON extraction works correctly with both SQLite and PostgreSQL."""
+    async with get_db_context() as db_ctx:
+        # Clean up any existing test tasks
+        await db_ctx.execute_with_retry(
+            storage.tasks_table.delete().where(
+                storage.tasks_table.c.task_id.like("test_json_%")
+            )
+        )
+
+        # Create test tasks with different document_ids
+        test_doc_id = 999
+        for i in range(3):
+            await storage.enqueue_task(
+                db_context=db_ctx,
+                task_id=f"test_json_{i}",
+                task_type="embed_and_store_batch",
+                payload={"document_id": test_doc_id if i < 2 else 888},
+            )
+
+        # Import the function to test
+        from family_assistant.indexing.tasks import check_document_completion
+
+        # Test that it correctly counts pending tasks
+        pending_count = await check_document_completion(db_ctx, test_doc_id)
+        assert pending_count == 2, f"Expected 2 pending tasks, got {pending_count}"
+
+        # Test with non-existent document
+        pending_count = await check_document_completion(db_ctx, 777)
+        assert pending_count == 0, (
+            f"Expected 0 pending tasks for non-existent doc, got {pending_count}"
+        )
+
+        # Clean up
+        await db_ctx.execute_with_retry(
+            storage.tasks_table.delete().where(
+                storage.tasks_table.c.task_id.like("test_json_%")
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_json_extraction_postgresql(pg_vector_db_engine: AsyncEngine) -> None:
+    """Test JSON extraction specifically with PostgreSQL."""
+    async with get_db_context() as db_ctx:
+        # This test will only run when PostgreSQL fixtures are available
+        assert db_ctx.engine.dialect.name == "postgresql", (
+            "This test requires PostgreSQL"
+        )
+
+        # Clean up any existing test tasks
+        await db_ctx.execute_with_retry(
+            storage.tasks_table.delete().where(
+                storage.tasks_table.c.task_id.like("test_pg_json_%")
+            )
+        )
+
+        # Create test task
+        test_doc_id = 12345
+        await storage.enqueue_task(
+            db_context=db_ctx,
+            task_id="test_pg_json_1",
+            task_type="embed_and_store_batch",
+            payload={"document_id": test_doc_id, "other_field": "test"},
+        )
+
+        # Don't test PostgreSQL internals, just verify our implementation works
+
+        # Test that our check_document_completion function works
+        from family_assistant.indexing.tasks import check_document_completion
+
+        pending_count = await check_document_completion(db_ctx, test_doc_id)
+        assert pending_count == 1, f"Expected 1 pending task, got {pending_count}"
+
+        # Clean up
+        await db_ctx.execute_with_retry(
+            storage.tasks_table.delete().where(
+                storage.tasks_table.c.task_id.like("test_pg_json_%")
+            )
+        )
