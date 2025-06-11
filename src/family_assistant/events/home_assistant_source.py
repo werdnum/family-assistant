@@ -5,6 +5,7 @@ Home Assistant event source implementation.
 import asyncio
 import contextlib
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 import homeassistant_api as ha_api
@@ -38,7 +39,19 @@ class HomeAssistantSource(EventSource):
         self.processor: EventProcessor | None = None
         self._websocket_task: asyncio.Task | None = None
         self._running = False
-        self._reconnect_delay = 5.0  # seconds
+
+        # Reconnection parameters with exponential backoff
+        self._base_reconnect_delay = 5.0  # Base delay in seconds
+        self._max_reconnect_delay = 300.0  # Max delay (5 minutes)
+        self._reconnect_delay = self._base_reconnect_delay
+        self._reconnect_attempts = 0
+
+        # Health check parameters
+        self._health_check_interval = 30.0  # Check every 30 seconds
+        self._health_check_task: asyncio.Task | None = None
+        self._last_event_time = 0.0
+        self._connection_healthy = False
+
         # Queue for thread-safe event passing (limit to prevent memory issues)
         self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
         self._processor_task: asyncio.Task | None = None
@@ -54,34 +67,50 @@ class HomeAssistantSource(EventSource):
         self._running = True
         self._websocket_task = asyncio.create_task(self._websocket_loop())
         self._processor_task = asyncio.create_task(self._process_events())
+        self._health_check_task = asyncio.create_task(self._health_check_loop())
         logger.info("Started Home Assistant event source")
 
     async def stop(self) -> None:
         """Stop listening for events."""
         self._running = False
-        if self._websocket_task:
-            self._websocket_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._websocket_task
-        if self._processor_task:
-            self._processor_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._processor_task
+        tasks = [self._websocket_task, self._processor_task, self._health_check_task]
+        for task in tasks:
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         logger.info("Stopped Home Assistant event source")
 
     async def _websocket_loop(self) -> None:
-        """Main WebSocket connection loop with reconnection."""
+        """Main WebSocket connection loop with exponential backoff reconnection."""
         while self._running:
             try:
+                # Reset connection state on new attempt
+                self._connection_healthy = False
+
                 # Run blocking WebSocket in thread
                 await asyncio.to_thread(self._connect_and_listen)
+
+                # If we get here, connection was closed normally
+                logger.warning("Home Assistant WebSocket connection closed")
+                self._reconnect_attempts += 1
+
             except Exception as e:
                 logger.error(f"Home Assistant WebSocket error: {e}", exc_info=True)
-                if self._running:
-                    logger.info(
-                        f"Reconnecting to Home Assistant in {self._reconnect_delay} seconds"
-                    )
-                    await asyncio.sleep(self._reconnect_delay)
+                self._reconnect_attempts += 1
+
+            if self._running:
+                # Calculate exponential backoff
+                self._reconnect_delay = min(
+                    self._base_reconnect_delay * (2**self._reconnect_attempts),
+                    self._max_reconnect_delay,
+                )
+
+                logger.info(
+                    f"Reconnecting to Home Assistant in {self._reconnect_delay} seconds "
+                    f"(attempt {self._reconnect_attempts})"
+                )
+                await asyncio.sleep(self._reconnect_delay)
 
     def _connect_and_listen(self) -> None:
         """Connect to Home Assistant WebSocket and listen for events (blocking)."""
@@ -103,6 +132,12 @@ class HomeAssistantSource(EventSource):
                 # Note: WebsocketClient doesn't have a verify_ssl parameter
             ) as ws_client:
                 logger.info("Connected to Home Assistant WebSocket")
+
+                # Mark connection as healthy and reset reconnect attempts
+                self._connection_healthy = True
+                self._reconnect_attempts = 0
+                self._reconnect_delay = self._base_reconnect_delay
+                self._last_event_time = time.time()
 
                 # Listen specifically for state_changed events
                 with ws_client.listen_events("state_changed") as events:
@@ -170,6 +205,8 @@ class HomeAssistantSource(EventSource):
             # Use thread-safe put_nowait since we're in a thread
             try:
                 self._event_queue.put_nowait(processed_event)
+                # Update last event time for health check
+                self._last_event_time = time.time()
             except asyncio.QueueFull:
                 logger.warning(f"Event queue full, dropping event for {entity_id}")
 
@@ -192,3 +229,59 @@ class HomeAssistantSource(EventSource):
                 continue
             except Exception as e:
                 logger.error(f"Error processing queued event: {e}", exc_info=True)
+
+    async def _health_check_loop(self) -> None:
+        """Periodically check connection health."""
+        await asyncio.sleep(10)  # Initial delay before starting health checks
+
+        while self._running:
+            try:
+                # Check if connection is marked as healthy
+                if self._connection_healthy:
+                    # Check if we've received any events recently
+                    time_since_last_event = time.time() - self._last_event_time
+
+                    # If no events for extended period, test the connection
+                    if time_since_last_event > 300:  # 5 minutes
+                        logger.warning(
+                            f"No events received for {time_since_last_event:.0f} seconds, "
+                            "checking Home Assistant connection"
+                        )
+
+                        # Try to verify connection with a simple API call
+                        connection_ok = await self._test_connection()
+
+                        if not connection_ok:
+                            logger.error("Home Assistant connection test failed")
+                            # Force reconnection by marking unhealthy
+                            self._connection_healthy = False
+                            # Cancel websocket task to trigger reconnection
+                            if self._websocket_task and not self._websocket_task.done():
+                                self._websocket_task.cancel()
+                else:
+                    # Connection is not healthy, log status
+                    logger.debug(
+                        f"Home Assistant connection unhealthy, reconnect attempt "
+                        f"{self._reconnect_attempts} pending"
+                    )
+
+                # Wait before next health check
+                await asyncio.sleep(self._health_check_interval)
+
+            except asyncio.CancelledError:
+                # Task is being cancelled, exit cleanly
+                break
+            except Exception as e:
+                logger.error(f"Error in health check loop: {e}", exc_info=True)
+                await asyncio.sleep(self._health_check_interval)
+
+    async def _test_connection(self) -> bool:
+        """Test if Home Assistant connection is working."""
+        try:
+            # Use the regular client to test API connectivity
+            # This is a lightweight call that should work if HA is accessible
+            states = await asyncio.to_thread(self.client.get_states)
+            return len(states) > 0
+        except Exception as e:
+            logger.error(f"Connection test failed: {e}")
+            return False

@@ -227,3 +227,28 @@ class EventProcessor:
                 {"id": listener_id},
             )
             logger.info(f"Disabled one-time listener {listener_id}")
+
+    async def get_health_status(self) -> dict[str, Any]:
+        """Get health status of all event sources."""
+        status = {
+            "processor_running": self._running,
+            "sources": {},
+            "listener_cache": {
+                "last_refresh": self._last_cache_refresh,
+                "listener_count": sum(len(v) for v in self._listener_cache.values()),
+                "by_source": {k: len(v) for k, v in self._listener_cache.items()},
+            },
+        }
+
+        for source_id, source in self.sources.items():
+            # Get source-specific health info if available
+            if hasattr(source, "_connection_healthy"):
+                status["sources"][source_id] = {
+                    "healthy": getattr(source, "_connection_healthy", None),
+                    "reconnect_attempts": getattr(source, "_reconnect_attempts", 0),
+                    "last_event_time": getattr(source, "_last_event_time", 0),
+                }
+            else:
+                status["sources"][source_id] = {"status": "unknown"}
+
+        return status
