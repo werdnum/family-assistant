@@ -465,7 +465,12 @@ async def check_and_update_rate_limit(
             return False, "Listener not found"
 
         # Check if we need to reset daily counter
-        if not listener["daily_reset_at"] or now > listener["daily_reset_at"]:
+        daily_reset_at = listener["daily_reset_at"]
+        # Handle SQLite returning naive datetimes
+        if daily_reset_at and daily_reset_at.tzinfo is None:
+            daily_reset_at = daily_reset_at.replace(tzinfo=timezone.utc)
+
+        if not daily_reset_at or now > daily_reset_at:
             # Reset counter for new day
             tomorrow = now.replace(
                 hour=0, minute=0, second=0, microsecond=0

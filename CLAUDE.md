@@ -110,3 +110,4 @@ When implementing a new tool for the assistant, follow these steps:
 - Save tokens when running tests: use pytest -q to check if a test passes, only use -s or -v if you need it
 - Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.
 - **Important**: When adding new imports, add the code that uses the import first, then add the import. Otherwise, a linter running in another tab might remove the import as unused before you add the code that uses it.
+- Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL text may break across engines.

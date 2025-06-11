@@ -27,6 +27,7 @@ from family_assistant.embeddings import (
     LiteLLMEmbeddingGenerator,
 )
 from family_assistant.events.home_assistant_source import HomeAssistantSource
+from family_assistant.events.indexing_source import IndexingSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.home_assistant_shared import create_home_assistant_client
 from family_assistant.indexing.document_indexer import DocumentIndexer
@@ -605,6 +606,11 @@ class Assistant:
                     )
                     event_sources[source_key] = ha_source
 
+            # Always add indexing source since it's needed for document indexing events
+            self.indexing_source = IndexingSource()
+            event_sources["indexing"] = self.indexing_source
+            logger.info("Created IndexingSource for document indexing events")
+
             if event_sources:
                 storage_config = event_config.get("storage", {})
                 sample_interval_hours = storage_config.get("sample_interval_hours", 1.0)
@@ -655,6 +661,9 @@ class Assistant:
             timezone_str=default_profile_conf["processing_config"]["timezone"],
             embedding_generator=self.embedding_generator,
             # shutdown_event is likely handled internally by TaskWorker or passed differently
+            indexing_source=getattr(
+                self, "indexing_source", None
+            ),  # Pass indexing source if available
         )
         self.task_worker_instance.register_task_handler(
             "log_message", task_wrapper_handle_log_message

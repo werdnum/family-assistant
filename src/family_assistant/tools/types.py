@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
@@ -38,6 +39,7 @@ class ToolExecutionContext:
         embedding_generator: Optional generator for creating text embeddings.
         new_task_event: Optional event to notify the task worker of new tasks.
         clock: Optional clock instance for managing time.
+        indexing_source: Optional indexing event source for emitting document indexing events.
     """
 
     interface_type: str  # e.g., 'telegram', 'web', 'email'
@@ -70,6 +72,7 @@ class ToolExecutionContext:
     )
     new_task_event: asyncio.Event | None = None  # Add new_task_event
     clock: Optional["Clock"] = None  # Add clock
+    indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
 
 
 class ToolNotFoundError(LookupError):
