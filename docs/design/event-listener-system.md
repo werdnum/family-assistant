@@ -806,7 +806,8 @@ Use cases:
 
 ### Phase 2: Production Hardening (IN PROGRESS)
 - ✅ Rate limiting implemented in check_and_update_rate_limit()
-- ⏳ Event cleanup task scheduling (cleanup_old_events function exists but not scheduled)
+- ✅ Event cleanup task scheduling (system_event_cleanup handler registered and scheduled)
+- ✅ Wake LLM action execution (EventProcessor._execute_action implemented)
 - ⏳ Connection retry logic for Home Assistant
 - ⏳ Health check and auto-reconnect
 - ⏳ Basic monitoring/alerting for connection issues

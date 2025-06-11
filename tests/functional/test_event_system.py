@@ -494,3 +494,188 @@ async def test_cleanup_old_events(test_db_engine: AsyncEngine) -> None:
 
     # Assert - the cleanup function works correctly
     assert deleted_count == 1  # Exactly one old event was deleted
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) -> None:
+    """Test end-to-end flow: event triggers listener which enqueues LLM callback task."""
+    from sqlalchemy import text
+
+    from family_assistant.storage.tasks import dequeue_task
+
+    # Step 1: Create an event listener that watches for motion detection
+    async with get_db_context() as db_ctx:
+        await db_ctx.execute_with_retry(
+            text("""INSERT INTO event_listeners 
+                 (name, match_conditions, source_id, action_type, action_config, enabled, 
+                  conversation_id, interface_type)
+                 VALUES (:name, :conditions, :source_id, :action_type, :action_config, 
+                         :enabled, :conversation_id, :interface_type)"""),
+            {
+                "name": "Motion Light Automation",
+                "conditions": json.dumps({
+                    "entity_id": "binary_sensor.hallway_motion",
+                    "new_state.state": "on",
+                }),
+                "source_id": EventSourceType.home_assistant.value,
+                "action_type": "wake_llm",
+                "action_config": json.dumps({
+                    "include_event_data": True,
+                }),
+                "enabled": True,
+                "conversation_id": "test_chat_123",
+                "interface_type": "telegram",
+            },
+        )
+
+    # Step 2: Create event processor and refresh cache
+    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    # Verify listener is in cache
+    listeners = processor._listener_cache.get("home_assistant", [])
+    assert len(listeners) == 1
+    assert listeners[0]["name"] == "Motion Light Automation"
+
+    # Step 3: Process a motion detection event
+    motion_event = {
+        "entity_id": "binary_sensor.hallway_motion",
+        "old_state": {
+            "state": "off",
+            "attributes": {"friendly_name": "Hallway Motion Sensor"},
+        },
+        "new_state": {
+            "state": "on",
+            "attributes": {"friendly_name": "Hallway Motion Sensor"},
+            "last_changed": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+
+    await processor.process_event("home_assistant", motion_event)
+
+    # Step 4: Verify the event was stored
+    async with get_db_context() as db_ctx:
+        events_result = await db_ctx.fetch_all(
+            text("SELECT * FROM recent_events WHERE source_id = 'home_assistant'")
+        )
+        assert len(events_result) >= 1
+
+        # Find our motion event
+        motion_event_stored = None
+        for event in events_result:
+            event_data = json.loads(event["event_data"])
+            if event_data.get("entity_id") == "binary_sensor.hallway_motion":
+                motion_event_stored = event
+                break
+
+        assert motion_event_stored is not None
+        triggered_listeners = json.loads(
+            motion_event_stored["triggered_listener_ids"] or "[]"
+        )
+        assert len(triggered_listeners) == 1
+
+    # Step 5: Verify an LLM callback task was created
+    async with get_db_context() as db_ctx:
+        # Check tasks table for our callback
+        tasks_result = await db_ctx.fetch_all(
+            text(
+                "SELECT * FROM tasks WHERE task_type = 'llm_callback' AND status = 'pending'"
+            )
+        )
+
+        # Find the task created by our listener
+        callback_task = None
+        for task in tasks_result:
+            if task["task_id"].startswith("event_listener_"):
+                callback_task = task
+                break
+
+        assert callback_task is not None
+
+        # Verify task payload
+        payload = json.loads(callback_task["payload"])
+        assert payload["interface_type"] == "telegram"
+        assert payload["conversation_id"] == "test_chat_123"
+        assert "callback_context" in payload
+
+        callback_context = payload["callback_context"]
+        assert (
+            callback_context["trigger"]
+            == "Event listener 'Motion Light Automation' matched"
+        )
+        assert callback_context["source"] == "home_assistant"
+        assert "event_data" in callback_context
+        assert (
+            callback_context["event_data"]["entity_id"]
+            == "binary_sensor.hallway_motion"
+        )
+
+    # Step 6: Verify the task can be dequeued by a worker
+    async with get_db_context() as db_ctx:
+        dequeued_task = await dequeue_task(
+            db_ctx,
+            worker_id="test_worker",
+            task_types=["llm_callback"],
+            current_time=datetime.now(timezone.utc),
+        )
+
+        assert dequeued_task is not None
+        assert dequeued_task["task_type"] == "llm_callback"
+        # The task was just dequeued and is ready for processing
+        assert dequeued_task["task_id"].startswith("event_listener_")
+
+
+@pytest.mark.asyncio
+async def test_one_time_listener_disables_after_trigger(
+    test_db_engine: AsyncEngine,
+) -> None:
+    """Test that one-time listeners are disabled after they trigger."""
+    from sqlalchemy import text
+
+    # Create a one-time listener
+    async with get_db_context() as db_ctx:
+        result = await db_ctx.execute_with_retry(
+            text("""INSERT INTO event_listeners 
+                 (name, match_conditions, source_id, action_type, enabled, 
+                  conversation_id, interface_type, one_time)
+                 VALUES (:name, :conditions, :source_id, :action_type, :enabled, 
+                         :conversation_id, :interface_type, :one_time)
+                 RETURNING id"""),
+            {
+                "name": "One-time door alert",
+                "conditions": json.dumps({
+                    "entity_id": "binary_sensor.front_door",
+                    "new_state.state": "open",
+                }),
+                "source_id": EventSourceType.home_assistant.value,
+                "action_type": "wake_llm",
+                "enabled": True,
+                "conversation_id": "test_chat_456",
+                "interface_type": "telegram",
+                "one_time": True,
+            },
+        )
+        listener_id = result.scalar_one()
+
+    # Create processor and process matching event
+    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    door_event = {
+        "entity_id": "binary_sensor.front_door",
+        "old_state": {"state": "closed"},
+        "new_state": {"state": "open"},
+    }
+
+    await processor.process_event("home_assistant", door_event)
+
+    # Verify listener is now disabled
+    async with get_db_context() as db_ctx:
+        result = await db_ctx.fetch_one(
+            text("SELECT enabled FROM event_listeners WHERE id = :id"),
+            {"id": listener_id},
+        )
+        assert result is not None
+        assert result["enabled"] == 0  # SQLite stores False as 0
