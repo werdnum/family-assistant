@@ -7,6 +7,7 @@ different storage modules to prevent circular dependencies.
 
 import logging
 import os
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -16,8 +17,10 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    event,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import func
 
 logger = logging.getLogger(__name__)
@@ -27,7 +30,56 @@ metadata = MetaData()
 
 # Define database engine
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db")
-engine = create_async_engine(DATABASE_URL, echo=False)
+
+
+def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
+    """Create engine with SQLite optimizations if applicable."""
+    # Create the engine first
+    engine = create_async_engine(
+        database_url,
+        echo=False,
+        connect_args={
+            "timeout": 30,  # 30 second busy timeout for SQLite
+            "check_same_thread": False,
+        }
+        if database_url.startswith("sqlite")
+        else {},
+        pool_pre_ping=True,
+        # Use StaticPool for SQLite to reuse connections
+        poolclass=StaticPool if database_url.startswith("sqlite") else None,
+    )
+
+    # Add SQLite-specific optimizations using dialect detection
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+        # Check if this is actually a SQLite connection
+        if hasattr(dbapi_connection, "execute"):
+            # Use a more robust check
+            cursor = dbapi_connection.cursor()
+            try:
+                # This will only work on SQLite
+                cursor.execute("SELECT sqlite_version()")
+                cursor.fetchone()
+
+                # If we get here, it's SQLite
+                cursor.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode
+                cursor.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
+                cursor.execute("PRAGMA synchronous=NORMAL")  # Better performance
+                cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+                cursor.execute("PRAGMA temp_store=MEMORY")  # Use memory for temp tables
+                cursor.execute("PRAGMA mmap_size=536870912")  # 512MB memory-mapped I/O
+
+                logger.debug("Applied SQLite optimizations")
+            except Exception:
+                # Not SQLite, ignore
+                pass
+            finally:
+                cursor.close()
+
+    return engine
+
+
+engine = create_engine_with_sqlite_optimizations(DATABASE_URL)
 logger.info(
     f"SQLAlchemy engine created for URL: {DATABASE_URL.split('@')[-1]}"
 )  # Log URL safely
