@@ -3,8 +3,11 @@
 __pycache__
 *.egg-info
 family_assistant.db
+family_assistant.db-shm
+family_assistant.db-wal
 node_modules
 scratch
 /build
 .coverage
 coverage_annotated/
+logs.log

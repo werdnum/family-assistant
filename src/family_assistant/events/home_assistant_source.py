@@ -5,6 +5,7 @@ Home Assistant event source implementation.
 import asyncio
 import contextlib
 import logging
+import queue
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -52,8 +53,8 @@ class HomeAssistantSource(EventSource):
         self._last_event_time = 0.0
         self._connection_healthy = False
 
-        # Queue for thread-safe event passing (limit to prevent memory issues)
-        self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+        # Use thread-safe queue since we're adding from a thread
+        self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
         self._processor_task: asyncio.Task | None = None
 
     @property
@@ -207,12 +208,12 @@ class HomeAssistantSource(EventSource):
             }
 
             # Add to queue for async processing
-            # Use thread-safe put_nowait since we're in a thread
+            # Use thread-safe queue.Queue instead of asyncio.Queue
             try:
                 self._event_queue.put_nowait(processed_event)
                 # Update last event time for health check
                 self._last_event_time = time.time()
-            except asyncio.QueueFull:
+            except queue.Full:
                 logger.warning(f"Event queue full, dropping event for {entity_id}")
 
         except Exception as e:
@@ -220,18 +221,25 @@ class HomeAssistantSource(EventSource):
 
     async def _process_events(self) -> None:
         """Process events from the queue asynchronously."""
+        logger.debug("Starting event processor task")
+
         while self._running:
             try:
-                # Wait for events with timeout to allow checking _running flag
-                event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
+                # Get from thread-safe queue with timeout (run in executor to avoid blocking)
+                try:
+                    event = await asyncio.get_event_loop().run_in_executor(
+                        None, self._event_queue.get, True, 1.0
+                    )
+                except queue.Empty:
+                    # No event within timeout, continue loop to check _running
+                    continue
 
                 # Send to processor
                 if self.processor:
                     await self.processor.process_event(self.source_id, event)
+                else:
+                    logger.error("Event processor is not set - event will be dropped")
 
-            except asyncio.TimeoutError:
-                # No event within timeout, continue loop to check _running
-                continue
             except Exception as e:
                 logger.error(f"Error processing queued event: {e}", exc_info=True)
 
