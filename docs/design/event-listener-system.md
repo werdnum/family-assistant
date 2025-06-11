@@ -825,6 +825,7 @@ Use cases:
 1. **Event Cleanup Task** - The system cleanup task handler is already registered and scheduled to run daily at 3 AM
 2. **Wake LLM Action** - The `_execute_action` method has been implemented in EventProcessor to create llm_callback tasks when listeners match
 3. **End-to-End Tests** - Tests verify the complete flow from event → listener match → LLM callback task creation
+4. **Concurrent Processing Fix** - Implemented queue-based event processing to prevent database connection conflicts
 
 ### Remaining Tasks for Production Hardening
 
