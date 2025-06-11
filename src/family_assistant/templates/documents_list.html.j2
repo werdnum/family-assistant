@@ -1,0 +1,126 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Documents - Family Assistant{% endblock %}
+{% block title_header %}Documents{% endblock %}
+
+{% block main_content %}
+<div class="documents-list">
+    {% if error %}
+    <div class="error-message" style="color: red; margin-bottom: 1em;">
+        <strong>Error:</strong> {{ error }}
+    </div>
+    {% endif %}
+    
+    <div style="margin-bottom: 1em;">
+        <p>Total documents: <strong>{{ total_count }}</strong></p>
+        {% if total_pages > 1 %}
+        <p>Page {{ current_page }} of {{ total_pages }}</p>
+        {% endif %}
+    </div>
+
+    {% if documents %}
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Source ID</th>
+                <th>Created</th>
+                <th>Added</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for doc in documents %}
+            <tr>
+                <td>
+                    {% if doc.title %}
+                        {{ doc.title[:50] }}{% if doc.title|length > 50 %}...{% endif %}
+                    {% else %}
+                        <em>No title</em>
+                    {% endif %}
+                </td>
+                <td>{{ doc.source_type }}</td>
+                <td>
+                    <code>{{ doc.source_id[:20] }}{% if doc.source_id|length > 20 %}...{% endif %}</code>
+                </td>
+                <td>
+                    {% if doc.created_at %}
+                        {{ doc.created_at.strftime('%Y-%m-%d %H:%M') if doc.created_at else 'N/A' }}
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </td>
+                <td>
+                    {{ doc.added_at.strftime('%Y-%m-%d %H:%M') if doc.added_at else 'N/A' }}
+                </td>
+                <td>
+                    <a href="{{ request.app.url_path_for('ui_document_detail', document_id=doc.id) }}">View</a>
+                    {% if doc.source_uri %}
+                     | <a href="{{ doc.source_uri }}" target="_blank">Source</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if total_pages > 1 %}
+    <div class="pagination" style="margin-top: 1.5em;">
+        {% if has_prev %}
+        <a href="?limit={{ limit }}&offset={{ prev_offset }}" class="button-link">← Previous</a>
+        {% endif %}
+        
+        <span style="margin: 0 1em;">Page {{ current_page }} of {{ total_pages }}</span>
+        
+        {% if has_next %}
+        <a href="?limit={{ limit }}&offset={{ next_offset }}" class="button-link">Next →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+    
+    {% else %}
+    <p>No documents found in the system.</p>
+    <p><a href="{{ request.app.url_path_for('get_document_upload_form') }}" class="button-link">Upload your first document</a></p>
+    {% endif %}
+</div>
+
+<style>
+/* Documents list specific styling */
+.documents-list table {
+    width: 100%;
+    margin-top: 1em;
+}
+
+.documents-list th {
+    text-align: left;
+    border-bottom: 2px solid var(--border);
+    padding: 0.5em;
+}
+
+.documents-list td {
+    padding: 0.5em;
+    border-bottom: 1px solid var(--border);
+}
+
+.documents-list tr:hover {
+    background-color: var(--accent-bg);
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1em;
+}
+
+/* Make source ID monospace */
+.documents-list code {
+    font-family: monospace;
+    font-size: 0.9em;
+    background-color: var(--accent-bg);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+}
+</style>
+{% endblock %}
