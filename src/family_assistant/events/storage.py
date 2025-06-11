@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.events import EventSourceType
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,20 @@ class EventStorage:
         event_data: dict[str, Any],
         triggered_listener_ids: list[int] | None = None,
     ) -> None:
-        """Store event if it should be stored based on sampling rules."""
+        """Store event if it should be stored based on sampling rules (opens new DB context)."""
+        async with get_db_context() as db_ctx:
+            await self.store_event_in_context(
+                db_ctx, source_id, event_data, triggered_listener_ids
+            )
+
+    async def store_event_in_context(
+        self,
+        db_ctx: DatabaseContext,
+        source_id: EventSourceType | str,
+        event_data: dict[str, Any],
+        triggered_listener_ids: list[int] | None = None,
+    ) -> None:
+        """Store event if it should be stored based on sampling rules within existing DB context."""
         now = time.time()
 
         # Convert enum to string if needed
@@ -58,14 +71,16 @@ class EventStorage:
 
         # Always store if it triggered listeners
         if triggered_listener_ids:
-            await self._write_event(source_str, event_data, triggered_listener_ids)
+            await self._write_event_in_context(
+                db_ctx, source_str, event_data, triggered_listener_ids
+            )
             return
 
         # Sample storage: 1 per entity per hour
         last = self.last_stored.get(key, 0)
         if now - last > self.sample_interval_seconds:
             self.last_stored[key] = now
-            await self._write_event(source_str, event_data, None)
+            await self._write_event_in_context(db_ctx, source_str, event_data, None)
 
     async def _write_event(
         self,
@@ -73,29 +88,41 @@ class EventStorage:
         event_data: dict[str, Any],
         triggered_listener_ids: list[int] | None,
     ) -> None:
-        """Write event to database."""
+        """Write event to database (opens new DB context)."""
+        async with get_db_context() as db_ctx:
+            await self._write_event_in_context(
+                db_ctx, source_id, event_data, triggered_listener_ids
+            )
+
+    async def _write_event_in_context(
+        self,
+        db_ctx: DatabaseContext,
+        source_id: str,
+        event_data: dict[str, Any],
+        triggered_listener_ids: list[int] | None,
+    ) -> None:
+        """Write event to database within existing DB context."""
         try:
             # Generate unique event ID
             event_id = f"{source_id}:{int(time.time() * 1000000)}"
 
-            async with get_db_context() as db_ctx:
-                await db_ctx.execute_with_retry(
-                    text("""INSERT INTO recent_events 
-                       (event_id, source_id, event_data, triggered_listener_ids, timestamp)
-                       VALUES (:event_id, :source_id, :event_data, :triggered_listener_ids, :timestamp)"""),
-                    {
-                        "event_id": event_id,
-                        "source_id": source_id,
-                        "event_data": json.dumps(event_data),
-                        "triggered_listener_ids": json.dumps(triggered_listener_ids)
-                        if triggered_listener_ids
-                        else None,
-                        "timestamp": datetime.now(timezone.utc),
-                    },
-                )
-                logger.debug(
-                    f"Stored event {event_id} (triggered: {len(triggered_listener_ids or [])} listeners)"
-                )
+            await db_ctx.execute_with_retry(
+                text("""INSERT INTO recent_events 
+                   (event_id, source_id, event_data, triggered_listener_ids, timestamp)
+                   VALUES (:event_id, :source_id, :event_data, :triggered_listener_ids, :timestamp)"""),
+                {
+                    "event_id": event_id,
+                    "source_id": source_id,
+                    "event_data": json.dumps(event_data),
+                    "triggered_listener_ids": json.dumps(triggered_listener_ids)
+                    if triggered_listener_ids
+                    else None,
+                    "timestamp": datetime.now(timezone.utc),
+                },
+            )
+            logger.debug(
+                f"Stored event {event_id} (triggered: {len(triggered_listener_ids or [])} listeners)"
+            )
         except Exception as e:
             logger.error(f"Failed to store event: {e}", exc_info=True)
             # Don't fail event processing due to storage errors

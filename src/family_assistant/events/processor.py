@@ -91,33 +91,38 @@ class EventProcessor:
             # Get all active listeners for this source
             listeners = self._listener_cache.get(source_id, [])
 
-        # Process all database operations in a single transaction when possible
-        triggered_listener_ids = []
+        # Process all database operations in a single transaction to avoid deadlocks
+        async with get_db_context() as db_ctx:
+            triggered_listener_ids = []
 
-        # Check each listener
-        for listener in listeners:
-            if self._check_match_conditions(event_data, listener["match_conditions"]):
-                # Check and update rate limit atomically
-                async with get_db_context() as db_ctx:
+            # Check each listener
+            for listener in listeners:
+                if self._check_match_conditions(
+                    event_data, listener["match_conditions"]
+                ):
+                    # Check and update rate limit atomically
                     allowed, reason = await check_and_update_rate_limit(
                         db_ctx, listener["id"], listener["conversation_id"]
                     )
                     if allowed:
-                        await self._execute_action(listener, event_data)
+                        await self._execute_action_in_context(
+                            db_ctx, listener, event_data
+                        )
                         triggered_listener_ids.append(listener["id"])
 
                         # Handle one-time listeners
                         if listener.get("one_time"):
-                            await self._disable_listener(listener["id"])
+                            await self._disable_listener_in_context(
+                                db_ctx, listener["id"]
+                            )
                     else:
                         logger.warning(
                             f"Listener {listener['id']} rate limited: {reason}"
                         )
 
-        # Store event for debugging/testing
-        async with get_db_context() as db_ctx:
-            await self.event_storage.store_event(
-                source_id, event_data, triggered_listener_ids
+            # Store event for debugging/testing in same transaction
+            await self.event_storage.store_event_in_context(
+                db_ctx, source_id, event_data, triggered_listener_ids
             )
 
     def _check_match_conditions(
@@ -177,7 +182,17 @@ class EventProcessor:
     async def _execute_action(
         self, listener: dict[str, Any], event_data: dict[str, Any]
     ) -> None:
-        """Execute the action defined in the listener."""
+        """Execute the action defined in the listener (opens new DB context)."""
+        async with get_db_context() as db_ctx:
+            await self._execute_action_in_context(db_ctx, listener, event_data)
+
+    async def _execute_action_in_context(
+        self,
+        db_ctx: DatabaseContext,
+        listener: dict[str, Any],
+        event_data: dict[str, Any],
+    ) -> None:
+        """Execute the action defined in the listener within existing DB context."""
         from family_assistant.storage.tasks import enqueue_task
 
         action_type = listener["action_type"]
@@ -203,19 +218,18 @@ class EventProcessor:
             # Enqueue llm_callback task
             from datetime import datetime, timezone
 
-            async with get_db_context() as db_ctx:
-                await enqueue_task(
-                    db_context=db_ctx,
-                    task_id=task_id,
-                    task_type="llm_callback",
-                    payload={
-                        "interface_type": listener.get("interface_type", "telegram"),
-                        "conversation_id": listener["conversation_id"],
-                        "callback_context": callback_context,
-                        "scheduling_timestamp": datetime.now(timezone.utc).isoformat(),
-                        "skip_if_user_responded": False,
-                    },
-                )
+            await enqueue_task(
+                db_context=db_ctx,
+                task_id=task_id,
+                task_type="llm_callback",
+                payload={
+                    "interface_type": listener.get("interface_type", "telegram"),
+                    "conversation_id": listener["conversation_id"],
+                    "callback_context": callback_context,
+                    "scheduling_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "skip_if_user_responded": False,
+                },
+            )
 
             logger.info(f"Enqueued wake_llm callback for listener {listener['id']}")
         else:
@@ -224,13 +238,19 @@ class EventProcessor:
             )
 
     async def _disable_listener(self, listener_id: int) -> None:
-        """Disable a one-time listener after it triggers."""
+        """Disable a one-time listener after it triggers (opens new DB context)."""
         async with get_db_context() as db_ctx:
-            await db_ctx.execute_with_retry(
-                text("UPDATE event_listeners SET enabled = FALSE WHERE id = :id"),
-                {"id": listener_id},
-            )
-            logger.info(f"Disabled one-time listener {listener_id}")
+            await self._disable_listener_in_context(db_ctx, listener_id)
+
+    async def _disable_listener_in_context(
+        self, db_ctx: DatabaseContext, listener_id: int
+    ) -> None:
+        """Disable a one-time listener after it triggers within existing DB context."""
+        await db_ctx.execute_with_retry(
+            text("UPDATE event_listeners SET enabled = FALSE WHERE id = :id"),
+            {"id": listener_id},
+        )
+        logger.info(f"Disabled one-time listener {listener_id}")
 
     async def get_health_status(self) -> dict[str, Any]:
         """Get health status of all event sources."""
