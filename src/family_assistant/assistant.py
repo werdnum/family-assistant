@@ -582,23 +582,28 @@ class Assistant:
         if event_config.get("enabled", False):
             event_sources = {}  # Dict, not list
 
-            # Create Home Assistant event sources for configured profiles
+            # Create Home Assistant event sources for unique HA instances
             if (
                 event_config.get("sources", {})
                 .get("home_assistant", {})
                 .get("enabled", False)
             ):
-                for profile_id, ha_client in self.home_assistant_clients.items():
-                    # Skip the cache key entries (contain "...")
-                    if "..." in str(profile_id):
-                        continue
+                # Get unique HA clients (use cache keys which represent unique instances)
+                unique_clients = {}
+                for key, ha_client in self.home_assistant_clients.items():
+                    # Cache keys contain "..." and represent unique HA instances
+                    if "..." in str(key):
+                        unique_clients[key] = ha_client
 
-                    logger.info(
-                        f"Creating HomeAssistantSource for profile '{profile_id}'"
-                    )
-                    # Since HA source has hardcoded source_id, we use profile_id as key
+                # Create one event source per unique HA instance
+                for idx, (key, ha_client) in enumerate(unique_clients.items()):
+                    logger.info(f"Creating HomeAssistantSource for HA instance: {key}")
                     ha_source = HomeAssistantSource(client=ha_client)
-                    event_sources[f"ha_{profile_id}"] = ha_source
+                    # Use a simple numeric suffix if we have multiple HA instances
+                    source_key = (
+                        "home_assistant" if idx == 0 else f"home_assistant_{idx}"
+                    )
+                    event_sources[source_key] = ha_source
 
             if event_sources:
                 storage_config = event_config.get("storage", {})

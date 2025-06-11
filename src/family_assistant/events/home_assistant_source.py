@@ -68,7 +68,7 @@ class HomeAssistantSource(EventSource):
         self._websocket_task = asyncio.create_task(self._websocket_loop())
         self._processor_task = asyncio.create_task(self._process_events())
         self._health_check_task = asyncio.create_task(self._health_check_loop())
-        logger.info("Started Home Assistant event source")
+        logger.info(f"Started Home Assistant event source [{self.source_id}]")
 
     async def stop(self) -> None:
         """Stop listening for events."""
@@ -79,7 +79,7 @@ class HomeAssistantSource(EventSource):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-        logger.info("Stopped Home Assistant event source")
+        logger.info(f"Stopped Home Assistant event source [{self.source_id}]")
 
     async def _websocket_loop(self) -> None:
         """Main WebSocket connection loop with exponential backoff reconnection."""
@@ -92,11 +92,16 @@ class HomeAssistantSource(EventSource):
                 await asyncio.to_thread(self._connect_and_listen)
 
                 # If we get here, connection was closed normally
-                logger.warning("Home Assistant WebSocket connection closed")
+                logger.warning(
+                    f"[{self.source_id}] Home Assistant WebSocket connection closed"
+                )
                 self._reconnect_attempts += 1
 
             except Exception as e:
-                logger.error(f"Home Assistant WebSocket error: {e}", exc_info=True)
+                logger.error(
+                    f"[{self.source_id}] Home Assistant WebSocket error: {e}",
+                    exc_info=True,
+                )
                 self._reconnect_attempts += 1
 
             if self._running:
@@ -114,7 +119,7 @@ class HomeAssistantSource(EventSource):
 
     def _connect_and_listen(self) -> None:
         """Connect to Home Assistant WebSocket and listen for events (blocking)."""
-        logger.info("Connecting to Home Assistant WebSocket")
+        logger.info(f"[{self.source_id}] Connecting to Home Assistant WebSocket")
 
         try:
             # Convert HTTP URL to WebSocket URL
@@ -123,7 +128,7 @@ class HomeAssistantSource(EventSource):
             )
             ws_url = ws_url.rstrip("/api") + "/api/websocket"
 
-            logger.info(f"Connecting to WebSocket at {ws_url}")
+            logger.info(f"[{self.source_id}] Connecting to WebSocket at {ws_url}")
 
             # Create WebSocket client and listen for state_changed events
             with WebsocketClient(
@@ -131,7 +136,7 @@ class HomeAssistantSource(EventSource):
                 token=self.token,
                 # Note: WebsocketClient doesn't have a verify_ssl parameter
             ) as ws_client:
-                logger.info("Connected to Home Assistant WebSocket")
+                logger.info(f"[{self.source_id}] Connected to Home Assistant WebSocket")
 
                 # Mark connection as healthy and reset reconnect attempts
                 self._connection_healthy = True
