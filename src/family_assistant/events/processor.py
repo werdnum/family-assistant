@@ -199,6 +199,8 @@ class EventProcessor:
             task_id = f"event_listener_{listener['id']}_{int(time.time() * 1000)}"
 
             # Enqueue llm_callback task
+            from datetime import datetime, timezone
+
             async with get_db_context() as db_ctx:
                 await enqueue_task(
                     db_context=db_ctx,
@@ -208,7 +210,7 @@ class EventProcessor:
                         "interface_type": listener.get("interface_type", "telegram"),
                         "conversation_id": listener["conversation_id"],
                         "callback_context": callback_context,
-                        "scheduling_timestamp": time.time(),
+                        "scheduling_timestamp": datetime.now(timezone.utc).isoformat(),
                         "skip_if_user_responded": False,
                     },
                 )
