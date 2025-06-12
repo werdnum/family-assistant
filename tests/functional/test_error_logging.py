@@ -19,14 +19,32 @@ from family_assistant.utils.logging_handler import SQLAlchemyErrorHandler
 @pytest.mark.asyncio
 async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
     """Test that errors are logged to the database correctly."""
+    # Clear all existing error logs first to ensure test isolation
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        from sqlalchemy import delete
+
+        # Clear all error logs
+        await db_context.execute_with_retry(delete(error_logs_table))
+
     # Create a test logger with our handler
     test_logger = logging.getLogger("test_error_logger")
     test_logger.setLevel(logging.DEBUG)
+    # Prevent propagation to avoid duplicate handling by parent loggers
+    test_logger.propagate = False
+
+    # Debug: Check existing handlers
+    if test_logger.handlers:
+        print(
+            f"\nWARNING: test_error_logger already has {len(test_logger.handlers)} handlers before test!"
+        )
+        test_logger.handlers.clear()
 
     # Add our SQLAlchemy handler
-    from family_assistant.storage.context import get_db_context
+    # Create a session factory that uses our test engine directly
+    def test_db_context_factory() -> DatabaseContext:
+        return DatabaseContext(engine=test_db_engine)
 
-    handler = SQLAlchemyErrorHandler(get_db_context, min_level=logging.ERROR)
+    handler = SQLAlchemyErrorHandler(test_db_context_factory, min_level=logging.ERROR)
     test_logger.addHandler(handler)
 
     try:
@@ -61,6 +79,17 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
             error_logs = await db_context.fetch_all(query)
 
             # Should have 3 error logs (2 ERROR, 1 CRITICAL)
+            if len(error_logs) != 3:
+                # Debug: print all error logs found
+                print(f"\nExpected 3 error logs, but found {len(error_logs)}:")
+                for i, log in enumerate(error_logs):
+                    print(f"\n{i + 1}. Logger: {log['logger_name']}")
+                    print(f"   Level: {log['level']}")
+                    print(f"   Message: {log['message']}")
+                    print(f"   Timestamp: {log['timestamp']}")
+                    print(f"   Module: {log['module']}")
+                    print(f"   Function: {log['function_name']}")
+
             assert len(error_logs) == 3
 
             # Check first error (simple error)
@@ -100,8 +129,12 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
             assert len(errors) == 0
 
     finally:
-        # Clean up the handler
+        # Clean up the handler and reset logger state
         test_logger.removeHandler(handler)
+        # Remove any other handlers that might have been added
+        test_logger.handlers.clear()
+        # Reset propagate to default
+        test_logger.propagate = True
 
 
 @pytest.mark.asyncio
