@@ -83,6 +83,8 @@ dependencies = [
     # For web scraping and JS rendering
     "homeassistant-api>=5.0.0",
     # For Home Assistant integration
+    "janus>=1.0.0",
+    # For thread-safe asyncio-aware queue
 ]
 
 [project.optional-dependencies]
