@@ -163,23 +163,27 @@ async def create_event_listener(
 ) -> int:
     """Create a new event listener, returning its ID."""
     try:
-        stmt = insert(event_listeners_table).values(
-            name=name,
-            description=description,
-            source_id=source_id,
-            match_conditions=match_conditions,
-            action_type=EventActionType.wake_llm,  # Default for now
-            action_config=action_config,
-            conversation_id=conversation_id,
-            interface_type=interface_type,
-            one_time=one_time,
-            enabled=enabled,
-            created_at=datetime.now(timezone.utc),
-            daily_executions=0,
+        stmt = (
+            insert(event_listeners_table)
+            .values(
+                name=name,
+                description=description,
+                source_id=source_id,
+                match_conditions=match_conditions,
+                action_type=EventActionType.wake_llm,  # Default for now
+                action_config=action_config,
+                conversation_id=conversation_id,
+                interface_type=interface_type,
+                one_time=one_time,
+                enabled=enabled,
+                created_at=datetime.now(timezone.utc),
+                daily_executions=0,
+            )
+            .returning(event_listeners_table.c.id)
         )
 
         result = await db_context.execute_with_retry(stmt)
-        listener_id = result.lastrowid  # type: ignore[attr-defined]
+        listener_id = result.scalar_one()
 
         logger.info(
             f"Created event listener '{name}' (ID: {listener_id}) for conversation {conversation_id}"
