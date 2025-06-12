@@ -47,6 +47,7 @@ from family_assistant.storage.context import (
 from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
+    handle_system_error_log_cleanup,
     handle_system_event_cleanup,
 )
 from family_assistant.task_worker import (
@@ -211,6 +212,14 @@ class Assistant:
         await init_db()
         async with get_db_context() as db_ctx:
             await storage.init_vector_db(db_ctx)
+
+        # Setup error logging to database if enabled
+        error_logging_config = self.config.get("logging", {}).get("database_errors", {})
+        if error_logging_config.get("enabled", True):
+            from family_assistant.utils.logging_handler import setup_error_logging
+
+            setup_error_logging(get_db_context)
+            logger.info("Database error logging handler initialized")
 
         resolved_profiles = self.config.get("service_profiles", [])
         default_service_profile_id = self.config.get(
@@ -694,6 +703,9 @@ class Assistant:
         self.task_worker_instance.register_task_handler(
             "system_event_cleanup", handle_system_event_cleanup
         )
+        self.task_worker_instance.register_task_handler(
+            "system_error_log_cleanup", handle_system_error_log_cleanup
+        )
         logger.info(
             f"Registered task handlers for worker {self.task_worker_instance.worker_id}"
         )
@@ -780,6 +792,31 @@ class Assistant:
             except Exception as e:
                 # If task already exists, this is fine - just log it
                 logger.info(f"System event cleanup task setup: {e}")
+
+            # Upsert the error log cleanup task
+            try:
+                # Get retention days from config
+                error_log_retention_days = (
+                    self.config.get("logging", {})
+                    .get("database_errors", {})
+                    .get("retention_days", 30)
+                )
+
+                await storage.enqueue_task(
+                    db_context=db_ctx,
+                    task_id="system_error_log_cleanup_daily",
+                    task_type="system_error_log_cleanup",
+                    payload={"retention_days": error_log_retention_days},
+                    scheduled_at=next_3am_utc,
+                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                    max_retries_override=5,  # Higher retry count for system tasks
+                )
+                logger.info(
+                    f"System error log cleanup task scheduled for {next_3am_local} ({timezone_str}) with {error_log_retention_days} day retention"
+                )
+            except Exception as e:
+                # If task already exists, this is fine - just log it
+                logger.info(f"System error log cleanup task setup: {e}")
 
     async def stop_services(self) -> None:
         """Gracefully stops all managed services."""

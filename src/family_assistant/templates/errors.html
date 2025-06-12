@@ -1,0 +1,140 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Error Logs{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">Error Logs</h1>
+    
+    <!-- Filter Form -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" action="/errors" class="row g-3">
+                <div class="col-md-3">
+                    <label for="level" class="form-label">Level</label>
+                    <select name="level" id="level" class="form-select">
+                        <option value="">All Levels</option>
+                        <option value="ERROR" {% if level == "ERROR" %}selected{% endif %}>ERROR</option>
+                        <option value="CRITICAL" {% if level == "CRITICAL" %}selected{% endif %}>CRITICAL</option>
+                        <option value="WARNING" {% if level == "WARNING" %}selected{% endif %}>WARNING</option>
+                    </select>
+                </div>
+                
+                <div class="col-md-3">
+                    <label for="logger" class="form-label">Logger Name</label>
+                    <input type="text" name="logger" id="logger" class="form-control" 
+                           value="{{ logger or '' }}" placeholder="e.g., family_assistant">
+                </div>
+                
+                <div class="col-md-3">
+                    <label for="days" class="form-label">Time Range</label>
+                    <select name="days" id="days" class="form-select">
+                        <option value="1" {% if days == 1 %}selected{% endif %}>Last 24 hours</option>
+                        <option value="7" {% if days == 7 %}selected{% endif %}>Last 7 days</option>
+                        <option value="30" {% if days == 30 %}selected{% endif %}>Last 30 days</option>
+                        <option value="90" {% if days == 90 %}selected{% endif %}>Last 90 days</option>
+                    </select>
+                </div>
+                
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">Filter</button>
+                    <a href="/errors" class="btn btn-secondary">Clear</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Results Summary -->
+    <div class="mb-3">
+        <strong>{{ total_count }}</strong> error(s) found
+    </div>
+    
+    <!-- Error List -->
+    <div class="table-responsive">
+        <table class="table table-striped table-hover">
+            <thead>
+                <tr>
+                    <th style="width: 150px;">Timestamp</th>
+                    <th style="width: 80px;">Level</th>
+                    <th>Logger</th>
+                    <th>Message</th>
+                    <th style="width: 100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for error in errors %}
+                <tr class="{% if error.level == 'CRITICAL' %}table-danger{% elif error.level == 'ERROR' %}table-warning{% endif %}">
+                    <td>
+                        <small>{{ error.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</small>
+                    </td>
+                    <td>
+                        <span class="badge {% if error.level == 'CRITICAL' %}bg-danger{% elif error.level == 'ERROR' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                            {{ error.level }}
+                        </span>
+                    </td>
+                    <td>
+                        <small>{{ error.logger_name }}</small>
+                    </td>
+                    <td>
+                        <div class="text-truncate" style="max-width: 500px;" title="{{ error.message }}">
+                            {{ error.message }}
+                        </div>
+                        {% if error.exception_type %}
+                        <small class="text-muted">{{ error.exception_type }}: {{ error.exception_message }}</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="/errors/{{ error.id }}" class="btn btn-sm btn-outline-primary">
+                            View Details
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    {% if total_count == 0 %}
+    <div class="alert alert-info">
+        No errors found matching your criteria.
+    </div>
+    {% endif %}
+    
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <nav aria-label="Error log pagination">
+        <ul class="pagination justify-content-center">
+            <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ page - 1 }}&level={{ level or '' }}&logger={{ logger or '' }}&days={{ days }}">
+                    Previous
+                </a>
+            </li>
+            
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == page or (p >= page - 2 and p <= page + 2) or p == 1 or p == total_pages %}
+                    {% if p > 1 and p < page - 2 %}
+                        <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                    
+                    <li class="page-item {% if p == page %}active{% endif %}">
+                        <a class="page-link" href="?page={{ p }}&level={{ level or '' }}&logger={{ logger or '' }}&days={{ days }}">
+                            {{ p }}
+                        </a>
+                    </li>
+                    
+                    {% if p < total_pages and p > page + 2 %}
+                        <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endif %}
+            {% endfor %}
+            
+            <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ page + 1 }}&level={{ level or '' }}&logger={{ logger or '' }}&days={{ days }}">
+                    Next
+                </a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}

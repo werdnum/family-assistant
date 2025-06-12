@@ -139,3 +139,7 @@ Quick summary:
 - Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.
 - **Important**: When adding new imports, add the code that uses the import first, then add the import. Otherwise, a linter running in another tab might remove the import as unused before you add the code that uses it.
 - Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL text may break across engines.
+
+## Development Best Practices
+
+- When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the assistant how it works in the system prompt in prompts.yaml.

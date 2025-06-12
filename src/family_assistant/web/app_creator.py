@@ -26,6 +26,7 @@ from family_assistant.web.routers.documentation import documentation_router
 from family_assistant.web.routers.documents_ui import (  # New import for document upload UI
     router as documents_ui_router,
 )
+from family_assistant.web.routers.errors import router as errors_router
 from family_assistant.web.routers.health import health_router
 from family_assistant.web.routers.history import history_router
 from family_assistant.web.routers.notes import notes_router
@@ -151,6 +152,7 @@ app.include_router(context_viewer_router, tags=["Context Viewer UI"])
 app.include_router(
     documents_ui_router, prefix="/documents", tags=["Documents UI"]
 )  # New router
+app.include_router(errors_router, tags=["Error Logs UI"])
 app.include_router(health_router, tags=["Health Check"])
 
 # General API endpoints (like /api/tools/execute, /api/documents/upload)
