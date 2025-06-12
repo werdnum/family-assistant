@@ -79,6 +79,39 @@ alembic upgrade head
 poe symbols
 ```
 
+### Finding Symbol Definitions and Signatures
+```bash
+# Use symbex to find symbol definitions and signatures
+# Docs: https://github.com/simonw/symbex
+
+# Find a specific function or class
+symbex my_function
+symbex MyClass
+
+# Show signatures for all symbols
+symbex -s
+
+# Show signatures with docstrings
+symbex --docstrings
+
+# Search with wildcards
+symbex 'test_*'
+symbex '*Tool.*'
+
+# Find async functions
+symbex --async -s
+
+# Find undocumented public functions
+symbex --function --public --undocumented
+
+# Search in specific files
+symbex MyClass -f src/family_assistant/assistant.py
+symbex 'handle_*' -f src/family_assistant/telegram_bot.py
+
+# Search in specific directories
+symbex -d src/family_assistant --function -s
+```
+
 ## Architecture Overview
 
 ## Development Guidelines
