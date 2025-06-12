@@ -11,9 +11,9 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    func,
     select,
 )
+from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.base import metadata
 from family_assistant.storage.context import DatabaseContext
