@@ -317,6 +317,7 @@ default_profile_settings:
       - "delegate_to_service"
       - "query_recent_events" # Event system tool
       - "create_event_listener" # Event system tool
+      - "render_home_assistant_template" # Home Assistant template rendering
       - "list_event_listeners" # Event system tool
       - "delete_event_listener" # Event system tool
       - "toggle_event_listener" # Event system tool

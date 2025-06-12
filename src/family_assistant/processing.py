@@ -105,6 +105,7 @@ class ProcessingService:
         )  # Store the clock instance
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
+        self.home_assistant_client: Any | None = None  # Store HA client if available
 
     # The LiteLLMClient passed to __init__ should already be configured
     # with primary and fallback model details by the caller (e.g., main.py)
@@ -469,6 +470,7 @@ class ProcessingService:
                         request_confirmation_callback=request_confirmation_callback,
                         processing_service=self,
                         clock=self.clock,  # Pass the clock from ProcessingService
+                        home_assistant_client=self.home_assistant_client,  # Pass HA client
                     )
 
                     tool_response_content_val = None  # Renamed to avoid conflict

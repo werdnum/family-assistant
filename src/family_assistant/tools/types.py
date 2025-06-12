@@ -73,6 +73,7 @@ class ToolExecutionContext:
     new_task_event: asyncio.Event | None = None  # Add new_task_event
     clock: Optional["Clock"] = None  # Add clock
     indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
+    home_assistant_client: Any | None = None  # Add home_assistant_client
 
 
 class ToolNotFoundError(LookupError):
