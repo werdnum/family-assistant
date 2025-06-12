@@ -102,6 +102,11 @@ async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> N
     # Set processor as running (normally done by start())
     processor._running = True
 
+    # Initialize the janus queue (normally done by start())
+    import janus
+
+    ha_source._event_queue = janus.Queue(maxsize=1000)
+
     # Process a state change event
     event = MockFiredEvent(
         entity_id="sensor.temperature", old_state="20.5", new_state="21.0"
@@ -112,9 +117,10 @@ async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> N
 
     # Process the event from the queue (normally done by _process_events task)
     # We'll manually process it here since we're not running the full async loop
-    if not ha_source._event_queue.empty():
-        queued_event = ha_source._event_queue.get_nowait()
+    if ha_source._event_queue and not ha_source._event_queue.async_q.empty():
+        queued_event = await ha_source._event_queue.async_q.get()
         await processor.process_event("home_assistant", queued_event)
+        ha_source._event_queue.async_q.task_done()
 
     # Give a small delay to ensure async writes complete
     await asyncio.sleep(0.1)
@@ -154,6 +160,9 @@ async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> N
         assert temp_event["source_id"] == "home_assistant"
         assert temp_event["event_data"]["old_state"]["state"] == "20.5"
         assert temp_event["event_data"]["new_state"]["state"] == "21.0"
+
+    # Clean up janus queue
+    await ha_source._event_queue.aclose()
 
 
 @pytest.mark.asyncio
