@@ -52,8 +52,12 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
 
         # Check the database
         async with DatabaseContext(engine=test_db_engine) as db_context:
-            # Count total error logs
-            query = select(error_logs_table).order_by(error_logs_table.c.timestamp)
+            # Get error logs from our test logger only
+            query = (
+                select(error_logs_table)
+                .where(error_logs_table.c.logger_name == "test_error_logger")
+                .order_by(error_logs_table.c.timestamp)
+            )
             error_logs = await db_context.fetch_all(query)
 
             # Should have 3 error logs (2 ERROR, 1 CRITICAL)
@@ -142,8 +146,18 @@ async def test_error_log_cleanup(test_db_engine: AsyncEngine) -> None:
         # Should have deleted 1 error (the 40-day old one)
         assert deleted_count == 1
 
-        # Verify remaining errors
-        query = select(error_logs_table).order_by(error_logs_table.c.timestamp)
+        # Verify remaining errors (only count the ones we created)
+        query = (
+            select(error_logs_table)
+            .where(
+                error_logs_table.c.logger_name.in_([
+                    "old.error",
+                    "recent.error",
+                    "very.recent.error",
+                ])
+            )
+            .order_by(error_logs_table.c.timestamp)
+        )
         remaining_errors = await db_context.fetch_all(query)
 
         assert len(remaining_errors) == 2
