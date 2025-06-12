@@ -32,21 +32,26 @@ This script runs:
 - `pylint` (additional linting in errors-only mode)
 
 ### Testing
+
+* IMPORTANT: Write your tests as "end-to-end" as you can.
+  * Use mock objects as little as possible. Use real databases (fixtures available in tests/conftest.py and tests/functional/telegram/conftest.py) and only mock external dependencies with no good fake implementations.
+* Each test tests one independent behaviour of the system under test. Arrange, Act, Assert. NEVER Arrange, Act, Assert, Act, Assert, Act, Assert.
+
 ```bash
 # Run all tests with verbose output
 poe test
 
 # Run specific test files
-pytest tests/functional/test_specific.py -v
+pytest tests/functional/test_specific.py -xq
 
 # Run with coverage
 pytest --cov=family_assistant tests/
 
 # Note: poe test will timeout when running all tests. Run tests in smaller batches:
-# pytest tests/unit/ -v
-# pytest tests/functional/indexing/ -v
-# pytest tests/functional/telegram/ -v
-# pytest tests/functional/web/ -v
+# pytest tests/unit/ -xq
+# pytest tests/functional/indexing/ -xq
+# pytest tests/functional/telegram/ -xq
+# pytest tests/functional/web/ -xq
 ```
 
 ### Running the Application
