@@ -593,15 +593,19 @@ class TaskWorker:
                     next_scheduled_dt = rule.after(last_scheduled_at)
 
                     if next_scheduled_dt:
-                        # Generate a new unique task ID for the next instance
-                        # Format: <original_task_id>_recur_<next_iso_timestamp>
-                        next_task_id = (
-                            f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
-                        )
-
-                        logger.info(
-                            f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
-                        )
+                        # For system tasks, reuse the original task ID to enable upsert behavior
+                        # For other tasks, generate a new unique task ID
+                        if original_task_id.startswith("system_"):
+                            next_task_id = original_task_id
+                            logger.info(
+                                f"Calculated next occurrence for system task {original_task_id} at {next_scheduled_dt}. Reusing task ID for upsert."
+                            )
+                        else:
+                            # Format: <original_task_id>_recur_<next_iso_timestamp>
+                            next_task_id = f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
+                            logger.info(
+                                f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
+                            )
 
                         # Enqueue the next task instance
                         await storage.enqueue_task(
