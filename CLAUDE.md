@@ -139,6 +139,14 @@ Quick summary:
 - Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.
 - **Important**: When adding new imports, add the code that uses the import first, then add the import. Otherwise, a linter running in another tab might remove the import as unused before you add the code that uses it.
 - Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL text may break across engines.
+- **SQLAlchemy Count Queries**: When using `func.count()` in SQLAlchemy queries, always use `.label("count")` to give the column an alias:
+  ```python
+  query = select(func.count(table.c.id).label("count"))
+  row = await db_context.fetch_one(query)
+  return row["count"] if row else 0
+  ```
+  This avoids KeyError when accessing the result.
+- **Pylint False Positives**: Pylint may complain about SQLAlchemy `func` methods like `func.count()` and `func.now()` with "E1102: func.X is not callable". These are false positives - SQLAlchemy's `func` is a special object that generates SQL functions dynamically. These errors can be safely ignored as they are valid SQLAlchemy usage patterns.
 
 ## Development Best Practices
 

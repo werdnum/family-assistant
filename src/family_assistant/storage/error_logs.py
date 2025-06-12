@@ -82,7 +82,7 @@ async def count_error_logs(
     since: datetime | None = None,
 ) -> int:
     """Count error logs matching criteria."""
-    query = select(func.count(error_logs_table.c.id))
+    query = select(func.count(error_logs_table.c.id).label("count"))
 
     if level:
         query = query.where(error_logs_table.c.level == level)
