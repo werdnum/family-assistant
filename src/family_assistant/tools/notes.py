@@ -7,7 +7,10 @@ that can be included in the assistant's context.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -111,11 +114,13 @@ NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
 # We need to create wrapper functions that match the tool signatures.
 
 
-async def get_note_tool(title: str, context: Any) -> dict[str, Any]:
+async def get_note_tool(
+    title: str, exec_context: ToolExecutionContext
+) -> dict[str, Any]:
     """Tool wrapper for get_note_by_title."""
     from family_assistant import storage
 
-    note = await storage.get_note_by_title(context.db_context, title)
+    note = await storage.get_note_by_title(exec_context.db_context, title)
     if note:
         return {
             "exists": True,
@@ -133,12 +138,12 @@ async def get_note_tool(title: str, context: Any) -> dict[str, Any]:
 
 
 async def list_notes_tool(
-    include_in_prompt: bool | None = None, context: Any = None
+    exec_context: ToolExecutionContext, include_in_prompt: bool | None = None
 ) -> list[dict[str, Any]]:
     """Tool wrapper for get_all_notes with optional filtering."""
     from family_assistant import storage
 
-    all_notes = await storage.get_all_notes(context.db_context)
+    all_notes = await storage.get_all_notes(exec_context.db_context)
 
     # Apply filtering if requested
     if include_in_prompt is not None:
@@ -161,11 +166,13 @@ async def list_notes_tool(
     ]
 
 
-async def delete_note_tool(title: str, context: Any) -> dict[str, Any]:
+async def delete_note_tool(
+    title: str, exec_context: ToolExecutionContext
+) -> dict[str, Any]:
     """Tool wrapper for delete_note."""
     from family_assistant import storage
 
-    deleted = await storage.delete_note(context.db_context, title)
+    deleted = await storage.delete_note(exec_context.db_context, title)
     return {
         "success": deleted,
         "message": f"Note '{title}' deleted successfully."
