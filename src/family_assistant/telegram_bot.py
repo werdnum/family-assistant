@@ -1810,8 +1810,28 @@ class TelegramService:
         if self.application:
             logger.info("Shutting down Telegram application...")
             try:
+                # First stop the application if it's running
+                if self.application.running:
+                    await self.application.stop()
+                    logger.info("Telegram application stopped.")
+                # Now we can safely shutdown
                 await self.application.shutdown()
                 logger.info("Telegram application shut down.")
+            except RuntimeError as e:
+                if "still running" in str(e):
+                    logger.warning(
+                        "Telegram application was still running during shutdown, forcing stop"
+                    )
+                    try:
+                        await self.application.stop()
+                        await self.application.shutdown()
+                    except Exception as e2:
+                        logger.error(f"Error forcing Telegram shutdown: {e2}")
+                else:
+                    logger.error(
+                        f"RuntimeError shutting down Telegram application: {e}",
+                        exc_info=True,
+                    )
             except Exception as e:
                 logger.error(
                     f"Error shutting down Telegram application: {e}", exc_info=True
