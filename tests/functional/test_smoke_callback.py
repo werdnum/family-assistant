@@ -232,6 +232,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         embedding_generator=mock_embedding_generator,
         clock=mock_clock,  # Inject mock_clock
         shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
+        engine=test_db_engine,  # Pass the test database engine
     )
     # Register the necessary handler for this test
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
@@ -504,6 +505,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
         shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
+        engine=test_db_engine,  # Pass the test database engine
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
@@ -841,6 +843,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
         shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
+        engine=test_db_engine,  # Pass the test database engine
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
@@ -1172,6 +1175,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
         embedding_generator=AsyncMock(),
         clock=mock_clock,
         shutdown_event_instance=test_shutdown_event,
+        engine=test_db_engine,  # Pass the test database engine
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
 

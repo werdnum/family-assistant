@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from dateutil import rrule
 from dateutil.parser import isoparse
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant import storage
 from family_assistant.embeddings import EmbeddingGenerator
@@ -406,6 +407,8 @@ class TaskWorker:
         shutdown_event_instance: asyncio.Event | None = None,  # Made optional
         clock: Clock | None = None,
         indexing_source: "IndexingSource | None" = None,
+        engine: AsyncEngine
+        | None = None,  # Add engine parameter for dependency injection
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -424,6 +427,7 @@ class TaskWorker:
             clock if clock is not None else SystemClock()
         )  # Store the clock instance
         self.indexing_source = indexing_source
+        self.engine = engine  # Store the engine for database operations
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
         self.task_handlers: dict[
@@ -731,7 +735,7 @@ class TaskWorker:
             try:
                 task = None  # Initialize task variable for the outer scope
                 # Database context per iteration (starts a transaction)
-                async with get_db_context() as db_context:
+                async with get_db_context(engine=self.engine) as db_context:
                     logger.debug(
                         "Polling for tasks on DB context: %s", db_context.engine.url
                     )
