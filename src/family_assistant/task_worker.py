@@ -806,9 +806,37 @@ async def handle_system_event_cleanup(
         raise
 
 
+async def handle_system_error_log_cleanup(
+    exec_context: ToolExecutionContext,
+    payload: dict[str, Any],
+) -> None:
+    """
+    Task handler for cleaning up old error logs from the database.
+    """
+    from family_assistant.storage.error_logs import cleanup_old_error_logs
+
+    # Get retention days from payload or use default
+    retention_days = payload.get("retention_days", 30)
+
+    logger.info(f"Starting system error log cleanup (retention: {retention_days} days)")
+
+    try:
+        deleted_count = await cleanup_old_error_logs(
+            exec_context.db_context, retention_days
+        )
+
+        logger.info(
+            f"System error log cleanup completed. Deleted {deleted_count} error logs older than {retention_days} days."
+        )
+    except Exception as e:
+        logger.error(f"Error during system error log cleanup: {e}", exc_info=True)
+        raise
+
+
 __all__ = [
     "TaskWorker",
     "handle_log_message",
     "handle_llm_callback",
     "handle_system_event_cleanup",
+    "handle_system_error_log_cleanup",
 ]  # Export class and relevant handlers

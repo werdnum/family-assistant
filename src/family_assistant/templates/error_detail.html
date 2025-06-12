@@ -1,0 +1,78 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Error Details - {{ error.id }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Error Details</h1>
+        <a href="/errors" class="btn btn-secondary">Back to List</a>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <span class="badge {% if error.level == 'CRITICAL' %}bg-danger{% elif error.level == 'ERROR' %}bg-warning text-dark{% else %}bg-secondary{% endif %} me-2">
+                {{ error.level }}
+            </span>
+            Error #{{ error.id }}
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <h6>Timestamp</h6>
+                    <p>{{ error.timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] }}</p>
+                </div>
+                <div class="col-md-6">
+                    <h6>Logger</h6>
+                    <p><code>{{ error.logger_name }}</code></p>
+                </div>
+            </div>
+            
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <h6>Module</h6>
+                    <p><code>{{ error.module or 'N/A' }}</code></p>
+                </div>
+                <div class="col-md-6">
+                    <h6>Function</h6>
+                    <p><code>{{ error.function_name or 'N/A' }}</code></p>
+                </div>
+            </div>
+            
+            <div class="mb-3">
+                <h6>Message</h6>
+                <div class="alert alert-light">
+                    <pre class="mb-0" style="white-space: pre-wrap;">{{ error.message }}</pre>
+                </div>
+            </div>
+            
+            {% if error.exception_type %}
+            <div class="mb-3">
+                <h6>Exception</h6>
+                <div class="alert alert-danger">
+                    <strong>{{ error.exception_type }}</strong>: {{ error.exception_message }}
+                </div>
+            </div>
+            {% endif %}
+            
+            {% if error.traceback %}
+            <div class="mb-3">
+                <h6>Traceback</h6>
+                <div class="bg-dark text-light p-3 rounded" style="overflow-x: auto;">
+                    <pre class="mb-0"><code>{{ error.traceback }}</code></pre>
+                </div>
+            </div>
+            {% endif %}
+            
+            {% if error.extra_data %}
+            <div class="mb-3">
+                <h6>Additional Data</h6>
+                <div class="bg-light p-3 rounded">
+                    <pre class="mb-0"><code>{{ error.extra_data | tojson(indent=2) }}</code></pre>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
