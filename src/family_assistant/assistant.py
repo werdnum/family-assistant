@@ -500,6 +500,11 @@ class Assistant:
                 server_url=self.config["server_url"],
                 app_config=self.config,
             )
+            # Set the home_assistant_client if available for this profile
+            if profile_id in self.home_assistant_clients:
+                processing_service_instance.home_assistant_client = (
+                    self.home_assistant_clients[profile_id]
+                )
             self.processing_services_registry[profile_id] = processing_service_instance
 
         if not self.processing_services_registry:
