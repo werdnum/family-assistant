@@ -286,8 +286,8 @@ default_profile_settings:
 
     # Default values, can be overridden by environment variables.
     timezone: "UTC"
-    max_history_messages: 5
-    history_max_age_hours: 24
+    max_history_messages: 3
+    history_max_age_hours: 2
     delegation_security_level: "confirm" # Default: "blocked", "confirm", or "unrestricted"
 
   tools_config:
