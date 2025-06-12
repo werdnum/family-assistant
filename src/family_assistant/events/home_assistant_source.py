@@ -5,11 +5,11 @@ Home Assistant event source implementation.
 import asyncio
 import contextlib
 import logging
-import queue
 import time
 from typing import TYPE_CHECKING, Any
 
 import homeassistant_api as ha_api
+import janus
 from homeassistant_api import WebsocketClient
 
 from family_assistant.events.sources import EventSource
@@ -53,8 +53,8 @@ class HomeAssistantSource(EventSource):
         self._last_event_time = 0.0
         self._connection_healthy = False
 
-        # Use thread-safe queue since we're adding from a thread
-        self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
+        # Janus queue for thread-to-asyncio communication
+        self._event_queue: janus.Queue[dict[str, Any]] | None = None
         self._processor_task: asyncio.Task | None = None
 
     @property
@@ -66,6 +66,10 @@ class HomeAssistantSource(EventSource):
         """Start listening for Home Assistant events."""
         self.processor = processor
         self._running = True
+
+        # Initialize janus queue
+        self._event_queue = janus.Queue(maxsize=1000)
+
         self._websocket_task = asyncio.create_task(self._websocket_loop())
         self._processor_task = asyncio.create_task(self._process_events())
         self._health_check_task = asyncio.create_task(self._health_check_loop())
@@ -80,6 +84,18 @@ class HomeAssistantSource(EventSource):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+
+        # Close janus queue properly
+        if self._event_queue:
+            logger.debug(f"[{self.source_id}] Closing janus queue")
+            try:
+                await self._event_queue.aclose()
+            except Exception as e:
+                logger.error(
+                    f"[{self.source_id}] Error closing janus queue: {e}", exc_info=True
+                )
+            self._event_queue = None
+
         logger.info(f"Stopped Home Assistant event source [{self.source_id}]")
 
     async def _websocket_loop(self) -> None:
@@ -208,13 +224,16 @@ class HomeAssistantSource(EventSource):
             }
 
             # Add to queue for async processing
-            # Use thread-safe queue.Queue instead of asyncio.Queue
-            try:
-                self._event_queue.put_nowait(processed_event)
-                # Update last event time for health check
-                self._last_event_time = time.time()
-            except queue.Full:
-                logger.warning(f"Event queue full, dropping event for {entity_id}")
+            # Use janus sync queue for thread-safe operations
+            if self._event_queue:
+                try:
+                    self._event_queue.sync_q.put_nowait(processed_event)
+                    # Update last event time for health check
+                    self._last_event_time = time.time()
+                except Exception:  # janus uses standard queue.Full exception
+                    logger.warning(f"Event queue full, dropping event for {entity_id}")
+            else:
+                logger.error("Event queue not initialized, dropping event")
 
         except Exception as e:
             logger.error(f"Error processing state change event: {e}", exc_info=True)
@@ -224,13 +243,17 @@ class HomeAssistantSource(EventSource):
         logger.debug("Starting event processor task")
 
         while self._running:
+            if not self._event_queue:
+                await asyncio.sleep(0.1)  # Wait for queue initialization
+                continue
+
             try:
-                # Get from thread-safe queue with timeout (run in executor to avoid blocking)
+                # Use janus async queue for asyncio side
                 try:
-                    event = await asyncio.get_event_loop().run_in_executor(
-                        None, self._event_queue.get, True, 1.0
+                    event = await asyncio.wait_for(
+                        self._event_queue.async_q.get(), timeout=1.0
                     )
-                except queue.Empty:
+                except asyncio.TimeoutError:
                     # No event within timeout, continue loop to check _running
                     continue
 
@@ -239,6 +262,9 @@ class HomeAssistantSource(EventSource):
                     await self.processor.process_event(self.source_id, event)
                 else:
                     logger.error("Event processor is not set - event will be dropped")
+
+                # Mark task as done for proper queue cleanup
+                self._event_queue.async_q.task_done()
 
             except Exception as e:
                 logger.error(f"Error processing queued event: {e}", exc_info=True)
