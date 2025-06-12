@@ -146,7 +146,15 @@ Quick summary:
   return row["count"] if row else 0
   ```
   This avoids KeyError when accessing the result.
-- **Pylint False Positives**: Pylint may complain about SQLAlchemy `func` methods like `func.count()` and `func.now()` with "E1102: func.X is not callable". These are false positives - SQLAlchemy's `func` is a special object that generates SQL functions dynamically. These errors can be safely ignored as they are valid SQLAlchemy usage patterns.
+- **SQLAlchemy func imports**: To avoid pylint errors about `func.count()` and `func.now()` not being callable, import func as:
+  ```python
+  from sqlalchemy.sql import functions as func
+  ```
+  instead of:
+  ```python
+  from sqlalchemy import func
+  ```
+  This resolves the "E1102: func.X is not callable" errors while maintaining the same functionality.
 
 ## Development Best Practices
 
