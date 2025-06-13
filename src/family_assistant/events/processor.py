@@ -159,13 +159,18 @@ class EventProcessor:
             new_cache = {}
             for row in result:
                 listener_dict = dict(row)
-                # Parse JSON fields
-                listener_dict["match_conditions"] = json.loads(
-                    listener_dict.get("match_conditions") or "{}"
-                )
-                listener_dict["action_config"] = json.loads(
-                    listener_dict.get("action_config") or "{}"
-                )
+                # Parse JSON fields if they're strings
+                match_conditions = listener_dict.get("match_conditions") or {}
+                if isinstance(match_conditions, str):
+                    listener_dict["match_conditions"] = json.loads(match_conditions)
+                else:
+                    listener_dict["match_conditions"] = match_conditions
+
+                action_config = listener_dict.get("action_config") or {}
+                if isinstance(action_config, str):
+                    listener_dict["action_config"] = json.loads(action_config)
+                else:
+                    listener_dict["action_config"] = action_config
 
                 source_id = listener_dict["source_id"]
                 if source_id not in new_cache:
