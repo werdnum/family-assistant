@@ -131,9 +131,8 @@ Quick summary:
 ## Important Notes
 
 - Always make sure you start with a clean working directory. Commit any uncommitted changes.
+- NEVER revert existing changes without the user's explicit permission.
 - Always check that linters and tests are happy when you're finished.
-- When running tests,  only use -s when you don't get the info you need without it
-- Save tokens when running tests: use pytest -q to check if a test passes, only use -s or -v if you need it
 - Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.
 - **Important**: When adding new imports, add the code that uses the import first, then add the import. Otherwise, a linter running in another tab might remove the import as unused before you add the code that uses it.
 - Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL text may break across engines.
