@@ -402,3 +402,62 @@ When adding new web UI endpoints that serve HTML pages:
   from sqlalchemy import func
   ```
   This resolves the "E1102: func.X is not callable" errors while maintaining the same functionality.
+
+## Test Fixtures
+
+The project provides several pytest fixtures for testing. These are defined in various `conftest.py` files:
+
+### Core Database Fixtures (tests/conftest.py)
+
+- **`test_db_engine`** (function scope): Provides an in-memory SQLite database engine with schema initialized. Automatically patches `storage.base.engine` for the test duration.
+  
+- **`postgres_container`** (session scope): Starts a PostgreSQL container with pgvector extension for the entire test session. Reused across all PostgreSQL tests.
+
+- **`pg_vector_db_engine`** (function scope): Provides a PostgreSQL database engine with vector support. Creates a clean schema for each test and handles proper cleanup.
+
+### Task Worker Fixtures (tests/conftest.py)
+
+- **`task_worker_manager`** (function scope): Manages TaskWorker lifecycle for testing background tasks. Returns a context manager that starts/stops the worker and provides task completion helpers.
+
+### CalDAV Server Fixtures (tests/conftest.py)
+
+- **`radicale_server_session`** (session scope): Starts a Radicale CalDAV server for the test session. Returns `(base_url, username, password)`.
+
+- **`radicale_server`** (function scope): Creates a unique calendar for each test with automatic cleanup. Returns `(calendar_url, username, password)`.
+
+### Telegram Bot Testing (tests/functional/telegram/conftest.py)
+
+- **`telegram_handler_fixture`** (function scope): Comprehensive fixture for Telegram bot testing. Returns a named tuple with:
+  - `handler`: The TelegramHandler instance
+  - `mock_bot`: Mock telegram Bot
+  - `mock_app`: Mock telegram Application
+  - `mock_llm_client`: RuleBasedMockLLMClient
+  - `mock_tools_provider`: CompositeToolProvider
+  - `mock_processing_service`: ProcessingService
+  - `db_engine`: Test database engine
+
+### Web API Testing (tests/functional/web/conftest.py)
+
+- **`db_context`**: Provides DatabaseContext for API tests
+- **`mock_llm_client`**: RuleBasedMockLLMClient instance
+- **`test_tools_provider`**: CompositeToolProvider with test tools
+- **`test_processing_service`**: ProcessingService configured for testing
+- **`app_fixture`**: FastAPI app with test dependencies
+- **`test_client`**: HTTPX AsyncClient for API testing
+
+### Indexing Pipeline Testing (tests/functional/indexing/conftest.py)
+
+- **`mock_pipeline_embedding_generator`**: MockEmbeddingGenerator with deterministic embeddings for testing
+- **`indexing_task_worker`**: TaskWorker configured for indexing tasks
+
+### Mock Utilities
+
+- **`RuleBasedMockLLMClient`**: A mock LLM client that returns responses based on rules. Useful for testing specific scenarios without API calls. Example:
+  ```python
+  mock_llm = RuleBasedMockLLMClient(
+      rules=[
+          ("weather", lambda q: "It will be sunny today"),
+          ("time", lambda q: "The current time is 2:30 PM"),
+      ]
+  )
+  ```
