@@ -73,6 +73,11 @@ You can ask the assistant a wide variety of things:
         *   "Remind me to call the dentist in 2 hours"
         *   "Set a reminder for tomorrow at 3pm to pick up groceries"
         *   "Remind me about the meeting at 4:30 PM"
+    *   **Managing Scheduled Tasks:** You can view and manage all scheduled tasks:
+        *   "Show me my pending callbacks" - Lists all scheduled tasks and reminders
+        *   "Cancel the daily weather update" - The assistant will find and cancel matching tasks
+        *   "Stop all recurring tasks about X" - The assistant will cancel all matching instances
+        *   For recurring tasks, each future instance is listed separately and can be cancelled individually
     *   If a scheduled task fails, you can often retry it manually from the "Tasks" page in the Web Interface.
 
 *   **Understand Photos:**
