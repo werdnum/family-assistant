@@ -413,7 +413,6 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_get_full_document_content_with_raw_content(
     pg_vector_db_engine: AsyncEngine,
-    embedding_generator_gemini: MockEmbeddingGenerator,
 ) -> None:
     """
     Test the get_full_document_content tool with raw content storage.
