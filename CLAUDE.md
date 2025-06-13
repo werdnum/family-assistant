@@ -113,6 +113,102 @@ symbex -d src/family_assistant --function -s
 
 ## Architecture Overview
 
+Family Assistant is an LLM-powered application designed to centralize family information management and automate tasks. It provides multiple interfaces (Telegram, Web UI, Email webhooks) and uses a modular architecture built with Python, FastAPI, and SQLAlchemy.
+
+### Core Components
+
+1. **Entry Point (`__main__.py`)**: 
+   - Handles configuration loading from multiple sources (defaults → config.yaml → environment variables → CLI args)
+   - Manages application lifecycle through the `Assistant` class
+   - Sets up signal handlers for graceful shutdown
+
+2. **Assistant (`assistant.py`)**: 
+   - Orchestrates application lifecycle and dependency injection
+   - Wires up all core components (LLM clients, tools, processing services, storage, etc.)
+   - Manages service startup/shutdown coordination
+
+3. **Processing Layer (`processing.py`)**: 
+   - Core business logic for handling chat interactions
+   - Manages conversation history and context aggregation
+   - Supports multiple service profiles with different LLM models, tools, and prompts
+   - Executes tool calls and manages delegation between profiles
+
+4. **User Interfaces**:
+   - **Telegram Bot (`telegram_bot.py`)**: Primary interface with slash command support
+   - **Web UI (`web/`)**: FastAPI-based web interface with routers for various features
+   - **Email Webhook**: Receives and processes emails via `/webhook/mail`
+
+5. **Storage Layer (`storage/`)**: 
+   - Database abstraction using SQLAlchemy (supports SQLite and PostgreSQL)
+   - Manages all persistent data: notes, message history, tasks, emails, vector embeddings
+   - Includes retry logic and connection pooling
+   - Database schema managed by Alembic migrations
+
+6. **Tools System (`tools/`)**: 
+   - Modular tool architecture with local Python functions and MCP (Model Context Protocol) integration
+   - Tools organized by category: notes, calendar, documents, communication, tasks, etc.
+   - Supports tool confirmation requirements and delegation security levels
+   - Composite tool provider system for flexible tool management
+
+7. **Task Queue (`task_worker.py`)**: 
+   - Database-backed async task queue for background processing
+   - Supports scheduled tasks, retries with exponential backoff, and recurring tasks
+   - Handles LLM callbacks, email indexing, embedding generation, and system maintenance
+
+8. **Document Indexing (`indexing/`)**: 
+   - Pipeline-based document processing system
+   - Supports multiple document types (PDFs, emails, web pages, notes)
+   - Includes text extraction, chunking, embedding generation, and vector storage
+   - Configurable processing pipeline with various processors
+
+9. **Event System (`events/`)**: 
+   - Event-driven architecture for system notifications
+   - Supports multiple event sources (Home Assistant, indexing pipeline)
+   - Event listeners with flexible matching conditions and rate limiting
+   - Event storage and processing with action execution
+
+10. **Context Providers (`context_providers.py`)**: 
+    - Pluggable system for injecting dynamic context into LLM prompts
+    - Includes providers for calendar events, notes, weather, known users, and Home Assistant
+
+### Data Flow
+
+1. **User Request Flow**:
+   - User sends message via interface (Telegram/Web/Email)
+   - Interface layer forwards to Processing Service
+   - Processing Service aggregates context from providers
+   - LLM generates response with potential tool calls
+   - Tools execute actions (database updates, external API calls)
+   - Response sent back through interface
+
+2. **Background Task Flow**:
+   - Tasks enqueued to database queue
+   - Task worker polls/receives notifications for new tasks
+   - Worker executes task handlers (callbacks, indexing, maintenance)
+   - Results stored and failures retried with backoff
+
+3. **Document Indexing Flow**:
+   - Document uploaded/ingested via API or tools
+   - Indexing pipeline processes document through configured processors
+   - Text extracted, chunked, and embedded
+   - Embeddings stored in vector database for semantic search
+
+### Configuration
+
+- **Hierarchical configuration**: Code defaults → config.yaml → environment variables → CLI arguments
+- **Service Profiles**: Multiple profiles with different LLMs, tools, and prompts
+- **Tool Configuration**: Fine-grained control over available tools per profile
+- **MCP Servers**: External tool integration via Model Context Protocol
+
+### Key Design Patterns
+
+- **Dependency Injection**: Core services accept dependencies as constructor arguments
+- **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface, LLMInterface, EmbeddingGenerator)
+- **Async/Await**: Fully asynchronous architecture using asyncio
+- **Context Managers**: Database operations use context managers for proper resource cleanup
+- **Retry Logic**: Built-in retry mechanisms for transient failures
+- **Event-Driven**: Loosely coupled components communicate via events
+
 ## Development Guidelines
 - ALWAYS make a plan before you make any nontrivial changes.
 - ALWAYS ask the user to approve the plan before you start work. In particular, you MUST stop and ask for approval before doing major rearchitecture or reimplementations, or making technical decisions that may require judgement calls.
