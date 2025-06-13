@@ -137,13 +137,6 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
                             "The context or instructions for the LLM when the callback triggers (e.g., 'Send a morning briefing with today's calendar events and weather', 'Check if any important emails arrived')."
                         ),
                     },
-                    "skip_if_user_responded": {
-                        "type": "boolean",
-                        "description": (
-                            "If true, the callback will be skipped if the user has sent a message since it was scheduled. Useful for non-critical callbacks that shouldn't interrupt an active conversation."
-                        ),
-                        "default": True,
-                    },
                     "max_retries": {
                         "type": "integer",
                         "description": (
@@ -299,7 +292,6 @@ async def schedule_reminder_tool(
             "conversation_id": conversation_id,
             "callback_context": message,
             "scheduling_timestamp": scheduling_time.isoformat(),
-            "skip_if_user_responded": False,  # Reminders don't use this flag
             "reminder_config": {
                 "is_reminder": True,
                 "follow_up": follow_up,
@@ -341,7 +333,6 @@ async def schedule_recurring_task_tool(
     initial_schedule_time: str,
     recurrence_rule: str,
     callback_context: str,
-    skip_if_user_responded: bool = True,
     max_retries: int | None = 3,
     description: str | None = None,
 ) -> str | None:
@@ -353,7 +344,6 @@ async def schedule_recurring_task_tool(
         initial_schedule_time: ISO 8601 datetime string for the *first* run.
         recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
         callback_context: The context/instructions for the LLM when the callback triggers.
-        skip_if_user_responded: Whether to skip the callback if the user has responded since scheduling (default True).
         max_retries: Maximum number of retries for each instance (default 3).
         description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief').
     """
@@ -414,7 +404,6 @@ async def schedule_recurring_task_tool(
             "conversation_id": conversation_id,
             "callback_context": callback_context,
             "scheduling_timestamp": scheduling_time.isoformat(),
-            "skip_if_user_responded": skip_if_user_responded,
         }
 
         # Enqueue the first instance using the db_context from exec_context
@@ -487,7 +476,6 @@ async def schedule_future_callback_tool(
             "conversation_id": conversation_id,  # Store conversation ID
             "callback_context": context,
             "scheduling_timestamp": scheduling_time.isoformat(),  # Add scheduling timestamp
-            "skip_if_user_responded": False,  # Always False for non-reminder callbacks
         }
 
         await storage.enqueue_task(

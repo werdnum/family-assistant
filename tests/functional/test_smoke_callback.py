@@ -1004,14 +1004,6 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
 
 
-# NOTE: This test is commented out because skip_if_user_responded was removed from
-# schedule_future_callback in favor of using the dedicated schedule_reminder tool
-# which has built-in follow-up functionality.
-#
-# The test_schedule_reminder_with_follow_up test above covers the reminder/follow-up
-# functionality that replaced this feature.
-
-
 @pytest.mark.asyncio
 async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> None:
     """
@@ -1383,7 +1375,6 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
                         "initial_schedule_time": initial_callback_time_iso,
                         "recurrence_rule": recurrence_rule,
                         "callback_context": callback_context,
-                        "skip_if_user_responded": True,
                         "description": "daily_briefing",
                     }),
                 ),
@@ -1541,7 +1532,6 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
         assert task["recurrence_rule"] == recurrence_rule
         payload = task["payload"]
         assert payload.get("callback_context") == callback_context
-        assert payload.get("skip_if_user_responded") is True
         initial_task_id = task["task_id"]
         assert "recurring_llm_callback_daily_briefing" in initial_task_id
         logger.info(f"Initial recurring task {initial_task_id} verified in DB")
