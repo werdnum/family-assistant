@@ -48,6 +48,153 @@ pytest tests/functional/test_specific.py -xq
 
 ```
 
+### Test Fixtures
+
+The project provides a comprehensive set of pytest fixtures for testing different components. These fixtures are defined in `tests/conftest.py` and `tests/functional/telegram/conftest.py`.
+
+#### Core Database Fixtures
+
+**`test_db_engine`** (function scope, autouse)
+- Automatically creates an in-memory SQLite database for each test
+- Patches the global storage engine to use the test database
+- Initializes the database schema
+- Cleans up after the test completes
+- Usage: Automatically available in all tests, no need to explicitly request
+
+**`postgres_container`** (session scope)
+- Starts a PostgreSQL container with pgvector extension for the test session
+- Uses testcontainers library with `pgvector/pgvector:0.8.0-pg17` image
+- Respects DOCKER_HOST environment variable
+- Usage: `def test_something(postgres_container):`
+
+**`pg_vector_db_engine`** (function scope)
+- Creates an AsyncEngine connected to the test PostgreSQL container
+- Initializes both main schema and vector database components
+- Patches the global storage engine to use PostgreSQL
+- Usage: `async def test_something(pg_vector_db_engine):`
+
+#### Task Worker Fixtures
+
+**`task_worker_manager`** (function scope)
+- Manages lifecycle of a TaskWorker instance for background task testing
+- Returns tuple: `(TaskWorker, new_task_event, shutdown_event)`
+- Worker has mock ChatInterface and embedding generator
+- Tests must register their own task handlers
+- Usage:
+  ```python
+  async def test_task(task_worker_manager):
+      worker, new_task_event, shutdown_event = task_worker_manager
+      worker.register_handler("my_task", my_handler)
+      # ... test task execution
+  ```
+
+#### CalDAV Server Fixtures
+
+**`radicale_server_session`** (session scope)
+- Starts a Radicale CalDAV server for the test session
+- Creates test user with credentials: `testuser`/`testpass`
+- Returns tuple: `(base_url, username, password)`
+- Server persists for entire test session
+
+**`radicale_server`** (function scope)
+- Creates a unique calendar for each test function
+- Depends on `radicale_server_session` and `pg_vector_db_engine`
+- Returns tuple: `(base_url, username, password, unique_calendar_url)`
+- Automatically cleans up the calendar after test
+- Usage:
+  ```python
+  async def test_calendar(radicale_server):
+      base_url, username, password, calendar_url = radicale_server
+      # Use calendar_url for test operations
+  ```
+
+#### Telegram Bot Testing Fixtures
+
+**`telegram_handler_fixture`** (function scope)
+- Comprehensive fixture for testing Telegram bot functionality
+- Located in `tests/functional/telegram/conftest.py`
+- Returns `TelegramHandlerTestFixture` named tuple with:
+  - `assistant`: Configured Assistant instance
+  - `handler`: TelegramUpdateHandler
+  - `mock_bot`: Mocked Telegram bot (AsyncMock)
+  - `mock_llm`: RuleBasedMockLLMClient for controlled LLM responses
+  - `mock_confirmation_manager`: Mock for tool confirmation requests
+  - `mock_application`: Mock Telegram Application
+  - `processing_service`: Configured ProcessingService
+  - `tools_provider`: Configured ToolsProvider
+  - `get_db_context_func`: Function to get database context
+- Usage:
+  ```python
+  async def test_telegram_command(telegram_handler_fixture):
+      fixture = telegram_handler_fixture
+      # Add LLM rules
+      fixture.mock_llm.rules.append((matcher_func, LLMOutput(...)))
+      # Test handler methods
+      await fixture.handler.handle_message(update, context)
+      # Assert bot interactions
+      fixture.mock_bot.send_message.assert_called_once()
+  ```
+
+#### Web API Testing Fixtures
+
+These fixtures are available in various web API test files:
+
+**`db_context`** (function scope)
+- Provides a DatabaseContext for web API tests
+- Usage: `async def test_api(db_context):`
+
+**`mock_processing_service_config`** (function scope)
+- Provides a ProcessingServiceConfig with test prompts
+
+**`mock_llm_client`** (function scope)
+- Provides a RuleBasedMockLLMClient for API tests
+
+**`test_tools_provider`** (function scope)
+- Configured ToolsProvider with local tools enabled
+
+**`test_processing_service`** (function scope)
+- ProcessingService instance with mock components
+
+**`app_fixture`** (function scope)
+- FastAPI application instance configured for testing
+
+**`test_client`** (function scope)
+- HTTPX AsyncClient for the test FastAPI app
+- Usage:
+  ```python
+  async def test_endpoint(test_client):
+      response = await test_client.post("/api/endpoint", json={...})
+      assert response.status_code == 200
+  ```
+
+#### Indexing Pipeline Fixtures
+
+**`mock_pipeline_embedding_generator`** (function scope)
+- HashingWordEmbeddingGenerator for deterministic embeddings in tests
+
+**`indexing_task_worker`** (function scope)
+- TaskWorker configured for indexing tasks
+- Returns tuple: `(TaskWorker, new_task_event, shutdown_event)`
+
+#### Mock Utilities
+
+The project includes `tests/mocks/mock_llm.py` with:
+
+**`RuleBasedMockLLMClient`**
+- Mock LLM that responds based on predefined rules
+- Rules are (matcher_function, LLMOutput) tuples
+- Matcher functions receive keyword arguments and return bool
+- Usage:
+  ```python
+  mock_llm = RuleBasedMockLLMClient(
+      rules=[
+          (lambda args: "weather" in args["messages"][0]["content"], 
+           LLMOutput(content="It's sunny today!")),
+      ],
+      default_response=LLMOutput(content="Default response")
+  )
+  ```
+
 ### Running the Application
 ```bash
 # Main application entry point
