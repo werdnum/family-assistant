@@ -215,7 +215,10 @@ class Assistant:
 
         # Setup error logging to database if enabled
         error_logging_config = self.config.get("logging", {}).get("database_errors", {})
-        if error_logging_config.get("enabled", True):
+        # Also check environment variable to disable for testing
+        if error_logging_config.get("enabled", True) and not os.environ.get(
+            "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"
+        ):
             from family_assistant.utils.logging_handler import setup_error_logging
 
             setup_error_logging(get_db_context)

@@ -36,6 +36,10 @@ from family_assistant.task_worker import TaskWorker
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
 
+# Disable SQLAlchemy error handler for tests to avoid connection issues
+# when the database is disposed
+os.environ["FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"] = "1"
+
 logger = logging.getLogger(__name__)
 
 
