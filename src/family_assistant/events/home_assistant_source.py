@@ -168,7 +168,7 @@ class HomeAssistantSource(EventSource):
 
                 # Listen for configured event types
                 # We need to handle multiple event types
-                for event_type in self.event_types:
+                for event_type in self.event_types or ["all"]:
                     logger.info(
                         f"[{self.source_id}] Subscribing to {event_type} events"
                     )
