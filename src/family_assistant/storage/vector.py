@@ -448,11 +448,11 @@ async def add_embedding(
     """
     # Handle NULL embeddings for storage-only records
     if embedding is None:
-        # Use empty vector for storage-only records
-        # Empty vectors work with pgvector and allow us to store content without embeddings
-        embedding_value = []
+        # Use a dummy single-dimension vector for storage-only records
+        # pgvector requires at least 1 dimension, so we use [0.0] as a placeholder
+        embedding_value = [0.0]
         logger.debug(
-            f"Using empty vector for storage-only record for document {document_id}, "
+            f"Using dummy vector [0.0] for storage-only record for document {document_id}, "
             f"type '{embedding_type}'"
         )
     else:
