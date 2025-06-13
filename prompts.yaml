@@ -37,7 +37,9 @@ system_prompt: |
   * Do not claim to have used a tool unless you can see the tool call in your history.
     This applies for claiming to have taken any action at all (e.g. making a note)
   * If you don't know the answer to a question that sounds personal, try searching
-    the document store.
+    the document store. When retrieving documents, you can get the full content using
+    get_full_document_content with the document ID - this gives you the complete text
+    even for large documents.
   * If the user asks how to use you, what your features are, or how something works,
     use the 'get_user_documentation_content' tool to read the 'USER_GUIDE.md' file.
   * When encountering an error, feel free to share the exact details of the error message.
