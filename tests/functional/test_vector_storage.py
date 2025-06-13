@@ -408,3 +408,137 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
         # For now, assume fixture handles cleanup.
 
     logger.info("--- Search Documents Tool Test Passed ---")
+
+
+@pytest.mark.asyncio
+async def test_get_full_document_content_with_raw_content(
+    pg_vector_db_engine: AsyncEngine,
+    embedding_generator_gemini: MockEmbeddingGenerator,
+) -> None:
+    """
+    Test the get_full_document_content tool with raw content storage.
+    Verifies that raw content is returned when available, and falls back
+    to chunk reconstruction when necessary.
+    """
+    logger.info("\n--- Running Get Full Document Content Test ---")
+
+    from family_assistant.tools.documents import get_full_document_content_tool
+
+    # Test content
+    test_title = f"Full Content Test Doc {uuid.uuid4()}"
+    full_text = "This is the complete document text. " * 100  # ~3.5K chars
+
+    # Create test document
+    class TestFullDoc:
+        @property
+        def id(self) -> int | None:
+            return None
+
+        @property
+        def source_type(self) -> str:
+            return "test_doc"
+
+        @property
+        def source_id(self) -> str:
+            return test_title
+
+        @property
+        def source_uri(self) -> str | None:
+            return None
+
+        @property
+        def title(self) -> str | None:
+            return test_title
+
+        @property
+        def created_at(self) -> datetime | None:
+            return datetime.now(timezone.utc)
+
+        @property
+        def metadata(self) -> dict[str, Any] | None:
+            return {"test": True}
+
+    doc_id = None
+
+    try:
+        # Add document
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            doc_id = await add_document(db, TestFullDoc())
+            logger.info(f"Created test document with ID: {doc_id}")
+
+            # Add raw content (should be stored, may or may not be embedded)
+            await add_embedding(
+                db_context=db,
+                document_id=doc_id,
+                chunk_index=0,
+                embedding_type="raw_file_text",
+                embedding=None,  # Will be embedded or not based on size
+                embedding_model="test",  # Will be overridden if too long
+                content=full_text,
+            )
+
+            # Also add some chunks for fallback testing
+            chunk_size = 500
+            for i in range(0, len(full_text), chunk_size - 100):  # With overlap
+                chunk_text = full_text[i : i + chunk_size]
+                await add_embedding(
+                    db_context=db,
+                    document_id=doc_id,
+                    chunk_index=i // (chunk_size - 100),
+                    embedding_type="content_chunk",
+                    embedding=[0.1] * TEST_EMBEDDING_DIMENSION,
+                    embedding_model=TEST_EMBEDDING_MODEL,
+                    content=chunk_text,
+                )
+
+        # Create execution context
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            exec_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conv",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db,
+                timezone_str="UTC",
+            )
+
+            # Test retrieval of full content
+            result = await get_full_document_content_tool(
+                exec_context=exec_context,
+                document_id=doc_id,
+            )
+
+            # Should get the raw content, not reconstructed chunks
+            assert result == full_text, "Should return exact raw content"
+            logger.info("Successfully retrieved raw content")
+
+            # Now test fallback by removing raw content
+            await db.execute_with_retry(
+                text(
+                    "DELETE FROM document_embeddings "
+                    "WHERE document_id = :doc_id AND embedding_type = 'raw_file_text'"
+                ),
+                {"doc_id": doc_id},
+            )
+
+            # Try again - should fall back to chunks
+            result2 = await get_full_document_content_tool(
+                exec_context=exec_context,
+                document_id=doc_id,
+            )
+
+            # Result should contain the text but may have duplicates due to overlap
+            assert len(result2) > len(full_text), (
+                "Reconstructed text should be longer due to overlap"
+            )
+            assert full_text[:100] in result2, "Beginning of text should be present"
+            logger.info("Successfully fell back to chunk reconstruction")
+
+    finally:
+        # Cleanup
+        if doc_id:
+            async with DatabaseContext(engine=pg_vector_db_engine) as db:
+                await delete_document(db, doc_id)
+                logger.info(f"Cleaned up test document {doc_id}")
+
+    logger.info("--- Get Full Document Content Test Passed ---")

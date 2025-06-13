@@ -22,6 +22,25 @@
     {% elif document %}
         <h2>Document: {{ document.title or 'Untitled Document' }} (ID: {{ document.id }})</h2>
         
+        {% if full_text %}
+        <section>
+            <h3>Full Document Content</h3>
+            {% if full_text_warning %}
+            <div class="warning-message" style="background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 0.75rem; margin-bottom: 1rem; border-radius: 3px;">
+                {{ full_text_warning }}
+            </div>
+            {% endif %}
+            <div class="full-content-display" style="background-color: var(--bg-secondary); padding: 1rem; border-radius: 5px; margin-bottom: 1.5rem;">
+                <div style="font-size: 0.85em; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                    Content Type: <code>{{ full_text_type }}</code> | Length: {{ full_text|length }} characters
+                </div>
+                <pre style="white-space: pre-wrap; word-break: break-word; margin: 0; max-height: 600px; overflow-y: auto;">{{ full_text }}</pre>
+            </div>
+        </section>
+        
+        <hr>
+        {% endif %}
+        
         <section>
             <h3>Document Metadata</h3>
             <dl class="detail-grid">

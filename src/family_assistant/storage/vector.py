@@ -426,7 +426,7 @@ async def add_embedding(
     document_id: int,
     chunk_index: int,
     embedding_type: str,
-    embedding: list[float],
+    embedding: list[float] | None,  # Allow None for storage-only
     embedding_model: str,
     content: str | None = None,
     content_hash: str | None = None,
@@ -440,17 +440,29 @@ async def add_embedding(
         document_id: ID of the parent document.
         chunk_index: Index of this chunk within the document for this embedding type.
         embedding_type: Type of embedding (e.g., 'title', 'content_chunk').
-        embedding: The vector embedding.
+        embedding: The vector embedding, or None for storage-only records.
         embedding_model: Name of the model used to generate the embedding.
         content: Optional textual content of the chunk.
         content_hash: Optional hash of the content.
         embedding_doc_metadata: Optional metadata specific to this embedding.
     """
+    # Handle NULL embeddings for storage-only records
+    if embedding is None:
+        # Use empty vector for storage-only records
+        # Empty vectors work with pgvector and allow us to store content without embeddings
+        embedding_value = []
+        logger.debug(
+            f"Using empty vector for storage-only record for document {document_id}, "
+            f"type '{embedding_type}'"
+        )
+    else:
+        embedding_value = embedding
+
     values_to_insert = {
         "document_id": document_id,
         "chunk_index": chunk_index,
         "embedding_type": embedding_type,
-        "embedding": embedding,
+        "embedding": embedding_value,
         "embedding_model": embedding_model,
         "content": content,
         "content_hash": content_hash,

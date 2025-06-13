@@ -117,11 +117,57 @@ async def document_detail_view(
     templates = request.app.state.templates
     document: DocumentRecord | None = None
     error: str | None = None
+    full_text: str | None = None
+    full_text_type: str | None = None
+    full_text_warning: str | None = None
 
     try:
         document = await get_document_by_id(db_context, document_id)
         if not document:
             error = f"Document with ID {document_id} not found."
+        elif document.embeddings:
+            # Look for raw content types first (these should contain full text)
+            raw_types = [
+                "raw_note_text",
+                "raw_body_text",
+                "raw_file_text",
+                "extracted_markdown_content",  # Full PDF text
+                "fetched_content_markdown",  # Full web page content
+                "original_document_file",  # Might have text content
+            ]
+
+            # First try to find raw content
+            for embedding in document.embeddings:
+                if embedding.embedding_type in raw_types and embedding.content:
+                    full_text = embedding.content
+                    full_text_type = embedding.embedding_type
+                    # Check if this was stored without embedding due to size
+                    if embedding.embedding_model in [
+                        "text_only_too_long",
+                        "text_only_error",
+                    ]:
+                        full_text_warning = (
+                            f"Note: This content was too large to embed "
+                            f"(reason: {embedding.embedding_model})"
+                        )
+                    break
+
+            # If no raw content found, fall back to chunk reconstruction
+            if not full_text:
+                chunks = [
+                    e
+                    for e in document.embeddings
+                    if e.embedding_type == "content_chunk" and e.content
+                ]
+                if chunks:
+                    # Sort by chunk index
+                    chunks.sort(key=lambda x: x.chunk_index)
+                    full_text = "".join(c.content for c in chunks if c.content)
+                    full_text_type = "reconstructed_from_chunks"
+                    full_text_warning = (
+                        "Note: This text was reconstructed from overlapping chunks. "
+                        "There may be duplicate content at chunk boundaries."
+                    )
     except Exception as e:
         logger.error(f"Error fetching document {document_id}: {e}", exc_info=True)
         error = f"An error occurred while fetching document details: {e}"
@@ -132,6 +178,9 @@ async def document_detail_view(
             "request": request,
             "document": document,
             "error": error,
+            "full_text": full_text,
+            "full_text_type": full_text_type,
+            "full_text_warning": full_text_warning,
             "user": request.session.get("user"),
             "AUTH_ENABLED": AUTH_ENABLED,
             "now_utc": datetime.now(timezone.utc),
