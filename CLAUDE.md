@@ -37,21 +37,15 @@ This script runs:
   * Use mock objects as little as possible. Use real databases (fixtures available in tests/conftest.py and tests/functional/telegram/conftest.py) and only mock external dependencies with no good fake implementations.
 * Each test tests one independent behaviour of the system under test. Arrange, Act, Assert. NEVER Arrange, Act, Assert, Act, Assert, Act, Assert.
 
+* ALWAYS run tests with `-xq` so there is less output to process. NEVER use `-s` or `-v` unless you have already tried with `-q` and you are sure there is information in the output of `-s` or `-v` that you need for debugging.
+
 ```bash
 # Run all tests with verbose output
-poe test
+poe test # Note: You will need a long timeout for this - something like 15 minutes
 
 # Run specific test files
 pytest tests/functional/test_specific.py -xq
 
-# Run with coverage
-pytest --cov=family_assistant tests/
-
-# Note: poe test will timeout when running all tests. Run tests in smaller batches:
-# pytest tests/unit/ -xq
-# pytest tests/functional/indexing/ -xq
-# pytest tests/functional/telegram/ -xq
-# pytest tests/functional/web/ -xq
 ```
 
 ### Running the Application
@@ -120,6 +114,10 @@ symbex -d src/family_assistant --function -s
 ## Architecture Overview
 
 ## Development Guidelines
+- ALWAYS make a plan before you make any nontrivial changes.
+- ALWAYS ask the user to approve the plan before you start work. In particular, you MUST stop and ask for approval before doing major rearchitecture or reimplementations, or making technical decisions that may require judgement calls.
+- Significant changes should have the plan written to docs/design for approval and future documentation.
+- When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the assistant how it works in the system prompt in prompts.yaml. This is NOT optional or low priority.
 
 ### Adding New Tools
 
@@ -155,7 +153,3 @@ Quick summary:
   from sqlalchemy import func
   ```
   This resolves the "E1102: func.X is not callable" errors while maintaining the same functionality.
-
-## Development Best Practices
-
-- When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the assistant how it works in the system prompt in prompts.yaml.
