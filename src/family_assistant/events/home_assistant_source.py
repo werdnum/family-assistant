@@ -204,17 +204,14 @@ class HomeAssistantSource(EventSource):
                     if not attr.startswith("_"):
                         try:
                             value = getattr(event_data, attr)
-                            # Only include serializable values
-                            if isinstance(
-                                value, (str, int, float, bool, list, dict, type(None))
-                            ):
-                                event_dict[attr] = value
+                            # Include all values - we'll handle complex objects later
+                            event_dict[attr] = value
                         except Exception:
                             pass
                 event_data = event_dict
 
             # Process based on event type
-            processed_event = {"event_type": event_type}
+            processed_event: dict[str, Any] = {"event_type": event_type}
 
             if event_type == "state_changed":
                 # Handle state_changed events specially
@@ -244,11 +241,9 @@ class HomeAssistantSource(EventSource):
                             "last_changed": getattr(state_obj, "last_changed", None),
                         }
 
-                processed_event.update({
-                    "entity_id": entity_id,
-                    "old_state": extract_state_info(old_state),
-                    "new_state": extract_state_info(new_state),
-                })
+                processed_event["entity_id"] = entity_id
+                processed_event["old_state"] = extract_state_info(old_state)
+                processed_event["new_state"] = extract_state_info(new_state)
             else:
                 # For other event types, include all event data
                 processed_event.update(event_data)

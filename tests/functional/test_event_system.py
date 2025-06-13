@@ -25,7 +25,14 @@ from family_assistant.tools.types import ToolExecutionContext
 class MockFiredEvent:
     """Mock for Home Assistant FiredEvent object."""
 
-    def __init__(self, entity_id: str, old_state: str, new_state: str) -> None:
+    def __init__(
+        self,
+        entity_id: str,
+        old_state: str,
+        new_state: str,
+        event_type: str = "state_changed",
+    ) -> None:
+        self.event_type = event_type
         self.data = MockEventData(entity_id, old_state, new_state)
 
 
@@ -113,7 +120,7 @@ async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> N
     )
 
     # Simulate the sync handler adding event to queue
-    ha_source._handle_state_change_sync(event)
+    ha_source._handle_event_sync("state_changed", event)
 
     # Process the event from the queue (normally done by _process_events task)
     # We'll manually process it here since we're not running the full async loop
@@ -158,6 +165,7 @@ async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> N
 
         assert temp_event is not None
         assert temp_event["source_id"] == "home_assistant"
+        assert temp_event["event_data"]["event_type"] == "state_changed"
         assert temp_event["event_data"]["old_state"]["state"] == "20.5"
         assert temp_event["event_data"]["new_state"]["state"] == "21.0"
 
