@@ -113,22 +113,16 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "schedule_recurring_task",
             "description": (
-                "Schedule a task that will run repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like sending a daily summary or checking for updates periodically."
+                "Schedule a recurring LLM callback that will trigger repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like daily briefings, weekly check-ins, or periodic reminders."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_type": {
-                        "type": "string",
-                        "description": (
-                            "The identifier for the task handler that should process this task (e.g., 'send_daily_brief')."
-                        ),
-                    },
                     "initial_schedule_time": {
                         "type": "string",
                         "format": "date-time",
                         "description": (
-                            "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the task should run."
+                            "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the callback should run."
                         ),
                     },
                     "recurrence_rule": {
@@ -137,14 +131,18 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
                             "An RRULE string defining the recurrence schedule according to RFC 5545 (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0' for 8:00 AM daily, 'FREQ=WEEKLY;BYDAY=MO' for every Monday)."
                         ),
                     },
-                    "payload": {
-                        "type": "object",
+                    "callback_context": {
+                        "type": "string",
                         "description": (
-                            "A JSON object containing any necessary data or parameters for the task handler."
+                            "The context or instructions for the LLM when the callback triggers (e.g., 'Send a morning briefing with today's calendar events and weather', 'Check if any important emails arrived')."
                         ),
-                        "additionalProperties": (
-                            True
-                        ),  # Allow any structure within the payload
+                    },
+                    "skip_if_user_responded": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, the callback will be skipped if the user has sent a message since it was scheduled. Useful for non-critical callbacks that shouldn't interrupt an active conversation."
+                        ),
+                        "default": True,
                     },
                     "max_retries": {
                         "type": "integer",
@@ -156,15 +154,14 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     "description": {
                         "type": "string",
                         "description": (
-                            "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief')."
+                            "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief', 'weekly_summary')."
                         ),
                     },
                 },
                 "required": [
-                    "task_type",
                     "initial_schedule_time",
                     "recurrence_rule",
-                    "payload",
+                    "callback_context",
                 ],
             },
         },
@@ -341,31 +338,37 @@ async def schedule_reminder_tool(
 
 async def schedule_recurring_task_tool(
     exec_context: ToolExecutionContext,
-    task_type: str,
     initial_schedule_time: str,
     recurrence_rule: str,
-    payload: dict[str, Any],
+    callback_context: str,
+    skip_if_user_responded: bool = True,
     max_retries: int | None = 3,
     description: str | None = None,
 ) -> str | None:
     """
-    Schedules a new recurring task.
+    Schedules a recurring LLM callback task.
 
     Args:
         exec_context: The execution context containing db_context and timezone_str.
-        task_type: The type of the task (e.g., 'send_daily_brief', 'check_reminders').
         initial_schedule_time: ISO 8601 datetime string for the *first* run.
         recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
-        payload: JSON object containing data needed by the task handler.
+        callback_context: The context/instructions for the LLM when the callback triggers.
+        skip_if_user_responded: Whether to skip the callback if the user has responded since scheduling (default True).
         max_retries: Maximum number of retries for each instance (default 3).
         description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief').
     """
     from family_assistant import storage
 
+    # Hardcode task type to llm_callback
+    task_type = "llm_callback"
+
     logger.info(
         f"Executing schedule_recurring_task_tool: type='{task_type}', initial='{initial_schedule_time}', rule='{recurrence_rule}'"
     )
     db_context = exec_context.db_context
+    interface_type = exec_context.interface_type
+    conversation_id = exec_context.conversation_id
+    clock = exec_context.clock or SystemClock()
 
     try:
         # Validate recurrence rule format (basic validation)
@@ -404,6 +407,16 @@ async def schedule_recurring_task_tool(
             base_id += f"_{safe_desc}"
         initial_task_id = f"{base_id}_{uuid.uuid4()}"
 
+        # Build the payload for llm_callback
+        scheduling_time = clock.now()
+        payload = {
+            "interface_type": interface_type,
+            "conversation_id": conversation_id,
+            "callback_context": callback_context,
+            "scheduling_timestamp": scheduling_time.isoformat(),
+            "skip_if_user_responded": skip_if_user_responded,
+        }
+
         # Enqueue the first instance using the db_context from exec_context
         await storage.enqueue_task(
             db_context=db_context,
@@ -417,7 +430,7 @@ async def schedule_recurring_task_tool(
         logger.info(
             f"Scheduled initial recurring task {initial_task_id} (Type: {task_type}) starting at {initial_dt} with rule '{recurrence_rule}'"
         )
-        return f"OK. Recurring task '{initial_task_id}' scheduled starting {initial_schedule_time} with rule '{recurrence_rule}'."
+        return f"OK. Recurring callback '{initial_task_id}' scheduled starting {initial_schedule_time} with rule '{recurrence_rule}'."
     except ValueError as ve:
         logger.error(f"Invalid arguments for scheduling recurring task: {ve}")
         return f"Error: Invalid arguments provided. {ve}"
