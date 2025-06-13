@@ -52,7 +52,7 @@ You can ask the assistant a wide variety of things:
         *   **Delete notes:** "Delete the note 'Old Shopping List'"
         *   **Automatic indexing:** All notes are now automatically indexed for better search capabilities
         *   **Smart inclusion:** Notes can be marked to automatically include in conversations when relevant
-    *   **Retrieve Full Documents:** After a search, if the assistant finds a document (e.g., "Document ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document 123." You can also click on search results in the Web UI to see a detailed view of the document and its content.
+    *   **Retrieve Full Documents:** After a search, if the assistant finds a document (e.g., "Document ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document 123." You can also click on search results in the Web UI to see a detailed view of the document. The document detail view now shows the complete text content at the top of the page, making it easy to read the full document without having to reconstruct it from search snippets. Large documents (like PDFs or long web pages) are fully accessible even if they were too large to process for search indexing.
     *   **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won the game last night?", "Find me a recipe for banana bread." (The assistant can search the web for information using its default search capabilities. For more complex web research that might involve navigating multiple pages or interacting with sites, you can use the `/browse` command followed by your research query, e.g., `/browse find recent reviews for the XZ-100 camera and compare its features to the YZ-200`. Uses the Brave Search service for some searches.)
 
 *   **Remember Things (Notes):**
@@ -157,7 +157,7 @@ While most interaction happens via Telegram, the web interface is useful for spe
         *   Search capabilities across all document types
     *   **Viewing History:** Look back through past conversations the assistant has had (across different chats, if configured).
     *   **Viewing Background Tasks:** See a log of tasks the assistant has performed automatically in the background (like fetching calendar updates or future scheduled actions). You can also manually retry failed tasks from this page.
-    *   **Searching Documents:** Use the "Vector Search" page to search through all indexed documents (notes, emails, uploaded files, web pages). Results are grouped by document, and you can click to see a "Document Detail View" with more information.
+    *   **Searching Documents:** Use the "Vector Search" page to search through all indexed documents (notes, emails, uploaded files, web pages). Results are grouped by document, and you can click to see a "Document Detail View" with complete document content. The detail view displays the full text at the top for easy reading, along with all metadata and search snippets. Even documents that were too large to fully index for search are displayed in their entirety.
     *   **Uploading Documents:** Use the "Upload Document" page to add new files (PDFs, text files, etc.) for the assistant to index and learn from.
     *   **Managing API Tokens:** If you need programmatic access to the assistant, you can manage your API tokens on the "API Tokens" page under "Settings".
     *   **Tool Testing:** A new "Tools" page allows developers to test and debug tool interactions directly from the web interface.
