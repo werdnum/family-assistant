@@ -761,6 +761,7 @@ async def test_notes_indexing_graceful_degradation(
 
     note_id = None
     document_db_id = None
+    indexing_task_id = None
 
     try:
         # Create large note
@@ -782,9 +783,70 @@ async def test_notes_indexing_graceful_degradation(
             note_id = note_row["id"]
             logger.info(f"Created large note with ID: {note_id}")
 
-        # Wait for indexing
+        # Find the indexing task
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            await asyncio.sleep(0.2)  # Wait for task to be enqueued
+            from sqlalchemy import Text
+
+            select_task_stmt = (
+                select(tasks_table.c.task_id)
+                .where(
+                    tasks_table.c.task_type == "index_note",
+                    tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
+                )
+                .order_by(tasks_table.c.created_at.desc())
+                .limit(1)
+            )
+            task_info = await db.fetch_one(select_task_stmt)
+            assert task_info is not None, (
+                f"Could not find indexing task for note ID {note_id}"
+            )
+            indexing_task_id = task_info["task_id"]
+            logger.info(f"Found indexing task ID: {indexing_task_id}")
+
+        # Wait for indexing task to complete
         test_new_task_event.set()
-        await asyncio.sleep(2.0)  # Give time for processing
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            task_ids={indexing_task_id},
+            timeout_seconds=20.0,
+        )
+        logger.info(f"Indexing task {indexing_task_id} completed.")
+
+        # Wait a bit more for any embed_and_store_batch tasks that may have been created
+        await asyncio.sleep(1.0)
+        test_new_task_event.set()
+
+        # Find any embed_and_store_batch tasks for this document
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            # First get the document ID
+            doc_record = await storage.get_document_by_source_id(db, unique_note_title)
+            if doc_record:
+                embed_task_stmt = select(
+                    tasks_table.c.task_id, tasks_table.c.status
+                ).where(
+                    tasks_table.c.task_type == "embed_and_store_batch",
+                    tasks_table.c.payload.cast(Text).like(
+                        f'%"document_id": {doc_record.id}%'
+                    ),
+                )
+                embed_tasks = await db.fetch_all(embed_task_stmt)
+                if embed_tasks:
+                    logger.info(f"Found {len(embed_tasks)} embed_and_store_batch tasks")
+                    embed_task_ids = {
+                        task["task_id"]
+                        for task in embed_tasks
+                        if task["status"] != "completed"
+                    }
+                    if embed_task_ids:
+                        logger.info(
+                            f"Waiting for {len(embed_task_ids)} embed tasks to complete"
+                        )
+                        await wait_for_tasks_to_complete(
+                            pg_vector_db_engine,
+                            task_ids=embed_task_ids,
+                            timeout_seconds=10.0,
+                        )
 
         # Verify document and embeddings
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
@@ -869,3 +931,32 @@ async def test_notes_indexing_graceful_degradation(
                     await delete_note(db_cleanup, unique_note_title)
             except Exception as e:
                 logger.warning(f"Note cleanup error: {e}")
+
+        if indexing_task_id:
+            try:
+                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    delete_stmt = tasks_table.delete().where(
+                        tasks_table.c.task_id == indexing_task_id
+                    )
+                    await db_cleanup.execute_with_retry(delete_stmt)
+                    logger.info(f"Cleaned up test task ID {indexing_task_id}")
+            except Exception as cleanup_err:
+                logger.warning(f"Error during task cleanup: {cleanup_err}")
+
+        # Also clean up any embed_and_store_batch tasks
+        if document_db_id:
+            try:
+                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    delete_embed_stmt = tasks_table.delete().where(
+                        tasks_table.c.task_type == "embed_and_store_batch",
+                        tasks_table.c.payload.cast(Text).like(
+                            f'%"document_id": {document_db_id}%'
+                        ),
+                    )
+                    result = await db_cleanup.execute_with_retry(delete_embed_stmt)
+                    if result.rowcount > 0:  # type: ignore[attr-defined]
+                        logger.info(
+                            f"Cleaned up {result.rowcount} embed_and_store_batch tasks"
+                        )
+            except Exception as cleanup_err:
+                logger.warning(f"Error during embed task cleanup: {cleanup_err}")
