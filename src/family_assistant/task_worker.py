@@ -75,7 +75,6 @@ async def _schedule_reminder_follow_up(
         "conversation_id": exec_context.conversation_id,
         "callback_context": original_context,
         "scheduling_timestamp": clock.now().isoformat(),
-        "skip_if_user_responded": False,  # Reminders don't use this flag
         "reminder_config": {
             "is_reminder": True,
             "follow_up": True,
@@ -177,8 +176,6 @@ async def handle_llm_callback(
     # chat_id is now from context
     callback_context = payload.get("callback_context")
     scheduling_timestamp_str = payload.get("scheduling_timestamp")
-    # Default to False if not present (original behavior: always run callback)
-    skip_if_user_responded = payload.get("skip_if_user_responded", False)
 
     # Extract reminder configuration if present
     reminder_config = payload.get("reminder_config", {})
@@ -213,10 +210,9 @@ async def handle_llm_callback(
         )
         raise ValueError("Invalid scheduling_timestamp format") from e
 
-    # For reminders with follow-up, always check if user responded
-    check_user_response = skip_if_user_responded or (is_reminder and follow_up_enabled)
-
-    if check_user_response:
+    # For reminders with follow-up, check if user responded
+    intervening_messages = []
+    if is_reminder and follow_up_enabled:
         # Check for intervening user messages
         stmt = (
             select(storage.message_history_table.c.internal_id)
@@ -229,25 +225,18 @@ async def handle_llm_callback(
         intervening_messages = await db_context.fetch_all(stmt)
 
         if intervening_messages:
-            if skip_if_user_responded and not is_reminder:
-                # Regular callback with skip flag
-                logger.info(
-                    f"User has responded since callback was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}, and skip_if_user_responded is True. Skipping callback."
-                )
-                return  # Abort the callback
-            elif is_reminder and follow_up_enabled:
-                # Reminder with follow-up - user responded, so no follow-up needed
-                logger.info(
-                    f"User has responded since reminder was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}. Skipping follow-up."
-                )
-                # Note: We still proceed with the current reminder, just don't schedule follow-up
+            # Reminder with follow-up - user responded, so no follow-up needed
+            logger.info(
+                f"User has responded since reminder was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}. Skipping follow-up."
+            )
+            # Note: We still proceed with the current reminder, just don't schedule follow-up
     else:
         logger.info(
             f"Callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}) proceeding without checking for user response."
         )
 
     logger.info(
-        f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}, skip_if_user_responded={skip_if_user_responded})"
+        f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str})"
     )
     current_time_str = (
         clock.now()
@@ -321,7 +310,7 @@ async def handle_llm_callback(
                 is_reminder
                 and follow_up_enabled
                 and current_attempt < max_follow_ups + 1
-                and not (check_user_response and intervening_messages)
+                and not intervening_messages
             ):
                 await _schedule_reminder_follow_up(
                     exec_context=exec_context,

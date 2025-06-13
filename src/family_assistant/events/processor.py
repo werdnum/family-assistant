@@ -232,7 +232,6 @@ class EventProcessor:
                     "conversation_id": listener["conversation_id"],
                     "callback_context": callback_context,
                     "scheduling_timestamp": datetime.now(timezone.utc).isoformat(),
-                    "skip_if_user_responded": False,
                 },
             )
 
