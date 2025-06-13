@@ -28,6 +28,7 @@ BASE_UI_ENDPOINTS = [
     ("/vector-search", "Vector Search Page"),
     ("/documents/upload", "Document Upload Page"),  # New endpoint
     ("/settings/tokens", "Manage API Tokens UI Page"),
+    ("/errors/", "Error Logs List Page"),
 ]
 
 # UI endpoints related to authentication, typically only active if AUTH_ENABLED is true

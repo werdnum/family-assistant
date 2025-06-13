@@ -32,7 +32,7 @@ class HomeAssistantSource(EventSource):
 
         Args:
             client: Shared Home Assistant API client
-            event_types: List of event types to subscribe to (default: ["state_changed"])
+            event_types: List of event types to subscribe to (default: all)
         """
         self.client = client
         # Extract connection info from client to create WebSocket client
@@ -44,7 +44,7 @@ class HomeAssistantSource(EventSource):
         self._websocket_task: asyncio.Task | None = None
         self._running = False
         # Event types to subscribe to
-        self.event_types = event_types or ["state_changed"]
+        self.event_types = event_types
 
         # Reconnection parameters with exponential backoff
         self._base_reconnect_delay = 5.0  # Base delay in seconds
