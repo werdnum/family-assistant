@@ -113,7 +113,9 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "schedule_recurring_task",
             "description": (
-                "Schedule a recurring LLM callback that will trigger repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like daily briefings, weekly check-ins, or periodic reminders."
+                "Schedule a recurring LLM callback that will trigger repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like daily briefings, weekly check-ins, or periodic reminders. "
+                "IMPORTANT: Each recurring task creates individual callback instances that can be managed using list_pending_callbacks, modify_pending_callback, and cancel_pending_callback tools. "
+                "To stop a recurring task entirely, you must cancel all its pending instances."
             ),
             "parameters": {
                 "type": "object",
@@ -163,7 +165,13 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_pending_callbacks",
-            "description": "Lists pending LLM callback tasks that were previously scheduled for the current conversation. Shows their task IDs, scheduled times, and context.",
+            "description": (
+                "Lists all pending LLM callback tasks for the current conversation, including:"
+                "\n- One-time callbacks from schedule_future_callback"
+                "\n- Reminder callbacks from schedule_reminder"
+                "\n- Individual instances of recurring tasks from schedule_recurring_task"
+                "\nReturns task IDs, scheduled times, and context for each pending callback."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -207,7 +215,14 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "cancel_pending_callback",
-            "description": "Cancels a specific pending LLM callback task. You must provide the task_id of the callback to cancel.",
+            "description": (
+                "Cancels a specific pending LLM callback task by its task_id. Use this to:"
+                "\n- Cancel one-time future callbacks"
+                "\n- Cancel scheduled reminders"
+                "\n- Cancel individual instances of recurring tasks"
+                "\n- Stop a recurring task by canceling all its pending instances (use list_pending_callbacks first to find them)"
+                "\nNote: This cancels only the specific task instance identified by task_id."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
