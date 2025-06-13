@@ -24,12 +24,15 @@ logger = logging.getLogger(__name__)
 class HomeAssistantSource(EventSource):
     """Event source for Home Assistant state changes."""
 
-    def __init__(self, client: ha_api.Client) -> None:
+    def __init__(
+        self, client: ha_api.Client, event_types: list[str] | None = None
+    ) -> None:
         """
         Initialize Home Assistant event source.
 
         Args:
             client: Shared Home Assistant API client
+            event_types: List of event types to subscribe to (default: ["state_changed"])
         """
         self.client = client
         # Extract connection info from client to create WebSocket client
@@ -40,6 +43,8 @@ class HomeAssistantSource(EventSource):
         self.processor: EventProcessor | None = None
         self._websocket_task: asyncio.Task | None = None
         self._running = False
+        # Event types to subscribe to
+        self.event_types = event_types or ["state_changed"]
 
         # Reconnection parameters with exponential backoff
         self._base_reconnect_delay = 5.0  # Base delay in seconds
@@ -161,67 +166,92 @@ class HomeAssistantSource(EventSource):
                 self._reconnect_delay = self._base_reconnect_delay
                 self._last_event_time = time.time()
 
-                # Listen specifically for state_changed events
-                with ws_client.listen_events("state_changed") as events:
+                # Listen for configured event types
+                # We need to handle multiple event types
+                for event_type in self.event_types:
+                    logger.info(
+                        f"[{self.source_id}] Subscribing to {event_type} events"
+                    )
+
+                # Listen to all events and filter by type
+                with ws_client.listen_events() as events:
                     for event in events:
                         if not self._running:
                             break
 
-                        # Process the state change event
-                        self._handle_state_change_sync(event)
+                        # Check if this event type is one we're interested in
+                        event_type = getattr(event, "event_type", None)
+                        if event_type and event_type in self.event_types:
+                            # Process the event
+                            self._handle_event_sync(event_type, event)
 
         except Exception as e:
             logger.error(f"WebSocket connection error: {e}")
             raise
 
-    def _handle_state_change_sync(self, event: Any) -> None:
-        """Handle a state change event synchronously from the thread."""
+    def _handle_event_sync(self, event_type: str, event: Any) -> None:
+        """Handle an event synchronously from the thread."""
         try:
             # FiredEvent object may have attributes instead of dict access
             # Try to access as attributes first, fall back to dict access
             event_data = event.data if hasattr(event, "data") else event.get("data", {})
 
-            if isinstance(event_data, dict):
+            # Convert event_data to dict if it's not already
+            if not isinstance(event_data, dict):
+                # Try to extract attributes from object
+                event_dict = {}
+                for attr in dir(event_data):
+                    if not attr.startswith("_"):
+                        try:
+                            value = getattr(event_data, attr)
+                            # Only include serializable values
+                            if isinstance(
+                                value, (str, int, float, bool, list, dict, type(None))
+                            ):
+                                event_dict[attr] = value
+                        except Exception:
+                            pass
+                event_data = event_dict
+
+            # Process based on event type
+            processed_event = {"event_type": event_type}
+
+            if event_type == "state_changed":
+                # Handle state_changed events specially
                 entity_id = event_data.get("entity_id")
-            else:
-                entity_id = getattr(event_data, "entity_id", None)
+                if not entity_id:
+                    return
 
-            if not entity_id:
-                return
-
-            # Extract state data
-            if isinstance(event_data, dict):
                 old_state = event_data.get("old_state", {})
                 new_state = event_data.get("new_state", {})
+
+                # Helper function to extract state info from dict or object
+                def extract_state_info(state_obj: Any) -> dict[str, Any] | None:
+                    if not state_obj:
+                        return None
+
+                    if isinstance(state_obj, dict):
+                        return {
+                            "state": state_obj.get("state"),
+                            "attributes": state_obj.get("attributes", {}),
+                            "last_changed": state_obj.get("last_changed"),
+                        }
+                    else:
+                        # Handle as object with attributes
+                        return {
+                            "state": getattr(state_obj, "state", None),
+                            "attributes": getattr(state_obj, "attributes", {}),
+                            "last_changed": getattr(state_obj, "last_changed", None),
+                        }
+
+                processed_event.update({
+                    "entity_id": entity_id,
+                    "old_state": extract_state_info(old_state),
+                    "new_state": extract_state_info(new_state),
+                })
             else:
-                old_state = getattr(event_data, "old_state", {})
-                new_state = getattr(event_data, "new_state", {})
-
-            # Helper function to extract state info from dict or object
-            def extract_state_info(state_obj: Any) -> dict[str, Any] | None:
-                if not state_obj:
-                    return None
-
-                if isinstance(state_obj, dict):
-                    return {
-                        "state": state_obj.get("state"),
-                        "attributes": state_obj.get("attributes", {}),
-                        "last_changed": state_obj.get("last_changed"),
-                    }
-                else:
-                    # Handle as object with attributes
-                    return {
-                        "state": getattr(state_obj, "state", None),
-                        "attributes": getattr(state_obj, "attributes", {}),
-                        "last_changed": getattr(state_obj, "last_changed", None),
-                    }
-
-            # Create simplified event data for processing
-            processed_event = {
-                "entity_id": entity_id,
-                "old_state": extract_state_info(old_state),
-                "new_state": extract_state_info(new_state),
-            }
+                # For other event types, include all event data
+                processed_event.update(event_data)
 
             # Add to queue for async processing
             # Use janus sync queue for thread-safe operations
@@ -231,12 +261,12 @@ class HomeAssistantSource(EventSource):
                     # Update last event time for health check
                     self._last_event_time = time.time()
                 except Exception:  # janus uses standard queue.Full exception
-                    logger.warning(f"Event queue full, dropping event for {entity_id}")
+                    logger.warning(f"Event queue full, dropping event: {event_type}")
             else:
                 logger.error("Event queue not initialized, dropping event")
 
         except Exception as e:
-            logger.error(f"Error processing state change event: {e}", exc_info=True)
+            logger.error(f"Error processing {event_type} event: {e}", exc_info=True)
 
     async def _process_events(self) -> None:
         """Process events from the queue asynchronously."""

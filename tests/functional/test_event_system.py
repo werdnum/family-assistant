@@ -381,6 +381,108 @@ async def test_test_event_listener_tool_empty_conditions_error(
 
 
 @pytest.mark.asyncio
+async def test_event_type_matching(test_db_engine: AsyncEngine) -> None:
+    """Test that event type matching works correctly."""
+    # Arrange - store different event types
+    async with get_db_context() as db_ctx:
+        from sqlalchemy import text
+
+        await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
+
+        now = datetime.now(timezone.utc)
+
+        # Store a state_changed event
+        await db_ctx.execute_with_retry(
+            text("""INSERT INTO recent_events 
+                   (event_id, source_id, event_data, timestamp)
+                   VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
+            {
+                "event_id": "test_state_1",
+                "source_id": EventSourceType.home_assistant.value,
+                "event_data": json.dumps({
+                    "event_type": "state_changed",
+                    "entity_id": "light.living_room",
+                    "old_state": {"state": "off"},
+                    "new_state": {"state": "on"},
+                }),
+                "timestamp": now,
+            },
+        )
+
+        # Store a call_service event
+        await db_ctx.execute_with_retry(
+            text("""INSERT INTO recent_events 
+                   (event_id, source_id, event_data, timestamp)
+                   VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
+            {
+                "event_id": "test_service_1",
+                "source_id": EventSourceType.home_assistant.value,
+                "event_data": json.dumps({
+                    "event_type": "call_service",
+                    "domain": "light",
+                    "service": "turn_on",
+                    "service_data": {"entity_id": "light.living_room"},
+                }),
+                "timestamp": now,
+            },
+        )
+
+    # Act - test matching state_changed events only
+    async with get_db_context() as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+        )
+
+        result = await event_listener_test_tool(
+            exec_context,
+            source_id=EventSourceType.home_assistant.value,
+            match_conditions={
+                "event_type": "state_changed",
+                "entity_id": "light.living_room",
+            },
+            hours=1,
+        )
+
+    # Assert
+    data = json.loads(result)
+    assert data["matched_count"] == 1
+    assert data["total_tested"] == 2
+    assert len(data["matched_events"]) == 1
+    assert data["matched_events"][0]["event_data"]["event_type"] == "state_changed"
+
+    # Act - test matching call_service events only
+    async with get_db_context() as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+        )
+
+        result = await event_listener_test_tool(
+            exec_context,
+            source_id=EventSourceType.home_assistant.value,
+            match_conditions={
+                "event_type": "call_service",
+                "domain": "light",
+            },
+            hours=1,
+        )
+
+    # Assert
+    data = json.loads(result)
+    assert data["matched_count"] == 1
+    assert data["total_tested"] == 2
+    assert len(data["matched_events"]) == 1
+    assert data["matched_events"][0]["event_data"]["event_type"] == "call_service"
+
+
+@pytest.mark.asyncio
 async def test_cleanup_old_events(test_db_engine: AsyncEngine) -> None:
     """Test that old events are cleaned up correctly."""
     from datetime import timedelta
