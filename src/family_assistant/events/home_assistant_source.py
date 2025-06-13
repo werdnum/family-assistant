@@ -181,7 +181,10 @@ class HomeAssistantSource(EventSource):
 
                         # Check if this event type is one we're interested in
                         event_type = getattr(event, "event_type", None)
-                        if event_type and event_type in self.event_types:
+                        if event_type and (
+                            self.event_types is None
+                            or (self.event_types and event_type in self.event_types)
+                        ):
                             # Process the event
                             self._handle_event_sync(event_type, event)
 
