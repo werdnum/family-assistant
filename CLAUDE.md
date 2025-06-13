@@ -224,6 +224,13 @@ Quick summary:
 2. Export in `src/family_assistant/tools/__init__.py`
 3. Enable in `config.yaml` under the profile's `enable_local_tools`
 
+### Adding New UI Endpoints
+
+When adding new web UI endpoints that serve HTML pages:
+1. Create your router in `src/family_assistant/web/routers/`
+2. Always include `now_utc: datetime.now(timezone.utc)` in the template context when using `TemplateResponse`
+3. **Important**: Add your new endpoint to the `BASE_UI_ENDPOINTS` list in `tests/functional/web/test_ui_endpoints.py` to ensure it's tested for basic accessibility
+
 ## Important Notes
 
 - Always make sure you start with a clean working directory. Commit any uncommitted changes.
