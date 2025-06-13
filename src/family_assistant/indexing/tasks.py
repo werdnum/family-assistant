@@ -134,30 +134,71 @@ async def handle_embed_and_store_batch(
         )
         raise ValueError("Texts to embed and metadata list must have the same length.")
 
+    # Configure max content length for embeddings (roughly 8K tokens)
+    MAX_CONTENT_LENGTH = 30000  # Characters, not tokens
+
     logger.info(
-        f"Generating {len(texts_to_embed)} embeddings for document_id {document_id}."
+        f"Processing {len(texts_to_embed)} items for document_id {document_id}."
     )
-    embedding_result = await embedding_generator_instance.generate_embeddings(
-        texts_to_embed
-    )
+
+    # Process each text item individually for graceful degradation
+    successful_embeds = 0
+    storage_only_items = 0
 
     for i, text_content in enumerate(texts_to_embed):
         meta = embedding_metadata_list[i]
-        vector = embedding_result.embeddings[i]
+        embedding_vector = None
+        embedding_model_used = "unknown"
 
+        # Check if content is too long for embedding
+        if len(text_content) > MAX_CONTENT_LENGTH:
+            logger.info(
+                f"Content too long ({len(text_content)} chars) for embedding type "
+                f"'{meta['embedding_type']}' in document {document_id}. Storing without vector."
+            )
+            embedding_model_used = "text_only_too_long"
+            storage_only_items += 1
+        else:
+            # Try to generate embedding
+            try:
+                result = await embedding_generator_instance.generate_embeddings([
+                    text_content
+                ])
+                if result.embeddings and len(result.embeddings) > 0:
+                    embedding_vector = result.embeddings[0]
+                    embedding_model_used = result.model_name
+                    successful_embeds += 1
+                else:
+                    logger.warning(
+                        f"Empty embedding result for type '{meta['embedding_type']}' "
+                        f"in document {document_id}. Storing without vector."
+                    )
+                    embedding_model_used = "text_only_empty_result"
+                    storage_only_items += 1
+            except Exception as e:
+                logger.warning(
+                    f"Embedding generation failed for type '{meta['embedding_type']}' "
+                    f"in document {document_id}: {e}. Storing without vector."
+                )
+                embedding_model_used = "text_only_error"
+                storage_only_items += 1
+
+        # Store with or without embedding
         await add_embedding(
-            db_context=db_context,  # Use the extracted DatabaseContext
+            db_context=db_context,
             document_id=document_id,
             chunk_index=meta["chunk_index"],
             embedding_type=meta["embedding_type"],
-            embedding=vector,
-            embedding_model=embedding_result.model_name,
+            embedding=embedding_vector,  # May be None
+            embedding_model=embedding_model_used,
             content=text_content,
             content_hash=meta.get("content_hash"),
             embedding_doc_metadata=meta["original_content_metadata"],
         )
+
     logger.info(
-        f"Successfully stored {len(texts_to_embed)} embeddings for document_id {document_id}."
+        f"Completed processing for document_id {document_id}: "
+        f"{successful_embeds} embeddings generated, {storage_only_items} stored without vectors."
     )
 
     # Check if all tasks for this document are complete

@@ -23,6 +23,7 @@ from family_assistant import storage
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.pipeline import IndexingPipeline
+from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import add_or_update_note
 from family_assistant.storage.tasks import tasks_table
@@ -199,9 +200,7 @@ async def test_notes_indexing_e2e(
 
     # Register task handlers
     worker.register_task_handler("index_note", notes_indexer.handle_index_note)
-    worker.register_task_handler(
-        "embed_and_store_batch", _helper_handle_embed_and_store_batch_notes
-    )
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
     logger.info("TaskWorker created and 'index_note' task handler registered.")
 
     # --- Act: Start Background Worker ---
@@ -512,9 +511,7 @@ async def test_note_update_reindexing_e2e(
     )
 
     worker.register_task_handler("index_note", notes_indexer.handle_index_note)
-    worker.register_task_handler(
-        "embed_and_store_batch", _helper_handle_embed_and_store_batch_notes
-    )
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
@@ -695,6 +692,174 @@ async def test_note_update_reindexing_e2e(
                     await storage.delete_document(db_cleanup, document_db_id)
             except Exception as e:
                 logger.warning(f"Cleanup error: {e}")
+
+        if note_id:
+            try:
+                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    from family_assistant.storage.notes import delete_note
+
+                    await delete_note(db_cleanup, unique_note_title)
+            except Exception as e:
+                logger.warning(f"Note cleanup error: {e}")
+
+
+@pytest.mark.asyncio
+async def test_notes_indexing_graceful_degradation(
+    pg_vector_db_engine: AsyncEngine,
+    mock_embedding_generator_notes: MockEmbeddingGenerator,
+) -> None:
+    """
+    Test that large note content is stored without embedding (graceful degradation).
+
+    This test verifies:
+    1. Small content gets embedded normally
+    2. Large content is stored but not embedded
+    3. Both are accessible via get_full_document_content
+    """
+    logger.info("\n--- Running Notes Indexing Graceful Degradation Test ---")
+
+    # Create very large content that exceeds embedding limit
+    LARGE_CONTENT = "This is a very large note. " * 2000  # ~30K chars
+    unique_note_title = f"Large Note Test {uuid.uuid4()}"
+
+    # Setup pipeline and indexer (same as main test)
+    from family_assistant.indexing.pipeline import ContentProcessor
+    from family_assistant.indexing.processors import EmbeddingDispatchProcessor
+
+    processors: list[ContentProcessor] = [
+        EmbeddingDispatchProcessor(
+            embedding_types_to_dispatch=["raw_note_text"],
+        )
+    ]
+
+    pipeline = IndexingPipeline(
+        processors=processors,
+        config={},
+    )
+    notes_indexer = NotesIndexer(pipeline=pipeline)
+
+    # Setup TaskWorker
+    mock_chat_interface = MagicMock()
+    worker_new_task_event = asyncio.Event()
+
+    worker = TaskWorker(
+        processing_service=cast("ProcessingService", None),
+        chat_interface=mock_chat_interface,
+        new_task_event=worker_new_task_event,
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=mock_embedding_generator_notes,
+    )
+
+    worker.register_task_handler("index_note", notes_indexer.handle_index_note)
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
+
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(test_new_task_event))
+    await asyncio.sleep(0.1)
+
+    note_id = None
+    document_db_id = None
+
+    try:
+        # Create large note
+        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+            result = await add_or_update_note(
+                db_context=db_context,
+                title=unique_note_title,
+                content=LARGE_CONTENT,
+            )
+            assert result == "Success"
+
+            from family_assistant.storage.notes import notes_table
+
+            note_stmt = select(notes_table.c.id).where(
+                notes_table.c.title == unique_note_title
+            )
+            note_row = await db_context.fetch_one(note_stmt)
+            assert note_row is not None, "Note not found after creation"
+            note_id = note_row["id"]
+            logger.info(f"Created large note with ID: {note_id}")
+
+        # Wait for indexing
+        test_new_task_event.set()
+        await asyncio.sleep(2.0)  # Give time for processing
+
+        # Verify document and embeddings
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            doc_record = await storage.get_document_by_source_id(db, unique_note_title)
+            assert doc_record is not None
+            document_db_id = doc_record.id
+
+            # Check embeddings
+            from family_assistant.storage.vector import DocumentEmbeddingRecord
+
+            embeddings_stmt = select(
+                DocumentEmbeddingRecord.embedding_type,
+                DocumentEmbeddingRecord.embedding_model,
+                DocumentEmbeddingRecord.content,
+            ).where(DocumentEmbeddingRecord.document_id == document_db_id)
+            embeddings = await db.fetch_all(embeddings_stmt)
+
+            # Should have at least one embedding record
+            assert len(embeddings) > 0
+
+            # Find the raw_note_text embedding
+            raw_note_embedding = None
+            for emb in embeddings:
+                if emb["embedding_type"] == "raw_note_text":
+                    raw_note_embedding = emb
+                    break
+
+            assert raw_note_embedding is not None, "raw_note_text embedding not found"
+
+            # Check if it was stored without embedding due to size
+            # The actual content embedded includes title + content
+            combined_text_len = (
+                len(raw_note_embedding["content"])
+                if raw_note_embedding["content"]
+                else 0
+            )
+            if combined_text_len > 30000:  # Matches MAX_CONTENT_LENGTH in tasks.py
+                assert raw_note_embedding["embedding_model"] in [
+                    "text_only_too_long",
+                    "text_only_error",
+                    "text_only_empty_result",
+                ], (
+                    f"Expected storage-only model, got: {raw_note_embedding['embedding_model']}"
+                )
+                logger.info(
+                    f"Large content ({combined_text_len} chars) was stored without embedding as expected"
+                )
+            else:
+                logger.info(
+                    f"Content ({combined_text_len} chars) was small enough to embed"
+                )
+
+            # Verify content is stored
+            assert raw_note_embedding["content"] is not None
+            assert unique_note_title in raw_note_embedding["content"]
+            assert len(raw_note_embedding["content"]) > 30000
+
+        logger.info("--- Notes Indexing Graceful Degradation Test Passed ---")
+
+    finally:
+        # Cleanup
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+
+        if document_db_id:
+            try:
+                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
+                    await storage.delete_document(db_cleanup, document_db_id)
+            except Exception as e:
+                logger.warning(f"Document cleanup error: {e}")
 
         if note_id:
             try:

@@ -305,41 +305,75 @@ async def get_full_document_content_tool(
     db_context = exec_context.db_context
 
     try:
-        # Query for content embeddings associated with the document ID, ordered by chunk index
-        # Prioritize 'content_chunk' type, but could potentially fetch others if needed.
-        # Using raw SQL for potential performance and direct access to embedding content.
-        # Ensure table/column names match your schema.
-        stmt = text(
+        # First try to get raw/full content types that contain complete text
+        raw_types_query = text(
+            """
+            SELECT content, embedding_type
+            FROM document_embeddings
+            WHERE document_id = :doc_id
+              AND embedding_type IN (
+                'raw_note_text', 
+                'raw_body_text', 
+                'raw_file_text',
+                'extracted_markdown_content',
+                'fetched_content_markdown'
+              )
+              AND content IS NOT NULL
+            LIMIT 1;
+        """
+        )
+        raw_result = await db_context.fetch_one(
+            raw_types_query, {"doc_id": document_id}
+        )
+
+        if raw_result and raw_result["content"]:
+            logger.info(
+                f"Retrieved full content for document ID {document_id} from "
+                f"'{raw_result['embedding_type']}' (Length: {len(raw_result['content'])})."
+            )
+            return raw_result["content"]
+
+        # Fall back to chunk reconstruction if no raw content found
+        logger.info(
+            f"No raw content found for document ID {document_id}, "
+            "falling back to chunk reconstruction."
+        )
+
+        chunk_query = text(
             """
             SELECT content
             FROM document_embeddings
             WHERE document_id = :doc_id
-              AND embedding_type = 'content_chunk' -- Assuming this type holds the main content
+              AND embedding_type = 'content_chunk'
               AND content IS NOT NULL
             ORDER BY chunk_index ASC;
         """
         )
-        results = await db_context.fetch_all(stmt, {"doc_id": document_id})
+        chunk_results = await db_context.fetch_all(chunk_query, {"doc_id": document_id})
 
-        if not results:
-            # Check if the document exists at all, maybe it has no content embeddings?
+        if not chunk_results:
+            # Check if the document exists at all
             doc_check_stmt = text("SELECT id FROM documents WHERE id = :doc_id")
             doc_exists = await db_context.fetch_one(
                 doc_check_stmt, {"doc_id": document_id}
             )
             if doc_exists:
                 logger.warning(
-                    f"Document ID {document_id} exists, but no 'content_chunk' embeddings with text content found."
+                    f"Document ID {document_id} exists, but no content found "
+                    "(neither raw content nor chunks)."
                 )
-                # TODO: Future enhancement: Check document source_type and potentially fetch content
-                # from original source (e.g., received_emails table) if no embedding content exists.
-                return f"Error: Document {document_id} found, but no text content is available for retrieval via this tool."
+                return f"Error: Document {document_id} found, but no text content is available."
             else:
                 logger.warning(f"Document ID {document_id} not found.")
                 return f"Error: Document with ID {document_id} not found."
 
         # Concatenate content from all chunks
-        full_content = "".join([row["content"] for row in results])
+        # NOTE: This may contain duplicated text due to chunk overlap
+        full_content = "".join([row["content"] for row in chunk_results])
+        logger.warning(
+            f"Reconstructed content for document ID {document_id} from "
+            f"{len(chunk_results)} chunks. Note: Text may contain duplicates due to chunk overlap."
+        )
 
         if not full_content.strip():
             logger.warning(
