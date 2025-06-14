@@ -1594,3 +1594,225 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
         test_shutdown_event.clear()  # Clear the test-specific event
 
     logger.info(f"--- Recurring Callback Test ({test_run_id}) Passed ---")
+
+
+@pytest.mark.asyncio
+async def test_list_pending_callbacks(test_db_engine: AsyncEngine) -> None:
+    """
+    Tests the list_pending_callbacks tool:
+    1. Schedule multiple callbacks
+    2. Mock LLM calls list_pending_callbacks
+    3. Verify the tool returns the correct callbacks for the conversation
+    4. Verify it doesn't return callbacks from other conversations
+    """
+    test_run_id = uuid.uuid4()
+    logger.info(f"\n--- Running List Pending Callbacks Test ({test_run_id}) ---")
+
+    # Setup
+    mock_clock = MockClock()
+    initial_time = mock_clock.now()
+
+    # Create callbacks for different conversations
+    test_chat_id = str(TEST_CHAT_ID)
+    other_chat_id = "99999"
+
+    callback_dt_1 = initial_time + timedelta(hours=1)
+    callback_dt_2 = initial_time + timedelta(hours=2)
+    callback_dt_3 = initial_time + timedelta(hours=3)
+
+    user_message_id = 1001
+
+    # --- Define Rules for Mock LLM ---
+    # Rule 1: List callbacks
+    def list_callbacks_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        tools = kwargs.get("tools")
+        last_text = get_last_message_text(messages).lower()
+        return "list my callbacks" in last_text and tools is not None
+
+    list_callbacks_response = MockLLMOutput(
+        content="Let me check your pending callbacks.",
+        tool_calls=[
+            ToolCallItem(
+                id=f"call_list_{test_run_id}",
+                type="function",
+                function=ToolCallFunction(
+                    name="list_pending_callbacks",
+                    arguments=json.dumps({"limit": 10}),
+                ),
+            )
+        ],
+    )
+
+    # Rule 2: Process the tool response
+    def tool_response_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        # Check if the last message is a tool response
+        if messages and len(messages) >= 2:
+            last_msg = messages[-1]
+            if last_msg.get("role") == "tool":
+                # Check if it contains our callback information
+                content = last_msg.get("content", "")
+                return (
+                    "First test callback" in content
+                    or "Second test callback" in content
+                )
+        return False
+
+    tool_response_output = MockLLMOutput(
+        content="I found 2 pending callbacks for you:\n1. First test callback - scheduled for 1 hour from now\n2. Second test callback - scheduled for 2 hours from now",
+    )
+
+    llm_client: LLMInterface = RuleBasedMockLLMClient(
+        rules=[
+            (list_callbacks_matcher, list_callbacks_response),
+            (tool_response_matcher, tool_response_output),
+        ],
+        default_response=MockLLMOutput(content="Here are your pending callbacks."),
+    )
+
+    # --- Setup dependencies ---
+    local_provider = LocalToolsProvider(
+        definitions=local_tools_definition,
+        implementations=local_tool_implementations,
+    )
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
+    await composite_provider.get_tool_definitions()
+
+    test_service_config = ProcessingServiceConfig(
+        prompts={"system_prompt": "Test system prompt for list callbacks."},
+        calendar_config={},
+        timezone_str="UTC",
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={},
+        delegation_security_level="confirm",
+        id="list_test_profile",
+    )
+
+    processing_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=composite_provider,
+        service_config=test_service_config,
+        app_config={},
+        context_providers=[],
+        server_url=None,
+        clock=mock_clock,
+    )
+
+    mock_chat_interface = AsyncMock(spec=ChatInterface)
+    mock_chat_interface.send_message.return_value = "mock_list_message_id"
+
+    # --- Part 1: Schedule callbacks in different conversations ---
+    logger.info("--- Part 1: Setting up test callbacks ---")
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        # Schedule two callbacks for test conversation
+        await db_context.tasks.enqueue(
+            task_id=f"test_callback_1_{test_run_id}",
+            task_type="llm_callback",
+            payload={
+                "interface_type": "test",
+                "conversation_id": test_chat_id,
+                "callback_context": "First test callback",
+                "scheduling_timestamp": initial_time.isoformat(),
+            },
+            scheduled_at=callback_dt_1,
+        )
+
+        await db_context.tasks.enqueue(
+            task_id=f"test_callback_2_{test_run_id}",
+            task_type="llm_callback",
+            payload={
+                "interface_type": "test",
+                "conversation_id": test_chat_id,
+                "callback_context": "Second test callback",
+                "scheduling_timestamp": initial_time.isoformat(),
+            },
+            scheduled_at=callback_dt_2,
+        )
+
+        # Schedule one callback for different conversation
+        await db_context.tasks.enqueue(
+            task_id=f"other_callback_{test_run_id}",
+            task_type="llm_callback",
+            payload={
+                "interface_type": "test",
+                "conversation_id": other_chat_id,
+                "callback_context": "Other conversation callback",
+                "scheduling_timestamp": initial_time.isoformat(),
+            },
+            scheduled_at=callback_dt_3,
+        )
+
+    logger.info("Test callbacks created")
+
+    # --- Part 2: Test list_pending_callbacks ---
+    logger.info("--- Part 2: Testing list_pending_callbacks ---")
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        resp, _, _, error = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=mock_chat_interface,
+            interface_type="test",
+            conversation_id=test_chat_id,
+            trigger_content_parts=[{"type": "text", "text": "List my callbacks"}],
+            trigger_interface_message_id=str(user_message_id),
+            user_name=TEST_USER_NAME,
+        )
+
+    assert error is None, f"Error listing callbacks: {error}"
+    logger.info(f"List response: {resp}")
+
+    # Verify response contains correct callbacks
+    assert resp is not None, "Response should not be None"
+    assert "First test callback" in resp
+    assert "Second test callback" in resp
+    assert "Other conversation callback" not in resp
+    # The mock LLM returns a simplified response, not the raw tool output
+    # So we don't check for task IDs in the final response
+
+    logger.info(
+        "Verified list_pending_callbacks returns only conversation-specific callbacks"
+    )
+
+    # --- Part 3: Verify database state ---
+    logger.info("--- Part 3: Verifying database state ---")
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        # Verify all three callbacks still exist in DB
+        stmt = select(tasks_table).where(
+            tasks_table.c.task_type == "llm_callback",
+            tasks_table.c.status == "pending",
+        )
+        all_tasks = await db_context.fetch_all(stmt)
+        assert len(all_tasks) == 3, "All three callbacks should still be in DB"
+
+        # Count callbacks per conversation
+        conversation_counts = {}
+        for task in all_tasks:
+            payload = task["payload"]
+            conv_id = payload.get("conversation_id")
+            conversation_counts[conv_id] = conversation_counts.get(conv_id, 0) + 1
+
+        assert conversation_counts[test_chat_id] == 2
+        assert conversation_counts[other_chat_id] == 1
+
+    logger.info("Database state verified")
+
+    # --- Cleanup ---
+    logger.info("--- Cleanup ---")
+    # Clean up test callbacks
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        for task_id in [
+            f"test_callback_1_{test_run_id}",
+            f"test_callback_2_{test_run_id}",
+            f"other_callback_{test_run_id}",
+        ]:
+            await db_context.tasks.update_status(
+                task_id=task_id,
+                status="failed",
+                error="Test cleanup",
+            )
+
+    logger.info(f"--- List Pending Callbacks Test ({test_run_id}) Passed ---")

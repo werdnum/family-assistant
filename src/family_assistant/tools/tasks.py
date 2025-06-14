@@ -530,8 +530,9 @@ async def list_pending_callbacks_tool(
     )
 
     try:
-        # Assuming storage.tasks_table is the correct SQLAlchemy Table object
-        # and payload is a JSON/JSONB column.
+        # Filter pending llm_callback tasks for this conversation
+        # Note: We'll fetch all pending llm_callback tasks and filter in Python
+        # to avoid database-specific JSON syntax issues
         stmt = (
             select(
                 storage.tasks_table.c.task_id,
@@ -541,22 +542,29 @@ async def list_pending_callbacks_tool(
             .where(
                 storage.tasks_table.c.task_type == "llm_callback",
                 storage.tasks_table.c.status == "pending",
-                storage.tasks_table.c.payload["interface_type"].astext
-                == interface_type,  # type: ignore[index]
-                storage.tasks_table.c.payload["conversation_id"].astext
-                == conversation_id,  # type: ignore[index]
             )
             .order_by(storage.tasks_table.c.scheduled_at.asc())
-            .limit(limit)
         )
 
         results = await db_context.fetch_all(stmt)
 
-        if not results:
+        # Filter results in Python to match the conversation
+        filtered_results = []
+        for row in results:
+            payload = row.get("payload", {})
+            if (
+                payload.get("interface_type") == interface_type
+                and payload.get("conversation_id") == conversation_id
+            ):
+                filtered_results.append(row)
+                if len(filtered_results) >= limit:
+                    break
+
+        if not filtered_results:
             return "No pending LLM callbacks found for this conversation."
 
         formatted_callbacks = ["Pending LLM callbacks:"]
-        for row_proxy in results:
+        for row_proxy in filtered_results:
             # row_proxy is already a Mapping[str, Any] as per fetch_all's contract
             row: Mapping[str, Any] = row_proxy
 
