@@ -413,13 +413,11 @@ async def test_email_indexing_and_query_e2e(
     dummy_calendar_config = {}  # Not used by email/embedding tasks
     dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
     mock_chat_interface_e2e = MagicMock()
-    worker_new_task_event_e2e = asyncio.Event()
     worker = TaskWorker(
         processing_service=MagicMock(
             spec=ProcessingService
         ),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_e2e,
-        new_task_event=worker_new_task_event_e2e,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
@@ -634,13 +632,11 @@ async def test_vector_ranking(
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
     mock_chat_interface_kw = MagicMock()
-    worker_new_task_event_kw = asyncio.Event()
     worker = TaskWorker(
         processing_service=MagicMock(
             spec=ProcessingService
         ),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_kw,
-        new_task_event=worker_new_task_event_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,
         timezone_str=dummy_timezone_str_kw,
@@ -827,13 +823,11 @@ async def test_metadata_filtering(
     dummy_calendar_config_meta = {}  # Define dummy_calendar_config_meta
     dummy_timezone_str_meta = "UTC"
     mock_chat_interface_meta = MagicMock()
-    worker_new_task_event_meta = asyncio.Event()
     worker = TaskWorker(
         processing_service=MagicMock(
             spec=ProcessingService
         ),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_meta,
-        new_task_event=worker_new_task_event_meta,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_meta,
         timezone_str=dummy_timezone_str_meta,
@@ -1010,14 +1004,12 @@ async def test_keyword_filtering(
     dummy_timezone_str_kw = "UTC"
     # Define new mocks for this test scope
     mock_chat_interface_keyword_test = MagicMock()
-    worker_new_task_event_keyword_test = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=MagicMock(
             spec=ProcessingService
         ),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_keyword_test,
-        new_task_event=worker_new_task_event_keyword_test,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,  # Now defined
         timezone_str=dummy_timezone_str_kw,
@@ -1267,11 +1259,9 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     dummy_calendar_config_pdf = {}
     dummy_timezone_str_pdf = "UTC"
     mock_chat_interface_pdf = MagicMock()
-    worker_new_task_event_pdf = asyncio.Event()
     worker = TaskWorker(
         processing_service=MagicMock(spec=ProcessingService),
         chat_interface=mock_chat_interface_pdf,
-        new_task_event=worker_new_task_event_pdf,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_pdf,
         timezone_str=dummy_timezone_str_pdf,
@@ -1550,11 +1540,9 @@ async def test_email_indexing_with_llm_summary_e2e(
     mock_application_summary.state = mock_app_state_summary
 
     mock_chat_interface_summary = MagicMock()
-    worker_new_task_event_summary = asyncio.Event()
     worker_email_summary = TaskWorker(
         processing_service=MagicMock(spec=ProcessingService),
         chat_interface=mock_chat_interface_summary,
-        new_task_event=worker_new_task_event_summary,
         embedding_generator=current_embedder,  # Use the updated embedder
         calendar_config={},
         timezone_str="UTC",
@@ -1826,11 +1814,9 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     mock_application_link_ext.state = mock_app_state_link_ext
 
     mock_chat_interface_link_ext = MagicMock()
-    worker_new_task_event_link_ext = asyncio.Event()
     worker_link_ext = TaskWorker(
         processing_service=MagicMock(spec=ProcessingService),
         chat_interface=mock_chat_interface_link_ext,
-        new_task_event=worker_new_task_event_link_ext,
         embedding_generator=current_embedder,
         calendar_config={},
         timezone_str="UTC",

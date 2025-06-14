@@ -193,7 +193,6 @@ async def store_incoming_email(
             task_id=task_id,
             task_type="index_email",
             payload={"email_db_id": email_db_id},
-            notify_event=None,  # Explicitly None; actual worker notification needs event access
         )
         logger.info(f"Enqueued indexing task {task_id} for email DB ID {email_db_id}")
 

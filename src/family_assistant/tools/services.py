@@ -195,7 +195,6 @@ async def delegate_to_service_tool(
             user_name=exec_context.user_name,  # Pass original user's name
             replied_to_interface_id=None,
             chat_interface=exec_context.chat_interface,  # Pass through for nested actions
-            new_task_event=exec_context.new_task_event,  # Pass through
             request_confirmation_callback=exec_context.request_confirmation_callback,  # Pass through
         )
 

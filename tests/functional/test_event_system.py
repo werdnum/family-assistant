@@ -746,7 +746,6 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
     task_worker = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        new_task_event=new_task_event,
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=MagicMock(),

@@ -123,7 +123,6 @@ class Assistant:
     ) -> None:
         self.config = config
         self.shutdown_event = asyncio.Event()
-        self.new_task_event = asyncio.Event()
         self.llm_client_overrides = (
             llm_client_overrides if llm_client_overrides is not None else {}
         )
@@ -587,7 +586,6 @@ class Assistant:
             processing_services_registry=self.processing_services_registry,
             app_config=self.config,
             get_db_context_func=get_db_context,
-            new_task_event=self.new_task_event,
             # use_batching argument removed
         )
         fastapi_app.state.telegram_service = self.telegram_service
@@ -671,7 +669,6 @@ class Assistant:
         self.task_worker_instance = TaskWorker(
             processing_service=self.default_processing_service,
             chat_interface=self.telegram_service.chat_interface,
-            new_task_event=self.new_task_event,
             calendar_config=default_profile_conf["processing_config"][
                 "calendar_config"
             ],
@@ -712,7 +709,7 @@ class Assistant:
         logger.info(
             f"Registered task handlers for worker {self.task_worker_instance.worker_id}"
         )
-        asyncio.create_task(self.task_worker_instance.run(self.new_task_event))
+        asyncio.create_task(self.task_worker_instance.run())
 
         # Start event processor if initialized
         if self.event_processor:

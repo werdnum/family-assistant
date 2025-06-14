@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 import pathlib
@@ -48,6 +49,24 @@ def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+@pytest.fixture(autouse=True)
+def reset_task_event() -> Generator[None, None, None]:
+    """Reset the global task event for each test to ensure isolation."""
+    import family_assistant.storage.tasks as tasks_module
+
+    # Reset before test
+    tasks_module._task_event = None
+
+    yield
+
+    # Reset after test
+    if tasks_module._task_event is not None:
+        # Clear any pending notifications
+        with contextlib.suppress(Exception):
+            tasks_module._task_event.clear()
+    tasks_module._task_event = None
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)  # Use pytest_asyncio.fixture
@@ -222,7 +241,6 @@ async def task_worker_manager() -> AsyncGenerator[
     worker = TaskWorker(
         processing_service=MagicMock(spec=ProcessingService),
         chat_interface=mock_chat_interface,  # Pass mock ChatInterface
-        new_task_event=new_task_event_for_worker,  # Pass the event for task notification
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_gen,

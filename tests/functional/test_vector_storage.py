@@ -361,7 +361,6 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
             turn_id=str(uuid.uuid4()),  # ADDED turn_id
             db_context=exec_db_context,
             chat_interface=None,  # Add chat_interface (None for this tool context)
-            new_task_event=None,  # Add new_task_event (None for this tool context)
             embedding_generator=mock_generator,
         )
 

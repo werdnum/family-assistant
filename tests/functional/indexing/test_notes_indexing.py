@@ -187,12 +187,10 @@ async def test_notes_indexing_e2e(
 
     # --- Arrange: Setup TaskWorker ---
     mock_chat_interface = MagicMock()
-    worker_new_task_event = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=cast("ProcessingService", None),
         chat_interface=mock_chat_interface,
-        new_task_event=worker_new_task_event,
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator_notes,
@@ -499,12 +497,10 @@ async def test_note_update_reindexing_e2e(
     notes_indexer = NotesIndexer(pipeline=pipeline)
 
     mock_chat_interface = MagicMock()
-    worker_new_task_event = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=cast("ProcessingService", None),
         chat_interface=mock_chat_interface,
-        new_task_event=worker_new_task_event,
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator_notes,
@@ -740,12 +736,10 @@ async def test_notes_indexing_graceful_degradation(
 
     # Setup TaskWorker
     mock_chat_interface = MagicMock()
-    worker_new_task_event = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=cast("ProcessingService", None),
         chat_interface=mock_chat_interface,
-        new_task_event=worker_new_task_event,
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator_notes,

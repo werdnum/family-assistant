@@ -4,6 +4,7 @@ Handles storage and retrieval of background tasks using the database queue.
 
 import asyncio
 import logging
+from asyncio import Event
 from datetime import datetime, timezone
 from typing import Any
 
@@ -30,6 +31,25 @@ from family_assistant.storage.context import DatabaseContext  # Import DatabaseC
 
 logger = logging.getLogger(__name__)
 # Remove engine = get_engine()
+
+# Module state for task notifications
+_task_event: Event | None = None
+
+
+def get_task_event() -> Event:
+    """Get the event that's set when new tasks are available.
+
+    This event is automatically set when immediate tasks are enqueued.
+    Task workers can wait on this event to be notified of new work.
+
+    Returns:
+        The global task notification event
+    """
+    global _task_event
+    if _task_event is None:
+        _task_event = asyncio.Event()
+    return _task_event
+
 
 # Define the tasks table for the message queue
 tasks_table = Table(
@@ -66,9 +86,20 @@ async def enqueue_task(
     max_retries_override: int | None = None,
     recurrence_rule: str | None = None,
     original_task_id: str | None = None,
-    notify_event: asyncio.Event | None = None,
 ) -> None:  # noqa: PLR0913
-    """Adds a task to the queue, optional notification."""
+    """Adds a task to the queue with automatic notification for immediate tasks.
+
+    Args:
+        db_context: Database context for the operation
+        task_id: Unique identifier for the task
+        task_type: Type of task (determines which handler processes it)
+        payload: Optional data payload for the task
+        scheduled_at: When to run the task (None = immediate)
+        max_retries_override: Override default max retries
+        recurrence_rule: Optional recurrence rule for repeating tasks
+        original_task_id: ID of the original task if this is a recurrence
+    """
+
     processed_scheduled_at = scheduled_at
     if processed_scheduled_at:
         if processed_scheduled_at.tzinfo is None:
@@ -166,10 +197,12 @@ async def enqueue_task(
         is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
             timezone.utc
         )
-        if is_immediate and notify_event:
+        if is_immediate:
+            # Automatically notify workers about immediate tasks
+            event = get_task_event()
 
             def notify() -> None:
-                notify_event.set()
+                event.set()
                 logger.info(f"Notified worker about immediate task {task_id}.")
 
             # Trigger eager task execution after the transaction commits.
@@ -355,7 +388,6 @@ async def reschedule_task_for_retry(
 async def manually_retry_task(
     db_context: DatabaseContext,
     internal_task_id: int,  # This is tasks_table.c.id
-    notify_event: asyncio.Event | None = None,
 ) -> bool:
     """
     Manually retries a task that has failed or exhausted its retries.
@@ -411,15 +443,16 @@ async def manually_retry_task(
             logger.info(
                 f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row['max_retries'] + 1}."
             )
-            if notify_event:
+            # Notify workers about the retry
+            event = get_task_event()
 
-                def notify() -> None:
-                    notify_event.set()
-                    logger.info(
-                        f"Notified worker about manual retry for task internal ID {internal_task_id}."
-                    )
+            def notify() -> None:
+                event.set()
+                logger.info(
+                    f"Notified worker about manual retry for task internal ID {internal_task_id}."
+                )
 
-                db_context.on_commit(notify)
+            db_context.on_commit(notify)
             return True
         else:
             logger.error(

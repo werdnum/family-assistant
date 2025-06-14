@@ -1,4 +1,3 @@
-import asyncio  # Add asyncio for Event type hint
 import json
 import logging
 import traceback  # Added for error traceback
@@ -185,7 +184,6 @@ class ProcessingService:
         user_name: str,  # Added user_name
         turn_id: str,  # Added turn_id
         chat_interface: ChatInterface | None,  # Added chat_interface
-        new_task_event: asyncio.Event | None,  # Added new_task_event
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
             Callable[
@@ -210,7 +208,6 @@ class ProcessingService:
             user_name: The name of the user for context.
             turn_id: The ID for the current processing turn.
             chat_interface: The interface for sending messages back to the chat.
-            new_task_event: Event to notify task worker.
             request_confirmation_callback: Function to request user confirmation for tools.
 
         Returns:
@@ -465,7 +462,6 @@ class ProcessingService:
                         turn_id=turn_id,
                         db_context=db_context,
                         chat_interface=chat_interface,
-                        new_task_event=new_task_event,  # Pass new_task_event
                         timezone_str=self.timezone_str,
                         request_confirmation_callback=request_confirmation_callback,
                         processing_service=self,
@@ -645,7 +641,6 @@ class ProcessingService:
         user_name: str,
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
-        new_task_event: asyncio.Event | None = None,
         request_confirmation_callback: (
             Callable[
                 [str, str, str | None, str, str, dict[str, Any], float],
@@ -675,7 +670,6 @@ class ProcessingService:
             user_name: The name of the user initiating the interaction.
             replied_to_interface_id: Optional interface-specific ID of a message being replied to.
             chat_interface: Optional interface for sending messages (e.g., for tool confirmations).
-            new_task_event: Optional event to notify the task worker of new tasks.
             request_confirmation_callback: Optional callback for requesting user confirmation for tools.
 
         Returns:
@@ -948,7 +942,6 @@ class ProcessingService:
                 user_name=user_name,  # Pass user_name
                 turn_id=turn_id,
                 chat_interface=chat_interface,
-                new_task_event=new_task_event,
                 request_confirmation_callback=request_confirmation_callback,
             )
             final_reasoning_info = final_reasoning_info_from_process_msg

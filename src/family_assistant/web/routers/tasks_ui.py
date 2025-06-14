@@ -47,12 +47,8 @@ async def retry_task_manually_endpoint(
     db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> RedirectResponse:
     """Handles the request to manually retry a task."""
-    notify_event = getattr(
-        request.app.state, "new_task_event", None
-    )  # Safely get event
-
     try:
-        success = await manually_retry_task(db_context, internal_task_id, notify_event)
+        success = await manually_retry_task(db_context, internal_task_id)
         if success:
             logger.info(
                 f"Successfully queued manual retry for task with internal ID {internal_task_id}"

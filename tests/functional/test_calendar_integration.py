@@ -254,7 +254,6 @@ async def test_add_event_and_verify_in_system_prompt(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),  # Added missing new_task_event
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message_create}],
@@ -449,7 +448,6 @@ async def test_modify_event(
         ) = await processing_service_for_add.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),  # Mock interface for this interaction
-            new_task_event=asyncio.Event(),
             interface_type="test_initial_add",  # Distinguish interface type
             conversation_id=f"{TEST_CHAT_ID}_initial_add",  # Distinguish conversation
             trigger_content_parts=[
@@ -613,7 +611,6 @@ async def test_modify_event(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message_modify}],
@@ -814,7 +811,6 @@ async def test_delete_event(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[
@@ -907,7 +903,6 @@ async def test_delete_event(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message_delete}],
@@ -1074,7 +1069,6 @@ async def test_search_events(
         _, _, _, err_add1 = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test_search",
             conversation_id=f"{TEST_CHAT_ID}_add1",
             trigger_content_parts=[
@@ -1140,7 +1134,6 @@ async def test_search_events(
         _, _, _, err_add2 = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test_search",
             conversation_id=f"{TEST_CHAT_ID}_add2",
             trigger_content_parts=[
@@ -1272,7 +1265,6 @@ async def test_search_events(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message_search}],

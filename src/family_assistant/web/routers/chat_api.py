@@ -95,7 +95,6 @@ async def api_chat_send_message(
         user_name=user_name_for_api,
         replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
         chat_interface=None,  # API doesn't use interactive chat elements for confirmation (yet)
-        new_task_event=None,  # No task event for synchronous API response
         request_confirmation_callback=None,  # No confirmation callback for API (yet)
     )
 

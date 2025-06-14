@@ -252,7 +252,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         confirmation_manager: "TelegramConfirmationUIManager",  # Inject confirmation manager
     ) -> None:
         # Check for debug mode environment variable
-        self.new_task_event = telegram_service.new_task_event  # Get from service
+        # Task event notification is now handled automatically in storage layer
         self.debug_mode = (
             os.environ.get("ASSISTANT_DEBUG_MODE", "false").lower() == "true"
         )
@@ -716,7 +716,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         user_name=user_name,
                         replied_to_interface_id=replied_to_interface_id,
                         chat_interface=self.telegram_service.chat_interface,
-                        new_task_event=self.telegram_service.new_task_event,
                         request_confirmation_callback=confirmation_callback_wrapper,
                     )
                     # Message saving is now handled within handle_chat_interaction.
@@ -1145,7 +1144,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         else "Unknown User",
                         replied_to_interface_id=reply_to_interface_id_str,
                         chat_interface=self.telegram_service.chat_interface,
-                        new_task_event=self.new_task_event,
                         request_confirmation_callback=confirmation_callback_wrapper,
                     )
 
@@ -1587,7 +1585,6 @@ class TelegramService:
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
-        new_task_event: asyncio.Event,
     ) -> None:
         """
         Initializes the Telegram Service.
@@ -1600,14 +1597,12 @@ class TelegramService:
             processing_services_registry: Dictionary of all ProcessingService instances.
             app_config: The main application configuration dictionary.
             get_db_context_func: Async context manager function to get a DatabaseContext.
-            new_task_event: asyncio.Event for task worker notification.
         """
         logger.info("Initializing TelegramService...")
         self.application = ApplicationBuilder().token(telegram_token).build()
         self._was_started: bool = False
         self._last_error: Exception | None = None
         self.chat_interface = TelegramChatInterface(self.application)
-        self.new_task_event = new_task_event
 
         self.processing_service = processing_service  # Store default service
         self.processing_services_registry = (
