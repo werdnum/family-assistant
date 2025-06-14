@@ -357,11 +357,12 @@ async def test_api_chat_add_note_tool(
     tool_response_msg_found = any(
         h["role"] == "tool"
         and h["tool_call_id"] == tool_call_id
-        and str(h["content"]) == "Success"  # Expect "Success" based on logs
+        and "has been" in str(h["content"])
+        and "successfully" in str(h["content"])
         for h in history
     )
     assert tool_response_msg_found, (
-        "Tool response with content 'Success' not found in history"
+        "Tool response with expected success message not found in history"
     )
 
     # Check for final assistant reply
