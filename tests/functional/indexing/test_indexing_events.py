@@ -68,7 +68,7 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
 
     # Create event listener that captures events
     async with get_db_context() as db_ctx:
-        await db_ctx.events.create_listener(
+        await db_ctx.events.create_event_listener(
             name="Test Document Ready Listener",
             description="Test listener for document ready events",
             conversation_id="test-conv",
@@ -341,7 +341,7 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
 
     # Create event listener
     async with get_db_context() as db_ctx:
-        await db_ctx.events.create_listener(
+        await db_ctx.events.create_event_listener(
             name="Newsletter Ready Listener",
             description="Test listener for newsletter ready events",
             conversation_id="test-conv",

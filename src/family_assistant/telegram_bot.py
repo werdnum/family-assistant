@@ -575,7 +575,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         replied_to_db_msg = (
                             await db_context.message_history.get_by_interface_id(
                                 interface_type=interface_type,
-                                conversation_id=conversation_id,
                                 interface_message_id=replied_to_interface_id,
                             )
                         )
@@ -853,10 +852,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # Get a new context for this update attempt
                     async with self.get_db_context() as db_ctx_err:
                         # Fetch the user message's internal ID first (can't update by interface ID)
-                        user_msg_record = await db_ctx_err.message_history.get_by_interface_id(
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,  # Correct variable name was already here
-                            interface_message_id=str(user_message_id),
+                        user_msg_record = (
+                            await db_ctx_err.message_history.get_by_interface_id(
+                                interface_type=interface_type,
+                                interface_message_id=str(user_message_id),
+                            )
                         )
                         if user_msg_record and user_msg_record.get("internal_id"):
                             stmt = (
@@ -1255,7 +1255,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         user_msg_record = (
                             await db_ctx.message_history.get_by_interface_id(
                                 interface_type="telegram",
-                                conversation_id=str(chat_id),
                                 interface_message_id=str(update.message.message_id),
                             )
                         )

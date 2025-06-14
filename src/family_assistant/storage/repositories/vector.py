@@ -1,41 +1,11 @@
 """Repository for vector storage operations."""
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from family_assistant.storage.repositories.base import BaseRepository
 
-
-class Document(Protocol):
-    """Protocol for document objects."""
-
-    @property
-    def source_id(self) -> str:
-        """Unique identifier for the document source."""
-        ...
-
-    @property
-    def source_type(self) -> str:
-        """Type of the document source."""
-        ...
-
-    @property
-    def title(self) -> str:
-        """Document title."""
-        ...
-
-    @property
-    def description(self) -> str | None:
-        """Optional document description."""
-        ...
-
-    @property
-    def created_at(self) -> Any:
-        """Creation timestamp."""
-        ...
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert document to dictionary."""
-        ...
+if TYPE_CHECKING:
+    from family_assistant.storage.vector import Document, DocumentRecord
 
 
 class VectorRepository(BaseRepository):
@@ -61,6 +31,9 @@ class VectorRepository(BaseRepository):
             self._logger.warning("Vector storage not enabled, skipping init")
             return
 
+        if self._vector_module is None:
+            raise RuntimeError("Vector module not available")
+
         try:
             await self._vector_module.init_vector_db(db_context=self._db)
             self._logger.info("Vector database initialized successfully")
@@ -70,7 +43,7 @@ class VectorRepository(BaseRepository):
 
     async def add_document(
         self,
-        doc: Document,
+        doc: "Document",
         enriched_doc_metadata: dict[str, Any] | None = None,
     ) -> int:
         """
@@ -83,7 +56,7 @@ class VectorRepository(BaseRepository):
         Returns:
             Document ID
         """
-        if not self._enabled:
+        if not self._enabled or self._vector_module is None:
             self._logger.warning("Vector storage not enabled")
             return -1
 
@@ -97,7 +70,7 @@ class VectorRepository(BaseRepository):
             self._logger.error(f"Failed to add document: {e}")
             raise
 
-    async def get_document_by_id(self, document_id: int) -> dict[str, Any] | None:
+    async def get_document_by_id(self, document_id: int) -> "DocumentRecord | None":
         """
         Get a document by its ID.
 
@@ -107,7 +80,7 @@ class VectorRepository(BaseRepository):
         Returns:
             Document data or None if not found
         """
-        if not self._enabled:
+        if not self._enabled or self._vector_module is None:
             return None
 
         try:
@@ -119,7 +92,9 @@ class VectorRepository(BaseRepository):
             self._logger.error(f"Failed to get document by ID {document_id}: {e}")
             raise
 
-    async def get_document_by_source_id(self, source_id: str) -> dict[str, Any] | None:
+    async def get_document_by_source_id(
+        self, source_id: str
+    ) -> "DocumentRecord | None":
         """
         Get a document by its source ID.
 
@@ -129,7 +104,7 @@ class VectorRepository(BaseRepository):
         Returns:
             Document data or None if not found
         """
-        if not self._enabled:
+        if not self._enabled or self._vector_module is None:
             return None
 
         try:
@@ -151,7 +126,7 @@ class VectorRepository(BaseRepository):
         Returns:
             True if deleted, False otherwise
         """
-        if not self._enabled:
+        if not self._enabled or self._vector_module is None:
             return False
 
         try:
@@ -168,9 +143,11 @@ class VectorRepository(BaseRepository):
         document_id: int,
         chunk_index: int,
         embedding_type: str,
-        embedding: list[float],
-        text_content: str,
-        metadata: dict[str, Any] | None = None,
+        embedding: list[float] | None,
+        embedding_model: str,
+        content: str | None = None,
+        content_hash: str | None = None,
+        embedding_doc_metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Add an embedding for a document.
@@ -179,11 +156,13 @@ class VectorRepository(BaseRepository):
             document_id: The document ID
             chunk_index: Index of the chunk within the document
             embedding_type: Type of embedding
-            embedding: The embedding vector
-            text_content: Text content for the embedding
-            metadata: Optional metadata
+            embedding: The embedding vector (or None for storage-only)
+            embedding_model: Model used to generate embedding
+            content: Text content for the embedding
+            content_hash: Hash of the content
+            embedding_doc_metadata: Optional metadata
         """
-        if not self._enabled:
+        if not self._enabled or self._vector_module is None:
             return
 
         try:
@@ -193,8 +172,10 @@ class VectorRepository(BaseRepository):
                 chunk_index=chunk_index,
                 embedding_type=embedding_type,
                 embedding=embedding,
-                text_content=text_content,
-                metadata=metadata,
+                embedding_model=embedding_model,
+                content=content,
+                content_hash=content_hash,
+                embedding_doc_metadata=embedding_doc_metadata,
             )
         except Exception as e:
             self._logger.error(f"Failed to add embedding: {e}")
@@ -203,10 +184,11 @@ class VectorRepository(BaseRepository):
     async def query_vectors(
         self,
         query_embedding: list[float],
-        top_k: int = 5,
-        similarity_threshold: float = 0.7,
-        embedding_types: list[str] | None = None,
-        source_types: list[str] | None = None,
+        embedding_model: str,
+        keywords: str | None = None,
+        filters: dict[str, Any] | None = None,
+        embedding_type_filter: list[str] | None = None,
+        limit: int = 10,
     ) -> list[dict[str, Any]]:
         """
         Query vectors by similarity.
@@ -221,17 +203,18 @@ class VectorRepository(BaseRepository):
         Returns:
             List of matching documents with similarity scores
         """
-        if not self._enabled:
+        if not self._enabled or self._vector_module is None:
             return []
 
         try:
             return await self._vector_module.query_vectors(
                 db_context=self._db,
                 query_embedding=query_embedding,
-                top_k=top_k,
-                similarity_threshold=similarity_threshold,
-                embedding_types=embedding_types,
-                source_types=source_types,
+                embedding_model=embedding_model,
+                keywords=keywords,
+                filters=filters,
+                embedding_type_filter=embedding_type_filter,
+                limit=limit,
             )
         except Exception as e:
             self._logger.error(f"Failed to query vectors: {e}")

@@ -5,7 +5,6 @@ Handles the indexing process for notes stored in the database.
 import logging
 from typing import Any, cast
 
-from family_assistant import storage
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.storage.notes import NoteDocument
 from family_assistant.storage.vector import (
@@ -77,7 +76,7 @@ class NotesIndexer:
             raise  # Re-raise to mark task as failed
 
         # --- 3. Add/Update Document Record in Vector DB & Get DB Record ---
-        doc_id = await storage.add_document(db_context=db_context, doc=note_doc)
+        doc_id = await db_context.vector.add_document(doc=note_doc)
         logger.info(
             f"Added/Updated document record for note {note_id}, vector DB doc ID: {doc_id}"
         )

@@ -695,7 +695,6 @@ class ProcessingService:
                     replied_to_db_msg = (
                         await db_context.message_history.get_by_interface_id(
                             interface_type=interface_type,
-                            conversation_id=conversation_id,
                             interface_message_id=replied_to_interface_id,
                         )
                     )
