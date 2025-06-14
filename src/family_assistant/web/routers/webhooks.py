@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from family_assistant.storage import store_incoming_email
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
 from family_assistant.web.dependencies import get_db
@@ -197,7 +196,7 @@ async def handle_mail_webhook(
         )
 
         # Pass the Pydantic model instance to the storage function
-        await store_incoming_email(db_context, parsed_email_payload)
+        await db_context.email.store_incoming(parsed_email_payload)
 
         return Response(status_code=200, content="Email received and processed.")
 

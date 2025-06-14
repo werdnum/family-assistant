@@ -21,6 +21,15 @@ from sqlalchemy.sql import Delete, Insert, Select, Update
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
+    from family_assistant.storage.repositories import (
+        EmailRepository,
+        ErrorLogsRepository,
+        EventsRepository,
+        MessageHistoryRepository,
+        NotesRepository,
+        TasksRepository,
+    )
+
 
 # Use absolute package path
 from family_assistant.storage.base import get_engine
@@ -59,6 +68,14 @@ class DatabaseContext:
         self.base_delay = base_delay
         self.conn: AsyncConnection | None = None
         self._transaction_cm: AbstractAsyncContextManager[AsyncConnection] | None = None
+
+        # Repository instances (lazy-loaded)
+        self._notes = None
+        self._tasks = None
+        self._message_history = None
+        self._email = None
+        self._error_logs = None
+        self._events = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -214,6 +231,60 @@ class DatabaseContext:
         # Register the wrapper with the transaction context manager
         event.listen(self.conn.sync_connection, "commit", event_listener_wrapper)
         return callback
+
+    @property
+    def notes(self) -> "NotesRepository":
+        """Get the notes repository instance."""
+        if self._notes is None:
+            from family_assistant.storage.repositories import NotesRepository
+
+            self._notes = NotesRepository(self)
+        return self._notes
+
+    @property
+    def tasks(self) -> "TasksRepository":
+        """Get the tasks repository instance."""
+        if self._tasks is None:
+            from family_assistant.storage.repositories import TasksRepository
+
+            self._tasks = TasksRepository(self)
+        return self._tasks
+
+    @property
+    def message_history(self) -> "MessageHistoryRepository":
+        """Get the message history repository instance."""
+        if self._message_history is None:
+            from family_assistant.storage.repositories import MessageHistoryRepository
+
+            self._message_history = MessageHistoryRepository(self)
+        return self._message_history
+
+    @property
+    def email(self) -> "EmailRepository":
+        """Get the email repository instance."""
+        if self._email is None:
+            from family_assistant.storage.repositories import EmailRepository
+
+            self._email = EmailRepository(self)
+        return self._email
+
+    @property
+    def error_logs(self) -> "ErrorLogsRepository":
+        """Get the error logs repository instance."""
+        if self._error_logs is None:
+            from family_assistant.storage.repositories import ErrorLogsRepository
+
+            self._error_logs = ErrorLogsRepository(self)
+        return self._error_logs
+
+    @property
+    def events(self) -> "EventsRepository":
+        """Get the events repository instance."""
+        if self._events is None:
+            from family_assistant.storage.repositories import EventsRepository
+
+            self._events = EventsRepository(self)
+        return self._events
 
 
 # Convenience function to create a database context
