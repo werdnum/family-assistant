@@ -1,6 +1,5 @@
 """Test Home Assistant template rendering tool."""
 
-import asyncio
 import json
 import logging
 import uuid
@@ -174,7 +173,6 @@ async def test_render_home_assistant_template_success(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -307,7 +305,6 @@ async def test_render_home_assistant_template_no_client(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -467,7 +464,6 @@ Status: Comfortable"""
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -614,7 +610,6 @@ async def test_render_home_assistant_template_api_error(
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=TEST_CHAT_ID,
             trigger_content_parts=[{"type": "text", "text": user_message}],

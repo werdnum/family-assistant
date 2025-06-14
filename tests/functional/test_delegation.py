@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import uuid
@@ -508,7 +507,6 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
             trigger_interface_message_id="msg1",
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
-            new_task_event=asyncio.Event(),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
@@ -584,7 +582,6 @@ async def test_delegation_confirm_target_granted(
             trigger_interface_message_id="msg2",
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
-            new_task_event=asyncio.Event(),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
@@ -653,7 +650,6 @@ async def test_delegation_confirm_target_denied(
             trigger_interface_message_id="msg3",
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
-            new_task_event=asyncio.Event(),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
@@ -710,7 +706,6 @@ async def test_delegation_blocked_target(
             trigger_interface_message_id="msg4",
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
-            new_task_event=asyncio.Event(),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 
@@ -772,7 +767,6 @@ async def test_delegation_unrestricted_confirm_arg_granted(
             trigger_interface_message_id="msg5",
             user_name=TEST_USER_NAME,
             chat_interface=MagicMock(spec=ChatInterface),
-            new_task_event=asyncio.Event(),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
 

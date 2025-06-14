@@ -346,14 +346,12 @@ async def test_document_indexing_and_query_e2e(
     dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     mock_chat_interface = MagicMock()  # Create a mock ChatInterface
-    worker_new_task_event = asyncio.Event()  # Create an event for the worker
 
     worker = TaskWorker(
         processing_service=cast(
             "ProcessingService", None
         ),  # No processing service needed for this handler
         chat_interface=mock_chat_interface,  # Pass mock ChatInterface
-        new_task_event=worker_new_task_event,  # Pass the event
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         embedding_generator=mock_embedding_generator,  # Pass the mock generator
@@ -776,12 +774,10 @@ async def test_document_indexing_with_llm_summary_e2e(
     fastapi_app.state.llm_client = mock_llm_client  # Inject mock LLM for the test
 
     mock_chat_interface_summary = MagicMock()
-    worker_new_task_event_summary = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=cast("ProcessingService", None),
         chat_interface=mock_chat_interface_summary,
-        new_task_event=worker_new_task_event_summary,
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
@@ -1040,12 +1036,10 @@ async def test_url_indexing_e2e(
     # --- Arrange: Task Worker Setup ---
     # fastapi_app.state.embedding_generator is set by http_client fixture
     mock_chat_interface_url = MagicMock()
-    worker_new_task_event_url = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=cast("ProcessingService", None),
         chat_interface=mock_chat_interface_url,
-        new_task_event=worker_new_task_event_url,
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
@@ -1319,12 +1313,10 @@ async def test_url_indexing_e2e(
 
         # --- Arrange: Task Worker Setup ---
         mock_chat_interface_auto_title = MagicMock()
-        worker_new_task_event_auto_title = asyncio.Event()
 
         worker = TaskWorker(
             processing_service=cast("ProcessingService", None),
             chat_interface=mock_chat_interface_auto_title,
-            new_task_event=worker_new_task_event_auto_title,
             calendar_config={},
             timezone_str="UTC",
             embedding_generator=mock_embedding_generator,

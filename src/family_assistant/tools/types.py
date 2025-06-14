@@ -3,7 +3,6 @@ Defines common types used by the tool system, like the execution context.
 Moved here to avoid circular imports.
 """
 
-import asyncio  # Add asyncio for Event type hint
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
@@ -37,7 +36,6 @@ class ToolExecutionContext:
             -> Awaitable[bool]
         processing_service: Optional service for core processing logic.
         embedding_generator: Optional generator for creating text embeddings.
-        new_task_event: Optional event to notify the task worker of new tasks.
         clock: Optional clock instance for managing time.
         indexing_source: Optional indexing event source for emitting document indexing events.
     """
@@ -70,7 +68,6 @@ class ToolExecutionContext:
     embedding_generator: Optional["EmbeddingGenerator"] = (
         None  # Add embedding_generator
     )
-    new_task_event: asyncio.Event | None = None  # Add new_task_event
     clock: Optional["Clock"] = None  # Add clock
     indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
     home_assistant_client: Any | None = None  # Add home_assistant_client

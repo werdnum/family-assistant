@@ -317,7 +317,6 @@ async def _enqueue_note_indexing_task(db_context: DatabaseContext, title: str) -
                 task_id=f"index_note_{note_row['id']}_{uuid.uuid4()}",
                 task_type="index_note",
                 payload={"note_id": note_row["id"]},
-                notify_event=None,
             )
             logger.info(
                 f"Enqueued indexing task for note ID {note_row['id']} (title: {title})"

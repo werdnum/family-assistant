@@ -322,7 +322,6 @@ async def schedule_reminder_tool(
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
-            notify_event=exec_context.new_task_event,
         )
 
         logger.info(
@@ -499,7 +498,6 @@ async def schedule_future_callback_tool(
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
-            notify_event=exec_context.new_task_event,  # Use event from context
         )
         logger.info(
             f"Scheduled LLM callback task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
@@ -683,9 +681,7 @@ async def modify_pending_callback_tool(
         result = await db_context.execute_with_retry(update_stmt)
 
         if result and result.rowcount > 0:  # type: ignore
-            # If scheduled_at was changed, notify the worker if an event is available
-            if "scheduled_at" in updates and exec_context.new_task_event:
-                exec_context.new_task_event.set()
+            # Notification happens automatically in enqueue_task when tasks are updated
             return f"Callback task '{task_id}' modified successfully."
         else:
             # This case should ideally not be reached if fetch_one found the task

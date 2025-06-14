@@ -65,7 +65,6 @@ async def execute_tool_api(
         turn_id=f"api_turn_{uuid.uuid4()}",
         db_context=db_context,
         chat_interface=None,  # No direct chat interface for API calls
-        new_task_event=None,  # No new_task_event for API calls
         timezone_str=timezone_str,  # Pass fetched timezone string
         request_confirmation_callback=None,  # No confirmation from API for now
         processing_service=None,  # API endpoint doesn't have access to this

@@ -127,12 +127,10 @@ async def indexing_task_worker(
     # and ToolExecutionContext.
 
     mock_chat_interface_for_worker = MagicMock()
-    new_task_event_for_worker = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=MagicMock(),  # Use MagicMock for ProcessingService
         chat_interface=mock_chat_interface_for_worker,
-        new_task_event=new_task_event_for_worker,
         embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
         timezone_str="UTC",
@@ -219,7 +217,6 @@ async def test_indexing_pipeline_e2e(
                 turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
-                new_task_event=test_new_task_event,  # Pass the event from fixture
                 embedding_generator=mock_pipeline_embedding_generator,
             )
 
@@ -428,7 +425,6 @@ async def test_indexing_pipeline_pdf_processing(
                 turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
-                new_task_event=test_new_task_event,  # Pass the event from fixture
                 embedding_generator=mock_pipeline_embedding_generator,
             )
 

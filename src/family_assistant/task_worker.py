@@ -90,7 +90,6 @@ async def _schedule_reminder_follow_up(
         task_type="llm_callback",
         payload=payload,
         scheduled_at=next_reminder_time,
-        notify_event=exec_context.new_task_event,
     )
 
     logger.info(
@@ -291,7 +290,6 @@ async def handle_llm_callback(
             trigger_interface_message_id=None,  # System trigger
             user_name="System",  # Callback initiated by system
             replied_to_interface_id=None,  # Not a reply
-            new_task_event=exec_context.new_task_event,  # Pass event from context
             request_confirmation_callback=None,  # No confirmation for system callbacks
         )
 
@@ -389,7 +387,6 @@ class TaskWorker:
         self,
         processing_service: ProcessingService,
         chat_interface: ChatInterface,
-        new_task_event: asyncio.Event,  # Add new_task_event
         calendar_config: dict[str, Any],
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
@@ -402,7 +399,6 @@ class TaskWorker:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
         self.chat_interface = chat_interface
-        self.new_task_event = new_task_event  # Store the event
         # Use provided shutdown_event_instance or default to global shutdown_event
         self.shutdown_event = (
             shutdown_event_instance
@@ -519,7 +515,6 @@ class TaskWorker:
                 ),  # Generate a new turn_id for this task execution
                 db_context=db_context,
                 chat_interface=self.chat_interface,
-                new_task_event=self.new_task_event,  # Pass the event
                 timezone_str=self.timezone_str,
                 processing_service=self.processing_service,
                 embedding_generator=self.embedding_generator,
@@ -610,7 +605,6 @@ class TaskWorker:
                             max_retries_override=task_max_retries,
                             recurrence_rule=recurrence_rule_str,
                             original_task_id=original_task_id,
-                            notify_event=wake_up_event,
                         )
                         logger.info(
                             f"Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
@@ -709,8 +703,19 @@ class TaskWorker:
             )
             pass  # Continue the loop normally after timeout
 
-    async def run(self, wake_up_event: asyncio.Event) -> None:
-        """Continuously polls for and processes tasks. Replaces task_worker_loop."""
+    async def run(self, wake_up_event: asyncio.Event | None = None) -> None:
+        """Continuously polls for and processes tasks.
+
+        Args:
+            wake_up_event: Optional override event for testing. If not provided,
+                          uses the global task event from storage.
+        """
+        # Use provided event or get the global task event
+        if wake_up_event is None:
+            from family_assistant.storage.tasks import get_task_event
+
+            wake_up_event = get_task_event()
+
         logger.info(f"Task worker {self.worker_id} run loop started.")
         # Get task types handled by *this specific instance*
         task_types_handled = list(self.task_handlers.keys())

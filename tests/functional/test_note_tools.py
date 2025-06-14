@@ -1,6 +1,5 @@
 """End-to-end functional tests for note tools."""
 
-import asyncio
 import json
 import logging
 import uuid
@@ -147,7 +146,6 @@ async def test_add_note_with_include_in_prompt(test_db_engine: AsyncEngine) -> N
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             trigger_content_parts=[
@@ -235,7 +233,6 @@ async def test_get_note_that_exists(test_db_engine: AsyncEngine) -> None:
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             trigger_content_parts=[
@@ -295,7 +292,6 @@ async def test_get_note_that_does_not_exist(test_db_engine: AsyncEngine) -> None
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             trigger_content_parts=[
@@ -368,7 +364,6 @@ async def test_list_all_notes(test_db_engine: AsyncEngine) -> None:
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             trigger_content_parts=[{"type": "text", "text": "List all notes"}],
@@ -442,7 +437,6 @@ async def test_list_notes_with_filter(test_db_engine: AsyncEngine) -> None:
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             trigger_content_parts=[
@@ -514,7 +508,6 @@ async def test_delete_note(test_db_engine: AsyncEngine) -> None:
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             trigger_content_parts=[
@@ -602,7 +595,6 @@ async def test_update_existing_note(test_db_engine: AsyncEngine) -> None:
         ) = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
-            new_task_event=asyncio.Event(),
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             trigger_content_parts=[
