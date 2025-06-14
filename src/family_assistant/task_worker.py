@@ -813,8 +813,8 @@ async def handle_system_error_log_cleanup(
     logger.info(f"Starting system error log cleanup (retention: {retention_days} days)")
 
     try:
-        deleted_count = await exec_context.db_context.error_logs.cleanup_old(
-            retention_days
+        deleted_count = await exec_context.db_context.error_logs.delete_old(
+            datetime.now(timezone.utc) - timedelta(days=retention_days)
         )
 
         logger.info(
