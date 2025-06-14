@@ -168,17 +168,23 @@ class TasksRepository(BaseRepository):
             )
             raise
 
-    async def dequeue(self, worker_id: str) -> dict[str, Any] | None:
+    async def dequeue(
+        self,
+        worker_id: str,
+        task_types: list[str],
+        current_time: datetime,
+    ) -> dict[str, Any] | None:
         """
         Atomically dequeues the next available task for a worker.
 
         Args:
             worker_id: Unique identifier for the worker
+            task_types: List of task types this worker can handle
+            current_time: Current time for scheduling checks
 
         Returns:
             Task data if a task was dequeued, None if no tasks available
         """
-        now = datetime.now(timezone.utc)
 
         if self._db.engine.dialect.name == "postgresql":
             # PostgreSQL: Use SELECT FOR UPDATE SKIP LOCKED for true atomic dequeue
@@ -186,14 +192,16 @@ class TasksRepository(BaseRepository):
                 select(tasks_table)
                 .where(
                     tasks_table.c.status == "pending",
+                    tasks_table.c.task_type.in_(task_types),
                     or_(
                         tasks_table.c.scheduled_at.is_(None),
-                        tasks_table.c.scheduled_at <= now,
+                        tasks_table.c.scheduled_at <= current_time,
                     ),
+                    tasks_table.c.retry_count <= tasks_table.c.max_retries,
                 )
                 .order_by(
-                    tasks_table.c.scheduled_at.asc().nullsfirst(),  # Immediate tasks first
-                    tasks_table.c.created_at.asc(),  # Then by creation time
+                    tasks_table.c.retry_count.asc(),
+                    tasks_table.c.created_at.asc(),
                 )
                 .limit(1)
                 .with_for_update(skip_locked=True)
@@ -205,7 +213,9 @@ class TasksRepository(BaseRepository):
                 update_stmt = (
                     update(tasks_table)
                     .where(tasks_table.c.id == row["id"])
-                    .values(status="processing", locked_by=worker_id, locked_at=now)
+                    .values(
+                        status="processing", locked_by=worker_id, locked_at=current_time
+                    )
                 )
                 await self._db.execute_with_retry(update_stmt)
                 return dict(row)
@@ -217,10 +227,12 @@ class TasksRepository(BaseRepository):
                 select(tasks_table.c.id)
                 .where(
                     tasks_table.c.status == "pending",
+                    tasks_table.c.task_type.in_(task_types),
                     or_(
                         tasks_table.c.scheduled_at.is_(None),
-                        tasks_table.c.scheduled_at <= now,
+                        tasks_table.c.scheduled_at <= current_time,
                     ),
+                    tasks_table.c.retry_count <= tasks_table.c.max_retries,
                 )
                 .order_by(
                     tasks_table.c.scheduled_at.asc().nullsfirst(),
@@ -240,7 +252,9 @@ class TasksRepository(BaseRepository):
                     tasks_table.c.id == row["id"],
                     tasks_table.c.status == "pending",  # Double-check status
                 )
-                .values(status="processing", locked_by=worker_id, locked_at=now)
+                .values(
+                    status="processing", locked_by=worker_id, locked_at=current_time
+                )
             )
 
             result = await self._db.execute_with_retry(update_stmt)
