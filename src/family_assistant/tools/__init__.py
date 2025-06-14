@@ -57,6 +57,7 @@ from family_assistant.tools.infrastructure import (
 )
 from family_assistant.tools.notes import (
     NOTE_TOOLS_DEFINITION,
+    add_or_update_note_tool,
     delete_note_tool,
     get_note_tool,
     list_notes_tool,
@@ -118,6 +119,7 @@ __all__ = [
     "_format_event_details_for_confirmation",
     "render_delete_calendar_event_confirmation",
     "render_modify_calendar_event_confirmation",
+    "add_or_update_note_tool",
     "delete_note_tool",
     "get_note_tool",
     "list_notes_tool",
@@ -132,6 +134,7 @@ __all__ = [
     "toggle_event_listener_tool",
     "HOME_ASSISTANT_TOOLS_DEFINITION",
     "render_home_assistant_template_tool",
+    "storage",
 ]
 
 
@@ -147,7 +150,7 @@ except ImportError:
 
 # Define available functions mapping
 AVAILABLE_FUNCTIONS: dict[str, Callable] = {
-    "add_or_update_note": storage.add_or_update_note,
+    "add_or_update_note": add_or_update_note_tool,
     "get_note": get_note_tool,
     "list_notes": list_notes_tool,
     "delete_note": delete_note_tool,

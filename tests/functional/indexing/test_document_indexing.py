@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine  # Add AsyncEngine import
 
 # Import components needed for the E2E test
-from family_assistant import storage
+# storage functions now accessed via DatabaseContext
 from family_assistant.embeddings import (
     MockEmbeddingGenerator,
 )
@@ -268,8 +268,7 @@ async def _helper_handle_embed_and_store_batch(
         meta = embedding_metadata_list[
             i
         ]  # This meta contains embedding_type, chunk_index, original_content_metadata
-        await storage.add_embedding(  # type: ignore
-            db_context=db_context,
+        await db_context.vector.add_embedding(
             document_id=document_id,
             chunk_index=meta.get("chunk_index", 0),  # From embedding_metadata_list
             embedding_type=meta["embedding_type"],  # From embedding_metadata_list
@@ -597,7 +596,7 @@ async def test_document_indexing_and_query_e2e(
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id)  # type: ignore
+                    await db_cleanup.vector.delete_document(document_db_id)
                     logger.info(f"Cleaned up test document DB ID {document_db_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test document cleanup: {cleanup_err}")
@@ -921,7 +920,7 @@ async def test_document_indexing_with_llm_summary_e2e(
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id)  # type: ignore
+                    await db_cleanup.vector.delete_document(document_db_id)
             except Exception as e:
                 logger.warning(f"Cleanup error for document {document_db_id}: {e}")
         if indexing_task_id:
@@ -1215,7 +1214,7 @@ async def test_url_indexing_e2e(
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id)  # type: ignore
+                    await db_cleanup.vector.delete_document(document_db_id)
                     logger.info(f"Cleaned up test URL document DB ID {document_db_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test URL document cleanup: {cleanup_err}")
@@ -1397,7 +1396,7 @@ async def test_url_indexing_e2e(
 
             # --- Assert: Verify Document Title in DB ---
             async with DatabaseContext(engine=pg_vector_db_engine) as db:
-                doc_record = await storage.get_document_by_id(db, document_db_id)  # type: ignore
+                doc_record = await db.vector.get_document_by_id(document_db_id)
                 assert doc_record is not None, (
                     f"Document record {document_db_id} not found in DB."
                 )
@@ -1464,7 +1463,7 @@ async def test_url_indexing_e2e(
                     async with DatabaseContext(
                         engine=pg_vector_db_engine
                     ) as db_cleanup:
-                        await storage.delete_document(db_cleanup, document_db_id)  # type: ignore
+                        await db_cleanup.vector.delete_document(document_db_id)
                 except Exception as e:
                     logger.warning(
                         f"Cleanup error for auto-title document {document_db_id}: {e}"

@@ -17,7 +17,7 @@ from typing import (
 )
 
 import telegramify_markdown  # type: ignore[import-untyped]
-from sqlalchemy import update as sqlalchemy_update  # For error handling db update
+from sqlalchemy import update as sqlalchemy_update
 from telegram import (
     BotCommand,  # For defining bot commands
     BotCommandScopeAllPrivateChats,  # For command scope
@@ -49,6 +49,9 @@ from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.interfaces import ChatInterface  # Import the new interface
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.message_history import (
+    message_history_table,  # For error handling db update
+)
 
 logger = logging.getLogger(__name__)
 
@@ -282,12 +285,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )
 
         # Store storage functions needed directly by the handler (e.g., history)
-        # These might be better accessed via the db_context passed around,
-        # but keeping add_message_to_history accessible for now.
-        # Import storage here if needed, or rely on db_context methods.
-        from family_assistant import storage  # Import storage locally if needed
-
-        self.storage = storage
+        # Storage operations are now accessed via DatabaseContext
         self.text_chunker = TextChunker(
             chunk_size=TELEGRAM_MAX_MESSAGE_LENGTH,
             chunk_overlap=50,  # Small overlap to maintain context across messages
@@ -575,8 +573,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 if replied_to_interface_id:
                     try:
                         replied_to_db_msg = (
-                            await self.storage.get_message_by_interface_id(
-                                db_context=db_context,
+                            await db_context.message_history.get_by_interface_id(
                                 interface_type=interface_type,
                                 conversation_id=conversation_id,
                                 interface_message_id=replied_to_interface_id,
@@ -653,8 +650,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                 if user_message_id:
                     trigger_interface_message_id = str(user_message_id)  # Store the ID
-                    await self.storage.add_message_to_history(
-                        db_context=db_context,
+                    await db_context.message_history.add(
                         interface_type=interface_type,
                         conversation_id=conversation_id,
                         interface_message_id=str(
@@ -756,8 +752,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         and last_assistant_internal_id is not None
                     ):
                         try:
-                            await self.storage.update_message_interface_id(
-                                db_context=db_context,
+                            await db_context.message_history.update_interface_id(
                                 internal_id=last_assistant_internal_id,
                                 interface_message_id=str(
                                     sent_assistant_message.message_id
@@ -858,8 +853,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # Get a new context for this update attempt
                     async with self.get_db_context() as db_ctx_err:
                         # Fetch the user message's internal ID first (can't update by interface ID)
-                        user_msg_record = await self.storage.get_message_by_interface_id(
-                            db_context=db_ctx_err,
+                        user_msg_record = await db_ctx_err.message_history.get_by_interface_id(
                             interface_type=interface_type,
                             conversation_id=conversation_id,  # Correct variable name was already here
                             interface_message_id=str(user_message_id),
@@ -867,9 +861,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         if user_msg_record and user_msg_record.get("internal_id"):
                             stmt = (
                                 # Use SQLAlchemy update directly
-                                sqlalchemy_update(self.storage.message_history_table)
+                                sqlalchemy_update(message_history_table)
                                 .where(
-                                    self.storage.message_history_table.c.internal_id
+                                    message_history_table.c.internal_id
                                     == user_msg_record["internal_id"]
                                 )
                                 .values(error_traceback=processing_error_traceback)
@@ -1185,8 +1179,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         sent_assistant_message  # This is now a Message object or None
                         and last_assistant_internal_id is not None
                     ):
-                        await self.storage.update_message_interface_id(
-                            db_context=db_ctx,
+                        await db_ctx.message_history.update_interface_id(
                             internal_id=last_assistant_internal_id,
                             interface_message_id=str(sent_assistant_message.message_id),
                         )
@@ -1259,17 +1252,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     and update.message.message_id
                 ):
                     try:
-                        user_msg_record = await self.storage.get_message_by_interface_id(
-                            db_context=db_ctx,  # db_ctx is still in scope from outer try
-                            interface_type="telegram",
-                            conversation_id=str(chat_id),
-                            interface_message_id=str(update.message.message_id),
+                        user_msg_record = (
+                            await db_ctx.message_history.get_by_interface_id(
+                                interface_type="telegram",
+                                conversation_id=str(chat_id),
+                                interface_message_id=str(update.message.message_id),
+                            )
                         )
                         if user_msg_record and user_msg_record.get("internal_id"):
                             stmt = (
-                                sqlalchemy_update(self.storage.message_history_table)
+                                sqlalchemy_update(message_history_table)
                                 .where(
-                                    self.storage.message_history_table.c.internal_id
+                                    message_history_table.c.internal_id
                                     == user_msg_record["internal_id"]
                                 )
                                 .values(error_traceback=processing_error_traceback)

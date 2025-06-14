@@ -11,15 +11,15 @@ from family_assistant.web.app_creator import app as actual_app
 @pytest.mark.asyncio
 async def test_notes_ui_endpoints_accessible(test_db_engine: AsyncEngine) -> None:
     """Test that notes UI endpoints are accessible and don't crash."""
-    from family_assistant import storage
+    # storage functions now accessed via DatabaseContext
 
     async with DatabaseContext(engine=test_db_engine) as db_context:
         # Add test notes with different include_in_prompt values
-        await storage.add_or_update_note(
-            db_context, "Test Note", "Test content", include_in_prompt=True
+        await db_context.notes.add_or_update(
+            title="Test Note", content="Test content", include_in_prompt=True
         )
-        await storage.add_or_update_note(
-            db_context, "Excluded Note", "Excluded content", include_in_prompt=False
+        await db_context.notes.add_or_update(
+            title="Excluded Note", content="Excluded content", include_in_prompt=False
         )
 
     # Create test client

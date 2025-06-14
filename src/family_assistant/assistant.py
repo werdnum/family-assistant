@@ -12,8 +12,6 @@ import uvicorn
 import family_assistant.embeddings as embeddings
 
 # Import the whole storage module for task queue functions etc.
-from family_assistant import storage
-
 # --- NEW: Import ContextProvider and its implementations ---
 from family_assistant.context_providers import (
     CalendarContextProvider,
@@ -210,7 +208,7 @@ class Assistant:
 
         await init_db()
         async with get_db_context() as db_ctx:
-            await storage.init_vector_db(db_ctx)
+            await db_ctx.init_vector_db()
 
         # Setup error logging to database if enabled
         error_logging_config = self.config.get("logging", {}).get("database_errors", {})
@@ -777,8 +775,7 @@ class Assistant:
 
             # Upsert the system event cleanup task
             try:
-                await storage.enqueue_task(
-                    db_context=db_ctx,
+                await db_ctx.tasks.enqueue(
                     task_id="system_event_cleanup_daily",
                     task_type="system_event_cleanup",
                     payload={"retention_hours": 48},
@@ -802,8 +799,7 @@ class Assistant:
                     .get("retention_days", 30)
                 )
 
-                await storage.enqueue_task(
-                    db_context=db_ctx,
+                await db_ctx.tasks.enqueue(
                     task_id="system_error_log_cleanup_daily",
                     task_type="system_error_log_cleanup",
                     payload={"retention_days": error_log_retention_days},

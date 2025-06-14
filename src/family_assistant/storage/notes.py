@@ -310,10 +310,7 @@ async def _enqueue_note_indexing_task(db_context: DatabaseContext, title: str) -
             # Use UUID to ensure unique task IDs for re-indexing
             import uuid
 
-            from family_assistant import storage as storage_module
-
-            await storage_module.enqueue_task(
-                db_context=db_context,
+            await db_context.tasks.enqueue(
                 task_id=f"index_note_{note_row['id']}_{uuid.uuid4()}",
                 task_type="index_note",
                 payload={"note_id": note_row["id"]},

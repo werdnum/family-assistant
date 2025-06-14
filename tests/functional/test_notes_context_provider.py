@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.notes import add_or_update_note, notes_table
+from family_assistant.storage.notes import notes_table
 
 
 async def get_test_db_context(engine: AsyncEngine) -> DatabaseContext:
@@ -33,20 +33,17 @@ async def test_notes_context_provider_respects_include_in_prompt(
 
     # Create test notes
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        await add_or_update_note(
-            db_context=db,
+        await db.notes.add_or_update(
             title="Visible Note 1",
             content="This should appear in context",
             include_in_prompt=True,
         )
-        await add_or_update_note(
-            db_context=db,
+        await db.notes.add_or_update(
             title="Hidden Note 1",
             content="This should NOT appear in context",
             include_in_prompt=False,
         )
-        await add_or_update_note(
-            db_context=db,
+        await db.notes.add_or_update(
             title="Visible Note 2",
             content="This should also appear in context",
             include_in_prompt=True,
@@ -94,14 +91,12 @@ async def test_notes_context_provider_empty_when_all_excluded(
 
     # Create only excluded notes
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        await add_or_update_note(
-            db_context=db,
+        await db.notes.add_or_update(
             title="Hidden Note A",
             content="Excluded content A",
             include_in_prompt=False,
         )
-        await add_or_update_note(
-            db_context=db,
+        await db.notes.add_or_update(
             title="Hidden Note B",
             content="Excluded content B",
             include_in_prompt=False,
@@ -149,8 +144,7 @@ async def test_notes_context_provider_mixed_visibility(
         ]
 
         for title, content, include in test_notes:
-            await add_or_update_note(
-                db_context=db,
+            await db.notes.add_or_update(
                 title=title,
                 content=content,
                 include_in_prompt=include,

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from asyncio import Event
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import insert, or_, select, update
@@ -282,41 +282,24 @@ class TasksRepository(BaseRepository):
     async def reschedule_for_retry(
         self,
         task_id: str,
-        delay_seconds: int,
-        error: str | None = None,
+        next_scheduled_at: datetime,
+        new_retry_count: int,
+        error: str,
     ) -> bool:
         """
-        Reschedules a task for retry after a delay.
+        Reschedules a task for retry.
 
         Args:
             task_id: The unique task identifier
-            delay_seconds: How many seconds to wait before retry
-            error: Optional error message from the failed attempt
+            next_scheduled_at: When to retry the task (must be timezone-aware)
+            new_retry_count: The new retry count
+            error: Error message from the failed attempt
 
         Returns:
-            True if the task was rescheduled, False if max retries exceeded
+            True if the task was rescheduled, False otherwise
         """
-        # First, check the current retry count and max retries
-        check_stmt = select(tasks_table.c.retry_count, tasks_table.c.max_retries).where(
-            tasks_table.c.task_id == task_id
-        )
-
-        row = await self._db.fetch_one(check_stmt)
-        if not row:
-            logger.error(f"Task {task_id} not found for retry scheduling")
-            return False
-
-        if row["retry_count"] >= row["max_retries"]:
-            # Max retries exceeded, mark as failed
-            await self.update_status(
-                task_id,
-                "failed",
-                error or "Max retries exceeded",
-            )
-            return False
-
-        # Calculate new scheduled time
-        new_scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+        if next_scheduled_at.tzinfo is None:
+            raise ValueError("next_scheduled_at must be timezone-aware")
 
         # Update the task for retry
         update_stmt = (
@@ -324,18 +307,19 @@ class TasksRepository(BaseRepository):
             .where(tasks_table.c.task_id == task_id)
             .values(
                 status="pending",
-                scheduled_at=new_scheduled_at,
-                retry_count=tasks_table.c.retry_count + 1,
-                locked_by=None,
-                locked_at=None,
-                error=error,
+                scheduled_at=next_scheduled_at,
+                retry_count=new_retry_count,
+                last_error=error,
             )
         )
 
-        await self._db.execute_with_retry(update_stmt)
+        result = await self._db.execute_with_retry(update_stmt)
+        if result.rowcount == 0:  # type: ignore[attr-defined]
+            logger.error(f"Task {task_id} not found for retry scheduling")
+            return False
+
         logger.info(
-            f"Rescheduled task {task_id} for retry at {new_scheduled_at} "
-            f"(attempt {row['retry_count'] + 2}/{row['max_retries'] + 1})"
+            f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
         )
         return True
 
@@ -376,3 +360,60 @@ class TasksRepository(BaseRepository):
 
         rows = await self._db.fetch_all(stmt)
         return [dict(row) for row in rows]
+
+    async def manually_retry(self, internal_task_id: int) -> bool:
+        """
+        Manually retries a task that has failed or exhausted its retries.
+        Increments max_retries, sets status to pending, and schedules for immediate run.
+
+        Args:
+            internal_task_id: The internal database ID of the task (tasks_table.c.id)
+
+        Returns:
+            True if the task was successfully queued for retry, False otherwise
+        """
+        current_time = datetime.now(timezone.utc)
+
+        # Fetch the task by its internal ID
+        select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)
+        task_row = await self._db.fetch_one(select_stmt)
+
+        if not task_row:
+            logger.warning(
+                f"Manual retry requested for non-existent task with internal ID {internal_task_id}."
+            )
+            return False
+
+        task = dict(task_row)
+        logger.info(
+            f"Manual retry requested for task {task['task_id']} "
+            f"(internal ID: {internal_task_id}, status: {task['status']}, "
+            f"retry_count: {task['retry_count']}, max_retries: {task['max_retries']})"
+        )
+
+        # Update the task to be retryable
+        # We increment max_retries to allow the retry and reset to pending
+        new_max_retries = max(task["max_retries"], task["retry_count"]) + 1
+
+        update_stmt = (
+            update(tasks_table)
+            .where(tasks_table.c.id == internal_task_id)
+            .values(
+                status="pending",
+                max_retries=new_max_retries,
+                scheduled_at=current_time,  # Schedule for immediate execution
+                last_error=None,  # Clear the error to give it a fresh start
+            )
+        )
+
+        result = await self._db.execute_with_retry(update_stmt)
+
+        if result.rowcount > 0:  # type: ignore[attr-defined]
+            logger.info(
+                f"Successfully queued task {task['task_id']} for manual retry. "
+                f"Max retries increased to {new_max_retries}."
+            )
+            return True
+        else:
+            logger.error(f"Failed to update task {task['task_id']} for manual retry.")
+            return False

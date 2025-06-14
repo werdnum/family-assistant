@@ -6,11 +6,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from family_assistant.storage import (
-    count_error_logs,
-    get_error_log_by_id,
-    get_error_logs,
-)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import get_db
 
@@ -56,8 +51,7 @@ async def get_errors(
     cutoff_date = datetime.now() - timedelta(days=days)
     offset = (page - 1) * limit
 
-    errors = await get_error_logs(
-        db_context,
+    errors = await db_context.error_logs.get_all(
         level=level,
         logger_name=logger,
         since=cutoff_date,
@@ -65,8 +59,7 @@ async def get_errors(
         offset=offset,
     )
 
-    total_count = await count_error_logs(
-        db_context,
+    total_count = await db_context.error_logs.count(
         level=level,
         logger_name=logger,
         since=cutoff_date,
@@ -89,7 +82,7 @@ async def get_error_by_id(
     db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> ErrorLogResponse:
     """Get a specific error log by ID."""
-    error = await get_error_log_by_id(db_context, error_id)
+    error = await db_context.error_logs.get_by_id(error_id)
     if not error:
         raise HTTPException(404, "Error log not found")
 

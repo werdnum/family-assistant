@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 from sqlalchemy.sql import select  # Import text
 
 # Import necessary components from the application
-from family_assistant import storage  # Import storage module
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -1261,8 +1260,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
     logger.info("--- Part 4: User responds to reminder ---")
     response_timestamp = mock_clock.now() + timedelta(seconds=5)
     async with DatabaseContext(engine=test_db_engine) as db_context:
-        await storage.add_message_to_history(
-            db_context=db_context,
+        await db_context.message_history.add(
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
             interface_message_id=str(user_message_id_response),

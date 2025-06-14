@@ -9,7 +9,7 @@ from typing import Any
 
 import filetype  # type: ignore[import-untyped]
 
-from family_assistant import storage
+# storage functions now accessed via DatabaseContext
 from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
@@ -157,8 +157,7 @@ async def process_document_ingestion_request(
         }
         doc_for_storage = IngestedDocument(document_data_for_obj)
 
-        document_id: int = await storage.add_document(
-            db_context=db_context,
+        document_id: int = await db_context.vector.add_document(
             doc=doc_for_storage,
         )
         logger.info(f"Stored document record for {source_id}, got DB ID: {document_id}")
@@ -175,8 +174,7 @@ async def process_document_ingestion_request(
         task_id = f"index-doc-{document_id}-{uuid.uuid4()}"
         task_enqueued = False
         try:
-            await storage.enqueue_task(
-                db_context=db_context,
+            await db_context.tasks.enqueue(
                 task_id=task_id,
                 task_type="process_uploaded_document",
                 payload=task_payload,

@@ -14,6 +14,10 @@ from family_assistant.storage.repositories.base import BaseRepository
 class MessageHistoryRepository(BaseRepository):
     """Repository for managing message history in the database."""
 
+    async def add(self, **kwargs: Any) -> dict[str, Any] | None:
+        """Alias for add_message for backward compatibility."""
+        return await self.add_message(**kwargs)
+
     async def add_message(
         self,
         # --- New/Renamed Parameters ---
@@ -128,8 +132,9 @@ class MessageHistoryRepository(BaseRepository):
         self,
         interface_type: str,
         conversation_id: str,
-        hours: int = 24,
         limit: int | None = None,
+        max_age: timedelta | None = None,
+        processing_profile_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Retrieves recent message history for a conversation.
@@ -137,21 +142,32 @@ class MessageHistoryRepository(BaseRepository):
         Args:
             interface_type: Type of interface
             conversation_id: Conversation identifier
-            hours: How many hours back to look
             limit: Maximum number of messages to return
+            max_age: Maximum age of messages to return
+            processing_profile_id: Filter by processing profile
 
         Returns:
             List of messages in chronological order
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        if max_age:
+            cutoff = datetime.now(timezone.utc) - max_age
+        else:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+
+        conditions = [
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.conversation_id == conversation_id,
+            message_history_table.c.timestamp >= cutoff,
+        ]
+
+        if processing_profile_id:
+            conditions.append(
+                message_history_table.c.processing_profile_id == processing_profile_id
+            )
 
         stmt = (
             select(message_history_table)
-            .where(
-                message_history_table.c.interface_type == interface_type,
-                message_history_table.c.conversation_id == conversation_id,
-                message_history_table.c.timestamp >= cutoff,
-            )
+            .where(*conditions)
             .order_by(message_history_table.c.timestamp.asc())
         )
 
@@ -258,19 +274,29 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
 
-    async def get_by_thread_id(self, thread_root_id: int) -> list[dict[str, Any]]:
+    async def get_by_thread_id(
+        self, thread_root_id: int, processing_profile_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Retrieves all messages in a thread.
 
         Args:
             thread_root_id: The root message ID of the thread
+            processing_profile_id: Filter by processing profile
 
         Returns:
             List of messages in the thread
         """
+        conditions = [message_history_table.c.thread_root_id == thread_root_id]
+
+        if processing_profile_id:
+            conditions.append(
+                message_history_table.c.processing_profile_id == processing_profile_id
+            )
+
         stmt = (
             select(message_history_table)
-            .where(message_history_table.c.thread_root_id == thread_root_id)
+            .where(*conditions)
             .order_by(message_history_table.c.timestamp.asc())
         )
 
@@ -353,3 +379,32 @@ class MessageHistoryRepository(BaseRepository):
                 msg["reasoning_info"] = None
 
         return msg
+
+    async def get_all_grouped(self) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        """
+        Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp.
+
+        Returns:
+            Dictionary mapping (interface_type, conversation_id) tuples to lists of messages
+        """
+        stmt = select(message_history_table).order_by(
+            message_history_table.c.interface_type,
+            message_history_table.c.conversation_id,
+            message_history_table.c.timestamp,
+            message_history_table.c.internal_id,  # For stable chronological order
+        )
+
+        rows = await self._db.fetch_all(stmt)
+
+        # Group messages by (interface_type, conversation_id)
+        grouped_history: dict[tuple[str, str], list[dict[str, Any]]] = {}
+
+        for row in rows:
+            msg = self._process_message_row(row)
+            key = (msg["interface_type"], msg["conversation_id"])
+
+            if key not in grouped_history:
+                grouped_history[key] = []
+            grouped_history[key].append(msg)
+
+        return grouped_history

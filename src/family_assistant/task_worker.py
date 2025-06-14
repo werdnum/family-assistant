@@ -17,7 +17,7 @@ from dateutil.parser import isoparse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant import storage
+# Removed storage import - using repository pattern
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 
@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.message_history import message_history_table
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.utils.clock import Clock, SystemClock
 
@@ -41,7 +42,7 @@ async def _schedule_reminder_follow_up(
     max_follow_ups: int,
 ) -> None:
     """Helper function to schedule a follow-up reminder."""
-    from family_assistant import storage
+    # Removed storage import - using repository pattern
 
     # Parse the follow-up interval
     interval_parts = follow_up_interval.lower().split()
@@ -84,8 +85,7 @@ async def _schedule_reminder_follow_up(
         },
     }
 
-    await storage.enqueue_task(
-        db_context=exec_context.db_context,
+    await exec_context.db_context.tasks.enqueue(
         task_id=task_id,
         task_type="llm_callback",
         payload=payload,
@@ -214,11 +214,11 @@ async def handle_llm_callback(
     if is_reminder and follow_up_enabled:
         # Check for intervening user messages
         stmt = (
-            select(storage.message_history_table.c.internal_id)
-            .where(storage.message_history_table.c.interface_type == interface_type)
-            .where(storage.message_history_table.c.conversation_id == conversation_id)
-            .where(storage.message_history_table.c.role == "user")
-            .where(storage.message_history_table.c.timestamp > scheduling_timestamp_dt)
+            select(message_history_table.c.internal_id)
+            .where(message_history_table.c.interface_type == interface_type)
+            .where(message_history_table.c.conversation_id == conversation_id)
+            .where(message_history_table.c.role == "user")
+            .where(message_history_table.c.timestamp > scheduling_timestamp_dt)
             .limit(1)
         )
         intervening_messages = await db_context.fetch_all(stmt)
@@ -258,8 +258,7 @@ async def handle_llm_callback(
 
         # Save the initial system trigger message for the callback to history
         callback_trigger_timestamp = clock.now()
-        await storage.add_message_to_history(
-            db_context=db_context,
+        await db_context.message_history.add(
             interface_type=interface_type,  # Should be "system_callback" or similar
             conversation_id=conversation_id,
             interface_message_id=None,  # System-generated, no direct interface ID
@@ -320,8 +319,7 @@ async def handle_llm_callback(
 
             if sent_message_id_str and final_assistant_message_internal_id is not None:
                 try:
-                    await storage.update_message_interface_id(
-                        db_context=db_context,
+                    await db_context.message_history.update_interface_id(
                         internal_id=final_assistant_message_internal_id,
                         interface_message_id=sent_message_id_str,
                     )
@@ -457,8 +455,7 @@ class TaskWorker:
             logger.error(
                 f"Worker {self.worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
             )
-            await storage.update_task_status(
-                db_context=db_context,
+            await db_context.tasks.update_status(
                 task_id=task["task_id"],
                 status="failed",
                 error=f"No handler registered for type {task['task_type']}",
@@ -483,8 +480,7 @@ class TaskWorker:
                     logger.error(
                         f"Task {task['task_id']} (llm_callback) missing interface_type or conversation_id in payload."
                     )
-                    await storage.update_task_status(
-                        db_context,
+                    await db_context.tasks.update_status(
                         task_id=task["task_id"],
                         status="failed",
                         error="Missing interface_type or conversation_id in payload for llm_callback",
@@ -539,8 +535,7 @@ class TaskWorker:
             task_max_retries = task.get("max_retries", 3)
 
             # Mark task as done
-            await storage.update_task_status(
-                db_context=db_context,
+            await db_context.tasks.update_status(
                 task_id=task_id,
                 status="done",
             )
@@ -596,8 +591,7 @@ class TaskWorker:
                             )
 
                         # Enqueue the next task instance
-                        await storage.enqueue_task(
-                            db_context=db_context,
+                        await db_context.tasks.enqueue(
                             task_id=next_task_id,
                             task_type=task_type,
                             payload=payload,
@@ -654,8 +648,7 @@ class TaskWorker:
                 f"Scheduling retry {current_retry + 1} for task {task['task_id']} at {next_attempt_time} (delay: {backoff_delay:.2f}s)"
             )
             try:
-                await storage.reschedule_task_for_retry(
-                    db_context=db_context,
+                await db_context.tasks.reschedule_for_retry(
                     task_id=task["task_id"],
                     next_scheduled_at=next_attempt_time,
                     new_retry_count=current_retry + 1,
@@ -667,8 +660,7 @@ class TaskWorker:
                     f"CRITICAL: Failed to reschedule task {task['task_id']} for retry after handler error. Marking as failed. Error: {reschedule_err}",
                     exc_info=True,
                 )
-                await storage.update_task_status(
-                    db_context=db_context,
+                await db_context.tasks.update_status(
                     task_id=task["task_id"],
                     status="failed",
                     error=f"Handler Error: {error_str}. Reschedule Failed: {reschedule_err}",
@@ -678,8 +670,7 @@ class TaskWorker:
             logger.warning(
                 f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
             )
-            await storage.update_task_status(
-                db_context=db_context,
+            await db_context.tasks.update_status(
                 task_id=task["task_id"],
                 status="failed",
                 error=error_str,
@@ -734,8 +725,7 @@ class TaskWorker:
                         "Polling for tasks on DB context: %s", db_context.engine.url
                     )
                     try:  # Inner try for dequeue, task processing, and waiting logic
-                        task = await storage.dequeue_task(
-                            db_context=db_context,
+                        task = await db_context.tasks.dequeue(
                             worker_id=self.worker_id,
                             task_types=task_types_handled,
                             current_time=self.clock.now(),  # Pass current time from worker's clock
@@ -788,7 +778,7 @@ async def handle_system_event_cleanup(
     """
     Task handler for cleaning up old events from the database.
     """
-    from family_assistant.storage.events import cleanup_old_events
+    # cleanup_old_events is now accessed via db_context.events.cleanup_old_events
 
     # Get retention hours from payload or use default
     retention_hours = payload.get("retention_hours", 48)
@@ -796,8 +786,8 @@ async def handle_system_event_cleanup(
     logger.info(f"Starting system event cleanup (retention: {retention_hours} hours)")
 
     try:
-        deleted_count = await cleanup_old_events(
-            exec_context.db_context, retention_hours
+        deleted_count = await exec_context.db_context.events.cleanup_old_events(
+            retention_hours
         )
 
         logger.info(
@@ -815,7 +805,7 @@ async def handle_system_error_log_cleanup(
     """
     Task handler for cleaning up old error logs from the database.
     """
-    from family_assistant.storage.error_logs import cleanup_old_error_logs
+    # cleanup_old_error_logs is now accessed via db_context.error_logs.cleanup_old
 
     # Get retention days from payload or use default
     retention_days = payload.get("retention_days", 30)
@@ -823,8 +813,8 @@ async def handle_system_error_log_cleanup(
     logger.info(f"Starting system error log cleanup (retention: {retention_days} days)")
 
     try:
-        deleted_count = await cleanup_old_error_logs(
-            exec_context.db_context, retention_days
+        deleted_count = await exec_context.db_context.error_logs.cleanup_old(
+            retention_days
         )
 
         logger.info(

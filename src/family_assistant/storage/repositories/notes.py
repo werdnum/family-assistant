@@ -7,7 +7,6 @@ from typing import Any
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from family_assistant import storage as storage_module
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.base import BaseRepository
 
@@ -52,6 +51,20 @@ class NotesRepository(BaseRepository):
             )
             raise
 
+    async def get_by_id(self, note_id: int) -> dict[str, Any] | None:
+        """
+        Retrieves a note by its ID.
+
+        Args:
+            note_id: The ID of the note to retrieve
+
+        Returns:
+            Dictionary containing note data or None if not found
+        """
+        query = select(notes_table).where(notes_table.c.id == note_id)
+        row = await self._db.fetch_one(query)
+        return dict(row) if row else None
+
     async def get_by_title(self, title: str) -> dict[str, Any] | None:
         """Retrieves a specific note by its title."""
         try:
@@ -65,25 +78,6 @@ class NotesRepository(BaseRepository):
         except SQLAlchemyError as e:
             self._logger.error(
                 f"Database error in get_by_title({title}): {e}", exc_info=True
-            )
-            raise
-
-    async def get_by_id(self, note_id: int) -> dict[str, Any] | None:
-        """Retrieves a specific note by its ID."""
-        try:
-            stmt = select(
-                notes_table.c.id,
-                notes_table.c.title,
-                notes_table.c.content,
-                notes_table.c.include_in_prompt,
-                notes_table.c.created_at,
-                notes_table.c.updated_at,
-            ).where(notes_table.c.id == note_id)
-            row = await self._db.fetch_one(stmt)
-            return dict(row) if row else None
-        except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_by_id({note_id}): {e}", exc_info=True
             )
             raise
 
@@ -220,8 +214,7 @@ class NotesRepository(BaseRepository):
             note_row = await self._db.fetch_one(note_stmt)
             if note_row:
                 # Use UUID to ensure unique task IDs for re-indexing
-                await storage_module.enqueue_task(
-                    db_context=self._db,
+                await self._db.tasks.enqueue(
                     task_id=f"index_note_{note_row['id']}_{uuid.uuid4()}",
                     task_type="index_note",
                     payload={"note_id": note_row["id"]},

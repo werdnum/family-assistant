@@ -76,6 +76,7 @@ class DatabaseContext:
         self._email = None
         self._error_logs = None
         self._events = None
+        self._vector = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -285,6 +286,19 @@ class DatabaseContext:
 
             self._events = EventsRepository(self)
         return self._events
+
+    @property
+    def vector(self) -> Any:  # Type hint as Any to avoid circular import
+        """Get the vector repository instance."""
+        if self._vector is None:
+            from family_assistant.storage.repositories import VectorRepository
+
+            self._vector = VectorRepository(self)
+        return self._vector
+
+    async def init_vector_db(self) -> None:
+        """Initialize vector database components."""
+        await self.vector.init_db()
 
 
 # Convenience function to create a database context

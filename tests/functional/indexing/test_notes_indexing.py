@@ -19,13 +19,14 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant import storage
+# storage functions now accessed via DatabaseContext
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.notes import add_or_update_note
+
+# notes functions now accessed via DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
@@ -133,8 +134,7 @@ async def _helper_handle_embed_and_store_batch_notes(
 
     for i, vector in enumerate(embedding_result.embeddings):
         meta = embedding_metadata_list[i]
-        await storage.add_embedding(
-            db_context=db_context,
+        await db_context.vector.add_embedding(
             document_id=document_id,
             chunk_index=meta.get("chunk_index", 0),
             embedding_type=meta["embedding_type"],
@@ -217,8 +217,7 @@ async def test_notes_indexing_e2e(
     try:
         # --- Act: Create Note (triggers indexing task) ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            result = await add_or_update_note(
-                db_context=db_context,
+            result = await db_context.notes.add_or_update(
                 title=unique_note_title,
                 content=TEST_NOTE_CONTENT,
             )
@@ -272,10 +271,9 @@ async def test_notes_indexing_e2e(
         # --- Assert: Find Document Record ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             # Find the document that was created for our note
-            doc_record = await storage.get_document_by_source_id(
-                db,
-                unique_note_title,  # Notes use title as source_id
-            )
+            doc_record = await db.vector.get_document_by_source_id(
+                unique_note_title
+            )  # Notes use title as source_id
             assert doc_record is not None, (
                 f"Document record not found for note with title: {unique_note_title}"
             )
@@ -382,9 +380,7 @@ async def test_notes_indexing_e2e(
         # --- Assert: Verify Note Content Accessibility ---
         # Verify that the original note content is still accessible via storage
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            from family_assistant.storage.notes import get_note_by_title
-
-            retrieved_note = await get_note_by_title(db, unique_note_title)
+            retrieved_note = await db.notes.get_by_title(unique_note_title)
             assert retrieved_note is not None, "Could not retrieve original note"
             assert retrieved_note["content"] == TEST_NOTE_CONTENT
             logger.info("Verified original note content is still accessible")
@@ -410,7 +406,7 @@ async def test_notes_indexing_e2e(
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id)
+                    await db_cleanup.vector.delete_document(document_db_id)
                     logger.info(f"Cleaned up test document DB ID {document_db_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during document cleanup: {cleanup_err}")
@@ -418,9 +414,7 @@ async def test_notes_indexing_e2e(
         if note_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    from family_assistant.storage.notes import delete_note
-
-                    await delete_note(db_cleanup, unique_note_title)
+                    await db_cleanup.notes.delete(unique_note_title)
                     logger.info(f"Cleaned up test note: {unique_note_title}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during note cleanup: {cleanup_err}")
@@ -520,8 +514,8 @@ async def test_note_update_reindexing_e2e(
     try:
         # --- Step 1: Create Initial Note ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            result = await add_or_update_note(
-                db_context=db_context, title=unique_note_title, content=initial_content
+            result = await db_context.notes.add_or_update(
+                title=unique_note_title, content=initial_content
             )
             assert result == "Success"
 
@@ -570,7 +564,7 @@ async def test_note_update_reindexing_e2e(
 
         # Get document ID and count embeddings
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            doc_record = await storage.get_document_by_source_id(db, unique_note_title)
+            doc_record = await db.vector.get_document_by_source_id(unique_note_title)
             assert doc_record is not None
             document_db_id = doc_record.id
 
@@ -587,8 +581,8 @@ async def test_note_update_reindexing_e2e(
 
         # --- Step 2: Update Note Content ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            result = await add_or_update_note(
-                db_context=db_context, title=unique_note_title, content=updated_content
+            result = await db_context.notes.add_or_update(
+                title=unique_note_title, content=updated_content
             )
             assert result == "Success"
             logger.info("Updated note content")
@@ -685,16 +679,14 @@ async def test_note_update_reindexing_e2e(
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id)
+                    await db_cleanup.vector.delete_document(document_db_id)
             except Exception as e:
                 logger.warning(f"Cleanup error: {e}")
 
         if note_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    from family_assistant.storage.notes import delete_note
-
-                    await delete_note(db_cleanup, unique_note_title)
+                    await db_cleanup.notes.delete(unique_note_title)
             except Exception as e:
                 logger.warning(f"Note cleanup error: {e}")
 
@@ -760,8 +752,7 @@ async def test_notes_indexing_graceful_degradation(
     try:
         # Create large note
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            result = await add_or_update_note(
-                db_context=db_context,
+            result = await db_context.notes.add_or_update(
                 title=unique_note_title,
                 content=LARGE_CONTENT,
             )
@@ -814,7 +805,7 @@ async def test_notes_indexing_graceful_degradation(
         # Find any embed_and_store_batch tasks for this document
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             # First get the document ID
-            doc_record = await storage.get_document_by_source_id(db, unique_note_title)
+            doc_record = await db.vector.get_document_by_source_id(unique_note_title)
             if doc_record:
                 embed_task_stmt = select(
                     tasks_table.c.task_id, tasks_table.c.status
@@ -844,7 +835,7 @@ async def test_notes_indexing_graceful_degradation(
 
         # Verify document and embeddings
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            doc_record = await storage.get_document_by_source_id(db, unique_note_title)
+            doc_record = await db.vector.get_document_by_source_id(unique_note_title)
             assert doc_record is not None
             document_db_id = doc_record.id
 
@@ -913,16 +904,14 @@ async def test_notes_indexing_graceful_degradation(
         if document_db_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await storage.delete_document(db_cleanup, document_db_id)
+                    await db_cleanup.vector.delete_document(document_db_id)
             except Exception as e:
                 logger.warning(f"Document cleanup error: {e}")
 
         if note_id:
             try:
                 async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    from family_assistant.storage.notes import delete_note
-
-                    await delete_note(db_cleanup, unique_note_title)
+                    await db_cleanup.notes.delete(unique_note_title)
             except Exception as e:
                 logger.warning(f"Note cleanup error: {e}")
 

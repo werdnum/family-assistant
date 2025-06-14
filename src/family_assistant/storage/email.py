@@ -14,8 +14,6 @@ from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
 from sqlalchemy.sql import functions, insert, update  # Consolidate and add update
 
 # Import storage facade for enqueue_task
-from family_assistant import storage
-
 # Import metadata and engine using absolute package path
 from family_assistant.storage.base import metadata  # Keep metadata
 
@@ -188,8 +186,7 @@ async def store_incoming_email(
         task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
 
         # 3. Enqueue the indexing task
-        await storage.enqueue_task(
-            db_context=db_context,
+        await db_context.tasks.enqueue(
             task_id=task_id,
             task_type="index_email",
             payload={"email_db_id": email_db_id},

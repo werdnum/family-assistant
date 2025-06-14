@@ -2,7 +2,6 @@
 Handles the indexing process for emails stored in the database.
 """
 
-import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -15,7 +14,7 @@ from sqlalchemy import select  # Import select and update
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute imports
-from family_assistant import storage  # For DB operations (add_document)
+# storage functions now accessed via DatabaseContext  # For DB operations (add_document)
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.storage.email import (
     received_emails_table,
@@ -220,17 +219,7 @@ class EmailIndexer:
         # LLM enrichment logic would go here in the future
 
         # --- 4. Add/Update Document Record in Vector DB & Get DB Record ---
-        # Ensure storage.add_document is awaitable (it might be a stub if vector_storage failed to import)
-        if not asyncio.iscoroutinefunction(storage.add_document):
-            logger.error(
-                "Vector storage backend (storage.add_document) is not available or not async."
-            )
-            raise RuntimeError(
-                "Vector storage backend is not available for add_document."
-            )
-
-        doc_db_id: int = await storage.add_document(
-            db_context=db_context,
+        doc_db_id: int = await db_context.vector.add_document(
             doc=email_doc,
             enriched_doc_metadata=enriched_metadata,
         )

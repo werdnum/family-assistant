@@ -5,12 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from family_assistant.storage import (
-    add_or_update_note,
-    delete_note,
-    get_all_notes,
-    get_note_by_title,
-)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.dependencies import get_db
@@ -27,7 +21,7 @@ async def read_root(
     templates = request.app.state.templates
     server_url = request.app.state.server_url
 
-    notes = await get_all_notes(db_context)
+    notes = await db_context.notes.get_all()
     return templates.TemplateResponse(
         "index.html.j2",
         {
@@ -68,7 +62,7 @@ async def edit_note_form(
 ) -> HTMLResponse:
     """Serves the form to edit an existing note."""
     templates = request.app.state.templates
-    note = await get_note_by_title(db_context, title)
+    note = await db_context.notes.get_by_title(title)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     return templates.TemplateResponse(
@@ -101,13 +95,13 @@ async def save_note(
         if original_title and original_title != title:
             # To rename, we delete the old and add a new one.
             # Consider if a direct update of title is preferable if IDs are used.
-            await delete_note(db_context, original_title)
-            await add_or_update_note(db_context, title, content, include_in_prompt_bool)
+            await db_context.notes.delete(original_title)
+            await db_context.notes.add_or_update(title, content, include_in_prompt_bool)
             logger.info(
                 f"Renamed note '{original_title}' to '{title}' and updated content."
             )
         else:
-            await add_or_update_note(db_context, title, content, include_in_prompt_bool)
+            await db_context.notes.add_or_update(title, content, include_in_prompt_bool)
             logger.info(f"Saved note: {title}")
         # Redirect to the main notes list page using its route name
         return RedirectResponse(
@@ -125,7 +119,7 @@ async def delete_note_post(
     db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> RedirectResponse:
     """Handles deleting a note."""
-    deleted = await delete_note(db_context, title)
+    deleted = await db_context.notes.delete(title)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found for deletion")
     return RedirectResponse(

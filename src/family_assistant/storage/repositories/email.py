@@ -6,7 +6,6 @@ from datetime import datetime
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from family_assistant import storage
 from family_assistant.storage.email import ParsedEmailData, received_emails_table
 from family_assistant.storage.repositories.base import BaseRepository
 
@@ -70,8 +69,7 @@ class EmailRepository(BaseRepository):
             task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
 
             # Step 3: Enqueue the indexing task
-            await storage.enqueue_task(
-                db_context=self._db,
+            await self._db.tasks.enqueue(
                 task_id=task_id,
                 task_type="index_email",
                 payload={"email_db_id": email_db_id},

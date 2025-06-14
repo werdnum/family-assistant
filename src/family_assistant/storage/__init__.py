@@ -24,60 +24,20 @@ from alembic import command as alembic_command
 # Import base components using absolute package paths
 from family_assistant.storage.base import engine, get_engine, metadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
-from family_assistant.storage.email import received_emails_table, store_incoming_email
 
-# Import specific storage modules using absolute package paths
-from family_assistant.storage.error_logs import (
-    cleanup_old_error_logs,
-    count_error_logs,
-    error_logs_table,
-    get_error_log_by_id,
-    get_error_logs,
-)
+# Import table definitions for direct use
+from family_assistant.storage.email import received_emails_table
+from family_assistant.storage.error_logs import error_logs_table
 from family_assistant.storage.events import (
     EventActionType,
     EventSourceType,
     InterfaceType,
-    check_and_update_rate_limit,
-    cleanup_old_events,
-    create_event_listener,
-    delete_event_listener,
     event_listeners_table,
-    get_event_listener_by_id,
-    get_event_listeners,
-    query_recent_events,
     recent_events_table,
-    store_event,
-    update_event_listener_enabled,
 )
-from family_assistant.storage.message_history import (
-    add_message_to_history,
-    get_grouped_message_history,
-    # Renamed from get_message_by_id
-    get_message_by_interface_id,
-    get_messages_by_thread_id,  # Added
-    get_messages_by_turn_id,  # Added
-    get_recent_history,
-    message_history_table,
-    update_message_error_traceback,  # Added
-    update_message_interface_id,  # Added
-)
-from family_assistant.storage.notes import (
-    add_or_update_note,
-    delete_note,
-    get_all_notes,
-    get_note_by_title,
-    get_prompt_notes,
-    notes_table,
-)
-from family_assistant.storage.tasks import (
-    dequeue_task,
-    enqueue_task,
-    get_all_tasks,
-    reschedule_task_for_retry,
-    tasks_table,
-    update_task_status,
-)
+from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.notes import notes_table
+from family_assistant.storage.tasks import tasks_table
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +49,6 @@ try:
     )
     from family_assistant.storage.vector import (
         Document,  # Protocol for document structure
-        add_document,
-        add_embedding,
-        delete_document,
-        get_document_by_id,
-        get_document_by_source_id,
-        init_vector_db,
-        query_vectors,
     )
 
     VECTOR_STORAGE_ENABLED = True
@@ -106,46 +59,9 @@ except ImportError:
         pass
 
     VectorBase = Base  # type: ignore
+    Document = Any  # type: ignore # Placeholder for the Document protocol if import fails
     logger.warning("storage/vector.py not found. Vector storage features disabled.")
     VECTOR_STORAGE_ENABLED = False
-
-    # Define placeholders for the functions if the import failed
-    async def init_vector_db(*args: Any, **kwargs: Any) -> None:  # type: ignore
-        pass
-
-    async def add_document(*args: Any, **kwargs: Any) -> int:  # type: ignore
-        # Return a dummy int; actual usage would expect an ID.
-        # Or raise NotImplementedError if called when disabled.
-        logger.warning(
-            "add_document called but vector storage is disabled. Returning -1."
-        )
-        return -1
-
-    async def get_document_by_source_id(*args: Any, **kwargs: Any) -> Any:  # type: ignore # Actual: DocumentRecord | None
-        logger.warning(
-            "get_document_by_source_id called but vector storage is disabled. Returning None."
-        )
-        return None
-
-    async def get_document_by_id(*args: Any, **kwargs: Any) -> Any:  # type: ignore # Actual: DocumentRecord | None
-        logger.warning(
-            "get_document_by_id called but vector storage is disabled. Returning None."
-        )
-        return None
-
-    async def add_embedding(*args: Any, **kwargs: Any) -> None:  # type: ignore
-        pass
-
-    async def delete_document(*args: Any, **kwargs: Any) -> bool:  # type: ignore
-        logger.warning(
-            "delete_document called but vector storage is disabled. Returning False."
-        )
-        return False
-
-    async def query_vectors(*args: Any, **kwargs: Any) -> list[Any]:  # type: ignore
-        return []  # Return an empty list for queries
-
-    Document = Any  # type: ignore # Placeholder for the Document protocol if import fails
 
 
 # logger definition moved here to be after potential vector_storage import logs
@@ -322,6 +238,9 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
             # Use DatabaseContext which handles its own retry logic for execution
             async with DatabaseContext(engine=engine) as vector_init_context:
                 # Assuming init_vector_db performs necessary table checks/creations
+                # TODO: migrate init_vector_db to repository pattern
+                from family_assistant.storage.vector import init_vector_db
+
                 await init_vector_db(db_context=vector_init_context)
             logger.info("Vector DB components initialized successfully.")
         except Exception as vec_e:
@@ -465,23 +384,14 @@ async def init_db() -> None:
 __all__ = [
     "init_db",  # Now defined above
     "get_engine",
-    # Keep functions that are still used directly (not migrated to repositories)
-    "get_recent_history",
-    "get_grouped_message_history",
-    "get_message_by_interface_id",  # Renamed
-    "get_messages_by_turn_id",  # Added
-    "get_messages_by_thread_id",  # Added
-    "dequeue_task",
-    "update_task_status",
-    "reschedule_task_for_retry",  # Removed duplicate
-    "get_all_tasks",
-    "update_message_interface_id",  # Added
-    "update_message_error_traceback",
     # Tables - still exported for direct use
     "notes_table",
     "message_history_table",
     "tasks_table",
     "received_emails_table",
+    "error_logs_table",
+    "event_listeners_table",
+    "recent_events_table",
     "engine",
     "metadata",
     "DatabaseContext",  # Export the new context manager
@@ -490,36 +400,6 @@ __all__ = [
     "EventActionType",
     "EventSourceType",
     "InterfaceType",
-    # Event functions not migrated yet
-    "check_and_update_rate_limit",
-    "event_listeners_table",
-    "recent_events_table",
-    # Error logging exports not migrated yet
-    "error_logs_table",
-    "get_error_logs",
-    "get_error_log_by_id",
-    "count_error_logs",
-    "cleanup_old_error_logs",
-    # Notes functions temporarily kept for compatibility
-    "get_all_notes",
-    "get_prompt_notes",
-    "get_note_by_title",
-    "add_or_update_note",
-    "delete_note",
-    # Tasks functions temporarily kept for compatibility
-    "enqueue_task",
-    # Message history functions temporarily kept for compatibility
-    "add_message_to_history",
-    # Email functions temporarily kept for compatibility
-    "store_incoming_email",
-    "cleanup_old_events",
-    "create_event_listener",
-    "delete_event_listener",
-    "get_event_listener_by_id",
-    "get_event_listeners",
-    "query_recent_events",
-    "store_event",
-    "update_event_listener_enabled",
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API
@@ -527,18 +407,9 @@ __all__ = [
 
 # Extend __all__ conditionally for vector storage if it was enabled.
 # Check if vector_storage specific names are available and if the feature is enabled.
-if (
-    VECTOR_STORAGE_ENABLED and "init_vector_db" in locals()
-):  # 'init_vector_db' is a proxy for successful import
+if VECTOR_STORAGE_ENABLED:
     __all__.extend([
-        "add_document",
         "VectorBase",
-        "init_vector_db",
-        "get_document_by_source_id",
-        "get_document_by_id",  # Added for completeness
-        "add_embedding",
-        "delete_document",
-        "query_vectors",
-        "Document",  # Changed from VectorDocumentProtocol to match actual name
+        "Document",  # Protocol for document structure
     ])
 # --- Email Storage (Moved to storage/email.py, re-exported here for compatibility) ---
