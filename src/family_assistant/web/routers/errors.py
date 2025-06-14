@@ -6,11 +6,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
-from family_assistant.storage import (
-    count_error_logs,
-    get_error_log_by_id,
-    get_error_logs,
-)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import get_db
 
@@ -34,8 +29,7 @@ async def error_list(
     limit = 50
     offset = (page - 1) * limit
 
-    errors = await get_error_logs(
-        db_context,
+    errors = await db_context.error_logs.get_all(
         level=level,
         logger_name=logger,
         since=cutoff_date,
@@ -44,8 +38,7 @@ async def error_list(
     )
 
     # Get total count for pagination
-    total_count = await count_error_logs(
-        db_context,
+    total_count = await db_context.error_logs.count(
         level=level,
         logger_name=logger,
         since=cutoff_date,
@@ -78,7 +71,7 @@ async def error_detail(
     """Show detailed error with full traceback."""
     templates = request.app.state.templates
 
-    error = await get_error_log_by_id(db_context, error_id)
+    error = await db_context.error_logs.get_by_id(error_id)
     if not error:
         raise HTTPException(404, "Error log not found")
 

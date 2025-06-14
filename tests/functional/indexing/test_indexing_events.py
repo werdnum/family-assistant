@@ -15,12 +15,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant import storage
+# storage module functions now accessed via DatabaseContext
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.events.indexing_source import IndexingEventType, IndexingSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage import get_db_context
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import add_document
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class TestDocument:
+class MockDocument:
     """Test implementation of Document protocol."""
 
     source_type: str
@@ -67,10 +68,7 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
 
     # Create event listener that captures events
     async with get_db_context() as db_ctx:
-        from family_assistant.storage.events import create_event_listener
-
-        await create_event_listener(
-            db_context=db_ctx,
+        await db_ctx.events.create_listener(
             name="Test Document Ready Listener",
             description="Test listener for document ready events",
             conversation_id="test-conv",
@@ -90,7 +88,7 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
 
         # Create a document
         async with get_db_context() as db_ctx:
-            test_doc = TestDocument(
+            test_doc = MockDocument(
                 source_type="test_upload",
                 source_id=f"test-{uuid.uuid4()}",
                 title=TEST_DOC_TITLE,
@@ -114,8 +112,7 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
         # Create embedding tasks
         async with get_db_context() as db_ctx:
             # Title embedding task
-            await storage.enqueue_task(
-                db_context=db_ctx,
+            await db_ctx.tasks.enqueue(
                 task_id=f"embed_title_{doc_id}",
                 task_type="embed_and_store_batch",
                 payload={
@@ -133,8 +130,7 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
 
             # Content chunk embedding tasks
             for i, chunk in enumerate(TEST_DOC_CHUNKS):
-                await storage.enqueue_task(
-                    db_context=db_ctx,
+                await db_ctx.tasks.enqueue(
                     task_id=f"embed_chunk_{doc_id}_{i}",
                     task_type="embed_and_store_batch",
                     payload={
@@ -153,8 +149,7 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
         # Process all embedding tasks
         async with get_db_context() as db_ctx:
             # Process title embedding
-            title_task = await storage.dequeue_task(
-                db_context=db_ctx,
+            title_task = await db_ctx.tasks.dequeue(
                 task_types=["embed_and_store_batch"],
                 worker_id="test-worker",
                 current_time=datetime.now(timezone.utc),
@@ -172,13 +167,12 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
                 indexing_source=indexing_source,
             )
             await handle_embed_and_store_batch(task_context, title_task["payload"])
-            await storage.update_task_status(db_ctx, title_task["task_id"], "done")
+            await db_ctx.tasks.update_status(title_task["task_id"], "done")
 
         # Process chunk embeddings
         for _ in range(len(TEST_DOC_CHUNKS)):
             async with get_db_context() as db_ctx:
-                chunk_task = await storage.dequeue_task(
-                    db_context=db_ctx,
+                chunk_task = await db_ctx.tasks.dequeue(
                     task_types=["embed_and_store_batch"],
                     worker_id="test-worker",
                     current_time=datetime.now(timezone.utc),
@@ -198,7 +192,7 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
 
                 # This should emit DOCUMENT_READY on the last task
                 await handle_embed_and_store_batch(task_context, chunk_task["payload"])
-                await storage.update_task_status(db_ctx, chunk_task["task_id"], "done")
+                await db_ctx.tasks.update_status(chunk_task["task_id"], "done")
 
         # Give event processor time to process events
         await asyncio.sleep(0.5)
@@ -251,7 +245,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
 
     # Create a document
     async with get_db_context() as db_ctx:
-        test_doc = TestDocument(
+        test_doc = MockDocument(
             source_type="test_upload",
             source_id=f"test-{uuid.uuid4()}",
             title="Test Document",
@@ -264,8 +258,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
         )
 
         # Create multiple embedding tasks
-        await storage.enqueue_task(
-            db_context=db_ctx,
+        await db_ctx.tasks.enqueue(
             task_id=f"embed_1_{doc_id}",
             task_type="embed_and_store_batch",
             payload={
@@ -281,8 +274,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
             },
         )
 
-        await storage.enqueue_task(
-            db_context=db_ctx,
+        await db_ctx.tasks.enqueue(
             task_id=f"embed_2_{doc_id}",
             task_type="embed_and_store_batch",
             payload={
@@ -304,8 +296,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
     )
 
     async with get_db_context() as db_ctx:
-        first_task = await storage.dequeue_task(
-            db_context=db_ctx,
+        first_task = await db_ctx.tasks.dequeue(
             task_types=["embed_and_store_batch"],
             worker_id="test-worker",
             current_time=datetime.now(timezone.utc),
@@ -336,7 +327,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
         )
 
         await handle_embed_and_store_batch(exec_context, first_task["payload"])
-        await storage.update_task_status(db_ctx, first_task["task_id"], "done")
+        await db_ctx.tasks.update_status(first_task["task_id"], "done")
 
         # Event should NOT have been emitted since second task is pending
         assert not event_emitted, "DOCUMENT_READY was emitted with pending tasks!"
@@ -350,10 +341,7 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
 
     # Create event listener
     async with get_db_context() as db_ctx:
-        from family_assistant.storage.events import create_event_listener
-
-        await create_event_listener(
-            db_context=db_ctx,
+        await db_ctx.events.create_listener(
             name="Newsletter Ready Listener",
             description="Test listener for newsletter ready events",
             conversation_id="test-conv",
@@ -373,7 +361,7 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
 
     # Create and process a newsletter document
     async with get_db_context() as db_ctx:
-        test_doc = TestDocument(
+        test_doc = MockDocument(
             source_type="email",
             source_id="newsletter@school.edu",
             title="School Newsletter - December 2024",
@@ -386,8 +374,7 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
         )
 
         # Simulate embedding task
-        await storage.enqueue_task(
-            db_context=db_ctx,
+        await db_ctx.tasks.enqueue(
             task_id=f"embed_newsletter_{doc_id}",
             task_type="embed_and_store_batch",
             payload={
@@ -411,8 +398,7 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
     )
 
     async with get_db_context() as db_ctx:
-        task = await storage.dequeue_task(
-            db_context=db_ctx,
+        task = await db_ctx.tasks.dequeue(
             task_types=["embed_and_store_batch"],
             worker_id="test-worker",
             current_time=datetime.now(timezone.utc),
@@ -496,16 +482,13 @@ async def test_json_extraction_compatibility(test_db_engine: AsyncEngine) -> Non
     async with get_db_context() as db_ctx:
         # Clean up any existing test tasks
         await db_ctx.execute_with_retry(
-            storage.tasks_table.delete().where(
-                storage.tasks_table.c.task_id.like("test_json_%")
-            )
+            tasks_table.delete().where(tasks_table.c.task_id.like("test_json_%"))
         )
 
         # Create test tasks with different document_ids
         test_doc_id = 999
         for i in range(3):
-            await storage.enqueue_task(
-                db_context=db_ctx,
+            await db_ctx.tasks.enqueue(
                 task_id=f"test_json_{i}",
                 task_type="embed_and_store_batch",
                 payload={"document_id": test_doc_id if i < 2 else 888},
@@ -526,9 +509,7 @@ async def test_json_extraction_compatibility(test_db_engine: AsyncEngine) -> Non
 
         # Clean up
         await db_ctx.execute_with_retry(
-            storage.tasks_table.delete().where(
-                storage.tasks_table.c.task_id.like("test_json_%")
-            )
+            tasks_table.delete().where(tasks_table.c.task_id.like("test_json_%"))
         )
 
 
@@ -543,15 +524,12 @@ async def test_json_extraction_postgresql(pg_vector_db_engine: AsyncEngine) -> N
 
         # Clean up any existing test tasks
         await db_ctx.execute_with_retry(
-            storage.tasks_table.delete().where(
-                storage.tasks_table.c.task_id.like("test_pg_json_%")
-            )
+            tasks_table.delete().where(tasks_table.c.task_id.like("test_pg_json_%"))
         )
 
         # Create test task
         test_doc_id = 12345
-        await storage.enqueue_task(
-            db_context=db_ctx,
+        await db_ctx.tasks.enqueue(
             task_id="test_pg_json_1",
             task_type="embed_and_store_batch",
             payload={"document_id": test_doc_id, "other_field": "test"},
@@ -567,7 +545,5 @@ async def test_json_extraction_postgresql(pg_vector_db_engine: AsyncEngine) -> N
 
         # Clean up
         await db_ctx.execute_with_retry(
-            storage.tasks_table.delete().where(
-                storage.tasks_table.c.task_id.like("test_pg_json_%")
-            )
+            tasks_table.delete().where(tasks_table.c.task_id.like("test_pg_json_%"))
         )

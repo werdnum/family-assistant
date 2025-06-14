@@ -1,19 +1,23 @@
-"""Repository for error logs storage operations."""
+"""Repository for managing error logs storage."""
 
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.error_logs import error_logs_table
-from family_assistant.storage.repositories.base import BaseRepository
+
+from .base import BaseRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ErrorLogsRepository(BaseRepository):
-    """Repository for managing error logs in the database."""
+    """Repository for managing error logs."""
 
-    async def get_logs(
+    async def get_all(
         self,
         *,
         level: str | None = None,
@@ -22,41 +26,44 @@ class ErrorLogsRepository(BaseRepository):
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Get error logs with filtering and pagination.
+        """
+        Retrieve error logs with optional filtering.
 
         Args:
             level: Filter by log level (e.g., 'ERROR', 'WARNING')
-            logger_name: Filter by logger name (partial match)
+            logger_name: Filter by logger name
             since: Only return logs after this timestamp
             limit: Maximum number of logs to return
-            offset: Number of logs to skip for pagination
+            offset: Number of logs to skip
 
         Returns:
             List of error log dictionaries
         """
-        query = select(error_logs_table)
+        query = select(error_logs_table).order_by(error_logs_table.c.timestamp.desc())
 
+        # Add filters
         if level:
-            query = query.where(error_logs_table.c.level == level)
+            query = query.where(error_logs_table.c.level == level.upper())
         if logger_name:
-            query = query.where(error_logs_table.c.logger_name.contains(logger_name))
+            query = query.where(error_logs_table.c.logger_name == logger_name)
         if since:
             query = query.where(error_logs_table.c.timestamp >= since)
 
-        query = query.order_by(error_logs_table.c.timestamp.desc())
-        query = query.offset(offset).limit(limit)
+        # Add pagination
+        query = query.limit(limit).offset(offset)
 
         rows = await self._db.fetch_all(query)
         return [dict(row) for row in rows]
 
     async def get_by_id(self, error_id: int) -> dict[str, Any] | None:
-        """Get a specific error log by ID.
+        """
+        Get a specific error log by ID.
 
         Args:
             error_id: The error log ID
 
         Returns:
-            Error log data or None if not found
+            Error log dictionary or None if not found
         """
         query = select(error_logs_table).where(error_logs_table.c.id == error_id)
         row = await self._db.fetch_one(query)
@@ -69,184 +76,88 @@ class ErrorLogsRepository(BaseRepository):
         logger_name: str | None = None,
         since: datetime | None = None,
     ) -> int:
-        """Count error logs matching criteria.
+        """
+        Count error logs with optional filtering.
 
         Args:
             level: Filter by log level
-            logger_name: Filter by logger name (partial match)
+            logger_name: Filter by logger name
             since: Only count logs after this timestamp
 
         Returns:
-            Count of matching error logs
+            Number of matching error logs
         """
         query = select(func.count(error_logs_table.c.id).label("count"))
 
+        # Add filters
         if level:
-            query = query.where(error_logs_table.c.level == level)
+            query = query.where(error_logs_table.c.level == level.upper())
         if logger_name:
-            query = query.where(error_logs_table.c.logger_name.contains(logger_name))
+            query = query.where(error_logs_table.c.logger_name == logger_name)
         if since:
             query = query.where(error_logs_table.c.timestamp >= since)
 
         row = await self._db.fetch_one(query)
         return row["count"] if row else 0
 
-    async def cleanup_old(self, retention_days: int = 30) -> int:
-        """Delete error logs older than the retention period.
+    async def add(
+        self,
+        *,
+        logger_name: str,
+        level: str,
+        message: str,
+        exception_type: str | None = None,
+        exception_message: str | None = None,
+        traceback: str | None = None,
+        module: str | None = None,
+        function_name: str | None = None,
+        extra_data: dict[str, Any] | None = None,
+    ) -> int:
+        """
+        Add a new error log.
 
         Args:
-            retention_days: Number of days to keep error logs
+            logger_name: Name of the logger
+            level: Log level (e.g., 'ERROR', 'WARNING')
+            message: Log message
+            exception_type: Type of exception if applicable
+            exception_message: Exception message if applicable
+            traceback: Stack trace if applicable
+            module: Module where error occurred
+            function_name: Function where error occurred
+            extra_data: Additional metadata
+
+        Returns:
+            ID of the created error log
+        """
+        stmt = error_logs_table.insert().values(
+            logger_name=logger_name,
+            level=level.upper(),
+            message=message,
+            exception_type=exception_type,
+            exception_message=exception_message,
+            traceback=traceback,
+            module=module,
+            function_name=function_name,
+            extra_data=extra_data,
+            timestamp=func.now(),
+        )
+
+        result = await self._db.execute_with_retry(stmt)
+        return result.lastrowid  # type: ignore[attr-defined]
+
+    async def delete_old(self, older_than: datetime) -> int:
+        """
+        Delete error logs older than the specified timestamp.
+
+        Args:
+            older_than: Delete logs before this timestamp
 
         Returns:
             Number of deleted logs
         """
-        cutoff_date = datetime.now() - timedelta(days=retention_days)
-
-        stmt = delete(error_logs_table).where(
-            error_logs_table.c.timestamp < cutoff_date
+        stmt = error_logs_table.delete().where(
+            error_logs_table.c.timestamp < older_than
         )
-
         result = await self._db.execute_with_retry(stmt)
-        deleted_count = result.rowcount  # type: ignore[attr-defined]
-
-        if deleted_count > 0:
-            self._logger.info(
-                f"Cleaned up {deleted_count} error logs older than {retention_days} days"
-            )
-
-        return deleted_count
-
-    async def get_by_module(
-        self,
-        module: str,
-        limit: int = 50,
-        since: datetime | None = None,
-    ) -> list[dict[str, Any]]:
-        """Get error logs from a specific module.
-
-        Args:
-            module: Module name to filter by
-            limit: Maximum number of logs to return
-            since: Only return logs after this timestamp
-
-        Returns:
-            List of error logs from the module
-        """
-        query = select(error_logs_table).where(error_logs_table.c.module == module)
-
-        if since:
-            query = query.where(error_logs_table.c.timestamp >= since)
-
-        query = query.order_by(error_logs_table.c.timestamp.desc()).limit(limit)
-
-        rows = await self._db.fetch_all(query)
-        return [dict(row) for row in rows]
-
-    async def get_by_exception_type(
-        self,
-        exception_type: str,
-        limit: int = 50,
-        since: datetime | None = None,
-    ) -> list[dict[str, Any]]:
-        """Get error logs by exception type.
-
-        Args:
-            exception_type: Exception type to filter by
-            limit: Maximum number of logs to return
-            since: Only return logs after this timestamp
-
-        Returns:
-            List of error logs with the specified exception type
-        """
-        query = select(error_logs_table).where(
-            error_logs_table.c.exception_type == exception_type
-        )
-
-        if since:
-            query = query.where(error_logs_table.c.timestamp >= since)
-
-        query = query.order_by(error_logs_table.c.timestamp.desc()).limit(limit)
-
-        rows = await self._db.fetch_all(query)
-        return [dict(row) for row in rows]
-
-    async def get_summary(self, since: datetime | None = None) -> dict[str, Any]:
-        """Get a summary of error logs.
-
-        Args:
-            since: Only consider logs after this timestamp
-
-        Returns:
-            Dictionary with summary statistics
-        """
-        # Base query with optional time filter
-        base_query = select(error_logs_table)
-        if since:
-            base_query = base_query.where(error_logs_table.c.timestamp >= since)
-
-        # Count by level
-        level_counts = {}
-        for level in ["ERROR", "WARNING", "CRITICAL"]:
-            query = select(func.count(error_logs_table.c.id).label("count")).where(
-                error_logs_table.c.level == level
-            )
-            if since:
-                query = query.where(error_logs_table.c.timestamp >= since)
-            row = await self._db.fetch_one(query)
-            level_counts[level] = row["count"] if row else 0
-
-        # Get top exception types
-        exception_query = (
-            select(
-                error_logs_table.c.exception_type,
-                func.count(error_logs_table.c.id).label("count"),
-            )
-            .where(error_logs_table.c.exception_type.isnot(None))
-            .group_by(error_logs_table.c.exception_type)
-            .order_by(func.count(error_logs_table.c.id).desc())
-            .limit(5)
-        )
-        if since:
-            exception_query = exception_query.where(
-                error_logs_table.c.timestamp >= since
-            )
-
-        exception_rows = await self._db.fetch_all(exception_query)
-        top_exceptions = [
-            {"type": row["exception_type"], "count": row["count"]}
-            for row in exception_rows
-        ]
-
-        # Get top modules with errors
-        module_query = (
-            select(
-                error_logs_table.c.module,
-                func.count(error_logs_table.c.id).label("count"),
-            )
-            .where(error_logs_table.c.module.isnot(None))
-            .group_by(error_logs_table.c.module)
-            .order_by(func.count(error_logs_table.c.id).desc())
-            .limit(5)
-        )
-        if since:
-            module_query = module_query.where(error_logs_table.c.timestamp >= since)
-
-        module_rows = await self._db.fetch_all(module_query)
-        top_modules = [
-            {"module": row["module"], "count": row["count"]} for row in module_rows
-        ]
-
-        # Total count
-        total_query = select(func.count(error_logs_table.c.id).label("count"))
-        if since:
-            total_query = total_query.where(error_logs_table.c.timestamp >= since)
-        total_row = await self._db.fetch_one(total_query)
-        total_count = total_row["count"] if total_row else 0
-
-        return {
-            "total_count": total_count,
-            "level_counts": level_counts,
-            "top_exceptions": top_exceptions,
-            "top_modules": top_modules,
-            "since": since.isoformat() if since else None,
-        }
+        return result.rowcount  # type: ignore[attr-defined]

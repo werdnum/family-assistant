@@ -16,10 +16,7 @@ from typing import (
 import pytz  # Added
 
 # Import storage and calendar integration for context building
-from family_assistant import (
-    storage,
-)  # calendar_integration import removed as context is handled by provider
-
+# storage import removed - using repository pattern via DatabaseContext
 # --- NEW: Import ContextProvider ---
 from .context_providers import ContextProvider
 from .interfaces import ChatInterface  # Import ChatInterface
@@ -556,7 +553,7 @@ class ProcessingService:
         expected by the LLM, handling assistant tool calls correctly.
 
         Args:
-            history_messages: List of message dictionaries from storage.get_recent_history.
+            history_messages: List of message dictionaries from db_context.message_history.get_recent.
 
         Returns:
             A list of message dictionaries formatted for the LLM API.
@@ -695,11 +692,12 @@ class ProcessingService:
 
             if replied_to_interface_id:
                 try:
-                    replied_to_db_msg = await storage.get_message_by_interface_id(
-                        db_context=db_context,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        interface_message_id=replied_to_interface_id,
+                    replied_to_db_msg = (
+                        await db_context.message_history.get_by_interface_id(
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            interface_message_id=replied_to_interface_id,
+                        )
                     )
                     if replied_to_db_msg:
                         thread_root_id_for_turn = replied_to_db_msg.get(
@@ -735,8 +733,7 @@ class ProcessingService:
                 elif trigger_content_parts[0].get("type") == "image_url":
                     user_content_for_history = "[Image Attached]"
 
-            saved_user_msg_record = await storage.add_message_to_history(
-                db_context=db_context,
+            saved_user_msg_record = await db_context.message_history.add(
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 interface_message_id=trigger_interface_message_id,
@@ -766,8 +763,7 @@ class ProcessingService:
 
             # --- 2. Prepare LLM Context (History, System Prompt) ---
             try:
-                raw_history_messages = await storage.get_recent_history(
-                    db_context=db_context,
+                raw_history_messages = await db_context.message_history.get_recent(
                     interface_type=interface_type,
                     conversation_id=conversation_id,
                     limit=self.max_history_messages,
@@ -815,11 +811,12 @@ class ProcessingService:
                     logger.info(
                         f"Fetching full thread history for root ID {thread_root_id_for_turn} due to reply."
                     )
-                    full_thread_messages_db = await storage.get_messages_by_thread_id(
-                        db_context=db_context,
-                        thread_root_id=thread_root_id_for_turn,
-                        processing_profile_id=self.service_config.id,  # Filter by profile
-                    )
+                    full_thread_messages_db = (
+                        await db_context.message_history.get_by_thread_id(
+                            thread_root_id=thread_root_id_for_turn,
+                            processing_profile_id=self.service_config.id,
+                        )
+                    )  # Filter by profile
                     current_trigger_removed_from_thread = []
                     if trigger_interface_message_id:
                         for msg_in_thread in full_thread_messages_db:
@@ -962,8 +959,8 @@ class ProcessingService:
                     # Add processing_profile_id for turn messages
                     msg_to_save["processing_profile_id"] = self.service_config.id
 
-                    saved_turn_msg_record = await storage.add_message_to_history(
-                        db_context=db_context, **msg_to_save
+                    saved_turn_msg_record = await db_context.message_history.add(
+                        **msg_to_save
                     )
 
                     if msg_dict.get("role") == "assistant" and msg_dict.get("content"):
@@ -997,8 +994,7 @@ class ProcessingService:
                 and saved_user_msg_record.get("internal_id")
             ):
                 try:
-                    await storage.update_message_error_traceback(
-                        db_context=db_context,
+                    await db_context.message_history.update_error_traceback(
                         internal_id=saved_user_msg_record["internal_id"],
                         error_traceback=processing_error_traceback,
                     )
@@ -1013,8 +1009,7 @@ class ProcessingService:
             )
             error_message_internal_id = None
             try:
-                saved_error_msg_record = await storage.add_message_to_history(
-                    db_context=db_context,
+                saved_error_msg_record = await db_context.message_history.add(
                     interface_type=interface_type,
                     conversation_id=conversation_id,
                     interface_message_id=None,  # No interface message ID for generated error

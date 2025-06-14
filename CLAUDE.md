@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Style
+* Comments are used to explain implementation when it's unclear. Do NOT add comments that are self-evident from the code, or that explain the code's history (that's what commit history is for). No comments like `# Removed db_context`.
+
 ## Development Setup
 
 ### Installation

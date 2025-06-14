@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from family_assistant import storage
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
-from family_assistant.storage.notes import NoteDocument, get_note_by_id
+from family_assistant.storage.notes import NoteDocument
 from family_assistant.storage.vector import (
     Document,
     delete_document_embeddings,
@@ -57,7 +57,7 @@ class NotesIndexer:
         logger.info(f"Starting indexing for note ID: {note_id}")
 
         # --- 1. Fetch Note Data ---
-        note_row = await get_note_by_id(db_context, note_id)
+        note_row = await db_context.notes.get_by_id(note_id)
         if not note_row:
             logger.warning(f"Note {note_id} not found in database. Skipping indexing.")
             # Don't raise an error, just exit gracefully. Task will be marked 'done'.

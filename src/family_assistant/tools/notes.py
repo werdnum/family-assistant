@@ -15,6 +15,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def add_or_update_note_tool(
+    exec_context: ToolExecutionContext,
+    title: str,
+    content: str,
+    include_in_prompt: bool = True,
+) -> str:
+    """
+    Adds a new note or updates an existing note with the given title.
+
+    Args:
+        exec_context: The execution context
+        title: The title of the note
+        content: The content of the note
+        include_in_prompt: Whether to include the note in system prompts
+
+    Returns:
+        A string indicating success or failure
+    """
+    db_context = exec_context.db_context
+    try:
+        result = await db_context.notes.add_or_update(
+            title=title,
+            content=content,
+            include_in_prompt=include_in_prompt,
+        )
+        return f"Note '{title}' has been {'updated' if result == 'Success' else 'created'} successfully."
+    except Exception as e:
+        logger.error(f"Error adding/updating note '{title}': {e}", exc_info=True)
+        return f"Error: Failed to add/update note '{title}'. {e}"
+
+
 # Tool Definitions
 NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
@@ -118,9 +149,7 @@ async def get_note_tool(
     title: str, exec_context: ToolExecutionContext
 ) -> dict[str, Any]:
     """Tool wrapper for get_note_by_title."""
-    from family_assistant import storage
-
-    note = await storage.get_note_by_title(exec_context.db_context, title)
+    note = await exec_context.db_context.notes.get_by_title(title)
     if note:
         return {
             "exists": True,
@@ -141,9 +170,7 @@ async def list_notes_tool(
     exec_context: ToolExecutionContext, include_in_prompt: bool | None = None
 ) -> list[dict[str, Any]]:
     """Tool wrapper for get_all_notes with optional filtering."""
-    from family_assistant import storage
-
-    all_notes = await storage.get_all_notes(exec_context.db_context)
+    all_notes = await exec_context.db_context.notes.get_all()
 
     # Apply filtering if requested
     if include_in_prompt is not None:
@@ -170,9 +197,7 @@ async def delete_note_tool(
     title: str, exec_context: ToolExecutionContext
 ) -> dict[str, Any]:
     """Tool wrapper for delete_note."""
-    from family_assistant import storage
-
-    deleted = await storage.delete_note(exec_context.db_context, title)
+    deleted = await exec_context.db_context.notes.delete(title)
     return {
         "success": deleted,
         "message": f"Note '{title}' deleted successfully."

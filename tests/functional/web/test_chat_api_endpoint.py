@@ -23,12 +23,7 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage import (
-    get_note_by_title,
-    get_recent_history,
-    init_db,
-    init_vector_db,
-)
+from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -216,7 +211,7 @@ async def app_fixture(
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=test_db_engine) as temp_db_ctx:
         await init_db()  # Initialize main schema
-        await init_vector_db(temp_db_ctx)  # Initialize vector schema
+        await temp_db_ctx.init_vector_db()  # Initialize vector schema
 
     return app
 
@@ -323,15 +318,14 @@ async def test_api_chat_add_note_tool(
     assert len(mock_llm_client.get_calls()) == 2
 
     # Assert Database State (Note created)
-    note = await get_note_by_title(db_context, note_title)
+    note = await db_context.notes.get_by_title(note_title)
     assert note is not None
     assert note["content"] == note_content
     logger.info(f"Note '{note_title}' found in database with correct content.")
 
     # Assert Message History
     # Fetch history for the conversation_id from the response
-    history = await get_recent_history(
-        db_context,
+    history = await db_context.message_history.get_recent(
         interface_type="api",
         conversation_id=response_data.conversation_id,
         limit=10,  # Get enough messages

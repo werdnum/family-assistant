@@ -7,6 +7,7 @@ from .events import EventsRepository
 from .message_history import MessageHistoryRepository
 from .notes import NotesRepository
 from .tasks import TasksRepository
+from .vector import VectorRepository
 
 __all__ = [
     "BaseRepository",
@@ -16,4 +17,5 @@ __all__ = [
     "MessageHistoryRepository",
     "NotesRepository",
     "TasksRepository",
+    "VectorRepository",
 ]

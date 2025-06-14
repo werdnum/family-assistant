@@ -258,7 +258,6 @@ async def schedule_reminder_tool(
         follow_up_interval: Time between follow-ups (e.g., "30 minutes", "1 hour").
         max_follow_ups: Maximum number of follow-up reminders.
     """
-    from family_assistant import storage
 
     # Get interface_type, conversation_id, and db_context from the execution context object
     interface_type = exec_context.interface_type
@@ -316,8 +315,7 @@ async def schedule_reminder_tool(
             },
         }
 
-        await storage.enqueue_task(
-            db_context=db_context,
+        await db_context.tasks.enqueue(
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
@@ -361,7 +359,6 @@ async def schedule_recurring_task_tool(
         max_retries: Maximum number of retries for each instance (default 3).
         description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief').
     """
-    from family_assistant import storage
 
     # Hardcode task type to llm_callback
     task_type = "llm_callback"
@@ -421,8 +418,7 @@ async def schedule_recurring_task_tool(
         }
 
         # Enqueue the first instance using the db_context from exec_context
-        await storage.enqueue_task(
-            db_context=db_context,
+        await db_context.tasks.enqueue(
             task_id=initial_task_id,
             task_type=task_type,
             payload=payload,
@@ -455,7 +451,6 @@ async def schedule_future_callback_tool(
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback.
     """
-    from family_assistant import storage
 
     # Get interface_type, conversation_id, and db_context from the execution context object
     interface_type = exec_context.interface_type
@@ -492,8 +487,7 @@ async def schedule_future_callback_tool(
             "scheduling_timestamp": scheduling_time.isoformat(),  # Add scheduling timestamp
         }
 
-        await storage.enqueue_task(
-            db_context=db_context,
+        await db_context.tasks.enqueue(
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
@@ -743,8 +737,7 @@ async def cancel_pending_callback_tool(
             return f"Error: Callback task '{task_id}' does not belong to this conversation. Cancellation denied."
 
         # Mark as 'failed' with a specific error message indicating cancellation
-        await storage.update_task_status(
-            db_context=db_context,
+        await db_context.tasks.update_status(
             task_id=task_id,
             status="failed",  # Using 'failed' as 'cancelled' might not be a standard status
             error="Callback cancelled by user.",

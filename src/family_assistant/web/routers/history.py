@@ -7,7 +7,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
-from family_assistant.storage import get_grouped_message_history
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.dependencies import get_db
@@ -43,7 +42,7 @@ async def view_message_history(
             )
             config_tz = zoneinfo.ZoneInfo("UTC")
 
-        history_by_chat = await get_grouped_message_history(db_context)
+        history_by_chat = await db_context.message_history.get_all_grouped()
 
         # --- Process into Turns using turn_id ---
         turns_by_chat = {}

@@ -5,9 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse  # Added RedirectResponse
 
-from family_assistant.storage import get_all_tasks
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.tasks import manually_retry_task  # Added
 from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.dependencies import get_db
 
@@ -22,7 +20,7 @@ async def view_tasks(
     """Serves the page displaying scheduled tasks."""
     templates = request.app.state.templates
     try:
-        tasks = await get_all_tasks(db_context, limit=200)
+        tasks = await db_context.tasks.get_all(limit=200)
         return templates.TemplateResponse(
             "tasks.html.j2",
             {
@@ -48,7 +46,7 @@ async def retry_task_manually_endpoint(
 ) -> RedirectResponse:
     """Handles the request to manually retry a task."""
     try:
-        success = await manually_retry_task(db_context, internal_task_id)
+        success = await db_context.tasks.manually_retry(internal_task_id)
         if success:
             logger.info(
                 f"Successfully queued manual retry for task with internal ID {internal_task_id}"

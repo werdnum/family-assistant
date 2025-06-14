@@ -89,7 +89,7 @@ async def get_message_history_tool(
     Returns:
         A formatted string containing the message history or an error message.
     """
-    from family_assistant.storage import get_recent_history
+    # get_recent_history now accessed via db_context.message_history.get_recent
 
     # Use new identifiers
     interface_type = exec_context.interface_type
@@ -101,8 +101,7 @@ async def get_message_history_tool(
 
     try:
         max_age_delta = timedelta(hours=max_age_hours)
-        history_messages = await get_recent_history(
-            db_context=db_context,  # Pass context
+        history_messages = await db_context.message_history.get_recent(
             interface_type=interface_type,  # Pass interface type
             conversation_id=conversation_id,  # Pass conversation ID
             limit=limit,
@@ -166,7 +165,6 @@ async def send_message_to_user_tool(
     Returns:
         A string indicating success or failure.
     """
-    from family_assistant import storage
 
     logger.info(
         f"Executing send_message_to_user_tool to chat_id {target_chat_id} with content: '{message_content[:50]}...'"
@@ -205,8 +203,7 @@ async def send_message_to_user_tool(
 
         # Record the sent message in history for the target user's chat
         try:
-            await storage.add_message_to_history(
-                db_context=db_context,
+            await db_context.message_history.add(
                 interface_type="telegram",  # Assuming Telegram interface for now
                 conversation_id=str(
                     target_chat_id
