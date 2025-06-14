@@ -8,7 +8,6 @@ import pytz
 
 from family_assistant import (
     calendar_integration,  # For calendar functions
-    storage,  # For storage.get_all_notes
 )
 
 # Import necessary types and modules from your project.
@@ -90,7 +89,7 @@ class NotesContextProvider(ContextProvider):
                 await self._get_db_context_func() as db_context
             ):  # Get context per call
                 # Only get notes that should be included in prompts
-                prompt_notes = await storage.get_prompt_notes(db_context=db_context)
+                prompt_notes = await db_context.notes.get_prompt_notes()
                 if prompt_notes:
                     notes_list_str = ""
                     note_item_format = self._prompts.get(

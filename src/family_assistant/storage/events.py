@@ -3,7 +3,7 @@ Handles storage for the event listener system.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -18,16 +18,11 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
-    delete,
-    insert,
-    select,
-    update,
 )
 from sqlalchemy import (
     Enum as SQLEnum,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import func
 
 from family_assistant.storage.base import metadata
@@ -162,46 +157,17 @@ async def create_event_listener(
     enabled: bool = True,
 ) -> int:
     """Create a new event listener, returning its ID."""
-    try:
-        stmt = (
-            insert(event_listeners_table)
-            .values(
-                name=name,
-                description=description,
-                source_id=source_id,
-                match_conditions=match_conditions,
-                action_type=EventActionType.wake_llm,  # Default for now
-                action_config=action_config,
-                conversation_id=conversation_id,
-                interface_type=interface_type,
-                one_time=one_time,
-                enabled=enabled,
-                created_at=datetime.now(timezone.utc),
-                daily_executions=0,
-            )
-            .returning(event_listeners_table.c.id)
-        )
-
-        result = await db_context.execute_with_retry(stmt)
-        listener_id = result.scalar_one()
-
-        logger.info(
-            f"Created event listener '{name}' (ID: {listener_id}) for conversation {conversation_id}"
-        )
-        return listener_id
-
-    except IntegrityError as e:
-        if "uq_name_conversation" in str(e):
-            logger.error(
-                f"Event listener with name '{name}' already exists for conversation {conversation_id}"
-            )
-            raise ValueError(
-                f"An event listener named '{name}' already exists in this conversation"
-            ) from e
-        raise
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in create_event_listener: {e}", exc_info=True)
-        raise
+    return await db_context.events.create_event_listener(
+        name=name,
+        source_id=source_id,
+        match_conditions=match_conditions,
+        conversation_id=conversation_id,
+        interface_type=interface_type,
+        description=description,
+        action_config=action_config,
+        one_time=one_time,
+        enabled=enabled,
+    )
 
 
 async def get_event_listeners(
@@ -211,34 +177,11 @@ async def get_event_listeners(
     enabled: bool | None = None,
 ) -> list[dict[str, Any]]:
     """Get event listeners for a conversation with optional filters."""
-    try:
-        # Start with base query filtered by conversation_id
-        stmt = select(event_listeners_table).where(
-            event_listeners_table.c.conversation_id == conversation_id
-        )
-
-        # Apply optional filters
-        if source_id is not None:
-            stmt = stmt.where(event_listeners_table.c.source_id == source_id)
-        if enabled is not None:
-            stmt = stmt.where(event_listeners_table.c.enabled == enabled)
-
-        # Order by creation date, newest first
-        stmt = stmt.order_by(event_listeners_table.c.created_at.desc())
-
-        rows = await db_context.fetch_all(stmt)
-
-        # Convert rows to dicts
-        listeners = []
-        for row in rows:
-            listener = dict(row)
-            listeners.append(listener)
-
-        return listeners
-
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in get_event_listeners: {e}", exc_info=True)
-        raise
+    return await db_context.events.get_event_listeners(
+        conversation_id=conversation_id,
+        source_id=source_id,
+        enabled=enabled,
+    )
 
 
 async def get_event_listener_by_id(
@@ -247,26 +190,10 @@ async def get_event_listener_by_id(
     conversation_id: str,
 ) -> dict[str, Any] | None:
     """Get a specific listener, ensuring it belongs to the conversation."""
-    try:
-        stmt = select(event_listeners_table).where(
-            (event_listeners_table.c.id == listener_id)
-            & (event_listeners_table.c.conversation_id == conversation_id)
-        )
-
-        row = await db_context.fetch_one(stmt)
-        if not row:
-            return None
-
-        # Convert to dict
-        listener = dict(row)
-        return listener
-
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in get_event_listener_by_id({listener_id}): {e}",
-            exc_info=True,
-        )
-        raise
+    return await db_context.events.get_event_listener_by_id(
+        listener_id=listener_id,
+        conversation_id=conversation_id,
+    )
 
 
 async def update_event_listener_enabled(
@@ -276,35 +203,11 @@ async def update_event_listener_enabled(
     enabled: bool,
 ) -> bool:
     """Toggle listener enabled status."""
-    try:
-        stmt = (
-            update(event_listeners_table)
-            .where(
-                (event_listeners_table.c.id == listener_id)
-                & (event_listeners_table.c.conversation_id == conversation_id)
-            )
-            .values(enabled=enabled)
-        )
-
-        result = await db_context.execute_with_retry(stmt)
-        updated_count = result.rowcount  # type: ignore[attr-defined]
-
-        if updated_count > 0:
-            status = "enabled" if enabled else "disabled"
-            logger.info(f"Updated event listener {listener_id} to {status}")
-            return True
-        else:
-            logger.warning(
-                f"Event listener {listener_id} not found for conversation {conversation_id}"
-            )
-            return False
-
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in update_event_listener_enabled({listener_id}): {e}",
-            exc_info=True,
-        )
-        raise
+    return await db_context.events.update_event_listener_enabled(
+        listener_id=listener_id,
+        conversation_id=conversation_id,
+        enabled=enabled,
+    )
 
 
 async def delete_event_listener(
@@ -313,44 +216,10 @@ async def delete_event_listener(
     conversation_id: str,
 ) -> bool:
     """Delete a listener."""
-    try:
-        # First get the listener name for logging
-        listener = await get_event_listener_by_id(
-            db_context, listener_id, conversation_id
-        )
-        if not listener:
-            logger.warning(
-                f"Event listener {listener_id} not found for conversation {conversation_id}"
-            )
-            return False
-
-        stmt = delete(event_listeners_table).where(
-            (event_listeners_table.c.id == listener_id)
-            & (event_listeners_table.c.conversation_id == conversation_id)
-        )
-
-        result = await db_context.execute_with_retry(stmt)
-        deleted_count = result.rowcount  # type: ignore[attr-defined]
-
-        if deleted_count > 0:
-            logger.info(
-                f"Deleted event listener '{listener['name']}' (ID: {listener_id}) "
-                f"for conversation {conversation_id}"
-            )
-            return True
-        else:
-            # This shouldn't happen since we checked existence above
-            logger.error(
-                f"Failed to delete event listener {listener_id} - deletion returned 0 rows"
-            )
-            return False
-
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in delete_event_listener({listener_id}): {e}",
-            exc_info=True,
-        )
-        raise
+    return await db_context.events.delete_event_listener(
+        listener_id=listener_id,
+        conversation_id=conversation_id,
+    )
 
 
 # Additional helper functions for event storage
@@ -364,29 +233,12 @@ async def store_event(
     timestamp: datetime | None = None,
 ) -> None:
     """Store an event in the recent_events table."""
-    try:
-        if timestamp is None:
-            timestamp = datetime.now(timezone.utc)
-
-        # Generate unique event ID
-        import time
-
-        event_id = f"{source_id}:{int(time.time() * 1000000)}"
-
-        stmt = insert(recent_events_table).values(
-            event_id=event_id,
-            source_id=source_id,
-            event_data=event_data,
-            triggered_listener_ids=triggered_listener_ids,
-            timestamp=timestamp,
-            created_at=datetime.now(timezone.utc),
-        )
-
-        await db_context.execute_with_retry(stmt)
-
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in store_event: {e}", exc_info=True)
-        # Don't raise - event storage failures shouldn't break event processing
+    await db_context.events.store_event(
+        source_id=source_id,
+        event_data=event_data,
+        triggered_listener_ids=triggered_listener_ids,
+        timestamp=timestamp,
+    )
 
 
 async def query_recent_events(
@@ -396,32 +248,11 @@ async def query_recent_events(
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """Query recent events with optional filters."""
-    try:
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-
-        stmt = select(recent_events_table).where(
-            recent_events_table.c.timestamp >= cutoff_time
-        )
-
-        if source_id is not None:
-            stmt = stmt.where(recent_events_table.c.source_id == source_id)
-
-        # Order by timestamp descending and apply limit
-        stmt = stmt.order_by(recent_events_table.c.timestamp.desc()).limit(limit)
-
-        rows = await db_context.fetch_all(stmt)
-
-        # Convert rows to dicts
-        events = []
-        for row in rows:
-            event = dict(row)
-            events.append(event)
-
-        return events
-
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in query_recent_events: {e}", exc_info=True)
-        raise
+    return await db_context.events.query_recent_events(
+        source_id=source_id,
+        hours=hours,
+        limit=limit,
+    )
 
 
 async def cleanup_old_events(
@@ -429,24 +260,9 @@ async def cleanup_old_events(
     retention_hours: int = 48,
 ) -> int:
     """Clean up events older than retention period."""
-    try:
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
-
-        stmt = delete(recent_events_table).where(
-            recent_events_table.c.created_at < cutoff_time
-        )
-
-        result = await db_context.execute_with_retry(stmt)
-        deleted_count = result.rowcount  # type: ignore[attr-defined]
-
-        logger.info(
-            f"Cleaned up {deleted_count} events older than {retention_hours} hours"
-        )
-        return deleted_count
-
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in cleanup_old_events: {e}", exc_info=True)
-        raise
+    return await db_context.events.cleanup_old_events(
+        retention_hours=retention_hours,
+    )
 
 
 # Rate limiting helper functions
@@ -458,63 +274,14 @@ async def check_and_update_rate_limit(
     conversation_id: str,
 ) -> tuple[bool, str | None]:
     """Check rate limit and update counter atomically."""
-    try:
-        now = datetime.now(timezone.utc)
+    return await db_context.events.check_and_update_rate_limit(
+        listener_id=listener_id,
+        conversation_id=conversation_id,
+    )
 
-        # Get current listener state
-        listener = await get_event_listener_by_id(
-            db_context, listener_id, conversation_id
-        )
-        if not listener:
-            return False, "Listener not found"
 
-        # Check if we need to reset daily counter
-        daily_reset_at = listener["daily_reset_at"]
-        # Handle SQLite returning naive datetimes
-        if daily_reset_at and daily_reset_at.tzinfo is None:
-            daily_reset_at = daily_reset_at.replace(tzinfo=timezone.utc)
+# The functions below have been migrated to use the repository pattern
+# They remain here for backward compatibility
 
-        if not daily_reset_at or now > daily_reset_at:
-            # Reset counter for new day
-            tomorrow = now.replace(
-                hour=0, minute=0, second=0, microsecond=0
-            ) + timedelta(days=1)
-            stmt = (
-                update(event_listeners_table)
-                .where(event_listeners_table.c.id == listener_id)
-                .values(
-                    daily_executions=1,
-                    daily_reset_at=tomorrow,
-                    last_execution_at=now,
-                )
-            )
-            await db_context.execute_with_retry(stmt)
-            return True, None
-
-        # Check if under limit
-        if listener["daily_executions"] >= 5:
-            return (
-                False,
-                f"Daily limit exceeded ({listener['daily_executions']} triggers today)",
-            )
-
-        # Increment counter
-        stmt = (
-            update(event_listeners_table)
-            .where(event_listeners_table.c.id == listener_id)
-            .values(
-                daily_executions=event_listeners_table.c.daily_executions + 1,
-                last_execution_at=now,
-            )
-        )
-        await db_context.execute_with_retry(stmt)
-
-        return True, None
-
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in check_and_update_rate_limit({listener_id}): {e}",
-            exc_info=True,
-        )
-        # On error, allow execution but log it
-        return True, None
+# Re-export check_and_update_rate_limit as-is since it already uses the repository
+# check_and_update_rate_limit is already defined above

@@ -39,8 +39,16 @@ from family_assistant.storage.events import (
     EventSourceType,
     InterfaceType,
     check_and_update_rate_limit,
+    cleanup_old_events,
+    create_event_listener,
+    delete_event_listener,
     event_listeners_table,
+    get_event_listener_by_id,
+    get_event_listeners,
+    query_recent_events,
     recent_events_table,
+    store_event,
+    update_event_listener_enabled,
 )
 from family_assistant.storage.message_history import (
     add_message_to_history,
@@ -456,46 +464,62 @@ async def init_db() -> None:
 # Define __all__ AFTER all functions/variables it references are defined.
 __all__ = [
     "init_db",  # Now defined above
-    "get_all_notes",
     "get_engine",
-    "add_message_to_history",
+    # Keep functions that are still used directly (not migrated to repositories)
     "get_recent_history",
     "get_grouped_message_history",
     "get_message_by_interface_id",  # Renamed
     "get_messages_by_turn_id",  # Added
     "get_messages_by_thread_id",  # Added
-    "add_or_update_note",
-    "delete_note",
-    "enqueue_task",
     "dequeue_task",
     "update_task_status",
     "reschedule_task_for_retry",  # Removed duplicate
     "get_all_tasks",
     "update_message_interface_id",  # Added
+    "update_message_error_traceback",
+    # Tables - still exported for direct use
     "notes_table",
     "message_history_table",
     "tasks_table",
     "received_emails_table",
-    "store_incoming_email",
     "engine",
     "metadata",
     "DatabaseContext",  # Export the new context manager
     "get_db_context",
-    "get_note_by_title",
-    "update_message_error_traceback",
-    "get_prompt_notes",
+    # Enums
     "EventActionType",
     "EventSourceType",
     "InterfaceType",
+    # Event functions not migrated yet
     "check_and_update_rate_limit",
     "event_listeners_table",
     "recent_events_table",
-    # Error logging exports
+    # Error logging exports not migrated yet
     "error_logs_table",
     "get_error_logs",
     "get_error_log_by_id",
     "count_error_logs",
     "cleanup_old_error_logs",
+    # Notes functions temporarily kept for compatibility
+    "get_all_notes",
+    "get_prompt_notes",
+    "get_note_by_title",
+    "add_or_update_note",
+    "delete_note",
+    # Tasks functions temporarily kept for compatibility
+    "enqueue_task",
+    # Message history functions temporarily kept for compatibility
+    "add_message_to_history",
+    # Email functions temporarily kept for compatibility
+    "store_incoming_email",
+    "cleanup_old_events",
+    "create_event_listener",
+    "delete_event_listener",
+    "get_event_listener_by_id",
+    "get_event_listeners",
+    "query_recent_events",
+    "store_event",
+    "update_event_listener_enabled",
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API
