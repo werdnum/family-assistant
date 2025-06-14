@@ -6,7 +6,6 @@ import traceback
 from collections.abc import Callable  # Added Any and Callable
 from typing import Any
 
-from alembic.config import Config as AlembicConfig
 from sqlalchemy import (
     inspect,
     text,
@@ -20,6 +19,7 @@ from sqlalchemy.exc import (
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from alembic import command as alembic_command
+from alembic.config import Config as AlembicConfig
 
 # Import base components using absolute package paths
 from family_assistant.storage.base import engine, get_engine, metadata
