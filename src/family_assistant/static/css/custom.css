@@ -148,27 +148,25 @@ a.button-link:hover {
 .user-message {
     background-color: #e1f5fe; /* Keep custom colors for distinction */
     border-color: #b3e5fc;
+    color: #01579b; /* Dark blue text for good contrast */
 }
 .assistant-message {
     background-color: #f1f8e9; /* Keep custom colors for distinction */
     border-color: #dcedc8;
+    color: #33691e; /* Dark green text for good contrast */
 }
 .system-message {
     background-color: #f5f5f5; /* Keep custom colors for distinction */
     border-color: #eeeeee;
     font-style: italic;
+    color: #424242; /* Dark grey text for good contrast */
 }
 /* Add a style for tool messages */
 .tool-message {
     background-color: #eeeeee; /* Example: Light grey */
     border-color: #dddddd; /* Example: Slightly darker grey border */
     font-style: italic; /* Optional: Make it look slightly different */
-}
-/* Adjust text color for better contrast on custom backgrounds if needed */
-.user-message, .assistant-message, .system-message {
-    color: #333; /* Ensure readability */
-/* Use theme text color for better adaptability */
-/* color: var(--text); */ /* Removing fixed color */
+    color: #424242; /* Dark grey text for good contrast */
 }
 
 .message-meta {
@@ -228,14 +226,25 @@ a.button-link:hover {
 }
 
 /* Status Colors applied to cards */
-.task-card.status-pending { background-color: #e3f2fd; border-left-color: #90caf9; }
-.task-card.status-processing { background-color: #fff9c4; border-left-color: #fff176; }
-.task-card.status-done { background-color: #e8f5e9; border-left-color: #a5d6a7; }
-.task-card.status-failed { background-color: #ffebee; border-left-color: #ef9a9a; }
-/* Ensure text is readable on status backgrounds */
-/* Remove fixed color, allow inheriting from theme or specific adjustments if needed */
-.task-card.status-pending, .task-card.status-processing, .task-card.status-done, .task-card.status-failed {
-/*  color: #333; */
+.task-card.status-pending { 
+    background-color: #e3f2fd; 
+    border-left-color: #90caf9; 
+    color: #0d47a1; /* Dark blue text for good contrast */
+}
+.task-card.status-processing { 
+    background-color: #fff9c4; 
+    border-left-color: #fff176; 
+    color: #795548; /* Dark brown text for good contrast */
+}
+.task-card.status-done { 
+    background-color: #e8f5e9; 
+    border-left-color: #a5d6a7; 
+    color: #1b5e20; /* Dark green text for good contrast */
+}
+.task-card.status-failed { 
+    background-color: #ffebee; 
+    border-left-color: #ef9a9a; 
+    color: #b71c1c; /* Dark red text for good contrast */
 }
 
 
@@ -396,13 +405,13 @@ main pre {
 
 .status-included {
     background-color: #e8f5e9;
-    color: #2e7d32;
+    color: #1b5e20; /* Darker green for better contrast */
     border: 1px solid #a5d6a7;
 }
 
 .status-excluded {
     background-color: #f3e5f5;
-    color: #6a1b9a;
+    color: #4a148c; /* Darker purple for better contrast */
     border: 1px solid #ce93d8;
 }
 

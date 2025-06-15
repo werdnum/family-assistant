@@ -25,7 +25,7 @@ async def view_tasks(
     task_type = request.query_params.get("task_type")
     date_from = request.query_params.get("date_from")
     date_to = request.query_params.get("date_to")
-    sort = request.query_params.get("sort", "asc")  # Default to oldest first
+    sort = request.query_params.get("sort", "desc")  # Default to newest first
 
     # Parse date filters if provided
     date_from_dt = None
@@ -56,7 +56,7 @@ async def view_tasks(
         task_types = sorted(set(task["task_type"] for task in all_tasks_for_types))
 
         # Check if any filters are active
-        active_filters = any([status, task_type, date_from, date_to, sort != "asc"])
+        active_filters = any([status, task_type, date_from, date_to, sort != "desc"])
 
         return templates.TemplateResponse(
             "tasks.html.j2",

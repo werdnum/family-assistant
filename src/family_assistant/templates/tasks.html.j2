@@ -45,8 +45,8 @@
             <div class="filter-group">
                 <label for="sort-filter">Sort:</label>
                 <select id="sort-filter" name="sort">
-                    <option value="asc" {% if request.query_params.get('sort', 'asc') == 'asc' %}selected{% endif %}>Oldest First</option>
-                    <option value="desc" {% if request.query_params.get('sort') == 'desc' %}selected{% endif %}>Newest First</option>
+                    <option value="asc" {% if request.query_params.get('sort') == 'asc' %}selected{% endif %}>Oldest First</option>
+                    <option value="desc" {% if request.query_params.get('sort', 'desc') == 'desc' %}selected{% endif %}>Newest First</option>
                 </select>
             </div>
         </div>
