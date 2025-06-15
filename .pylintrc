@@ -72,7 +72,7 @@ missing-member-max-choices=1
 
 [LOGGING]
 # The type of string formatting that logging methods do.
-logging-format-style=new
+logging-format-style=old
 
 # Logging modules to check that the string format arguments are in logging
 # function parameter format.
