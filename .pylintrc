@@ -20,6 +20,48 @@ disable=
     C,
     # Disable all information messages (I)
     I,
+    # Type checking - covered by basedpyright
+    E1101,  # no-member
+    E1102,  # not-callable
+    E1111,  # assignment-from-no-return
+    E1120,  # no-value-for-parameter
+    E1121,  # too-many-function-args
+    E1123,  # unexpected-keyword-arg
+    E1124,  # redundant-keyword-arg
+    E1125,  # missing-kwoa
+    E1126,  # invalid-sequence-index
+    E1127,  # invalid-slice-index
+    E1128,  # assignment-from-none
+    E1129,  # not-context-manager
+    E1130,  # invalid-unary-operand-type
+    E1131,  # unsupported-binary-operation
+    E1132,  # repeated-keyword
+    E1133,  # not-an-iterable
+    E1134,  # not-a-mapping
+    E1135,  # unsupported-membership-test
+    E1136,  # unsubscriptable-object
+    E1137,  # unsupported-assignment-operation
+    E1138,  # unsupported-delete-operation
+    E1139,  # invalid-metaclass
+    E1140,  # unhashable-dict-key
+    E1141,  # dict-iter-missing-items
+    # Syntax/code issues - covered by ruff
+    E0001,  # syntax-error
+    E0102,  # function-redefined
+    E0401,  # import-error
+    E0402,  # relative-beyond-top-level
+    W0101,  # unreachable
+    W0102,  # dangerous-default-value
+    W0104,  # pointless-statement
+    W0105,  # pointless-string-statement
+    W0107,  # unnecessary-pass
+    W0108,  # unnecessary-lambda
+    W0404,  # reimported
+    W0410,  # multiple-imports
+    W0612,  # unused-variable
+    W0614,  # unused-wildcard-import
+    W0622,  # redefined-builtin
+    W0702,  # bare-except
     # Specific warnings to disable
     W1203,  # logging-fstring-interpolation (1143 occurrences - too many to fix now)
     W0718,  # broad-exception-caught (193 occurrences - often intentional)
