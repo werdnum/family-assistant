@@ -380,14 +380,43 @@ class MessageHistoryRepository(BaseRepository):
 
         return msg
 
-    async def get_all_grouped(self) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    async def get_all_grouped(
+        self,
+        interface_type: str | None = None,
+        conversation_id: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
         """
         Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp.
+
+        Args:
+            interface_type: Filter by interface type
+            conversation_id: Filter by conversation ID
+            date_from: Filter messages after this date (inclusive)
+            date_to: Filter messages before this date (inclusive)
 
         Returns:
             Dictionary mapping (interface_type, conversation_id) tuples to lists of messages
         """
-        stmt = select(message_history_table).order_by(
+        # Build query conditions
+        conditions = []
+        if interface_type:
+            conditions.append(message_history_table.c.interface_type == interface_type)
+        if conversation_id:
+            conditions.append(
+                message_history_table.c.conversation_id == conversation_id
+            )
+        if date_from:
+            conditions.append(message_history_table.c.timestamp >= date_from)
+        if date_to:
+            conditions.append(message_history_table.c.timestamp <= date_to)
+
+        stmt = select(message_history_table)
+        if conditions:
+            stmt = stmt.where(*conditions)
+
+        stmt = stmt.order_by(
             message_history_table.c.interface_type,
             message_history_table.c.conversation_id,
             message_history_table.c.timestamp,
