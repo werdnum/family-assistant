@@ -119,6 +119,7 @@
 <!-- Load vanilla-jsoneditor -->
 <script type="module">
     import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+    import { createJSONEditorWithCopy } from '{{ url_for('static', path='js/json_editor_copy.js') }}';
 
     function initializeEditor(targetId, jsonData) {
         const target = document.getElementById(targetId);
@@ -135,7 +136,7 @@
 
         try {
             target.textContent = ''; // Clear the target before initializing the editor
-            new createJSONEditor({
+            createJSONEditorWithCopy(createJSONEditor, {
                 target: target,
                 props: {
                     content,
@@ -145,7 +146,7 @@
                     statusBar: false,
                     mode: 'tree'
                 }
-            });
+            }, jsonData, 'Copy Payload');
         } catch (error) {
              console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
              target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`;

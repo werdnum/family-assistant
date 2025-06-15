@@ -572,3 +572,27 @@ main pre {
         text-align: center;
     }
 }
+
+/* JSON Editor Copy Button Styling */
+.json-copy-button {
+    font-family: inherit;
+    font-size: 12px !important;
+    padding: 5px 10px !important;
+    background-color: var(--accent-bg) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 3px !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease !important;
+}
+
+.json-copy-button:hover {
+    background-color: var(--accent) !important;
+    color: var(--accent-text) !important;
+    border-color: var(--accent) !important;
+}
+
+/* Ensure JSON editor container has proper positioning context */
+.json-editor-container {
+    position: relative;
+}
