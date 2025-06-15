@@ -29,6 +29,11 @@ disable=
     W0613,  # unused-argument (sometimes required for interface compliance)
     W2301,  # unnecessary-ellipsis (needed for Protocol definitions)
     W0706,  # try-except-raise (we re-raise after logging which is valid)
+    W0640,  # cell-var-from-loop (complex lambdas in loops are sometimes needed)
+    W0603,  # global-statement (sometimes needed for module-level config)
+    W0705,  # duplicate-except (catching specific then general is valid pattern)
+    W0201,  # attribute-defined-outside-init (sometimes needed for lazy init)
+    W0221,  # arguments-differ (override methods may extend parent signatures)
 
 [FORMAT]
 # Maximum number of characters on a single line.

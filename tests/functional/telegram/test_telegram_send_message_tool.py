@@ -227,7 +227,7 @@ async def test_send_message_to_user_tool(
             ).is_equal_to(2)  # Expecting 2 calls based on logs
 
             # Call 1: Message sent to Bob by the tool (via ChatInterface)
-            args_to_bob, kwargs_to_bob = fix.mock_bot.send_message.call_args_list[0]
+            _, kwargs_to_bob = fix.mock_bot.send_message.call_args_list[0]
             assert_that(kwargs_to_bob["chat_id"]).described_as(
                 "Chat ID for message to Bob"
             ).is_equal_to(bob_chat_id)
@@ -249,9 +249,7 @@ async def test_send_message_to_user_tool(
 
             # Call 2: Final confirmation sent to Alice by the handler (TelegramUpdateHandler)
             # Intermediate message is not sent.
-            args_final_alice, kwargs_final_alice = (
-                fix.mock_bot.send_message.call_args_list[1]
-            )
+            _, kwargs_final_alice = fix.mock_bot.send_message.call_args_list[1]
             assert_that(kwargs_final_alice["chat_id"]).described_as(
                 "Chat ID for final confirmation to Alice"
             ).is_equal_to(alice_chat_id)

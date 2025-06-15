@@ -207,7 +207,7 @@ async def test_confirmation_accepted(
 
     # 4. Final success message sent to user
     fix.mock_bot.send_message.assert_awaited_once()
-    args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
+    _, kwargs_bot = fix.mock_bot.send_message.call_args
     expected_final_escaped_text = telegramify_markdown.markdownify(
         llm_final_success_text
     )
@@ -349,7 +349,7 @@ async def test_confirmation_rejected(
     # 4. Final cancellation message sent to user (matching rule_final_cancel)
     # This assertion is now outside both patches.
     fix.mock_bot.send_message.assert_awaited_once()
-    args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
+    _, kwargs_bot = fix.mock_bot.send_message.call_args
     expected_cancel_escaped_text = telegramify_markdown.markdownify(
         llm_final_cancel_text
     )
@@ -486,7 +486,7 @@ async def test_confirmation_timed_out(
     # 4. Final timeout message sent to user (matching rule_final_timeout)
     # This assertion is now outside both patches.
     fix.mock_bot.send_message.assert_awaited_once()
-    args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
+    _, kwargs_bot = fix.mock_bot.send_message.call_args
     # Get the default response text from the mock LLM used in the fixture
     expected_timeout_escaped_text = telegramify_markdown.markdownify(
         llm_final_timeout_text
