@@ -224,7 +224,7 @@ class DefaultMessageBatcher(MessageBatcher):
             logger.debug(
                 f"Processing task for chat {chat_id} completed with an exception (handled elsewhere)."
             )
-            pass  # Error should have been logged by the task itself or the error handler
+            # Error should have been logged by the task itself or the error handler
 
         if hasattr(self, "processing_tasks"):
             self.processing_tasks.pop(chat_id, None)
@@ -815,8 +815,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             )
             # Capture traceback if not already captured by generate_llm_response_for_chat
             if not processing_error_traceback:
-                import traceback
-
                 processing_error_traceback = traceback.format_exc()
             # --- Attempt to notify user if possible ---
             if reply_target_message_id:
@@ -1898,8 +1896,6 @@ class TelegramChatInterface(ChatInterface):
             )
 
             # Always use ForceReply to ensure user replies to the most recent message
-            from telegram import ForceReply
-
             force_reply_markup = ForceReply(selective=False)
 
             sent_msg = await self.application.bot.send_message(

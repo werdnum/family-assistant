@@ -230,7 +230,7 @@ async def test_slash_command_routes_to_specific_profile(
 
         # 2. Bot API Call Verification (Output to user)
         fix.mock_bot.send_message.assert_awaited_once()
-        args, kwargs = fix.mock_bot.send_message.call_args
+        _, kwargs = fix.mock_bot.send_message.call_args
 
         assert_that(kwargs).described_as("send_message kwargs").contains_key("chat_id")
         assert_that(kwargs["chat_id"]).described_as("send_message chat_id").is_equal_to(

@@ -286,7 +286,6 @@ class LocalToolsProvider:
     async def close(self) -> None:
         """Local provider has no resources to clean up."""
         logger.debug("Closing LocalToolsProvider (no-op).")
-        pass  # Explicitly pass for clarity
 
 
 class CompositeToolsProvider:

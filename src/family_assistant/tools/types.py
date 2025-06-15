@@ -75,5 +75,3 @@ class ToolExecutionContext:
 
 class ToolNotFoundError(LookupError):
     """Custom exception raised when a tool cannot be found by any provider."""
-
-    pass

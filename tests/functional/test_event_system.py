@@ -663,7 +663,7 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
 
     # Step 6: Start a task worker that will process the callback task
     from typing import Any
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock
 
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService, ProcessingServiceConfig

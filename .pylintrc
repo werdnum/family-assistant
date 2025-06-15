@@ -27,6 +27,8 @@ disable=
     W0212,  # protected-access (needed in tests for mocking/inspection)
     W0621,  # redefined-outer-name (common with pytest fixtures)
     W0613,  # unused-argument (sometimes required for interface compliance)
+    W2301,  # unnecessary-ellipsis (needed for Protocol definitions)
+    W0706,  # try-except-raise (we re-raise after logging which is valid)
 
 [FORMAT]
 # Maximum number of characters on a single line.
