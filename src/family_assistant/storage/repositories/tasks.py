@@ -341,6 +341,9 @@ class TasksRepository(BaseRepository):
         self,
         status: str | None = None,
         task_type: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        sort_order: str = "asc",
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """
@@ -349,6 +352,9 @@ class TasksRepository(BaseRepository):
         Args:
             status: Filter by task status
             task_type: Filter by task type
+            date_from: Filter tasks created after this date (inclusive)
+            date_to: Filter tasks created before this date (inclusive)
+            sort_order: Sort order for created_at ("asc" or "desc")
             limit: Maximum number of tasks to return
 
         Returns:
@@ -362,15 +368,26 @@ class TasksRepository(BaseRepository):
             conditions.append(tasks_table.c.status == status)
         if task_type:
             conditions.append(tasks_table.c.task_type == task_type)
+        if date_from:
+            conditions.append(tasks_table.c.created_at >= date_from)
+        if date_to:
+            conditions.append(tasks_table.c.created_at <= date_to)
 
         if conditions:
             stmt = stmt.where(*conditions)
 
-        # Order by scheduled time and creation time
-        stmt = stmt.order_by(
-            tasks_table.c.scheduled_at.asc().nullsfirst(),
-            tasks_table.c.created_at.asc(),
-        ).limit(limit)
+        # Order by creation time based on sort_order
+        if sort_order == "desc":
+            # Newest first (reverse chronological)
+            stmt = stmt.order_by(tasks_table.c.created_at.desc())
+        else:
+            # Oldest first (chronological) - original behavior
+            stmt = stmt.order_by(
+                tasks_table.c.scheduled_at.asc().nullsfirst(),
+                tasks_table.c.created_at.asc(),
+            )
+
+        stmt = stmt.limit(limit)
 
         rows = await self._db.fetch_all(stmt)
         return [dict(row) for row in rows]

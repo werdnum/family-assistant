@@ -17,15 +17,54 @@ tasks_ui_router = APIRouter()
 async def view_tasks(
     request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
 ) -> HTMLResponse:
-    """Serves the page displaying scheduled tasks."""
+    """Serves the page displaying scheduled tasks with filtering and sorting."""
     templates = request.app.state.templates
+
+    # Extract filter parameters from query string
+    status = request.query_params.get("status")
+    task_type = request.query_params.get("task_type")
+    date_from = request.query_params.get("date_from")
+    date_to = request.query_params.get("date_to")
+    sort = request.query_params.get("sort", "asc")  # Default to oldest first
+
+    # Parse date filters if provided
+    date_from_dt = None
+    date_to_dt = None
     try:
-        tasks = await db_context.tasks.get_all(limit=200)
+        if date_from:
+            date_from_dt = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
+        if date_to:
+            date_to_dt = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning(
+            f"Invalid date format in filters: from={date_from}, to={date_to}"
+        )
+
+    try:
+        # Get filtered tasks
+        tasks = await db_context.tasks.get_all(
+            status=status if status else None,
+            task_type=task_type if task_type else None,
+            date_from=date_from_dt,
+            date_to=date_to_dt,
+            sort_order=sort,
+            limit=500,
+        )
+
+        # Get unique task types for autocomplete
+        all_tasks_for_types = await db_context.tasks.get_all(limit=1000)
+        task_types = sorted(set(task["task_type"] for task in all_tasks_for_types))
+
+        # Check if any filters are active
+        active_filters = any([status, task_type, date_from, date_to, sort != "asc"])
+
         return templates.TemplateResponse(
             "tasks.html.j2",
             {
                 "request": request,
                 "tasks": tasks,
+                "task_types": task_types,
+                "active_filters": active_filters,
                 "user": request.session.get("user"),
                 "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
                 "now_utc": datetime.now(timezone.utc),  # Pass to base template
