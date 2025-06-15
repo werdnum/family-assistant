@@ -1,0 +1,228 @@
+[MAIN]
+# Use multiple processes to speed up Pylint.
+jobs=0
+
+# Pickle collected data for later comparisons.
+persistent=yes
+
+# Minimum Python version to use for version dependent checks.
+py-version=3.11
+
+# Discover python modules and packages in the file system subtree.
+recursive=yes
+
+[MESSAGES CONTROL]
+# Enable errors (E) and warnings (W), disable others
+disable=
+    # Disable all refactoring messages (R)
+    R,
+    # Disable all convention messages (C)
+    C,
+    # Disable all information messages (I)
+    I,
+    # Specific warnings to disable
+    W1203,  # logging-fstring-interpolation (1143 occurrences - too many to fix now)
+    W0718,  # broad-exception-caught (193 occurrences - often intentional)
+    W0511,  # fixme (TODO comments are useful documentation)
+    W0212,  # protected-access (needed in tests for mocking/inspection)
+    W0621,  # redefined-outer-name (common with pytest fixtures)
+    W0613,  # unused-argument (sometimes required for interface compliance)
+
+[FORMAT]
+# Maximum number of characters on a single line.
+max-line-length=120
+
+# Allow the body of a class to be on the same line as the declaration if body
+# contains single statement.
+single-line-class-stmt=no
+
+# Allow the body of an if to be on the same line as the test if there is no else.
+single-line-if-stmt=no
+
+[VARIABLES]
+# List of additional names supposed to be defined in builtins.
+additional-builtins=
+
+# Tells whether unused global variables should be treated as a violation.
+allow-global-unused-variables=yes
+
+# A regular expression matching the name of dummy variables (i.e. expected to not be used).
+dummy-variables-rgx=_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|^ignored_|^unused_
+
+# Argument names that match this expression will be ignored.
+ignored-argument-names=_.*|^ignored_|^unused_
+
+[TYPECHECK]
+# List of decorators that produce context managers
+contextmanager-decorators=contextlib.contextmanager
+
+# List of module names for which member attributes should not be checked
+ignored-modules=
+
+# Show a hint with possible names when a member name was not found.
+missing-member-hint=yes
+
+# The minimum edit distance a name should have in order to be considered a
+# similar match for a missing member name.
+missing-member-hint-distance=1
+
+# The total number of similar names that should be taken in consideration when
+# showing a hint for a missing member.
+missing-member-max-choices=1
+
+[LOGGING]
+# The type of string formatting that logging methods do.
+logging-format-style=new
+
+# Logging modules to check that the string format arguments are in logging
+# function parameter format.
+logging-modules=logging
+
+[MISCELLANEOUS]
+# List of note tags to take in consideration, separated by a comma.
+notes=FIXME,XXX,TODO
+
+[BASIC]
+# Naming style matching correct argument names.
+argument-naming-style=snake_case
+
+# Naming style matching correct attribute names.
+attr-naming-style=snake_case
+
+# Naming style matching correct class attribute names.
+class-attribute-naming-style=any
+
+# Naming style matching correct class constant names.
+class-const-naming-style=UPPER_CASE
+
+# Naming style matching correct class names.
+class-naming-style=PascalCase
+
+# Naming style matching correct constant names.
+const-naming-style=UPPER_CASE
+
+# Naming style matching correct function names.
+function-naming-style=snake_case
+
+# Naming style matching correct method names.
+method-naming-style=snake_case
+
+# Naming style matching correct module names.
+module-naming-style=snake_case
+
+# Naming style matching correct variable names.
+variable-naming-style=snake_case
+
+# Good variable names which should always be accepted, separated by a comma.
+good-names=i,j,k,ex,Run,_,id,db,pk,tx,df,ax,x,y,z,w,h,dx,dy,dt,t0,t1,v0,v1,up
+
+# Good variable names regexes, separated by a comma.
+good-names-rgxs=
+
+# Bad variable names which should always be refused, separated by a comma.
+bad-names=foo,bar,baz,toto,tutu,tata
+
+# Bad variable names regexes, separated by a comma.
+bad-names-rgxs=
+
+[DESIGN]
+# Maximum number of arguments for function / method.
+max-args=10
+
+# Maximum number of attributes for a class (see R0902).
+max-attributes=15
+
+# Maximum number of boolean expressions in an if statement (see R0916).
+max-bool-expr=5
+
+# Maximum number of branch for function / method body.
+max-branches=15
+
+# Maximum number of locals for function / method body.
+max-locals=20
+
+# Maximum number of parents for a class (see R0901).
+max-parents=7
+
+# Maximum number of public methods for a class (see R0904).
+max-public-methods=25
+
+# Maximum number of return / yield for function / method body.
+max-returns=10
+
+# Maximum number of statements in function / method body.
+max-statements=50
+
+# Minimum number of public methods for a class (see R0903).
+min-public-methods=0
+
+[IMPORTS]
+# Allow wildcard imports from modules that define __all__.
+allow-wildcard-with-all=no
+
+# Force import order to recognize a module as part of the standard
+# compatibility libraries.
+known-standard-library=
+
+# Force import order to recognize a module as part of a third party library.
+known-third-party=
+
+# Couples of modules and preferred modules, separated by a comma.
+preferred-modules=
+
+[EXCEPTIONS]
+# Exceptions that will emit a warning when caught.
+overgeneral-exceptions=builtins.BaseException,builtins.Exception
+
+[REFACTORING]
+# Maximum number of nested blocks for function / method body
+max-nested-blocks=5
+
+# Complete the refactoring by resolving all the auto-generated TODOs
+never-returning-functions=sys.exit,argparse.parse_error
+
+[SPELLING]
+# Limits count of emitted suggestions for spelling mistakes.
+max-spelling-suggestions=4
+
+# Spelling dictionary name.
+spelling-dict=
+
+# List of comma separated words that should be considered directives if they
+# appear at the beginning of a comment and should not be checked.
+spelling-ignore-comment-directives=fmt: on,fmt: off,noqa:,noqa,nosec,isort:skip,mypy:
+
+# List of comma separated words that should not be checked.
+spelling-ignore-words=
+
+# A path to a file that contains the private dictionary; one word per line.
+spelling-private-dict-file=
+
+# Tells whether to store unknown words to the private dictionary (see the
+# --spelling-private-dict-file option) instead of raising a message.
+spelling-store-unknown-words=no
+
+[STRING]
+# This flag controls whether inconsistent-quotes generates a warning when the
+# character used as a quote delimiter is used inconsistently within a module.
+check-quote-consistency=no
+
+# This flag controls whether the implicit-str-concat should generate a warning
+# on implicit string concatenation in sequences defined over several lines.
+check-str-concat-over-line-jumps=no
+
+[CLASSES]
+# Warn about protected attribute access inside special methods
+check-protected-access-in-special-methods=no
+
+# List of method names used to declare (i.e. assign) instance attributes.
+defining-attr-methods=__init__,__new__,setUp,asyncSetUp,__post_init__
+
+# List of member names, which should be excluded from the protected access warning.
+exclude-protected=_asdict,_fields,_replace,_source,_make,_value_
+
+# List of valid names for the first argument in a class method.
+valid-classmethod-first-arg=cls
+
+# List of valid names for the first argument in a metaclass class method.
+valid-metaclass-classmethod-first-arg=mcs
