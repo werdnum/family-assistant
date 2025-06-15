@@ -13,7 +13,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Integer,  # Import Integer
-    Select,  # Add Select
+    Select,  # Used in cast() for type checking
     String,
     Table,
     Text,
