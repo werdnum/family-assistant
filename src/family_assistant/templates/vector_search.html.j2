@@ -256,8 +256,9 @@
 
 <script type="module">
     import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+    import { createJSONEditorWithCopy } from '{{ url_for('static', path='js/json_editor_copy.js') }}';
 
-    function initializeJsonEditorForResult(targetId, jsonData) {
+    function initializeJsonEditorForResult(targetId, jsonData, buttonText = 'Copy Metadata') {
         const target = document.getElementById(targetId);
         if (!target || !jsonData) {
              if (!target) console.error(`Element with ID ${targetId} not found.`);
@@ -267,7 +268,8 @@
         let content = { json: jsonData };
 
         try {
-            new createJSONEditor({
+            target.textContent = ''; // Clear target before initializing
+            createJSONEditorWithCopy(createJSONEditor, {
                 target: target,
                 props: {
                     content,
@@ -277,7 +279,7 @@
                     statusBar: false,
                     mode: 'tree'
                 }
-            });
+            }, jsonData, buttonText);
         } catch (error) {
              console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
              target.innerHTML = `<pre>${JSON.stringify(jsonData, null, 2)}</pre>`;

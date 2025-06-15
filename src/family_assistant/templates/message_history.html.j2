@@ -136,26 +136,32 @@
 <!-- Load vanilla-jsoneditor -->
 <script type="module">
     import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
+    import { createJSONEditorWithCopy } from '{{ url_for('static', path='js/json_editor_copy.js') }}';
 
-    function initializeEditor(targetId, jsonData) {
+    function initializeEditor(targetId, jsonData, buttonText = 'Copy JSON') {
         const target = document.getElementById(targetId);
         if (!target) {
             console.warn(`Target element with ID '${targetId}' not found`);
             return;
         }
         let content = { json: undefined, text: undefined };
+        let dataForCopy = jsonData; // Store original data for copy button
+        
         if (typeof jsonData === 'object' && jsonData !== null) {
              content.json = jsonData;
         } else if (typeof jsonData === 'string') {
             try {
                 content.json = JSON.parse(jsonData);
+                dataForCopy = content.json; // Use parsed JSON for copy
             } catch (e) {
                  console.warn(`Data for ${targetId} is not valid JSON, displaying as text:`, jsonData);
                  content.text = jsonData;
+                 dataForCopy = jsonData; // Copy as string if not valid JSON
             }
         } else {
              console.warn(`Invalid data type for ${targetId}, displaying as text:`, jsonData);
              content.text = String(jsonData);
+             dataForCopy = String(jsonData);
         }
 
         if (content.json === undefined && content.text === undefined) {
@@ -164,7 +170,8 @@
         }
 
         try {
-            const editor = createJSONEditor({
+            target.textContent = ''; // Clear target before initializing
+            createJSONEditorWithCopy(createJSONEditor, {
                 target: target,
                 props: {
                     content,
@@ -173,7 +180,7 @@
                     navigationBar: false,
                     statusBar: false,
                 }
-            });
+            }, dataForCopy, buttonText);
             console.log(`JSON editor initialized for ${targetId}`);
         } catch (error) {
              console.error(`Failed to initialize JSONEditor for ${targetId}:`, error);
@@ -217,11 +224,11 @@
                 {% for message in turn_display_obj.all_messages_in_group %}
                 {% if message.role == 'assistant' and message.tool_calls %}
                     {% for tool_call in message.tool_calls %}
-        initializeEditor('tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.get('function', {}).get('arguments') | tojson | safe }});
+        initializeEditor('tool-args-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}-{{ loop.index }}', {{ tool_call.get('function', {}).get('arguments') | tojson | safe }}, 'Copy Arguments');
                     {% endfor %}
                 {% endif %}
                 {% if message.reasoning_info %}
-        initializeEditor('reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}', {{ message.reasoning_info | tojson | safe }});
+        initializeEditor('reasoning-{{ conversation_key }}-{{ message.turn_id or 'no_turn' }}-{{ message.internal_id }}', {{ message.reasoning_info | tojson | safe }}, 'Copy Reasoning');
                 {% endif %}
                 {% endfor %}
             {% endfor %}
