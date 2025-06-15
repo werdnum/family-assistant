@@ -290,7 +290,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     # Assertion: Check if the mock_chat_interface_for_worker's send_message was called
     logger.info("Checking if mock_chat_interface_for_worker.send_message was called...")
     mock_chat_interface_for_worker.send_message.assert_awaited_once()
-    call_args, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
+    _, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
     assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
     sent_text = call_kwargs.get("text")
     assert sent_text is not None

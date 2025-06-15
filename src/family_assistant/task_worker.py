@@ -692,7 +692,7 @@ class TaskWorker:
             logger.debug(
                 f"Worker {self.worker_id}: Wait timed out, continuing poll cycle."
             )
-            pass  # Continue the loop normally after timeout
+            # Continue the loop normally after timeout
 
     async def run(self, wake_up_event: asyncio.Event | None = None) -> None:
         """Continuously polls for and processes tasks.

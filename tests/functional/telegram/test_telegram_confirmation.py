@@ -168,7 +168,7 @@ async def test_confirmation_accepted(
                 fix.mock_confirmation_manager.assert_awaited_once()
                 # Check args
                 # Access call_args directly from fix.mock_confirmation_manager
-                conf_args, conf_kwargs = fix.mock_confirmation_manager.call_args  # noqa: F841
+                _, conf_kwargs = fix.mock_confirmation_manager.call_args
                 assert_that(conf_kwargs.get("tool_name")).is_equal_to(
                     TOOL_NAME_SENSITIVE
                 )

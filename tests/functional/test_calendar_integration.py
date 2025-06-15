@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import uuid
-from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -18,7 +17,7 @@ from family_assistant.calendar_integration import (
 from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -215,9 +214,6 @@ async def test_add_event_and_verify_in_system_prompt(
         providers=[local_provider, mcp_provider]
     )
     await composite_provider.get_tool_definitions()
-
-    def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
-        return get_db_context(engine=test_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,
@@ -573,9 +569,6 @@ async def test_modify_event(
     )
     await composite_provider.get_tool_definitions()
 
-    def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
-        return get_db_context(engine=pg_vector_db_engine)
-
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
@@ -761,9 +754,6 @@ async def test_delete_event(
         providers=[local_provider, mcp_provider]
     )
     await composite_provider.get_tool_definitions()
-
-    def get_test_db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
-        return get_db_context(engine=pg_vector_db_engine)
 
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,

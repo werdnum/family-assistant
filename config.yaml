@@ -375,38 +375,6 @@ service_profiles:
     slash_commands:
       - "/browse"
 
-  - id: "kubernetes_debug"
-    description: "Assistant profile for Kubernetes debugging tasks. Provides tools to interact with Kubernetes clusters, search the web for solutions, and execute Python code for diagnostics."
-    processing_config:
-      prompts:
-        system_prompt: "You are a specialized Kubernetes debugging assistant. Current time is {current_time}. Focus on diagnosing and resolving Kubernetes issues. You have access to tools for interacting with Kubernetes clusters, searching the web, and executing Python code."
-      # This profile will inherit default timezone, history settings etc.
-      # It will not load calendar, notes, or known_users context providers by default
-      # due to the focused system prompt and lack of explicit inclusion.
-    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
-      enable_local_tools:
-        - "get_message_history"
-      enable_mcp_server_ids:
-        - "kubernetes"
-        - "brave"
-        - "python"
-      confirm_tools:
-        - "kubectl_create"
-        - "kubectl_apply"
-        - "kubectl_delete"
-        - "kubectl_scale"
-        - "kubectl_patch"
-        - "kubectl_rollout"
-        - "kubectl_generic" # Generic command can be destructive
-        - "install_helm_chart"
-        - "upgrade_helm_chart"
-        - "uninstall_helm_chart"
-        - "port_forward"
-        - "stop_port_forward"
-        - "cleanup" # Assumed tool name for cleanup operations
-    slash_commands:
-      - "/k8s"
-
   - id: "research"
     description: "Assistant profile for deep research, utilizing the Perplexity Sonar model. Ideal for comprehensive information gathering and analysis when web browsing or specific tool execution is not required."
     processing_config:
