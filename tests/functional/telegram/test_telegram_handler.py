@@ -145,7 +145,7 @@ async def test_simple_text_message(
         # 2. Bot API Call Verification (Output to user)
         fix.mock_bot.send_message.assert_awaited_once()
         # Check specific arguments using call_args
-        args, kwargs = fix.mock_bot.send_message.call_args
+        _, kwargs = fix.mock_bot.send_message.call_args
 
         # Use chained assertions and descriptive names for kwargs
         assert_that(kwargs).described_as("send_message kwargs").contains_key("chat_id")
@@ -299,7 +299,7 @@ async def test_add_note_tool_usage(
 
         # 3. Bot API Call (Final Response)
         fix.mock_bot.send_message.assert_awaited_once()  # Check it was called exactly once for the final message
-        args_bot, kwargs_bot = fix.mock_bot.send_message.call_args
+        _, kwargs_bot = fix.mock_bot.send_message.call_args
         expected_final_escaped_text = telegramify_markdown.markdownify(
             llm_final_confirmation_text
         )
@@ -450,7 +450,7 @@ async def test_tool_result_in_subsequent_history(
     expected_escaped_text_1 = telegramify_markdown.markdownify(
         llm_final_confirmation_text_1
     )
-    call_1_args, call_1_kwargs = fix.mock_bot.send_message.call_args_list[0]
+    _, call_1_kwargs = fix.mock_bot.send_message.call_args_list[0]
     assert_that(call_1_kwargs["text"]).described_as(
         "Bot message text (Turn 1)"
     ).is_equal_to(expected_escaped_text_1)
@@ -471,7 +471,7 @@ async def test_tool_result_in_subsequent_history(
         ).is_equal_to(2)  # One more send
 
         # Check the *second* call to send_message
-        call_2_args, call_2_kwargs = fix.mock_bot.send_message.call_args_list[1]
+        _, call_2_kwargs = fix.mock_bot.send_message.call_args_list[1]
         # --- Expected behavior assertion ---
         expected_escaped_text_2 = telegramify_markdown.markdownify(llm_response_text_2)
         assert_that(call_2_kwargs["text"]).described_as(
