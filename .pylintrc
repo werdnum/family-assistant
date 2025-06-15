@@ -34,6 +34,7 @@ disable=
     W0705,  # duplicate-except (catching specific then general is valid pattern)
     W0201,  # attribute-defined-outside-init (sometimes needed for lazy init)
     W0221,  # arguments-differ (override methods may extend parent signatures)
+    W0602,  # global-variable-not-assigned (false positive when reading then assigning)
 
 [FORMAT]
 # Maximum number of characters on a single line.

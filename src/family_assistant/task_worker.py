@@ -628,7 +628,7 @@ class TaskWorker:
         payload_dict = (
             task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
         )
-        (  # Create helper string for logging
+        interface_info = (  # Create helper string for logging
             f" ({payload_dict.get('interface_type', 'unknown_if')}:"
             f"{payload_dict.get('conversation_id', 'unknown_cid')})"
             if payload_dict.get("interface_type")
@@ -636,7 +636,7 @@ class TaskWorker:
         )
         error_str = "\n".join(traceback.format_exception(handler_exc))
         logger.error(
-            f"Worker {self.worker_id} failed task {task['task_id']} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
+            f"Worker {self.worker_id} failed task {task['task_id']}{interface_info} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
             exc_info=True,
         )
 

@@ -254,6 +254,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         | None,  # Inject the batcher, can be None initially
         confirmation_manager: "TelegramConfirmationUIManager",  # Inject confirmation manager
     ) -> None:
+        """Initializes the TelegramUpdateHandler.
+
+        Args:
+            telegram_service: The parent TelegramService instance.
+            allowed_user_ids: List of chat IDs allowed to interact with the bot.
+            developer_chat_id: Chat ID for developer notifications.
+            processing_service: The processing service for handling interactions.
+            get_db_context_func: Function to get database context.
+            message_batcher: Message batcher for grouping messages.
+            confirmation_manager: Manager for tool confirmation UI.
+        """
         # Check for debug mode environment variable
         # Task event notification is now handled automatically in storage layer
         self.debug_mode = (
@@ -261,17 +272,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )
         logger.info(f"Debug mode enabled: {self.debug_mode}")
 
-        """
-        Initializes the TelegramUpdateHandler. # Updated docstring
-
-        Args:
-            telegram_service: The parent TelegramService instance.
-            allowed_user_ids: List of chat IDs allowed to interact with the bot.
-            developer_chat_id: Optional chat ID for sending error notifications.
-            processing_service: The ProcessingService instance.
-            get_db_context_func: Async context manager function to get a DatabaseContext.
-            message_batcher: The message batcher instance to use.
-        """
         self.telegram_service = telegram_service  # Store the service instance
 
         # application is accessed via telegram_service.application if needed
