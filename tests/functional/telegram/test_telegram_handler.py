@@ -4,6 +4,7 @@
 # 1. Messages SENT by the bot (via mocked Telegram API calls like send_message).
 # 2. Messages RECEIVED by the bot (implicitly verified by mock LLM rules/matchers).
 # Database state changes (message history, notes, tasks) are NOT directly asserted here.
+
 import json  # Add import
 import logging
 import typing  # ADDED for cast
@@ -30,7 +31,7 @@ from tests.mocks.mock_llm import (
     LLMOutput,  # This is the one for Rules
     MatcherArgs,
     Rule,
-    RuleBasedMockLLMClient,  # For casting
+    RuleBasedMockLLMClient,
     get_last_message_text,
 )
 

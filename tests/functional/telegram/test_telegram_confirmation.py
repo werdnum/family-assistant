@@ -23,7 +23,7 @@ from tests.mocks.mock_llm import (
 from tests.mocks.mock_llm import (
     MatcherArgs,
     Rule,
-    RuleBasedMockLLMClient,  # Import the concrete class for casting
+    RuleBasedMockLLMClient,
     get_last_message_text,
 )
 
