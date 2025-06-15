@@ -289,9 +289,18 @@ Family Assistant is an LLM-powered application designed to centralize family inf
    - **Email Webhook**: Receives and processes emails via `/webhook/mail`
 
 5. **Storage Layer (`storage/`)**: 
-   - Database abstraction using SQLAlchemy (supports SQLite and PostgreSQL)
-   - Manages all persistent data: notes, message history, tasks, emails, vector embeddings
-   - Includes retry logic and connection pooling
+   - Repository pattern architecture with SQLAlchemy (supports SQLite and PostgreSQL)
+   - **DatabaseContext**: Central hub providing access to all repositories
+   - **Repository Classes** (`storage/repositories/`):
+     - `NotesRepository`: Note management and search
+     - `TasksRepository`: Background task queue operations
+     - `MessageHistoryRepository`: Conversation history storage
+     - `EmailRepository`: Email storage and retrieval
+     - `VectorRepository`: Vector embeddings for semantic search
+     - `EventsRepository`: Event storage and matching
+     - `ErrorLogsRepository`: Error tracking and logging
+   - Each repository extends `BaseRepository` for consistent error handling and logging
+   - Includes retry logic, connection pooling, and transaction management
    - Database schema managed by Alembic migrations
 
 6. **Tools System (`tools/`)**: 
@@ -352,6 +361,7 @@ Family Assistant is an LLM-powered application designed to centralize family inf
 
 ### Key Design Patterns
 
+- **Repository Pattern**: Data access logic encapsulated in repository classes, accessed via DatabaseContext
 - **Dependency Injection**: Core services accept dependencies as constructor arguments
 - **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface, LLMInterface, EmbeddingGenerator)
 - **Async/Await**: Fully asynchronous architecture using asyncio
@@ -389,6 +399,17 @@ When adding new web UI endpoints that serve HTML pages:
 - Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.
 - **Important**: When adding new imports, add the code that uses the import first, then add the import. Otherwise, a linter running in another tab might remove the import as unused before you add the code that uses it.
 - Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL text may break across engines.
+- **Database Access Pattern**: Use the repository pattern via DatabaseContext:
+  ```python
+  from family_assistant.storage.context import DatabaseContext
+  
+  async with DatabaseContext() as db:
+      # Access repositories as properties
+      await db.notes.add_or_update(title, content)
+      tasks = await db.tasks.get_pending_tasks()
+      await db.email.store_email(email_data)
+  ```
+  Avoid using the old module-level functions directly.
 - **SQLAlchemy Count Queries**: When using `func.count()` in SQLAlchemy queries, always use `.label("count")` to give the column an alias:
   ```python
   query = select(func.count(table.c.id).label("count"))
