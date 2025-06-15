@@ -3,6 +3,65 @@
 {% block title_header %}Message History{% endblock %}
 
 {% block main_content %}
+    <!-- Filter Form -->
+    <form id="filter-form" class="filter-form" method="get" action="{{ url_for('ui_message_history') }}">
+        <div class="filter-row">
+            <div class="filter-group">
+                <label for="interface-type-filter">Interface Type:</label>
+                <select id="interface-type-filter" name="interface_type">
+                    <option value="">All</option>
+                    {% for interface in interface_types %}
+                    <option value="{{ interface }}" {% if request.query_params.get('interface_type') == interface %}selected{% endif %}>{{ interface }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="conversation-filter">Conversation:</label>
+                <select id="conversation-filter" name="conversation_id">
+                    <option value="">All</option>
+                    {% for conv_id in conversation_ids %}
+                    <option value="{{ conv_id }}" {% if request.query_params.get('conversation_id') == conv_id %}selected{% endif %}>{{ conv_id }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="date-from-filter">From:</label>
+                <input type="datetime-local" id="date-from-filter" name="date_from" 
+                       value="{{ request.query_params.get('date_from', '') }}">
+            </div>
+            
+            <div class="filter-group">
+                <label for="date-to-filter">To:</label>
+                <input type="datetime-local" id="date-to-filter" name="date_to" 
+                       value="{{ request.query_params.get('date_to', '') }}">
+            </div>
+        </div>
+        
+        <div class="filter-actions">
+            <button type="submit" class="button-primary">Apply Filters</button>
+            <a href="{{ url_for('ui_message_history') }}" class="button-secondary">Clear Filters</a>
+        </div>
+    </form>
+    
+    <div class="tasks-summary">
+        <p>Showing {{ total_conversations }} conversation{% if total_conversations != 1 %}s{% endif %}
+        {% if active_filters %}
+            with filters:
+            {% if request.query_params.get('interface_type') %}
+                <span class="filter-tag">Interface: {{ request.query_params.get('interface_type') }}</span>
+            {% endif %}
+            {% if request.query_params.get('conversation_id') %}
+                <span class="filter-tag">Conversation: {{ request.query_params.get('conversation_id') }}</span>
+            {% endif %}
+            {% if request.query_params.get('date_from') or request.query_params.get('date_to') %}
+                <span class="filter-tag">Date Range</span>
+            {% endif %}
+        {% endif %}
+        </p>
+    </div>
+
     {% if paged_conversations %}
         {% for conversation_key, turns_list in paged_conversations %} {# Iterate over paginated conversations #}
         <div class="chat-group">
@@ -71,6 +130,9 @@
 {% endblock %}
 
 {% block scripts_extra %}
+<!-- Load message history filter script -->
+<script src="{{ url_for('static', path='js/message_history_filters.js') }}"></script>
+
 <!-- Load vanilla-jsoneditor -->
 <script type="module">
     import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';

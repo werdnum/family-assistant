@@ -28,6 +28,26 @@ async def view_message_history(
 ) -> HTMLResponse:
     """Serves the page displaying message history."""
     templates = request.app.state.templates
+
+    # Extract filter parameters from query string
+    interface_type = request.query_params.get("interface_type")
+    conversation_id = request.query_params.get("conversation_id")
+    date_from = request.query_params.get("date_from")
+    date_to = request.query_params.get("date_to")
+
+    # Parse date filters if provided
+    date_from_dt = None
+    date_to_dt = None
+    try:
+        if date_from:
+            date_from_dt = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
+        if date_to:
+            date_to_dt = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning(
+            f"Invalid date format in filters: from={date_from}, to={date_to}"
+        )
+
     try:
         # Get the configured timezone from app state
         app_config = getattr(request.app.state, "config", {})
@@ -42,7 +62,18 @@ async def view_message_history(
             )
             config_tz = zoneinfo.ZoneInfo("UTC")
 
-        history_by_chat = await db_context.message_history.get_all_grouped()
+        # Get unique interface types and conversation IDs for dropdowns
+        all_history_unfiltered = await db_context.message_history.get_all_grouped()
+        interface_types = sorted(set(key[0] for key in all_history_unfiltered))
+        conversation_ids = sorted(set(key[1] for key in all_history_unfiltered))
+
+        # Get filtered history
+        history_by_chat = await db_context.message_history.get_all_grouped(
+            interface_type=interface_type if interface_type else None,
+            conversation_id=conversation_id if conversation_id else None,
+            date_from=date_from_dt,
+            date_to=date_to_dt,
+        )
 
         # --- Process into Turns using turn_id ---
         turns_by_chat = {}
@@ -216,12 +247,19 @@ async def view_message_history(
             "next_num": current_page + 1 if current_page < total_pages else None,
         }
 
+        # Check if any filters are active
+        active_filters = any([interface_type, conversation_id, date_from, date_to])
+
         return templates.TemplateResponse(
             "message_history.html.j2",
             {
                 "request": request,
                 "paged_conversations": paged_items,  # Renamed for clarity in template
                 "pagination": pagination_info,
+                "interface_types": interface_types,
+                "conversation_ids": conversation_ids,
+                "total_conversations": len(paged_items),
+                "active_filters": active_filters,
                 "user": request.session.get("user"),
                 "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
                 "now_utc": datetime.now(timezone.utc),  # Pass to base template
