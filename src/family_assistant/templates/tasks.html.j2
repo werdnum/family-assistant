@@ -3,6 +3,77 @@
 {% block title_header %}Scheduled Tasks{% endblock %}
 
 {% block main_content %}
+    <!-- Filter Form -->
+    <form id="filter-form" class="filter-form" method="get" action="{{ url_for('ui_list_tasks') }}">
+        <div class="filter-row">
+            <div class="filter-group">
+                <label for="status-filter">Status:</label>
+                <select id="status-filter" name="status">
+                    <option value="">All</option>
+                    <option value="pending" {% if request.query_params.get('status') == 'pending' %}selected{% endif %}>Pending</option>
+                    <option value="processing" {% if request.query_params.get('status') == 'processing' %}selected{% endif %}>Processing</option>
+                    <option value="done" {% if request.query_params.get('status') == 'done' %}selected{% endif %}>Done</option>
+                    <option value="failed" {% if request.query_params.get('status') == 'failed' %}selected{% endif %}>Failed</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="task-type-filter">Task Type:</label>
+                <input type="text" id="task-type-filter" name="task_type" 
+                       value="{{ request.query_params.get('task_type', '') }}" 
+                       placeholder="e.g., llm_callback"
+                       list="task-types-list">
+                <datalist id="task-types-list">
+                    {% for task_type in task_types %}
+                    <option value="{{ task_type }}">
+                    {% endfor %}
+                </datalist>
+            </div>
+            
+            <div class="filter-group">
+                <label for="date-from-filter">From:</label>
+                <input type="datetime-local" id="date-from-filter" name="date_from" 
+                       value="{{ request.query_params.get('date_from', '') }}">
+            </div>
+            
+            <div class="filter-group">
+                <label for="date-to-filter">To:</label>
+                <input type="datetime-local" id="date-to-filter" name="date_to" 
+                       value="{{ request.query_params.get('date_to', '') }}">
+            </div>
+            
+            <div class="filter-group">
+                <label for="sort-filter">Sort:</label>
+                <select id="sort-filter" name="sort">
+                    <option value="asc" {% if request.query_params.get('sort', 'asc') == 'asc' %}selected{% endif %}>Oldest First</option>
+                    <option value="desc" {% if request.query_params.get('sort') == 'desc' %}selected{% endif %}>Newest First</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="filter-actions">
+            <button type="submit" class="button-primary">Apply Filters</button>
+            <a href="{{ url_for('ui_list_tasks') }}" class="button-secondary">Clear Filters</a>
+        </div>
+    </form>
+    
+    <div class="tasks-summary">
+        <p>Showing {{ tasks|length }} task{% if tasks|length != 1 %}s{% endif %}
+        {% if active_filters %}
+            with filters:
+            {% if request.query_params.get('status') %}
+                <span class="filter-tag">Status: {{ request.query_params.get('status') }}</span>
+            {% endif %}
+            {% if request.query_params.get('task_type') %}
+                <span class="filter-tag">Type: {{ request.query_params.get('task_type') }}</span>
+            {% endif %}
+            {% if request.query_params.get('date_from') or request.query_params.get('date_to') %}
+                <span class="filter-tag">Date Range</span>
+            {% endif %}
+        {% endif %}
+        </p>
+    </div>
+
     {% if tasks %}
     <div class="tasks-list">
         {% for task in tasks %}
@@ -42,6 +113,9 @@
 {% endblock %}
 
 {% block scripts_extra %}
+<!-- Load tasks filter script -->
+<script src="{{ url_for('static', path='js/tasks_filters.js') }}"></script>
+
 <!-- Load vanilla-jsoneditor -->
 <script type="module">
     import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
