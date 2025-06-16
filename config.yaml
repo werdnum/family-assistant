@@ -186,9 +186,9 @@ default_profile_settings:
         {%- endif -%}
 
         {%- if forecast_type.value -%}
-          {# This forecast is of interest (very low or very high price) #}
+          {#- This forecast is of interest (very low or very high price) -#}
           {%- if current_period.type == none -%}
-            {# No active significant period, so start a new one #}
+            {#- No active significant period, so start a new one -#}
             {%- set current_period.start_time = f_start_time_str -%}
             {%- set current_period.raw_end_time_for_comparison = f_end_time_str -%}
             {%- set current_period.end_time = f_end_time_str -%}
@@ -196,22 +196,22 @@ default_profile_settings:
             {%- set current_period.min = forecast.per_kwh -%}
             {%- set current_period.max = forecast.per_kwh -%}
           {%- elif current_period.type == forecast_type.value -%}
-            {# Current forecast is of the same significant type as the active period. Check for adjacency. #}
-            {# Adjacency condition: current forecast's start_time should be very close to the active period's end_time. #}
-            {# We use as_timestamp for robust comparison, allowing for small gaps (e.g., 1 second). #}
+            {#- Current forecast is of the same significant type as the active period. Check for adjacency. -#}
+            {#- Adjacency condition: current forecast's start_time should be very close to the active period's end_time. -#}
+            {#- We use as_timestamp for robust comparison, allowing for small gaps (e.g., 1 second). -#}
             {%- set prev_end_ts = as_timestamp(current_period.raw_end_time_for_comparison) | default(0) -%}
             {%- set curr_start_ts = as_timestamp(f_start_time_str) | default(0) -%}
 
-            {# Consider adjacent if start is within ~5 seconds of previous end, and not before it. #}
-            {# This threshold (5 seconds) can be adjusted based on data patterns. #}
+            {#- Consider adjacent if start is within ~5 seconds of previous end, and not before it. -#}
+            {#- This threshold (5 seconds) can be adjusted based on data patterns. -#}
             {%- if curr_start_ts - prev_end_ts <= 5 and curr_start_ts >= prev_end_ts -%}
-              {# Adjacent and same type: extend the current period #}
+              {#- Adjacent and same type: extend the current period -#}
               {%- set current_period.raw_end_time_for_comparison = f_end_time_str -%}
               {%- set current_period.end_time = f_end_time_str -%}
               {%- set current_period.min = [current_period.min, forecast.per_kwh]|min -%}
               {%- set current_period.max = [current_period.max, forecast.per_kwh]|max -%}
             {%- else -%}
-              {# Not adjacent: finalize the old period and start a new one #}
+              {#- Not adjacent: finalize the old period and start a new one -#}
               {%- set significant_periods = significant_periods + [{
                   "type": current_period.type,
                   "start": current_period.start_time,
@@ -239,9 +239,9 @@ default_profile_settings:
             {%- set current_period.max = forecast.per_kwh -%}
           {%- endif -%}
         {%- else -%}
-          {# Forecast is not of interest (e.g., neutral, low) #}
+          {#- Forecast is not of interest (e.g., neutral, low) -#}
           {%- if current_period.type != none -%}
-            {# A significant period was active, finalize it #}
+            {#- A significant period was active, finalize it -#}
             {%- set significant_periods = significant_periods + [{
                 "type": current_period.type,
                 "start": current_period.start_time,
