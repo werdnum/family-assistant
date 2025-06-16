@@ -165,16 +165,22 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.processing_profile_id == processing_profile_id
             )
 
+        # First, order by timestamp descending to get the most recent messages
         stmt = (
             select(message_history_table)
             .where(*conditions)
-            .order_by(message_history_table.c.timestamp.asc())
+            .order_by(message_history_table.c.timestamp.desc())
         )
 
         if limit:
             stmt = stmt.limit(limit)
 
         rows = await self._db.fetch_all(stmt)
+
+        # Reverse the results to return them in chronological order (oldest first)
+        # This ensures we get the N most recent messages but present them chronologically
+        rows.reverse()
+
         return [self._process_message_row(row) for row in rows]
 
     async def get_grouped(
