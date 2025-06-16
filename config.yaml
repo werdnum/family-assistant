@@ -364,7 +364,7 @@ service_profiles:
       # Optionally, use a different LLM model optimized for browsing or summarization
       # llm_model: "claude-3-sonnet-20240229"
       prompts: # MERGES with default_profile_settings.processing_config.prompts
-        system_prompt: "You are an assistant with web browsing capabilities. Current time is {current_time}."
+        system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
       delegation_security_level: "unrestricted" # This profile can be delegated to without forced confirmation
     tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
       # enable_local_tools: [] # Example: if you want NO local tools for this profile
@@ -380,7 +380,7 @@ service_profiles:
     processing_config:
       llm_model: "openrouter/perplexity/sonar-deep-research"
       prompts:
-        system_prompt: "You are a research assistant. Please focus on providing comprehensive and accurate information."
+        system_prompt: "You are a research assistant interacting with {user_name}. Please focus on providing comprehensive and accurate information. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users."
       # Inherits default timezone, history settings.
       # No specific context providers are added by default for this profile.
       delegation_security_level: "unrestricted"
