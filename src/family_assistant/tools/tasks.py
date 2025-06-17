@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -390,11 +390,8 @@ async def schedule_recurring_task_tool(
             initial_dt = initial_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
 
         # Ensure it's in the future (optional, but good practice)
-        # Comparing offset-aware with offset-naive will raise TypeError if initial_dt is naive
-        # Ensure comparison is done with aware datetime
-        now_aware = datetime.now(
-            initial_dt.tzinfo or timezone.utc
-        )  # Use parsed timezone or UTC
+        # Use the clock from context to ensure test compatibility
+        now_aware = clock.now()
         if initial_dt <= now_aware:
             raise ValueError("Initial schedule time must be in the future.")
 
@@ -620,6 +617,7 @@ async def modify_pending_callback_tool(
     conversation_id = exec_context.conversation_id
     interface_type = exec_context.interface_type
     timezone_str = exec_context.timezone_str
+    clock = exec_context.clock or SystemClock()
     logger.info(
         f"Executing modify_pending_callback_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
     )
@@ -658,7 +656,7 @@ async def modify_pending_callback_tool(
                 scheduled_dt = isoparse(new_callback_time)
                 if scheduled_dt.tzinfo is None:
                     scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(timezone_str))
-                if scheduled_dt <= datetime.now(timezone.utc):  # Compare with UTC now
+                if scheduled_dt <= clock.now():  # Use clock from context
                     raise ValueError("New callback time must be in the future.")
                 updates["scheduled_at"] = scheduled_dt.astimezone(
                     timezone.utc
