@@ -34,6 +34,8 @@ This script runs:
 - `basedpyright` (type checking)  
 - `pylint` (additional linting in errors-only mode)
 
+**IMPORTANT**: `scripts/format-and-lint.sh` MUST pass before committing. NEVER use `git commit --no-verify` -- all lint failures must be fixed or properly disabled.
+
 ### Testing
 
 * IMPORTANT: Write your tests as "end-to-end" as you can.
@@ -374,6 +376,7 @@ Family Assistant is an LLM-powered application designed to centralize family inf
 - ALWAYS ask the user to approve the plan before you start work. In particular, you MUST stop and ask for approval before doing major rearchitecture or reimplementations, or making technical decisions that may require judgement calls.
 - Significant changes should have the plan written to docs/design for approval and future documentation.
 - When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the assistant how it works in the system prompt in prompts.yaml. This is NOT optional or low priority.
+- When solving a problem, always consider whether there's a better long term fix and ask the user whether they prefer the tactical pragmatic fix or the "proper" long term fix. Look out for design or code smells. Refactoring is relatively cheap in this project - cheaper than leaving something broken.
 
 ### Adding New Tools
 
