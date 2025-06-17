@@ -568,12 +568,28 @@ class TaskWorker:
                             f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
                         )
 
+                    # Convert UTC time to user's timezone before calculating recurrence
+                    # This ensures BYHOUR and other time-based rules work in the user's timezone
+                    user_tz = zoneinfo.ZoneInfo(self.timezone_str)
+                    last_scheduled_in_user_tz = last_scheduled_at.astimezone(user_tz)
+                    logger.debug(
+                        f"Converting scheduled time from {last_scheduled_at} UTC to {last_scheduled_in_user_tz} {self.timezone_str} for recurrence calculation"
+                    )
+
                     # Calculate the next occurrence *after* the last scheduled time
+                    # Use the user timezone time as dtstart so BYHOUR is interpreted correctly
                     rule = rrule.rrulestr(
                         recurrence_rule_str,
-                        dtstart=last_scheduled_at,
+                        dtstart=last_scheduled_in_user_tz,
                     )
-                    next_scheduled_dt = rule.after(last_scheduled_at)
+                    next_scheduled_dt = rule.after(last_scheduled_in_user_tz)
+
+                    # Convert the result back to UTC for storage
+                    if next_scheduled_dt:
+                        next_scheduled_dt = next_scheduled_dt.astimezone(timezone.utc)
+                        logger.debug(
+                            f"Next occurrence calculated as {next_scheduled_dt} UTC"
+                        )
 
                     if next_scheduled_dt:
                         # For system tasks, reuse the original task ID to enable upsert behavior
