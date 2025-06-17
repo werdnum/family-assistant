@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
@@ -1276,5 +1276,107 @@ async def test_search_events(
     logger.info("Test Search Events PASSED.")
 
 
-# TODO: Add tests for all-day events and basic recurring events.
+@pytest.mark.asyncio
+async def test_mixed_date_datetime_sorting(
+    radicale_server: tuple[str, str, str, str],
+    pg_vector_db_engine: AsyncEngine,
+) -> None:
+    """Test that calendar fetching correctly sorts mixed date and datetime events."""
+    _, r_user, r_pass, test_calendar_direct_url = radicale_server
+
+    # Create test events with mixed types directly in CalDAV
+    client = get_radicale_client(radicale_server)
+    calendar = await asyncio.to_thread(client.calendar, url=test_calendar_direct_url)
+
+    # Create an all-day event (uses date type)
+    all_day_event_uid = str(uuid.uuid4())
+    all_day_start = datetime.now(ZoneInfo(TEST_TIMEZONE_STR)).date() + timedelta(days=2)
+    all_day_event_data = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//Test//EN
+BEGIN:VEVENT
+UID:{all_day_event_uid}
+SUMMARY:All Day Event Test
+DTSTART;VALUE=DATE:{all_day_start.strftime("%Y%m%d")}
+DTEND;VALUE=DATE:{(all_day_start + timedelta(days=1)).strftime("%Y%m%d")}
+DTSTAMP:{datetime.now(ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")}
+END:VEVENT
+END:VCALENDAR"""
+
+    # Create a timed event (uses datetime type)
+    timed_event_uid = str(uuid.uuid4())
+    timed_start = datetime.now(ZoneInfo(TEST_TIMEZONE_STR)) + timedelta(
+        days=1, hours=10
+    )
+    timed_end = timed_start + timedelta(hours=2)
+    timed_event_data = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//Test//EN
+BEGIN:VEVENT
+UID:{timed_event_uid}
+SUMMARY:Timed Event Test
+DTSTART:{timed_start.strftime("%Y%m%dT%H%M%S")}
+DTEND:{timed_end.strftime("%Y%m%dT%H%M%S")}
+DTSTAMP:{datetime.now(ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")}
+END:VEVENT
+END:VCALENDAR"""
+
+    # Save both events
+    await asyncio.to_thread(calendar.save_event, all_day_event_data)
+    await asyncio.to_thread(calendar.save_event, timed_event_data)
+
+    # Setup calendar configuration
+    test_calendar_config = {
+        "caldav": {
+            "base_url": radicale_server[0],
+            "username": r_user,
+            "password": r_pass,
+            "calendar_urls": [test_calendar_direct_url],
+        },
+        "ical": {"urls": []},
+    }
+
+    # Import and test the fetch function
+    from family_assistant.calendar_integration import fetch_upcoming_events
+
+    # Fetch events - this should not throw an error even with mixed date/datetime types
+    events = await fetch_upcoming_events(test_calendar_config, TEST_TIMEZONE_STR)
+
+    # Verify events were fetched and sorted correctly
+    assert len(events) >= 2, "Should have fetched at least 2 events"
+
+    # Find our test events
+    found_timed = False
+    found_all_day = False
+    for event in events:
+        if event["summary"] == "Timed Event Test":
+            found_timed = True
+            assert isinstance(event["start"], datetime), (
+                "Timed event should have datetime start"
+            )
+        elif event["summary"] == "All Day Event Test":
+            found_all_day = True
+            assert isinstance(event["start"], date) and not isinstance(
+                event["start"], datetime
+            ), "All-day event should have date start"
+
+    assert found_timed, "Timed event not found in fetched events"
+    assert found_all_day, "All-day event not found in fetched events"
+
+    # Verify events are sorted (timed event comes before all-day event based on our dates)
+    event_summaries = [
+        e["summary"]
+        for e in events
+        if e["summary"] in ["Timed Event Test", "All Day Event Test"]
+    ]
+    timed_idx = event_summaries.index("Timed Event Test")
+    all_day_idx = event_summaries.index("All Day Event Test")
+    assert timed_idx < all_day_idx, (
+        "Events should be sorted with timed event before all-day event"
+    )
+
+    logger.info("Test mixed date/datetime sorting PASSED.")
+
+
+# TODO: Add tests for basic recurring events.
 # TODO: Add test for event created directly in CalDAV appears in application fetch.
