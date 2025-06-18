@@ -109,7 +109,7 @@ Create a single root ToolsProvider with ALL tools, then use FilteredToolsProvide
 ### Remaining Issues (for Phase 2)
 - Tools executed via API still won't have ProcessingService dependencies
 - Calendar config needs special handling
-- MCP tool filtering by server ID not yet implemented
+- ~~MCP tool filtering by server ID not yet implemented~~ ✅ IMPLEMENTED
 
 ---
 

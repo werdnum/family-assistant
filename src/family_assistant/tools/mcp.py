@@ -795,6 +795,14 @@ class MCPToolsProvider:
                     )
             del self._connection_contexts[server_id]
 
+    def get_tool_to_server_mapping(self) -> dict[str, str]:
+        """Returns a mapping of tool names to their server IDs.
+
+        Returns:
+            Dictionary mapping tool name to server ID
+        """
+        return self._tool_map.copy()
+
     async def close(self) -> None:
         """Closes all managed MCP connections and cleans up resources."""
         logger.info(

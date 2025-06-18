@@ -363,16 +363,42 @@ class Assistant:
                             )
                     profile_specific_local_definitions.append(current_tool_def)
 
+            # Build complete set of allowed tools (local + MCP)
+            mcp_server_ids_from_config = profile_tools_conf_dict.get(
+                "enable_mcp_server_ids"
+            )
+
+            # Start with local tools
+            all_enabled_tool_names = enabled_local_tool_names.copy()
+
+            # Add MCP tools from enabled servers
+            if mcp_server_ids_from_config is not None:
+                # Get MCP tool-to-server mapping
+                mcp_tool_to_server = root_mcp_provider.get_tool_to_server_mapping()
+
+                # Add tools from enabled MCP servers
+                for tool_name, server_id in mcp_tool_to_server.items():
+                    if server_id in mcp_server_ids_from_config:
+                        all_enabled_tool_names.add(tool_name)
+
+                logger.info(
+                    f"Profile '{profile_id}' has {len(enabled_local_tool_names)} local tools "
+                    f"and {len(all_enabled_tool_names) - len(enabled_local_tool_names)} MCP tools "
+                    f"from servers: {mcp_server_ids_from_config}"
+                )
+
             # Create filtered view of root provider for this profile
-            if local_tools_list_from_config is None:
+            if (
+                local_tools_list_from_config is None
+                and mcp_server_ids_from_config is None
+            ):
                 # All tools enabled for this profile
                 filtered_provider = self.root_tools_provider
             else:
                 # Filter to only allowed tools
-                # TODO: Add MCP tool filtering when we can identify tools by server
                 filtered_provider = FilteredToolsProvider(
                     wrapped_provider=self.root_tools_provider,
-                    allowed_tool_names=enabled_local_tool_names,
+                    allowed_tool_names=all_enabled_tool_names,
                 )
             profile_confirm_tools_set = set(
                 profile_tools_conf_dict.get("confirm_tools", [])
