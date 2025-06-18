@@ -58,6 +58,10 @@ async def execute_tool_api(
     # We need some context, minimum placeholders for now
     # Generate a unique ID for this specific API call context
     # This isn't a persistent conversation like Telegram
+
+    # Get the root tools provider from app state for execute_script tool
+    root_tools_provider = getattr(request.app.state, "tools_provider", None)
+
     execution_context = ToolExecutionContext(
         interface_type="api",  # Identify interface
         conversation_id=f"api_call_{uuid.uuid4()}",
@@ -68,6 +72,7 @@ async def execute_tool_api(
         timezone_str=timezone_str,  # Pass fetched timezone string
         request_confirmation_callback=None,  # No confirmation from API for now
         processing_service=None,  # API endpoint doesn't have access to this
+        tools_provider=root_tools_provider,  # Pass root tools provider for execute_script
     )
 
     try:

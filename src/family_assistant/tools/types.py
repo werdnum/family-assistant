@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.tools import ToolsProvider
     from family_assistant.utils.clock import Clock
 
 
@@ -38,6 +39,7 @@ class ToolExecutionContext:
         embedding_generator: Optional generator for creating text embeddings.
         clock: Optional clock instance for managing time.
         indexing_source: Optional indexing event source for emitting document indexing events.
+        tools_provider: Optional tools provider for direct access (used by execute_script from API).
     """
 
     interface_type: str  # e.g., 'telegram', 'web', 'email'
@@ -71,6 +73,9 @@ class ToolExecutionContext:
     clock: Optional["Clock"] = None  # Add clock
     indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
     home_assistant_client: Any | None = None  # Add home_assistant_client
+    tools_provider: Optional["ToolsProvider"] = (
+        None  # Add tools_provider for API access
+    )
 
 
 class ToolNotFoundError(LookupError):
