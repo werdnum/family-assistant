@@ -84,6 +84,17 @@ indexing_pipeline_config:
 # Other future configurations can go here
 # e.g., web_server_port: 8080
 
+# --- Calendar Configuration ---
+# Calendar configuration is shared across all profiles.
+# Populated from environment variables (CALDAV_*, ICAL_URLS).
+# calendar_config:
+#   caldav:
+#     username: "user"
+#     password: "password"
+#     calendar_urls: ["url1"]
+#   ical:
+#     urls: ["url2"]
+
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
 default_profile_settings:
@@ -280,16 +291,6 @@ default_profile_settings:
     # prompts:
     #   system_prompt: "You are a helpful assistant. Current time is {current_time}."
     #   # ... other prompts ...
-
-    # `calendar_config` is primarily built from environment variables (CALDAV_*, ICAL_URLS).
-    # This key is a placeholder for that structure.
-    # calendar_config:
-    #   caldav:
-    #     username: "user"
-    #     password: "password"
-    #     calendar_urls: ["url1"]
-    #   ical:
-    #     urls: ["url2"]
 
     # Default values, can be overridden by environment variables.
     timezone: "UTC"

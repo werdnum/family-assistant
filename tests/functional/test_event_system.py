@@ -715,7 +715,6 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
     # Setup processing service
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt"},
-        calendar_config={},
         timezone_str="UTC",
         max_history_messages=5,
         history_max_age_hours=24,
@@ -746,9 +745,9 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
     task_worker = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},
         timezone_str="UTC",
         embedding_generator=MagicMock(),
+        calendar_config={},
         clock=None,
         shutdown_event_instance=shutdown_event,
     )

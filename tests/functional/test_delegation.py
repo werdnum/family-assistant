@@ -66,7 +66,6 @@ def dummy_prompts() -> dict[str, str]:
 def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceConfig:
     return ProcessingServiceConfig(
         prompts=dummy_prompts,
-        calendar_config={},
         timezone_str="UTC",
         max_history_messages=5,
         history_max_age_hours=24,
@@ -86,7 +85,6 @@ def specialized_service_config_factory(
     def _factory(delegation_security_level: str) -> ProcessingServiceConfig:
         return ProcessingServiceConfig(
             prompts=dummy_prompts,
-            calendar_config={},
             timezone_str="UTC",
             max_history_messages=5,
             history_max_age_hours=24,

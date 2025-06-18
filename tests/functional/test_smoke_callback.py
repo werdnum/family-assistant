@@ -171,7 +171,6 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
 
     # Processing Service
     dummy_prompts = {"system_prompt": "Test system prompt for callback."}
-    dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
@@ -179,7 +178,6 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
 
     test_service_config_obj_callback = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
@@ -225,7 +223,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface_for_worker,  # Pass ChatInterface
-        calendar_config=dummy_calendar_config,
+        calendar_config={},  # Pass empty dict for calendar_config
         timezone_str=dummy_timezone_str,
         embedding_generator=mock_embedding_generator,
         clock=mock_clock,  # Inject mock_clock
@@ -469,7 +467,6 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     dummy_prompts = {"system_prompt": "Test system prompt for modify."}
     test_service_config_obj_modify = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        calendar_config={},
         timezone_str="UTC",
         max_history_messages=5,
         history_max_age_hours=24,
@@ -496,7 +493,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface_for_worker,
-        calendar_config={},
+        calendar_config={},  # Pass empty dict for calendar_config
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
@@ -803,7 +800,6 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     dummy_prompts = {"system_prompt": "Test system prompt for cancel."}
     test_service_config_obj_cancel = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        calendar_config={},
         timezone_str="UTC",
         max_history_messages=5,
         history_max_age_hours=24,
@@ -831,7 +827,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface_for_worker,
-        calendar_config={},
+        calendar_config={},  # Pass empty dict for calendar_config
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
@@ -1127,7 +1123,6 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
 
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt for reminders."},
-        calendar_config={},
         timezone_str="UTC",
         max_history_messages=10,
         history_max_age_hours=24,
@@ -1152,7 +1147,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
     task_worker = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},
+        calendar_config={},  # Pass empty dict for calendar_config
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
         clock=mock_clock,
@@ -1443,7 +1438,6 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
 
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt for recurring callbacks."},
-        calendar_config={},
         timezone_str="UTC",
         max_history_messages=10,
         history_max_age_hours=24,
@@ -1471,7 +1465,7 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
     task_worker = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},
+        calendar_config={},  # Pass empty dict for calendar_config
         timezone_str="UTC",
         embedding_generator=AsyncMock(),
         clock=mock_clock,
@@ -1684,7 +1678,6 @@ async def test_list_pending_callbacks(test_db_engine: AsyncEngine) -> None:
 
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt for list callbacks."},
-        calendar_config={},
         timezone_str="UTC",
         max_history_messages=5,
         history_max_age_hours=24,

@@ -223,7 +223,6 @@ async def test_add_event_and_verify_in_system_prompt(
     service_config = ProcessingServiceConfig(
         id="test_cal_add_profile",  # Changed profile ID for clarity
         prompts=dummy_prompts,
-        calendar_config=test_calendar_config,
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
@@ -407,7 +406,6 @@ async def test_modify_event(
     service_config_for_add = ProcessingServiceConfig(
         id="test_cal_initial_add_profile",  # Unique profile ID
         prompts=dummy_prompts_for_add,
-        calendar_config=test_calendar_config_for_add,
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
@@ -577,7 +575,6 @@ async def test_modify_event(
     service_config = ProcessingServiceConfig(
         id="test_cal_mod_profile",
         prompts=dummy_prompts,
-        calendar_config=test_calendar_config,
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
@@ -763,7 +760,6 @@ async def test_delete_event(
     service_config = ProcessingServiceConfig(
         id="test_cal_del_profile",
         prompts=dummy_prompts,  # type: ignore
-        calendar_config=test_calendar_config,
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
@@ -993,7 +989,6 @@ async def test_search_events(
     service_config = ProcessingServiceConfig(
         id="test_cal_search_profile_main",  # Main profile for the test
         prompts=dummy_prompts,
-        calendar_config=test_calendar_config,
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
@@ -1304,9 +1299,11 @@ END:VEVENT
 END:VCALENDAR"""
 
     # Create a timed event (uses datetime type)
+    # Set it to tomorrow at 10 AM to ensure it's on a different day than the all-day event
     timed_event_uid = str(uuid.uuid4())
-    timed_start = datetime.now(ZoneInfo(TEST_TIMEZONE_STR)) + timedelta(
-        days=1, hours=10
+    tomorrow = datetime.now(ZoneInfo(TEST_TIMEZONE_STR)).date() + timedelta(days=1)
+    timed_start = datetime.combine(tomorrow, datetime.min.time()).replace(
+        hour=10, minute=0, second=0, microsecond=0, tzinfo=ZoneInfo(TEST_TIMEZONE_STR)
     )
     timed_end = timed_start + timedelta(hours=2)
     timed_event_data = f"""BEGIN:VCALENDAR
