@@ -44,7 +44,6 @@ async def execute_script_tool(
         # Create a configuration with reasonable defaults
         config = StarlarkConfig(
             max_execution_time=30.0,  # 30 second timeout
-            max_memory_mb=100,  # 100MB memory limit
             enable_print=True,  # Allow print statements
             enable_debug=False,  # No debug output by default
             allowed_tools=None,  # Allow all tools (controlled by ToolsProvider)
@@ -136,7 +135,6 @@ SCRIPT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "Language reference: https://github.com/bazelbuild/starlark/blob/master/spec.md\n\n"
                 "**Execution Environment:**\n"
                 "• Timeout: 30 seconds maximum execution time\n"
-                "• Memory: 100MB memory limit\n"
                 "• Sandboxed: No file system or network access\n"
                 "• Deterministic: No random numbers or current time\n\n"
                 "**Built-in Functions:**\n"
