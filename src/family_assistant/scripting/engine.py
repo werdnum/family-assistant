@@ -9,15 +9,16 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import starlark
 
-from family_assistant.tools import ToolsProvider
-from family_assistant.tools.types import ToolExecutionContext
-
 from .apis.tools import create_tools_api
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
+
+if TYPE_CHECKING:
+    from family_assistant.tools import ToolsProvider
+    from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class StarlarkEngine:
 
     def __init__(
         self,
-        tools_provider: ToolsProvider | None = None,
+        tools_provider: "ToolsProvider | None" = None,
         config: StarlarkConfig | None = None,
     ) -> None:
         """
@@ -72,7 +73,7 @@ class StarlarkEngine:
         self,
         script: str,
         globals_dict: dict[str, Any] | None = None,
-        execution_context: ToolExecutionContext | None = None,
+        execution_context: "ToolExecutionContext | None" = None,
     ) -> Any:
         """
         Evaluate a Starlark expression or script synchronously.
@@ -201,7 +202,7 @@ class StarlarkEngine:
         self,
         script: str,
         globals_dict: dict[str, Any] | None = None,
-        execution_context: ToolExecutionContext | None = None,
+        execution_context: "ToolExecutionContext | None" = None,
     ) -> Any:
         """
         Evaluate a Starlark expression or script asynchronously.

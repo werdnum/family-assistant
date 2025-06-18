@@ -41,6 +41,10 @@ from family_assistant.tools.events import (
     query_recent_events_tool,
     test_event_listener_tool,
 )
+from family_assistant.tools.execute_script import (
+    SCRIPT_TOOLS_DEFINITION,
+    execute_script_tool,
+)
 from family_assistant.tools.home_assistant import (
     HOME_ASSISTANT_TOOLS_DEFINITION,
     render_home_assistant_template_tool,
@@ -135,6 +139,8 @@ __all__ = [
     "HOME_ASSISTANT_TOOLS_DEFINITION",
     "render_home_assistant_template_tool",
     "storage",
+    "execute_script_tool",
+    "SCRIPT_TOOLS_DEFINITION",
 ]
 
 
@@ -179,6 +185,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "delete_event_listener": delete_event_listener_tool,
     "toggle_event_listener": toggle_event_listener_tool,
     "render_home_assistant_template": render_home_assistant_template_tool,
+    "execute_script": execute_script_tool,
 }
 
 
@@ -371,4 +378,5 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
         },
     ]
     + COMMUNICATION_TOOLS_DEFINITION
+    + SCRIPT_TOOLS_DEFINITION
 )
