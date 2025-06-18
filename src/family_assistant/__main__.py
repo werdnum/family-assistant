@@ -134,6 +134,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                             "title",
                             "content_chunk",
                             "llm_generated_summary",
+                            "fetched_content_markdown",
                         ]
                     },
                 },
