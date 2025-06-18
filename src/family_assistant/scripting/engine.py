@@ -28,7 +28,6 @@ class StarlarkConfig:
     """Configuration for the Starlark scripting engine."""
 
     max_execution_time: float = 30.0  # Maximum execution time in seconds
-    max_memory_mb: int = 100  # Maximum memory usage in megabytes
     enable_print: bool = True  # Whether to enable the print() function
     enable_debug: bool = False  # Whether to enable debug output
     allowed_tools: set[str] | None = (
@@ -60,13 +59,9 @@ class StarlarkEngine:
         self.tools_provider = tools_provider
         self.config = config or StarlarkConfig()
 
-        # Note: starlark-pyo3 doesn't have direct memory limit configuration
-        # Memory limits would need to be enforced at the process level
-
         logger.info(
-            "Initialized StarlarkEngine with config: max_execution_time=%s, max_memory_mb=%s",
+            "Initialized StarlarkEngine with config: max_execution_time=%s",
             self.config.max_execution_time,
-            self.config.max_memory_mb,
         )
 
     def evaluate(
