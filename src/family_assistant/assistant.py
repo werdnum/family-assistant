@@ -60,6 +60,7 @@ from family_assistant.tools import (
 from family_assistant.tools import (
     CompositeToolsProvider,
     ConfirmingToolsProvider,
+    FilteredToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
     _scan_user_docs,
@@ -278,6 +279,39 @@ class Assistant:
                     )
                 break
 
+        # Create root providers with ALL tools for UI/API access
+        logger.info("Creating root ToolsProvider with all available tools")
+
+        # Create root local provider with ALL tools
+        root_local_provider = LocalToolsProvider(
+            definitions=base_local_tools_definition,  # ALL local tools
+            implementations=local_tool_implementations,  # ALL implementations
+            embedding_generator=self.embedding_generator,
+            calendar_config=None,  # Will be handled per-context
+        )
+
+        # Create root MCP provider with ALL configured servers
+        all_mcp_servers_config = self.config.get("mcp_config", {}).get("mcpServers", {})
+        root_mcp_provider = MCPToolsProvider(
+            mcp_server_configs=all_mcp_servers_config,
+            initialization_timeout_seconds=60,
+        )
+
+        # Create composite root provider
+        self.root_tools_provider = CompositeToolsProvider(
+            providers=[root_local_provider, root_mcp_provider]
+        )
+
+        # Initialize and store for UI/API access
+        await self.root_tools_provider.get_tool_definitions()
+        fastapi_app.state.tools_provider = self.root_tools_provider
+        fastapi_app.state.tool_definitions = (
+            await self.root_tools_provider.get_tool_definitions()
+        )
+        logger.info(
+            f"Root ToolsProvider initialized with {len(fastapi_app.state.tool_definitions)} tools"
+        )
+
         for profile_conf in resolved_profiles:
             profile_id = profile_conf["id"]
             logger.info(
@@ -329,62 +363,22 @@ class Assistant:
                             )
                     profile_specific_local_definitions.append(current_tool_def)
 
-            profile_local_implementations = {
-                name: func
-                for name, func in local_tool_implementations.items()
-                if name in enabled_local_tool_names
-            }
-            local_provider_for_profile = LocalToolsProvider(
-                definitions=profile_specific_local_definitions,
-                implementations=profile_local_implementations,
-                embedding_generator=self.embedding_generator,
-                calendar_config=profile_proc_conf_dict["calendar_config"],
-            )
-
-            all_mcp_servers_config = self.config.get("mcp_config", {}).get(
-                "mcpServers", {}
-            )
-            mcp_server_ids_from_config = profile_tools_conf_dict.get(
-                "enable_mcp_server_ids"
-            )
-            enabled_mcp_server_ids = (
-                set(all_mcp_servers_config.keys())
-                if mcp_server_ids_from_config is None and all_mcp_servers_config
-                else set(mcp_server_ids_from_config or [])
-            )
-
-            profile_mcp_servers_config = {
-                sid: sconf
-                for sid, sconf in all_mcp_servers_config.items()
-                if sid in enabled_mcp_server_ids
-            }
-            mcp_timeout_seconds = profile_tools_conf_dict.get(
-                "mcp_initialization_timeout_seconds", 60
-            )
-            mcp_provider_for_profile = MCPToolsProvider(
-                mcp_server_configs=profile_mcp_servers_config,
-                initialization_timeout_seconds=mcp_timeout_seconds,
-            )
-
-            composite_provider_for_profile = CompositeToolsProvider(
-                providers=[local_provider_for_profile, mcp_provider_for_profile]
-            )
-            try:
-                await composite_provider_for_profile.get_tool_definitions()
-            except ValueError as provider_err:
-                logger.critical(
-                    f"Failed to initialize CompositeToolsProvider for profile '{profile_id}': {provider_err}",
-                    exc_info=True,
+            # Create filtered view of root provider for this profile
+            if local_tools_list_from_config is None:
+                # All tools enabled for this profile
+                filtered_provider = self.root_tools_provider
+            else:
+                # Filter to only allowed tools
+                # TODO: Add MCP tool filtering when we can identify tools by server
+                filtered_provider = FilteredToolsProvider(
+                    wrapped_provider=self.root_tools_provider,
+                    allowed_tool_names=enabled_local_tool_names,
                 )
-                raise SystemExit(
-                    f"Tool provider init failed for '{profile_id}': {provider_err}"
-                ) from provider_err
-
             profile_confirm_tools_set = set(
                 profile_tools_conf_dict.get("confirm_tools", [])
             )
             confirming_provider_for_profile = ConfirmingToolsProvider(
-                wrapped_provider=composite_provider_for_profile,
+                wrapped_provider=filtered_provider,
                 tools_requiring_confirmation=profile_confirm_tools_set,
             )
             await confirming_provider_for_profile.get_tool_definitions()
@@ -543,12 +537,7 @@ class Assistant:
 
         fastapi_app.state.processing_service = self.default_processing_service
         fastapi_app.state.llm_client = self.default_processing_service.llm_client
-        fastapi_app.state.tools_provider = (
-            self.default_processing_service.tools_provider
-        )
-        fastapi_app.state.tool_definitions = (
-            await self.default_processing_service.tools_provider.get_tool_definitions()
-        )
+        # Note: tools_provider and tool_definitions are already set to root provider above
         logger.info(
             f"Default processing service set to profile ID: '{default_service_profile_id}'."
         )
