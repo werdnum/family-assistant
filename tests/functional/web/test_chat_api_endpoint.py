@@ -68,7 +68,6 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
                 "Context: {aggregated_other_context}"
             )
         },
-        calendar_config={},
         timezone_str="UTC",
         max_history_messages=5,
         history_max_age_hours=24,
@@ -102,7 +101,7 @@ async def test_tools_provider(
         definitions=local_tools_definition,  # Use actual definitions
         implementations=local_tool_implementations,  # Use actual implementations
         embedding_generator=None,  # Not needed for add_note
-        calendar_config=mock_processing_service_config.calendar_config,
+        calendar_config={},  # Empty calendar config for tests
     )
     # Mock MCP provider as it's not the focus here
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
@@ -154,7 +153,7 @@ def test_processing_service(
         prompts=mock_processing_service_config.prompts,
     )
     calendar_provider = CalendarContextProvider(
-        calendar_config=mock_processing_service_config.calendar_config,
+        calendar_config={},  # Empty calendar config for tests
         timezone_str=mock_processing_service_config.timezone_str,
         prompts=mock_processing_service_config.prompts,
     )
