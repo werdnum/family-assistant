@@ -1,0 +1,20 @@
+{
+  "default": true,
+  "MD013": false,
+  "MD033": false,
+  "MD040": {
+    "allowed_languages": [
+      "",
+      "bash",
+      "python",
+      "yaml",
+      "json",
+      "sql",
+      "javascript",
+      "typescript",
+      "jsx",
+      "tsx",
+      "shell"
+    ]
+  }
+}
