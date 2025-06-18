@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+import pytest
+
 from family_assistant.scripting.engine import StarlarkEngine
 
 
@@ -349,6 +351,7 @@ parse_and_check_times()
         assert len(result["years"]) == 5
         assert "Europe/Paris" in result["paris_tz"]
 
+    @pytest.mark.asyncio
     async def test_time_api_with_async_evaluation(self) -> None:
         """Test time API works with async script evaluation."""
         engine = StarlarkEngine()
