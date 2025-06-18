@@ -86,6 +86,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "attachment_storage_path": "/mnt/data/mailbox/attachments",
         "willyweather_api_key": None,  # Added for Weather Provider
         "willyweather_location_id": None,  # Added for Weather Provider
+        "calendar_config": {},  # Calendar configuration - populated from CALDAV_*/ICAL_URLS env vars
         "llm_parameters": {},  # Global LLM parameters
         "mcp_config": {"mcpServers": {}},  # Global MCP server definitions
         "default_service_profile_id": "default_assistant",  # Default profile ID
@@ -144,7 +145,6 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "default_profile_settings": {
             "processing_config": {
                 "prompts": {},  # Populated from prompts.yaml
-                "calendar_config": {},  # Populated from CALDAV_*/ICAL_URLS env vars
                 "timezone": "UTC",
                 "max_history_messages": 5,
                 "history_max_age_hours": 24,
@@ -277,6 +277,43 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     config_data["embedding_dimensions"] = int(
         os.getenv("EMBEDDING_DIMENSIONS", str(config_data["embedding_dimensions"]))
     )
+
+    # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
+    # This populates the top-level calendar_config
+    caldav_user_env = os.getenv("CALDAV_USERNAME")
+    caldav_pass_env = os.getenv("CALDAV_PASSWORD")
+    caldav_urls_str_env = os.getenv("CALDAV_CALENDAR_URLS")
+
+    temp_calendar_config = {}
+    if caldav_user_env and caldav_pass_env and caldav_urls_str_env:
+        caldav_urls_env = [
+            url.strip() for url in caldav_urls_str_env.split(",") if url.strip()
+        ]
+        if caldav_urls_env:
+            temp_calendar_config["caldav"] = {
+                "username": caldav_user_env,
+                "password": caldav_pass_env,
+                "calendar_urls": caldav_urls_env,
+            }
+            logger.info("Loaded CalDAV config from environment variables.")
+
+    ical_urls_str_env = os.getenv("ICAL_URLS")
+    if ical_urls_str_env:
+        ical_urls_env = [
+            url.strip() for url in ical_urls_str_env.split(",") if url.strip()
+        ]
+        if ical_urls_env:
+            temp_calendar_config["ical"] = {"urls": ical_urls_env}
+            logger.info("Loaded iCal config from environment variables.")
+
+    # Only update top-level calendar_config if env vars provided valid config
+    if temp_calendar_config:
+        config_data["calendar_config"] = temp_calendar_config
+    elif not config_data.get("calendar_config"):  # If no config from yaml either
+        logger.warning(
+            "No calendar sources configured in config file or environment variables."
+        )
+
     # --- Target nested config for profile-specific settings ---
     profile_settings = config_data["default_profile_settings"]  # Get the whole profile
     profile_proc_config = profile_settings["processing_config"]
@@ -379,44 +416,6 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 f"Invalid format for CHAT_ID_TO_NAME_MAP env var: {e}. Using previous value. Expected format: '123:Alice,456:Bob'"
             )
 
-    # Calendar Config from Env Vars (overrides anything in config.yaml for calendars)
-    # This will populate default_profile_settings.processing_config.calendar_config
-    caldav_user_env = os.getenv("CALDAV_USERNAME")
-    caldav_pass_env = os.getenv("CALDAV_PASSWORD")
-    caldav_urls_str_env = os.getenv("CALDAV_CALENDAR_URLS")
-
-    temp_calendar_config = {}
-    if caldav_user_env and caldav_pass_env and caldav_urls_str_env:
-        caldav_urls_env = [
-            url.strip() for url in caldav_urls_str_env.split(",") if url.strip()
-        ]
-        if caldav_urls_env:
-            temp_calendar_config["caldav"] = {
-                "username": caldav_user_env,
-                "password": caldav_pass_env,
-                "calendar_urls": caldav_urls_env,
-            }
-            logger.info("Loaded CalDAV config from environment variables.")
-
-    ical_urls_str_env = os.getenv("ICAL_URLS")
-    if ical_urls_str_env:
-        ical_urls_env = [
-            url.strip() for url in ical_urls_str_env.split(",") if url.strip()
-        ]
-        if ical_urls_env:
-            temp_calendar_config["ical"] = {"urls": ical_urls_env}
-            logger.info("Loaded iCal config from environment variables.")
-
-    # Only update profile's calendar_config if env vars provided valid config
-    if temp_calendar_config:
-        profile_proc_config["calendar_config"] = temp_calendar_config
-    elif not profile_proc_config.get(
-        "calendar_config"
-    ):  # If no config from yaml either
-        logger.warning(
-            "No calendar sources configured for default profile in config file or environment variables."
-        )
-
     # Validate Timezone in the profile
     try:
         zoneinfo.ZoneInfo(profile_proc_config["timezone"])
@@ -473,21 +472,12 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         if "processing_config" in profile_def and isinstance(
             profile_def["processing_config"], dict
         ):
-            # Deep merge for 'prompts' and 'calendar_config'
+            # Deep merge for 'prompts'
             if "prompts" in profile_def["processing_config"]:
                 resolved_profile_config["processing_config"]["prompts"] = (
                     deep_merge_dicts(
                         resolved_profile_config["processing_config"].get("prompts", {}),
                         profile_def["processing_config"]["prompts"],
-                    )
-                )
-            if "calendar_config" in profile_def["processing_config"]:
-                resolved_profile_config["processing_config"]["calendar_config"] = (
-                    deep_merge_dicts(
-                        resolved_profile_config["processing_config"].get(
-                            "calendar_config", {}
-                        ),
-                        profile_def["processing_config"]["calendar_config"],
                     )
                 )
             # Replace for scalar values like llm_model, timezone, max_history, history_max_age
@@ -600,17 +590,12 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
             "database_url",
         ]  # Exclude top-level secrets
     })
-    # Also exclude password from calendar_config within default_profile_settings
-    if "default_profile_settings" in loggable_config:
-        profile_log_config = loggable_config["default_profile_settings"]
-        if (
-            "processing_config" in profile_log_config
-            and "calendar_config" in profile_log_config["processing_config"]
-            and "caldav" in profile_log_config["processing_config"]["calendar_config"]
-        ):
-            profile_log_config["processing_config"]["calendar_config"]["caldav"].pop(
-                "password", None
-            )
+    # Also exclude password from top-level calendar_config
+    if (
+        "calendar_config" in loggable_config
+        and "caldav" in loggable_config["calendar_config"]
+    ):
+        loggable_config["calendar_config"]["caldav"].pop("password", None)
 
     logger.info(
         f"Final configuration loaded (excluding secrets): {json.dumps(loggable_config, indent=2, default=str)}"

@@ -40,7 +40,6 @@ class ProcessingServiceConfig:
     """Configuration specific to a ProcessingService instance."""
 
     prompts: dict[str, str]
-    calendar_config: dict[str, Any]
     timezone_str: str
     max_history_messages: int
     history_max_age_hours: int
@@ -118,10 +117,6 @@ class ProcessingService:
     @property
     def prompts(self) -> dict[str, str]:
         return self.service_config.prompts
-
-    @property
-    def calendar_config(self) -> dict[str, Any]:
-        return self.service_config.calendar_config
 
     @property
     def timezone_str(self) -> str:

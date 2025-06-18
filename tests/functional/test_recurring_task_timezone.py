@@ -166,7 +166,6 @@ async def test_recurring_task_respects_user_timezone(
 
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt"},
-        calendar_config={},
         timezone_str="Australia/Sydney",  # Sydney timezone
         max_history_messages=5,
         history_max_age_hours=24,
@@ -195,9 +194,9 @@ async def test_recurring_task_respects_user_timezone(
     task_worker_instance = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},
         timezone_str="Australia/Sydney",  # Sydney timezone
         embedding_generator=AsyncMock(),
+        calendar_config={},
         clock=mock_clock,
         shutdown_event_instance=test_shutdown_event,
         engine=test_db_engine,

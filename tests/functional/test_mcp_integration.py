@@ -250,7 +250,6 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
 
     # Processing Service
     dummy_prompts = {"system_prompt": "Test system prompt for MCP."}
-    dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
@@ -258,7 +257,6 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
 
     test_service_config_obj_stdio = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
@@ -453,7 +451,6 @@ async def test_mcp_time_conversion_sse(
 
     # Processing Service (reuse settings)
     dummy_prompts = {"system_prompt": "Test system prompt for MCP SSE."}
-    dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
@@ -461,7 +458,6 @@ async def test_mcp_time_conversion_sse(
 
     test_service_config_obj_sse = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,

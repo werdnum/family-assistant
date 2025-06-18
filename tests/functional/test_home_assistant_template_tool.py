@@ -142,7 +142,6 @@ async def test_render_home_assistant_template_success(
     service_config = ProcessingServiceConfig(
         id="test_ha_template_profile",
         prompts=dummy_prompts,
-        calendar_config={},
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
@@ -275,7 +274,6 @@ async def test_render_home_assistant_template_no_client(
     service_config = ProcessingServiceConfig(
         id="test_ha_no_client_profile",
         prompts=dummy_prompts,
-        calendar_config={},
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
@@ -431,7 +429,6 @@ Status: Comfortable"""
     service_config = ProcessingServiceConfig(
         id="test_ha_complex_profile",
         prompts=dummy_prompts,
-        calendar_config={},
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,
@@ -579,7 +576,6 @@ async def test_render_home_assistant_template_api_error(
     service_config = ProcessingServiceConfig(
         id="test_ha_api_error_profile",
         prompts=dummy_prompts,
-        calendar_config={},
         timezone_str=TEST_TIMEZONE_STR,
         max_history_messages=5,
         history_max_age_hours=24,

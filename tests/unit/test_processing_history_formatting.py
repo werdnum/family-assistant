@@ -55,7 +55,6 @@ def processing_service() -> ProcessingService:
     """Provides a ProcessingService instance with mock dependencies."""
     mock_service_config = ProcessingServiceConfig(
         prompts={},  # Not used by _format_history_for_llm
-        calendar_config={},  # Not used
         timezone_str="UTC",  # Not used
         max_history_messages=10,  # Not used
         history_max_age_hours=1,  # Not used

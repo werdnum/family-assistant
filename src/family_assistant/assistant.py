@@ -287,7 +287,9 @@ class Assistant:
             definitions=base_local_tools_definition,  # ALL local tools
             implementations=local_tool_implementations,  # ALL implementations
             embedding_generator=self.embedding_generator,
-            calendar_config=None,  # Will be handled per-context
+            calendar_config=self.config.get(
+                "calendar_config"
+            ),  # Top-level calendar config
         )
 
         # Create root MCP provider with ALL configured servers
@@ -414,7 +416,9 @@ class Assistant:
                 prompts=profile_proc_conf_dict["prompts"],
             )
             calendar_provider = CalendarContextProvider(
-                calendar_config=profile_proc_conf_dict["calendar_config"],
+                calendar_config=self.config.get(
+                    "calendar_config", {}
+                ),  # Use top-level calendar config with empty dict fallback
                 timezone_str=profile_proc_conf_dict["timezone"],
                 prompts=profile_proc_conf_dict["prompts"],
             )
@@ -510,7 +514,6 @@ class Assistant:
 
             service_config = ProcessingServiceConfig(
                 prompts=profile_proc_conf_dict["prompts"],
-                calendar_config=profile_proc_conf_dict["calendar_config"],
                 timezone_str=profile_proc_conf_dict["timezone"],
                 max_history_messages=profile_proc_conf_dict["max_history_messages"],
                 history_max_age_hours=profile_proc_conf_dict["history_max_age_hours"],
@@ -682,9 +685,9 @@ class Assistant:
         self.task_worker_instance = TaskWorker(
             processing_service=self.default_processing_service,
             chat_interface=self.telegram_service.chat_interface,
-            calendar_config=default_profile_conf["processing_config"][
-                "calendar_config"
-            ],
+            calendar_config=self.config.get(
+                "calendar_config", {}
+            ),  # Use top-level calendar config with empty dict fallback
             timezone_str=default_profile_conf["processing_config"]["timezone"],
             embedding_generator=self.embedding_generator,
             # shutdown_event is likely handled internally by TaskWorker or passed differently
