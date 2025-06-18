@@ -101,6 +101,59 @@ class StarlarkEngine:
             module.add_callable("json_decode", json.loads)
             module.add_callable("json_encode", json.dumps)
 
+            # Add time API functions
+            from .apis import time as time_api
+
+            # Time creation functions
+            module.add_callable("time_now", time_api.time_now)
+            module.add_callable("time_now_utc", time_api.time_now_utc)
+            module.add_callable("time_create", time_api.time_create)
+            module.add_callable("time_from_timestamp", time_api.time_from_timestamp)
+            module.add_callable("time_parse", time_api.time_parse)
+
+            # Time manipulation functions
+            module.add_callable("time_in_location", time_api.time_in_location)
+            module.add_callable("time_format", time_api.time_format)
+            module.add_callable("time_add", time_api.time_add)
+            module.add_callable("time_add_duration", time_api.time_add_duration)
+
+            # Time component functions
+            module.add_callable("time_year", time_api.time_year)
+            module.add_callable("time_month", time_api.time_month)
+            module.add_callable("time_day", time_api.time_day)
+            module.add_callable("time_hour", time_api.time_hour)
+            module.add_callable("time_minute", time_api.time_minute)
+            module.add_callable("time_second", time_api.time_second)
+            module.add_callable("time_weekday", time_api.time_weekday)
+
+            # Time comparison functions
+            module.add_callable("time_before", time_api.time_before)
+            module.add_callable("time_after", time_api.time_after)
+            module.add_callable("time_equal", time_api.time_equal)
+            module.add_callable("time_diff", time_api.time_diff)
+
+            # Duration functions
+            module.add_callable("duration_parse", time_api.duration_parse)
+            module.add_callable("duration_human", time_api.duration_human)
+
+            # Timezone functions
+            module.add_callable("timezone_is_valid", time_api.timezone_is_valid)
+            module.add_callable("timezone_offset", time_api.timezone_offset)
+
+            # Utility functions
+            module.add_callable("is_between", time_api.is_between)
+            module.add_callable("is_weekend", time_api.is_weekend)
+
+            # Duration constants
+            module["NANOSECOND"] = time_api.NANOSECOND
+            module["MICROSECOND"] = time_api.MICROSECOND
+            module["MILLISECOND"] = time_api.MILLISECOND
+            module["SECOND"] = time_api.SECOND
+            module["MINUTE"] = time_api.MINUTE
+            module["HOUR"] = time_api.HOUR
+            module["DAY"] = time_api.DAY
+            module["WEEK"] = time_api.WEEK
+
             # Add user-provided globals to module
             if globals_dict:
                 for key, value in globals_dict.items():

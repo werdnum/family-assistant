@@ -39,14 +39,17 @@ The Starlark scripting engine has been successfully implemented with Phases 1, 3
    - Custom exception types (ScriptSyntaxError, ScriptExecutionError, ScriptTimeoutError)
    - StarlarkConfig class for configuration management
 
+5. **TimeAPI** ✅
+   - Full time manipulation API implemented
+   - Time creation, parsing, and formatting
+   - Timezone support with zoneinfo
+   - Duration parsing and arithmetic
+   - Time comparison and utility functions
+   - Compatible with starlark-go patterns (adapted for starlark-pyo3)
+
 ### Not Yet Implemented
 
-1. **TimeAPI** ❌
-   - Current time access
-   - Hour/day helpers
-   - Time comparison utilities
-
-2. **StateAPI** ❌
+1. **StateAPI** ❌
    - Persistent key-value storage
    - Per-script/user isolation
    - Database integration
@@ -91,6 +94,30 @@ for event in calendar_events:
 data = {"tasks": ["review PR", "update docs"]}
 json_str = json_encode(data)
 parsed = json_decode(json_str)
+
+# Time-based automation
+def check_working_hours():
+    now = time_now()
+    if is_weekend(now):
+        return False
+    return is_between(9, 17, now)
+
+# Schedule reminders
+def schedule_reminder(event_name, event_time_str):
+    event = time_parse(event_time_str, "%Y-%m-%d %H:%M:%S")
+    now = time_now()
+    time_until = time_diff(event, now)
+    
+    if time_until > 0 and time_until <= DAY:
+        add_or_update_note(
+            title=f"Reminder: {event_name}",
+            content=f"Event in {duration_human(time_until)}"
+        )
+
+# Work with timezones
+meeting_utc = time_create(year=2024, month=12, day=25, hour=15, timezone_name="UTC")
+meeting_ny = time_in_location(meeting_utc, "America/New_York")
+print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
 ```
 
 ## Proposed Next Steps
