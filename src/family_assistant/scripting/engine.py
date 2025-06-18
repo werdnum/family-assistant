@@ -98,6 +98,12 @@ class StarlarkEngine:
             # Get standard globals
             globals_dict_to_use = starlark.Globals.standard()
 
+            # Add JSON functions
+            import json
+
+            module.add_callable("json_decode", json.loads)
+            module.add_callable("json_encode", json.dumps)
+
             # Add user-provided globals to module
             if globals_dict:
                 for key, value in globals_dict.items():
