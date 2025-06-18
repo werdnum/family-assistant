@@ -1,6 +1,57 @@
 # ToolsProvider Refactoring Plan
 
-## Current Architecture
+## Phase 1: Minimal Fix for Tools UI Visibility (Current Focus)
+
+### Problem
+The tools UI at `/tools` only shows tools available to the default profile because it gets its tools provider from `app.state.processing_service.tools_provider`.
+
+### Minimal Solution
+Create a separate root ToolsProvider with ALL tools for the UI/API, while keeping profile-specific providers for LLM interactions.
+
+### Implementation Steps
+
+1. **In Assistant.setup_dependencies()**, create a root provider with all tools:
+   ```python
+   # After creating all profile-specific providers
+   # Create a root provider for UI/API with ALL tools
+   root_local_provider = LocalToolsProvider(
+       definitions=base_local_tools_definition,  # ALL local tools
+       implementations=local_tool_implementations,  # ALL implementations
+       embedding_generator=self.embedding_generator,
+       calendar_config=None,  # Will need to handle this
+   )
+   
+   # Include ALL MCP servers
+   all_mcp_servers = self.config.get("mcp_config", {}).get("mcpServers", {})
+   root_mcp_provider = MCPToolsProvider(
+       mcp_server_configs=all_mcp_servers,
+       initialization_timeout_seconds=60,
+   )
+   
+   # Composite provider with all tools
+   self.root_tools_provider = CompositeToolsProvider(
+       providers=[root_local_provider, root_mcp_provider]
+   )
+   
+   # Store for UI/API access
+   fastapi_app.state.tools_provider = self.root_tools_provider
+   fastapi_app.state.tool_definitions = await self.root_tools_provider.get_tool_definitions()
+   ```
+
+2. **Keep existing code** for profile-specific providers in ProcessingService
+
+3. **No changes needed** to tools_ui.py or tools_api.py - they already use `app.state.tools_provider`
+
+### Trade-offs
+- **Pro**: Minimal code changes, fixes the immediate problem
+- **Con**: Maintains two sets of providers (root + per-profile)
+- **Con**: Tools executed via API still won't have access to ProcessingService dependencies
+
+---
+
+## Phase 2: Comprehensive Refactoring (Future Work)
+
+### Current Architecture Issues
 
 The current implementation creates separate ToolsProvider instances for each ProcessingService profile:
 - Each profile creates its own LocalToolsProvider with filtered tools based on `enable_local_tools`
@@ -9,7 +60,7 @@ The current implementation creates separate ToolsProvider instances for each Pro
 - The tools UI gets the tools from the default ProcessingService's provider
 - This means the tools UI only sees the filtered tools from the default profile
 
-## Problems with Current Architecture
+### Problems to Address
 
 1. **Law of Demeter violation**: Tools UI accesses tools through `app.state.processing_service.tools_provider`
 2. **Incomplete tool visibility**: Tools UI only sees tools available to the default profile
@@ -23,9 +74,9 @@ The current implementation creates separate ToolsProvider instances for each Pro
 6. **Broken tools in API**: Tools executed via `/api/tools/execute/{tool_name}` can't access these dependencies
 7. **ToolExecutionContext overloading**: Context carries both execution info AND service dependencies
 
-## Proposed Architecture
+### Proposed Architecture
 
-### Core Principles
+#### Core Principles
 
 1. **Single root ToolsProvider** with all available tools
 2. **ProcessingService instances** get filtered views based on their profile's `enable_local_tools`
@@ -306,20 +357,20 @@ exec_context = ToolExecutionContext(
 )
 ```
 
-## Migration Strategy
+### Migration Strategy
 
 1. **Backward Compatibility**: The changes are mostly internal and maintain the same external interfaces
 2. **Testing**: Existing tests should continue to work with minimal changes
 3. **Rollback**: Easy to revert by keeping the old per-profile provider creation logic
 
-## Benefits
+### Benefits
 
 1. **Clean Architecture**: Single source of truth for all tools
 2. **Proper Separation**: UI sees all tools, LLM access is properly restricted
 3. **Performance**: Single initialization of MCP connections instead of per-profile
 4. **Maintainability**: Clearer code flow and responsibilities
 
-## Implementation Order
+### Implementation Order
 
 1. Create ServiceContainer class in `tools/types.py`
 2. Update ToolExecutionContext to use ServiceContainer
@@ -331,7 +382,7 @@ exec_context = ToolExecutionContext(
 8. Verify tools UI shows all available tools
 9. Verify tools work via API endpoint
 
-## Potential Issues
+### Potential Issues
 
 1. **MCP Tool Filtering**: Currently, we can't easily filter MCP tools by server ID. We might need to enhance MCPToolsProvider to track which server provides each tool.
 2. **Calendar Config**: Tools that need calendar_config will need to get it from the execution context rather than provider initialization. This is profile-specific so can't go in ServiceContainer.
@@ -339,7 +390,7 @@ exec_context = ToolExecutionContext(
 4. **Circular Dependency**: execute_script.py needs access to root_tools_provider, which we'll add to ServiceContainer to break the cycle.
 5. **Backward Compatibility**: Need to maintain old ToolExecutionContext fields during transition.
 
-## Detailed Tool Updates Required
+### Tool Updates Required
 
 Based on analysis of current usage:
 
@@ -363,8 +414,11 @@ Based on analysis of current usage:
    - Currently: `exec_context.clock or SystemClock()`
    - Update to: `exec_context.service_container.clock if exec_context.service_container else SystemClock()`
 
-## Future Enhancements
+---
 
-1. **Lazy Loading**: Load MCP tools only when first requested
-2. **Tool Metadata**: Add metadata to track tool source (local vs MCP server ID)
-3. **Dynamic Reloading**: Support adding/removing tools at runtime
+## Summary
+
+**Phase 1 (Current Focus)**: Create a separate root ToolsProvider with all tools for the UI/API to fix the immediate visibility issue with minimal code changes.
+
+**Phase 2 (Future Work)**: Comprehensive refactoring using ServiceContainer pattern to properly separate service dependencies from profile restrictions and ensure all tools work from all entry points.
+
