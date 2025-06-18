@@ -14,7 +14,7 @@ The Starlark scripting engine has been successfully implemented with Phases 1, 3
 1. **Core Starlark Engine** ✅
    - StarlarkEngine class implemented in `src/family_assistant/scripting/engine.py`
    - Basic expression evaluation working
-   - 30-second execution timeout
+   - 10-minute execution timeout (to allow for external API calls)
    - Sandboxed environment (no file system or network access)
    - JSON encode/decode functions built-in
 
@@ -32,7 +32,7 @@ The Starlark scripting engine has been successfully implemented with Phases 1, 3
    - Integration with root tools provider for web API calls
 
 4. **Production Features** ✅
-   - Execution timeout (30 seconds)
+   - Execution timeout (10 minutes for scripts, configurable)
    - Comprehensive error handling with line numbers
    - Sandboxing via Starlark's built-in restrictions
    - Full test coverage for implemented features
@@ -240,7 +240,7 @@ parsed = json_decode(json_str)
 
 #### Tasks:
 1. **Add execution limits** ✅ PARTIAL
-   - CPU timeout (configurable, default 30s) ✅
+   - CPU timeout (configurable, default 10 minutes for scripts) ✅
    - Memory limits (not supported by starlark-pyo3) ❌
    - Script size limits ❌
    - Recursion depth limits (built into Starlark) ✅
