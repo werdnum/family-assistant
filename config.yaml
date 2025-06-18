@@ -316,6 +316,7 @@ default_profile_settings:
       - "get_message_history"
       - "get_user_documentation_content"
       - "ingest_document_from_url"
+      - "execute_script"
       - "send_message_to_user"
       - "add_calendar_event"
       - "search_calendar_events"
