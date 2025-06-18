@@ -53,7 +53,12 @@ async def execute_script_tool(
 
         # Get the tools provider from the context if available
         tools_provider = None
-        if exec_context.processing_service and hasattr(
+
+        # First try to get it directly from the context (for API calls)
+        if hasattr(exec_context, "tools_provider") and exec_context.tools_provider:
+            tools_provider = exec_context.tools_provider
+        # Otherwise try to get it from processing_service (for normal calls)
+        elif exec_context.processing_service and hasattr(
             exec_context.processing_service, "tools_provider"
         ):
             tools_provider = exec_context.processing_service.tools_provider
