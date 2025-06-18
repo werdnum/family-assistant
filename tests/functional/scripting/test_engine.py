@@ -5,6 +5,7 @@ This module tests only our integration with Starlark, not the Starlark language 
 """
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -131,22 +132,46 @@ class TestStarlarkEngineIntegration:
         result = engine.evaluate('[{"id": 1}, {"id": 2}]')
         assert result == [{"id": 1}, {"id": 2}]
 
-    def test_function_injection_not_supported(self) -> None:
-        """Test that function injection is not supported (starlark-pyo3 limitation)."""
+    def test_function_injection_supported(self) -> None:
+        """Test that function injection is now supported via add_callable."""
         engine = StarlarkEngine()
 
         def my_function() -> int:
             return 42
 
-        # Functions should be skipped during global injection
+        # Both functions and values should be accessible
         globals_dict = {"my_func": my_function, "my_value": 10}
 
         # Value should be accessible
         assert engine.evaluate("my_value", globals_dict) == 10
 
-        # Function should not be accessible (skipped in our implementation)
-        with pytest.raises(ScriptExecutionError):
-            engine.evaluate("my_func()", globals_dict)
+        # Function should now be accessible via add_callable
+        assert engine.evaluate("my_func()", globals_dict) == 42
+
+        # Test function with arguments
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        globals_dict["add"] = add
+        assert engine.evaluate("add(5, 3)", globals_dict) == 8
+
+        # Test function with variable arguments
+        def concat(*args: str) -> str:
+            return "".join(args)
+
+        globals_dict["concat"] = concat
+        assert (
+            engine.evaluate("concat('Hello', ' ', 'World')", globals_dict)
+            == "Hello World"
+        )
+
+        # Test function that returns complex data
+        def get_data() -> dict[str, Any]:
+            return {"status": "ok", "count": 3}
+
+        globals_dict["get_data"] = get_data
+        assert engine.evaluate("get_data()['status']", globals_dict) == "ok"
+        assert engine.evaluate("get_data()['count']", globals_dict) == 3
 
     @pytest.mark.skip(reason="Resource limits testing disabled - crashes the machine")
     def test_resource_limits(self) -> None:
