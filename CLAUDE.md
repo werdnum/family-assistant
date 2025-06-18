@@ -3,11 +3,13 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Style
+
 * Comments are used to explain implementation when it's unclear. Do NOT add comments that are self-evident from the code, or that explain the code's history (that's what commit history is for). No comments like `# Removed db_context`.
 
 ## Development Setup
 
 ### Installation
+
 ```bash
 # Install the project in development mode with all dependencies
 uv pip install -e '.[dev]'
@@ -16,6 +18,7 @@ uv pip install -e '.[dev]'
 ## Development Commands
 
 ### Linting and Type Checking
+
 ```bash
 # Lint entire codebase (src/ and tests/)
 scripts/format-and-lint.sh
@@ -28,7 +31,9 @@ scripts/format-and-lint.sh $(git diff --name-only --cached | grep '\.py$')
 
 # Note: This script is for Python files only. It will error if given non-Python files.
 ```
+
 This script runs:
+
 - `ruff check --fix` (linting with auto-fixes)
 - `ruff format` (code formatting)
 - `basedpyright` (type checking)  
@@ -60,6 +65,7 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 #### Core Database Fixtures
 
 **`test_db_engine`** (function scope, autouse)
+
 - Automatically creates an in-memory SQLite database for each test
 - Patches the global storage engine to use the test database
 - Initializes the database schema
@@ -67,12 +73,14 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 - Usage: Automatically available in all tests, no need to explicitly request
 
 **`postgres_container`** (session scope)
+
 - Starts a PostgreSQL container with pgvector extension for the test session
 - Uses testcontainers library with `pgvector/pgvector:0.8.0-pg17` image
 - Respects DOCKER_HOST environment variable
 - Usage: `def test_something(postgres_container):`
 
 **`pg_vector_db_engine`** (function scope)
+
 - Creates an AsyncEngine connected to the test PostgreSQL container
 - Initializes both main schema and vector database components
 - Patches the global storage engine to use PostgreSQL
@@ -81,11 +89,13 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 #### Task Worker Fixtures
 
 **`task_worker_manager`** (function scope)
+
 - Manages lifecycle of a TaskWorker instance for background task testing
 - Returns tuple: `(TaskWorker, new_task_event, shutdown_event)`
 - Worker has mock ChatInterface and embedding generator
 - Tests must register their own task handlers
 - Usage:
+
   ```python
   async def test_task(task_worker_manager):
       worker, new_task_event, shutdown_event = task_worker_manager
@@ -96,17 +106,20 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 #### CalDAV Server Fixtures
 
 **`radicale_server_session`** (session scope)
+
 - Starts a Radicale CalDAV server for the test session
 - Creates test user with credentials: `testuser`/`testpass`
 - Returns tuple: `(base_url, username, password)`
 - Server persists for entire test session
 
 **`radicale_server`** (function scope)
+
 - Creates a unique calendar for each test function
 - Depends on `radicale_server_session` and `pg_vector_db_engine`
 - Returns tuple: `(base_url, username, password, unique_calendar_url)`
 - Automatically cleans up the calendar after test
 - Usage:
+
   ```python
   async def test_calendar(radicale_server):
       base_url, username, password, calendar_url = radicale_server
@@ -116,6 +129,7 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 #### Telegram Bot Testing Fixtures
 
 **`telegram_handler_fixture`** (function scope)
+
 - Comprehensive fixture for testing Telegram bot functionality
 - Located in `tests/functional/telegram/conftest.py`
 - Returns `TelegramHandlerTestFixture` named tuple with:
@@ -129,6 +143,7 @@ The project provides a comprehensive set of pytest fixtures for testing differen
   - `tools_provider`: Configured ToolsProvider
   - `get_db_context_func`: Function to get database context
 - Usage:
+
   ```python
   async def test_telegram_command(telegram_handler_fixture):
       fixture = telegram_handler_fixture
@@ -145,27 +160,35 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 These fixtures are available in various web API test files:
 
 **`db_context`** (function scope)
+
 - Provides a DatabaseContext for web API tests
 - Usage: `async def test_api(db_context):`
 
 **`mock_processing_service_config`** (function scope)
+
 - Provides a ProcessingServiceConfig with test prompts
 
 **`mock_llm_client`** (function scope)
+
 - Provides a RuleBasedMockLLMClient for API tests
 
 **`test_tools_provider`** (function scope)
+
 - Configured ToolsProvider with local tools enabled
 
 **`test_processing_service`** (function scope)
+
 - ProcessingService instance with mock components
 
 **`app_fixture`** (function scope)
+
 - FastAPI application instance configured for testing
 
 **`test_client`** (function scope)
+
 - HTTPX AsyncClient for the test FastAPI app
 - Usage:
+
   ```python
   async def test_endpoint(test_client):
       response = await test_client.post("/api/endpoint", json={...})
@@ -175,9 +198,11 @@ These fixtures are available in various web API test files:
 #### Indexing Pipeline Fixtures
 
 **`mock_pipeline_embedding_generator`** (function scope)
+
 - HashingWordEmbeddingGenerator for deterministic embeddings in tests
 
 **`indexing_task_worker`** (function scope)
+
 - TaskWorker configured for indexing tasks
 - Returns tuple: `(TaskWorker, new_task_event, shutdown_event)`
 
@@ -186,10 +211,12 @@ These fixtures are available in various web API test files:
 The project includes `tests/mocks/mock_llm.py` with:
 
 **`RuleBasedMockLLMClient`**
+
 - Mock LLM that responds based on predefined rules
 - Rules are (matcher_function, LLMOutput) tuples
 - Matcher functions receive keyword arguments and return bool
 - Usage:
+
   ```python
   mock_llm = RuleBasedMockLLMClient(
       rules=[
@@ -201,6 +228,7 @@ The project includes `tests/mocks/mock_llm.py` with:
   ```
 
 ### Running the Application
+
 ```bash
 # Main application entry point
 python -m family_assistant
@@ -213,6 +241,7 @@ uvicorn family_assistant.web_server:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Database Migrations
+
 ```bash
 # Create new migration
 alembic revision --autogenerate -m "Description"
@@ -225,12 +254,14 @@ alembic upgrade head
 ```
 
 ### Code Generation
+
 ```bash
 # Generate SYMBOLS.md file
 poe symbols
 ```
 
 ### Finding Symbol Definitions and Signatures
+
 ```bash
 # Use symbex to find symbol definitions and signatures
 # Docs: https://github.com/simonw/symbex
@@ -372,6 +403,7 @@ Family Assistant is an LLM-powered application designed to centralize family inf
 - **Event-Driven**: Loosely coupled components communicate via events
 
 ## Development Guidelines
+
 - ALWAYS make a plan before you make any nontrivial changes.
 - ALWAYS ask the user to approve the plan before you start work. In particular, you MUST stop and ask for approval before doing major rearchitecture or reimplementations, or making technical decisions that may require judgement calls.
 - Significant changes should have the plan written to docs/design for approval and future documentation.
@@ -383,6 +415,7 @@ Family Assistant is an LLM-powered application designed to centralize family inf
 See the detailed guide in `src/family_assistant/tools/README.md` for complete instructions on implementing new tools.
 
 Quick summary:
+
 1. Create tool implementation in `src/family_assistant/tools/something.py`
 2. Export in `src/family_assistant/tools/__init__.py`
 3. Enable in `config.yaml` under the profile's `enable_local_tools`
@@ -390,6 +423,7 @@ Quick summary:
 ### Adding New UI Endpoints
 
 When adding new web UI endpoints that serve HTML pages:
+
 1. Create your router in `src/family_assistant/web/routers/`
 2. Always include `now_utc: datetime.now(timezone.utc)` in the template context when using `TemplateResponse`
 3. **Important**: Add your new endpoint to the `BASE_UI_ENDPOINTS` list in `tests/functional/web/test_ui_endpoints.py` to ensure it's tested for basic accessibility
@@ -412,6 +446,7 @@ When adding new web UI endpoints that serve HTML pages:
       tasks = await db.tasks.get_pending_tasks()
       await db.email.store_email(email_data)
   ```
+
   Avoid using the old module-level functions directly.
 - **SQLAlchemy Count Queries**: When using `func.count()` in SQLAlchemy queries, always use `.label("count")` to give the column an alias:
   ```python
@@ -419,6 +454,7 @@ When adding new web UI endpoints that serve HTML pages:
   row = await db_context.fetch_one(query)
   return row["count"] if row else 0
   ```
+
   This avoids KeyError when accessing the result.
 - **SQLAlchemy func imports**: To avoid pylint errors about `func.count()` and `func.now()` not being callable, import func as:
   ```python
@@ -428,6 +464,7 @@ When adding new web UI endpoints that serve HTML pages:
   ```python
   from sqlalchemy import func
   ```
+
   This resolves the "E1102: func.X is not callable" errors while maintaining the same functionality.
 
 ## Test Fixtures
@@ -488,3 +525,7 @@ The project provides several pytest fixtures for testing. These are defined in v
       ]
   )
   ```
+
+## Markdown
+
+* Docs are rendered with redcarpet, which expects a blank line between paragraphs and other blocks (fenced code blocks, bulleted lists, etc).

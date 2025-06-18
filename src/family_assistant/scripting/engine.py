@@ -7,10 +7,11 @@ scripts with access to family assistant tools and state.
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
-from starlark_go import Starlark
+import starlark
 
 from family_assistant.tools import ToolsProvider
 
@@ -51,11 +52,9 @@ class StarlarkEngine:
         """
         self.tools_provider = tools_provider
         self.config = config or StarlarkConfig()
-        self._starlark = Starlark()
 
-        # Configure Starlark options
-        if self.config.max_memory_mb > 0:
-            self._starlark.set_max_memory(self.config.max_memory_mb * 1024 * 1024)
+        # Note: starlark-pyo3 doesn't have direct memory limit configuration
+        # Memory limits would need to be enforced at the process level
 
         logger.info(
             "Initialized StarlarkEngine with config: max_execution_time=%s, max_memory_mb=%s",
@@ -80,32 +79,49 @@ class StarlarkEngine:
             ScriptTimeoutError: If the script exceeds the execution time limit
         """
         try:
-            # Prepare globals
-            globals_to_use = {}
+            # Create a module for execution
+            module = starlark.Module()
 
-            # Add built-in functions if enabled
-            if self.config.enable_print:
-                globals_to_use["print"] = self._create_print_function()
+            # Get standard globals
+            globals_dict_to_use = starlark.Globals.standard()
 
-            # Add user-provided globals
+            # Add user-provided globals to module
+            # Note: Functions can't be added directly due to JSON serialization requirements
             if globals_dict:
-                globals_to_use.update(globals_dict)
+                for key, value in globals_dict.items():
+                    # Skip functions for now - starlark-pyo3 has limitations
+                    if not callable(value):
+                        module[key] = value
 
-            # Execute the script with timeout
-            # Note: starlark-go doesn't have built-in timeout support,
-            # so we'll need to implement this differently in production
-            result = self._starlark.exec(script, globals_to_use)
+            # Parse the script first
+            ast = starlark.parse("script.star", script)
+
+            # Evaluate the parsed AST
+            result = starlark.eval(module, ast, globals_dict_to_use)
 
             return result
 
-        except SyntaxError as e:
-            # Extract line and column info if available
-            line = getattr(e, "lineno", None)
-            column = getattr(e, "offset", None)
-            raise ScriptSyntaxError(str(e), line=line, column=column) from e
+        except starlark.StarlarkError as e:
+            # Handle Starlark-specific errors
+            error_str = str(e)
+
+            # Try to determine if it's a syntax error
+            if "parse error" in error_str.lower() or "syntax" in error_str.lower():
+                # Extract line info if available from error message
+                line = None
+                # Parse line number from error message if present
+                match = re.search(r"line (\d+)", error_str)
+                if match:
+                    line = int(match.group(1))
+                raise ScriptSyntaxError(error_str, line=line) from e
+            else:
+                # Runtime error
+                raise ScriptExecutionError(
+                    f"Script execution failed: {error_str}"
+                ) from e
 
         except Exception as e:
-            # Handle runtime errors
+            # Handle other runtime errors
             error_msg = f"Script execution failed: {str(e)}"
             logger.error(error_msg, exc_info=True)
             raise ScriptExecutionError(error_msg) from e
