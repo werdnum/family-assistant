@@ -43,7 +43,7 @@ async def execute_script_tool(
     try:
         # Create a configuration with reasonable defaults
         config = StarlarkConfig(
-            max_execution_time=30.0,  # 30 second timeout
+            max_execution_time=600.0,  # 10 minute timeout for scripts that may make external calls
             enable_print=True,  # Allow print statements
             enable_debug=False,  # No debug output by default
             allowed_tools=None,  # Allow all tools (controlled by ToolsProvider)
@@ -134,7 +134,7 @@ SCRIPT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "memory-safe, and has a familiar Python syntax but with some restrictions for security.\n\n"
                 "**For detailed Family Assistant scripting documentation, see docs/user/scripting.md**\n\n"
                 "**Execution Environment:**\n"
-                "• Timeout: 30 seconds maximum execution time\n"
+                "• Timeout: 10 minutes maximum execution time (to allow for external API calls)\n"
                 "• Sandboxed: No file system or network access\n"
                 "• Deterministic: No random numbers or current time\n\n"
                 "**Built-in Functions:**\n"

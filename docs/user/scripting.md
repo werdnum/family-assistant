@@ -63,7 +63,7 @@ if "user_email" in globals():
 
 - **Tool Access**: Scripts only have access to tools allowed by the current profile
 - **Sandboxing**: No file system, network, or system access
-- **Timeout**: Scripts timeout after 30 seconds
+- **Timeout**: Scripts timeout after 10 minutes (to allow for external API calls)
 - **No Imports**: Cannot import external code
 
 ## Common Patterns
@@ -215,10 +215,11 @@ else:
 ```
 
 ### Performance Tips
-- Scripts timeout after 30 seconds
-- Avoid processing large datasets
+- Scripts timeout after 10 minutes (but try to keep them efficient)
+- Avoid processing very large datasets in memory
 - Limit search results when possible
 - Use specific queries to reduce result sets
+- Be mindful of external API rate limits when making many tool calls
 
 ## Examples of Script Requests
 

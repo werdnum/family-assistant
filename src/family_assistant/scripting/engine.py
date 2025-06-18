@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 class StarlarkConfig:
     """Configuration for the Starlark scripting engine."""
 
-    max_execution_time: float = 30.0  # Maximum execution time in seconds
+    max_execution_time: float = (
+        600.0  # Maximum execution time in seconds (10 minutes default)
+    )
     enable_print: bool = True  # Whether to enable the print() function
     enable_debug: bool = False  # Whether to enable debug output
     allowed_tools: set[str] | None = (
