@@ -51,11 +51,27 @@ async def execute_script_tool(
             deny_all_tools=False,  # Don't deny tools by default
         )
 
-        # Create the engine with the tools provider from the context
+        # Get the tools provider from the context if available
+        tools_provider = None
+        if exec_context.processing_service and hasattr(
+            exec_context.processing_service, "tools_provider"
+        ):
+            tools_provider = exec_context.processing_service.tools_provider
+
+        # Log whether tools are available
+        if tools_provider:
+            logger.info(
+                f"Script execution with tools provider available: {type(tools_provider).__name__}"
+            )
+        else:
+            logger.warning(
+                "Script execution without tools provider - tool functions will not be available. "
+                "This may happen when execute_script is called outside of normal processing flow."
+            )
+
+        # Create the engine with the tools provider (may be None)
         engine = StarlarkEngine(
-            tools_provider=exec_context.processing_service.tools_provider
-            if exec_context.processing_service
-            else None,
+            tools_provider=tools_provider,
             config=config,
         )
 
@@ -63,7 +79,9 @@ async def execute_script_tool(
         result = await engine.evaluate_async(
             script=script,
             globals_dict=globals,
-            execution_context=exec_context,
+            execution_context=exec_context
+            if tools_provider
+            else None,  # Only pass context if we have tools
         )
 
         # Format the result as a string
