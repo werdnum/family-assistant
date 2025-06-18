@@ -81,6 +81,8 @@ dependencies = [
     # For detecting file types
     "playwright>=1.40.0",
     # For web scraping and JS rendering
+    "starlark-pyo3>=0.1.0",
+    # For Starlark scripting language support
     "homeassistant-api>=5.0.0",
     # For Home Assistant integration
     "janus>=1.0.0",
