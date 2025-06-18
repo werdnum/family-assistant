@@ -358,6 +358,56 @@ class CompositeToolsProvider:
         logger.info("CompositeToolsProvider closed.")
 
 
+class FilteredToolsProvider(ToolsProvider):
+    """Provides a filtered view of another ToolsProvider based on allowed tool names."""
+
+    def __init__(
+        self, wrapped_provider: ToolsProvider, allowed_tool_names: set[str] | None
+    ) -> None:
+        """
+        Initialize the filtered provider.
+
+        Args:
+            wrapped_provider: The provider to filter
+            allowed_tool_names: Set of allowed tool names. If None, all tools are allowed.
+        """
+        self._wrapped_provider = wrapped_provider
+        self._allowed_tool_names = allowed_tool_names
+        self._filtered_definitions: list[dict[str, Any]] | None = None
+
+    async def get_tool_definitions(self) -> list[dict[str, Any]]:
+        """Get filtered tool definitions."""
+        if self._filtered_definitions is None:
+            all_definitions = await self._wrapped_provider.get_tool_definitions()
+            if self._allowed_tool_names is None:
+                # No filtering - return all tools
+                self._filtered_definitions = all_definitions
+            else:
+                # Filter to only allowed tools
+                self._filtered_definitions = [
+                    d
+                    for d in all_definitions
+                    if d.get("function", {}).get("name") in self._allowed_tool_names
+                ]
+        return self._filtered_definitions
+
+    async def execute_tool(
+        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+    ) -> str:
+        """Execute a tool if it's allowed."""
+        if (
+            self._allowed_tool_names is not None
+            and name not in self._allowed_tool_names
+        ):
+            raise ToolNotFoundError(f"Tool '{name}' is not available in this profile")
+        return await self._wrapped_provider.execute_tool(name, arguments, context)
+
+    async def close(self) -> None:
+        """Close the provider. Does nothing since wrapped provider is shared."""
+        # Don't close the wrapped provider - it's shared across multiple filtered views
+        pass
+
+
 class ConfirmingToolsProvider(ToolsProvider):
     """Wraps another provider to add confirmation for specific tools."""
 
