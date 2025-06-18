@@ -241,11 +241,28 @@ class LocalToolsProvider:
                     )
                     return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
             if needs_calendar_config:  # Added injection logic
-                if self._calendar_config:
-                    call_args["calendar_config"] = self._calendar_config
+                # Try to get calendar_config from the instance first
+                calendar_config_to_use = self._calendar_config
+
+                # If not available on instance, try to get from ProcessingService via context
+                if not calendar_config_to_use and context.processing_service:
+                    try:
+                        calendar_config_to_use = (
+                            context.processing_service.calendar_config
+                        )
+                        logger.debug(
+                            f"Retrieved calendar_config from ProcessingService for tool '{name}'"
+                        )
+                    except AttributeError:
+                        logger.warning(
+                            "ProcessingService does not have calendar_config attribute"
+                        )
+
+                if calendar_config_to_use:
+                    call_args["calendar_config"] = calendar_config_to_use
                 else:
                     logger.error(
-                        f"Tool '{name}' requires a calendar_config, but none was provided to LocalToolsProvider."
+                        f"Tool '{name}' requires a calendar_config, but none was provided to LocalToolsProvider and none found in ProcessingService."
                     )
                     return f"Error: Tool '{name}' cannot be executed because the calendar_config is missing."
 
