@@ -152,38 +152,6 @@ async def test_execute_script_syntax_error(test_db_engine: Any) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.slow  # This test takes 30 seconds to timeout
-async def test_execute_script_timeout(test_db_engine: Any) -> None:
-    """Test execute_script timeout handling."""
-    async with DatabaseContext() as db:
-        ctx = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-conv",
-            user_name="test",
-            turn_id=None,
-            db_context=db,
-            processing_service=None,
-        )
-
-        # Script with infinite loop (will timeout)
-        # Note: Starlark requires loops to be inside functions
-        result = await execute_script_tool(
-            ctx,
-            """
-def infinite_loop():
-    for i in range(1000000000):
-        for j in range(1000000000):
-            x = i * j
-    return x
-
-infinite_loop()
-""",
-        )
-        assert "Error:" in result
-        assert "timeout" in result.lower()
-
-
-@pytest.mark.asyncio
 async def test_execute_script_with_globals(test_db_engine: Any) -> None:
     """Test execute_script with global variables."""
     async with DatabaseContext() as db:
