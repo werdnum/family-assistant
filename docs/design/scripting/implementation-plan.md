@@ -6,6 +6,9 @@ This document outlines the implementation plan for the core Starlark scripting e
 
 ## Current Status (Updated: December 2024)
 
+### Summary
+The Starlark scripting engine has been successfully implemented with Phases 1, 3, and most of Phase 4 completed. The engine is production-ready with full tool integration, security controls, and comprehensive testing. Only Phase 2 (TimeAPI and StateAPI) remains unimplemented.
+
 ### Completed Features
 
 1. **Core Starlark Engine** ✅
@@ -33,6 +36,8 @@ This document outlines the implementation plan for the core Starlark scripting e
    - Comprehensive error handling with line numbers
    - Sandboxing via Starlark's built-in restrictions
    - Full test coverage for implemented features
+   - Custom exception types (ScriptSyntaxError, ScriptExecutionError, ScriptTimeoutError)
+   - StarlarkConfig class for configuration management
 
 ### Not Yet Implemented
 
@@ -143,29 +148,29 @@ parsed = json_decode(json_str)
 
 ## Implementation Phases
 
-### Phase 1: Foundation
+### Phase 1: Foundation ✅ COMPLETED
 **Goal**: Establish basic Starlark integration and simple expression evaluation
 
 #### Tasks:
-1. **Set up starlark-pyo3 dependency**
+1. **Set up starlark-pyo3 dependency** ✅
    - Add to pyproject.toml
    - Verify installation and import
 
-2. **Create basic StarlarkEngine class**
+2. **Create basic StarlarkEngine class** ✅
    - Location: `src/family_assistant/scripting/engine.py`
    - Basic structure with initialization
    - Simple evaluate method for expressions
 
-3. **Add test for basic expression evaluation**
+3. **Add test for basic expression evaluation** ✅
    - Location: `tests/functional/scripting/test_engine.py`
    - Test arithmetic expressions
    - Test boolean logic
    - Test string operations
 
 #### Deliverables:
-- Working StarlarkEngine that can evaluate simple expressions
-- Tests demonstrating basic functionality
-- All code passing lint checks
+- Working StarlarkEngine that can evaluate simple expressions ✅
+- Tests demonstrating basic functionality ✅
+- All code passing lint checks ✅
 
 ### Phase 2: Context APIs
 **Goal**: Enable scripts to access contextual information (time, state)
@@ -197,70 +202,72 @@ parsed = json_decode(json_str)
 - Comprehensive tests for all context APIs
 - Documentation of available APIs
 
-### Phase 3: Tool Integration
+### Phase 3: Tool Integration ✅ COMPLETED
 **Goal**: Enable scripts to execute tools via ToolsProvider
 
 #### Tasks:
-1. **Create ToolsAPI wrapper**
+1. **Create ToolsAPI wrapper** ✅
    - Bridge between Starlark and ToolsProvider
-   - Handle tool discovery (`is_available`)
-   - Execute tools with parameters
+   - Handle tool discovery (`tools_list`, `tools_get`)
+   - Execute tools with parameters (`tools_execute`, `tools_execute_json`)
    - Return handling and error propagation
+   - Direct callable interface (tools as functions)
 
-2. **Implement tool execution**
+2. **Implement tool execution** ✅
    - Parameter validation
    - Async tool execution from sync Starlark
    - Result serialization back to Starlark
 
-3. **Add security controls**
-   - Tool allowlist configuration
-   - Execution permission checks
-   - Rate limiting preparation
+3. **Add security controls** ✅
+   - Tool allowlist configuration (`allowed_tools`)
+   - Execution permission checks (`deny_all_tools`)
+   - Security event logging
 
-4. **Add tests for tool execution**
+4. **Add tests for tool execution** ✅
    - Mock ToolsProvider integration
    - Test successful tool calls
    - Test error handling
    - Test permission controls
+   - Test direct callable interface
 
 #### Deliverables:
-- Scripts can discover and execute allowed tools
-- Security controls for tool access
-- Tests covering success and failure scenarios
+- Scripts can discover and execute allowed tools ✅
+- Security controls for tool access ✅
+- Tests covering success and failure scenarios ✅
 
-### Phase 4: Production Readiness
+### Phase 4: Production Readiness ✅ MOSTLY COMPLETED
 **Goal**: Add robustness features for production use
 
 #### Tasks:
-1. **Add execution limits**
-   - CPU timeout (configurable, default 5s)
-   - Memory limits (if supported by starlark-pyo3)
-   - Script size limits
-   - Recursion depth limits
+1. **Add execution limits** ✅ PARTIAL
+   - CPU timeout (configurable, default 30s) ✅
+   - Memory limits (not supported by starlark-pyo3) ❌
+   - Script size limits ❌
+   - Recursion depth limits (built into Starlark) ✅
 
-2. **Implement error handling**
-   - Graceful handling of syntax errors
-   - Runtime error capture and reporting
-   - Useful error messages for debugging
-   - Error context (line numbers, etc.)
+2. **Implement error handling** ✅
+   - Graceful handling of syntax errors (ScriptSyntaxError) ✅
+   - Runtime error capture and reporting (ScriptExecutionError) ✅
+   - Useful error messages for debugging ✅
+   - Error context (line numbers, etc.) ✅
 
-3. **Add audit logging**
-   - Script execution logging
-   - Performance metrics
-   - Error tracking
-   - Tool call auditing
+3. **Add audit logging** ✅ PARTIAL
+   - Script execution logging ✅
+   - Performance metrics ❌
+   - Error tracking ✅
+   - Tool call auditing (via security events) ✅
 
-4. **Create integration tests**
-   - Real-world automation scenarios
-   - Complex multi-step scripts
-   - Error recovery scenarios
-   - Performance benchmarks
+4. **Create integration tests** ✅
+   - Real-world automation scenarios ✅
+   - Complex multi-step scripts ✅
+   - Error recovery scenarios ✅
+   - Performance benchmarks ❌
 
 #### Deliverables:
-- Production-ready engine with safety limits
-- Comprehensive error handling
-- Full test coverage of edge cases
-- Performance baselines established
+- Production-ready engine with safety limits ✅
+- Comprehensive error handling ✅
+- Full test coverage of edge cases ✅
+- Performance baselines established ❌
 
 ## Technical Design
 
@@ -272,20 +279,22 @@ parsed = json_decode(json_str)
 ```
 src/family_assistant/scripting/
 ├── __init__.py
-├── engine.py          # Main StarlarkEngine class
+├── engine.py          # Main StarlarkEngine class ✅
 ├── apis/              # Context APIs
-│   ├── __init__.py
-│   ├── time.py       # TimeAPI implementation
-│   ├── state.py      # StateAPI implementation
-│   └── tools.py      # ToolsAPI implementation
-└── errors.py         # Custom exceptions
+│   ├── __init__.py    ✅
+│   ├── time.py       # TimeAPI implementation (NOT YET)
+│   ├── state.py      # StateAPI implementation (NOT YET)
+│   └── tools.py      # ToolsAPI implementation ✅
+└── errors.py         # Custom exceptions ✅
 
 tests/functional/scripting/
-├── __init__.py
-├── test_engine.py    # Basic engine tests
-├── test_apis.py      # Context API tests
-├── test_tools.py     # Tool integration tests
-└── test_integration.py # Full scenario tests
+├── __init__.py                    ✅
+├── test_engine.py                 # Basic engine tests ✅
+├── test_tools_api.py              # Tools API tests ✅
+├── test_direct_tool_callables.py  # Direct callable tests ✅
+├── test_tools_security.py         # Security tests ✅
+├── test_json_functions.py         # JSON function tests ✅
+└── test_execute_script.py         # Integration tests ✅
 ```
 
 ### Key Classes
