@@ -11,10 +11,11 @@ import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Thread
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from family_assistant.tools.infrastructure import ToolsProvider
-from family_assistant.tools.types import ToolExecutionContext
+if TYPE_CHECKING:
+    from family_assistant.tools.infrastructure import ToolsProvider
+    from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,8 @@ class ToolsAPI:
 
     def __init__(
         self,
-        tools_provider: ToolsProvider,
-        execution_context: ToolExecutionContext,
+        tools_provider: "ToolsProvider",
+        execution_context: "ToolExecutionContext",
         allowed_tools: set[str] | None = None,
         deny_all_tools: bool = False,
     ) -> None:
@@ -307,8 +308,8 @@ class StarlarkToolsAPI:
 
 
 def create_tools_api(
-    tools_provider: ToolsProvider,
-    execution_context: ToolExecutionContext,
+    tools_provider: "ToolsProvider",
+    execution_context: "ToolExecutionContext",
     allowed_tools: set[str] | None = None,
     deny_all_tools: bool = False,
 ) -> StarlarkToolsAPI:
