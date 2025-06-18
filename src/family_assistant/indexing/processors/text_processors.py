@@ -131,36 +131,35 @@ class TextChunker(ContentProcessor):
         output_items: list[IndexableContent] = []
 
         for item in current_items:
-            if item.content and item.mime_type in self.PROCESSED_MIME_TYPES:
-                if len(item.content) > 0:  # Ensure content is not empty string
-                    # Determine output embedding type using the map
-                    output_embedding_type = self.embedding_type_prefix_map.get(
-                        item.embedding_type, f"{item.embedding_type}_chunk"
+            # Pass through so we embed and store the unchunked text too.
+            output_items.append(item)
+            if (
+                item.content
+                and item.mime_type in self.PROCESSED_MIME_TYPES
+                and len(item.content) > 0
+            ):
+                # Determine output embedding type using the map
+                output_embedding_type = self.embedding_type_prefix_map.get(
+                    item.embedding_type, f"{item.embedding_type}_chunk"
+                )
+                chunks = self._chunk_text_natively(item.content)
+                for i, chunk_text in enumerate(chunks):
+                    chunk_metadata = item.metadata.copy()
+                    chunk_metadata.update({
+                        "chunk_index": i,
+                        "original_embedding_type": item.embedding_type,
+                        "original_content_length": len(item.content),
+                        "chunk_content_length": len(chunk_text),
+                    })
+                    chunk_item = IndexableContent(
+                        embedding_type=output_embedding_type,
+                        source_processor=self.name,
+                        content=chunk_text,
+                        mime_type=item.mime_type,  # Retain original mime_type or set to text/plain
+                        metadata=chunk_metadata,
                     )
-                    chunks = self._chunk_text_natively(item.content)
-                    for i, chunk_text in enumerate(chunks):
-                        chunk_metadata = item.metadata.copy()
-                        chunk_metadata.update({
-                            "chunk_index": i,
-                            "original_embedding_type": item.embedding_type,
-                            "original_content_length": len(item.content),
-                            "chunk_content_length": len(chunk_text),
-                        })
-                        chunk_item = IndexableContent(
-                            embedding_type=output_embedding_type,
-                            source_processor=self.name,
-                            content=chunk_text,
-                            mime_type=item.mime_type,  # Retain original mime_type or set to text/plain
-                            metadata=chunk_metadata,
-                        )
-                        output_items.append(chunk_item)
-                    logger.debug(
-                        f"Split content from item (type: {item.embedding_type}, mapped to: {output_embedding_type if output_embedding_type != f'{item.embedding_type}_chunk' else 'default _chunk'}) into {len(chunks)} chunks for document ID {original_document.source_id if hasattr(original_document, 'source_id') else 'N/A'}"
-                    )
-                else:  # Empty content string
-                    output_items.append(item)  # Pass through if content is empty
-            else:  # Not text or not a processed mime type
-                output_items.append(
-                    item
-                )  # Pass through non-text items or non-processed mime types
+                    output_items.append(chunk_item)
+                logger.debug(
+                    f"Split content from item (type: {item.embedding_type}, mapped to: {output_embedding_type if output_embedding_type != f'{item.embedding_type}_chunk' else 'default _chunk'}) into {len(chunks)} chunks for document ID {original_document.source_id if hasattr(original_document, 'source_id') else 'N/A'}"
+                )
         return output_items
