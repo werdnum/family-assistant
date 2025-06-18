@@ -154,6 +154,20 @@ except ImportError:
     MCPToolsProvider = None  # type: ignore[assignment,misc]
 
 
+# IMPORTANT: Tool Registration Process
+# ====================================
+# To add a new tool to the system, you MUST:
+# 1. Add the tool function to AVAILABLE_FUNCTIONS below
+# 2. Add the tool definition to the appropriate TOOLS_DEFINITION list (e.g., NOTE_TOOLS_DEFINITION)
+# 3. Add the tool name to config.yaml under enable_local_tools for each profile that should have access
+#
+# The dual registration provides security and flexibility:
+# - Different profiles can have different tool access (e.g., browser profile has only browser tools)
+# - Destructive tools can be excluded from certain profiles
+# - New profiles can mix and match tools without code changes
+#
+# Note: If enable_local_tools is not specified for a profile, ALL tools are enabled by default.
+
 # Define available functions mapping
 AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "add_or_update_note": add_or_update_note_tool,

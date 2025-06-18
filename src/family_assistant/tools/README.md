@@ -117,16 +117,31 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
 
 ### 3. Enable the Tool in Configuration
 
+**IMPORTANT**: Tools must be enabled in `config.yaml` for each profile that should have access to them.
+
 Add the tool name to `config.yaml` under the appropriate profile's `enable_local_tools` list:
 
 ```yaml
-processing_profiles:
-  default:
-    tools_config:
+# config.yaml
+default_profile_settings:
+  tools_config:
+    enable_local_tools:
+      # ... existing tools ...
+      - "tool_name"  # Add your new tool here
+
+service_profiles:
+  - id: "default_assistant"
+    # This profile inherits from default_profile_settings
+    # so it will have access to "tool_name"
+    
+  - id: "browser_profile"
+    tools_config:  # This REPLACES the default tools_config
       enable_local_tools:
-        # ... existing tools ...
-        - "tool_name"
+        # Only tools listed here will be available
+        # "tool_name" is NOT available unless listed
 ```
+
+**Note**: If `enable_local_tools` is not specified for a profile, ALL tools defined in the code are enabled by default. This dual registration system provides security and flexibility - different profiles can have different tool access.
 
 ## Tool Execution Context
 
