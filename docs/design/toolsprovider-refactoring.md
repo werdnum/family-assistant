@@ -6,29 +6,63 @@
 The tools UI at `/tools` only shows tools available to the default profile because it gets its tools provider from `app.state.processing_service.tools_provider`.
 
 ### Minimal Solution
-Create a separate root ToolsProvider with ALL tools for the UI/API, while keeping profile-specific providers for LLM interactions.
+Create a single root ToolsProvider with ALL tools, then use FilteredToolsProvider to create profile-specific views for ProcessingService instances.
 
 ### Implementation Steps
 
-1. **In Assistant.setup_dependencies()**, create a root provider with all tools:
+1. **Create FilteredToolsProvider class** in `tools/infrastructure.py`:
    ```python
-   # After creating all profile-specific providers
-   # Create a root provider for UI/API with ALL tools
+   class FilteredToolsProvider(ToolsProvider):
+       """Provides a filtered view of another ToolsProvider based on allowed tool names."""
+       
+       def __init__(self, wrapped_provider: ToolsProvider, allowed_tool_names: set[str] | None):
+           """
+           Args:
+               wrapped_provider: The provider to filter
+               allowed_tool_names: Set of allowed tool names. If None, all tools are allowed.
+           """
+           self._wrapped_provider = wrapped_provider
+           self._allowed_tool_names = allowed_tool_names
+           self._filtered_definitions: list[dict[str, Any]] | None = None
+       
+       async def get_tool_definitions(self) -> list[dict[str, Any]]:
+           if self._filtered_definitions is None:
+               all_definitions = await self._wrapped_provider.get_tool_definitions()
+               if self._allowed_tool_names is None:
+                   self._filtered_definitions = all_definitions
+               else:
+                   self._filtered_definitions = [
+                       d for d in all_definitions 
+                       if d.get("function", {}).get("name") in self._allowed_tool_names
+                   ]
+           return self._filtered_definitions
+       
+       async def execute_tool(self, name: str, arguments: dict[str, Any], context: ToolExecutionContext) -> str:
+           if self._allowed_tool_names is not None and name not in self._allowed_tool_names:
+               raise ToolNotFoundError(f"Tool '{name}' is not available in this profile")
+           return await self._wrapped_provider.execute_tool(name, arguments, context)
+       
+       async def close(self) -> None:
+           # Don't close the wrapped provider - it's shared
+           pass
+   ```
+
+2. **In Assistant.setup_dependencies()**, create a single root provider:
+   ```python
+   # Create root providers with ALL tools (before profile loop)
    root_local_provider = LocalToolsProvider(
        definitions=base_local_tools_definition,  # ALL local tools
        implementations=local_tool_implementations,  # ALL implementations
        embedding_generator=self.embedding_generator,
-       calendar_config=None,  # Will need to handle this
+       calendar_config=None,  # Will be handled per-context
    )
    
-   # Include ALL MCP servers
    all_mcp_servers = self.config.get("mcp_config", {}).get("mcpServers", {})
    root_mcp_provider = MCPToolsProvider(
        mcp_server_configs=all_mcp_servers,
        initialization_timeout_seconds=60,
    )
    
-   # Composite provider with all tools
    self.root_tools_provider = CompositeToolsProvider(
        providers=[root_local_provider, root_mcp_provider]
    )
@@ -38,14 +72,44 @@ Create a separate root ToolsProvider with ALL tools for the UI/API, while keepin
    fastapi_app.state.tool_definitions = await self.root_tools_provider.get_tool_definitions()
    ```
 
-2. **Keep existing code** for profile-specific providers in ProcessingService
+3. **Update profile creation** to use FilteredToolsProvider:
+   ```python
+   # In the profile loop, replace provider creation with:
+   local_tools_list = profile_tools_conf_dict.get("enable_local_tools")
+   
+   # Build set of enabled tools
+   if local_tools_list is None:
+       # All tools enabled
+       enabled_tool_names = None
+   else:
+       enabled_tool_names = set(local_tools_list)
+       # TODO: Add MCP tool filtering when we can identify tools by server
+   
+   # Create filtered view
+   filtered_provider = FilteredToolsProvider(
+       wrapped_provider=self.root_tools_provider,
+       allowed_tool_names=enabled_tool_names
+   )
+   
+   # Wrap with confirming provider as before
+   confirming_provider = ConfirmingToolsProvider(
+       wrapped_provider=filtered_provider,
+       tools_requiring_confirmation=profile_confirm_tools_set,
+   )
+   
+   # Use confirming_provider in ProcessingService
+   ```
 
-3. **No changes needed** to tools_ui.py or tools_api.py - they already use `app.state.tools_provider`
+### Benefits
+- **Clean architecture**: Single source of truth for all tools
+- **Efficient**: No duplicate tool instances or MCP connections
+- **Profile isolation**: Each profile only sees its allowed tools
+- **UI gets all tools**: Tools UI shows everything available
 
-### Trade-offs
-- **Pro**: Minimal code changes, fixes the immediate problem
-- **Con**: Maintains two sets of providers (root + per-profile)
-- **Con**: Tools executed via API still won't have access to ProcessingService dependencies
+### Remaining Issues (for Phase 2)
+- Tools executed via API still won't have ProcessingService dependencies
+- Calendar config needs special handling
+- MCP tool filtering by server ID not yet implemented
 
 ---
 
