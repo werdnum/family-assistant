@@ -841,10 +841,150 @@ async def handle_system_error_log_cleanup(
         raise
 
 
+async def handle_script_execution(
+    exec_context: ToolExecutionContext,
+    payload: dict[str, Any],
+) -> None:
+    """
+    Task handler for executing Starlark scripts triggered by events.
+
+    Executes user-defined scripts in response to events from Home Assistant,
+    document indexing, and other sources. Scripts run with restricted tool access
+    based on the event_handler processing profile.
+
+    Args:
+        exec_context: Execution context providing access to tools and services
+        payload: Task payload containing:
+            - script_code: The Starlark script to execute
+            - event_data: Event data to pass to the script
+            - config: Optional configuration (timeout, allowed_tools)
+            - listener_id: ID of the event listener that triggered this
+            - conversation_id: Conversation context for the script
+
+    Raises:
+        ScriptTimeoutError: If script execution exceeds the timeout
+        ScriptError: If script has syntax errors or runtime errors
+    """
+    from family_assistant.scripting import (
+        ScriptError,
+        ScriptTimeoutError,
+        StarlarkEngine,
+    )
+    from family_assistant.scripting.engine import StarlarkConfig
+
+    # Extract required fields from payload
+    script_code = payload.get("script_code")
+    event_data = payload.get("event_data", {})
+    config = payload.get("config", {})
+    listener_id = payload.get("listener_id")
+    conversation_id = payload.get("conversation_id")
+
+    # Validate required fields
+    if not script_code:
+        logger.error(
+            f"Invalid payload for script_execution task (missing script_code): {payload}"
+        )
+        raise ValueError("Missing required field in payload: script_code")
+
+    if not listener_id:
+        logger.error(
+            f"Invalid payload for script_execution task (missing listener_id): {payload}"
+        )
+        raise ValueError("Missing required field in payload: listener_id")
+
+    logger.info(
+        f"Starting script execution for listener {listener_id} in conversation {conversation_id}"
+    )
+
+    # Get the event_handler processing service if available
+    processing_service = exec_context.processing_service
+    tools_provider = None
+
+    if processing_service and hasattr(processing_service, "tools_provider"):
+        # Use the event_handler profile's tools if available
+        tools_provider = processing_service.tools_provider
+        logger.debug(
+            f"Using tools from processing service for script execution: {processing_service.service_config.id}"
+        )
+    else:
+        logger.warning(
+            "No processing service available for script execution, tools will be unavailable"
+        )
+
+    # Create script engine with configuration
+    engine_config = StarlarkConfig(
+        max_execution_time=config.get("timeout", 600),  # Default 10 minutes
+        allowed_tools=config.get("allowed_tools"),  # None means use profile defaults
+        deny_all_tools=False,  # Scripts should have tool access
+        enable_print=True,  # Allow print() for debugging
+        enable_debug=False,  # Could be enabled based on config
+    )
+
+    engine = StarlarkEngine(
+        tools_provider=tools_provider,
+        config=engine_config,
+    )
+
+    # Prepare global variables for the script
+    script_globals = {
+        "event": event_data,
+        "conversation_id": conversation_id,
+        "listener_id": listener_id,
+        "listener_name": config.get("listener_name", ""),  # Optional listener name
+        # Note: trigger_count would need to be retrieved from DB if needed
+    }
+
+    # Execute the script
+    try:
+        logger.debug(
+            f"Executing script for listener {listener_id} with event data: {event_data}"
+        )
+
+        result = engine.evaluate(
+            script_code,
+            globals_dict=script_globals,
+            execution_context=exec_context,
+        )
+
+        logger.info(
+            f"Script execution completed successfully for listener {listener_id}. "
+            f"Result type: {type(result).__name__}"
+        )
+
+        # Log script output if it returned something meaningful
+        if result is not None:
+            logger.debug(f"Script returned: {result}")
+
+    except ScriptTimeoutError as e:
+        logger.error(
+            f"Script timeout for listener {listener_id} after {e.timeout_seconds} seconds: {e}"
+        )
+        # Re-raise to trigger task retry with exponential backoff
+        raise
+
+    except ScriptError as e:
+        logger.error(
+            f"Script error for listener {listener_id}: {e}",
+            exc_info=True,
+        )
+        # Re-raise to trigger task retry
+        raise
+
+    except Exception as e:
+        # Catch any unexpected errors
+        logger.error(
+            f"Unexpected error during script execution for listener {listener_id}: {e}",
+            exc_info=True,
+        )
+        # Wrap in ScriptError for consistent handling
+        raise ScriptError(f"Unexpected error: {e}") from e
+
+
 __all__ = [
     "TaskWorker",
     "handle_log_message",
     "handle_llm_callback",
     "handle_system_event_cleanup",
     "handle_system_error_log_cleanup",
+    "handle_script_execution",
 ]  # Export class and relevant handlers

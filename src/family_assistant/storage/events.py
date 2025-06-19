@@ -44,6 +44,7 @@ class EventActionType(str, Enum):
     """Types of actions that can be triggered by events."""
 
     wake_llm = "wake_llm"
+    script = "script"
 
 
 class InterfaceType(str, Enum):

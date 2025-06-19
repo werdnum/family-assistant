@@ -393,6 +393,34 @@ service_profiles:
     slash_commands:
       - "/research"
 
+  - id: "event_handler"
+    description: "Restricted assistant profile for automated script-event integration. Uses fast Haiku model with read-only and non-destructive tools only."
+    processing_config:
+      llm_model: "claude-3-5-haiku-20241022"
+      prompts:
+        system_prompt: "You are an automated event handler assistant. You are responding to events from scripts and automations. Provide clear, concise responses focused on the event context. Current time is {current_time}."
+      max_history_messages: 1  # Minimal history for event processing
+      history_max_age_hours: 0.5  # 30 minutes - events are typically immediate
+      delegation_security_level: "blocked"  # Cannot delegate to other services
+    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
+      enable_local_tools:
+        # Core data tools (read/write for notes, read-only for documents)
+        - "add_or_update_note"
+        - "list_notes"
+        - "get_note"
+        - "search_documents"
+        # Communication (Telegram only to prevent email spam)
+        - "send_message_to_user"
+        # Calendar read-only
+        - "search_calendar_events"
+        # Event system query only (no listener creation/modification)
+        - "query_recent_events"
+      enable_mcp_server_ids:
+        # Home Assistant read-only access
+        - "homeassistant"  # Configured to only allow get_entity_state and get_all_entities
+      confirm_tools: []  # No confirmation needed for automated operations
+    slash_commands: []  # Not accessible via slash commands
+
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
