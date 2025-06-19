@@ -56,7 +56,7 @@
             <tr>
                 <th>Timestamp</th>
                 <th>Source</th>
-                <th>Event Summary</th>
+                <th>Event Data</th>
                 <th>Triggered Listeners</th>
                 <th>Actions</th>
             </tr>
@@ -73,7 +73,14 @@
                     </span>
                 </td>
                 <td>
-                    <code style="font-size: 0.9em;">{{ event.summary }}</code>
+                    <details>
+                        <summary style="cursor: pointer;">
+                            <code style="font-size: 0.9em;">{{ event.summary }}</code>
+                        </summary>
+                        <div style="margin-top: 0.5rem; padding: 0.5rem; background-color: var(--bg-secondary); border-radius: 4px; overflow-x: auto;">
+                            <pre style="margin: 0; font-size: 0.85em;"><code>{{ event.event_data | tojson(indent=2) }}</code></pre>
+                        </div>
+                    </details>
                 </td>
                 <td>
                     {% if event.triggered_listener_names %}
@@ -124,6 +131,23 @@
         background-color: var(--bg-secondary);
         padding: 0.2rem 0.4rem;
         border-radius: 3px;
+    }
+    
+    details summary {
+        user-select: none;
+    }
+    
+    details summary:hover {
+        text-decoration: underline;
+    }
+    
+    details[open] summary {
+        margin-bottom: 0.5rem;
+    }
+    
+    pre code {
+        background: none;
+        padding: 0;
     }
 </style>
 {% endblock %}
