@@ -53,7 +53,7 @@ async def listeners_list(
         else:
             # Regular user sees only their listeners
             all_listeners = await db.events.get_event_listeners(
-                conversation_id=user["conversation_id"] if user else "",
+                conversation_id=user.get("conversation_id", "") if user else "",
                 source_id=source_id,
                 enabled=enabled,
             )
@@ -138,7 +138,7 @@ async def listener_detail(
             listener = await db.events.get_event_listener_by_id(listener_id)
         else:
             listener = await db.events.get_event_listener_by_id(
-                listener_id, user["conversation_id"] if user else ""
+                listener_id, user.get("conversation_id", "") if user else ""
             )
 
         if not listener:
@@ -213,7 +213,7 @@ async def toggle_listener(
                 raise HTTPException(status_code=404, detail="Event listener not found")
             conversation_id = listener["conversation_id"]
         else:
-            conversation_id = user["conversation_id"] if user else ""
+            conversation_id = user.get("conversation_id", "") if user else ""
 
         success = await db.events.update_event_listener_enabled(
             listener_id, conversation_id, enabled
@@ -244,7 +244,7 @@ async def delete_listener(
                 raise HTTPException(status_code=404, detail="Event listener not found")
             conversation_id = listener["conversation_id"]
         else:
-            conversation_id = user["conversation_id"] if user else ""
+            conversation_id = user.get("conversation_id", "") if user else ""
 
         success = await db.events.delete_event_listener(listener_id, conversation_id)
 
