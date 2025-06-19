@@ -136,7 +136,7 @@ async def event_detail(
         else:
             # Regular user sees only their listeners
             all_listeners = await db.events.get_event_listeners(
-                conversation_id=user["conversation_id"] if user else "",
+                conversation_id=user.get("conversation_id", "") if user else "",
                 source_id=event.get("source_id"),
                 enabled=True,
             )
