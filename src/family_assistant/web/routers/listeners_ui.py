@@ -32,43 +32,28 @@ async def listeners_list(
     action_type: Annotated[
         str | None, Query(description="Filter by action type")
     ] = None,
+    conversation_id: Annotated[
+        str | None, Query(description="Filter by conversation ID")
+    ] = None,
     enabled: Annotated[
         bool | None, Query(description="Filter by enabled status")
     ] = None,
     limit: Annotated[int, Query(description="Items per page")] = 50,
     offset: Annotated[int, Query(description="Page offset")] = 0,
 ) -> Any:
-    """Display list of event listeners."""
+    """Display list of event listeners (administrative view)."""
     user = request.session.get("user")
     async with DatabaseContext() as db:
-        if user and user.get("admin_mode"):
-            # Admin sees all listeners
-            listeners, total_count = await db.events.get_all_event_listeners(
-                source_id=source_id,
-                action_type=action_type,
-                enabled=enabled,
-                limit=limit,
-                offset=offset,
-            )
-        else:
-            # Regular user sees only their listeners
-            all_listeners = await db.events.get_event_listeners(
-                conversation_id=user.get("conversation_id", "") if user else "",
-                source_id=source_id,
-                enabled=enabled,
-            )
-
-            # Filter by action_type if specified
-            if action_type:
-                all_listeners = [
-                    listener
-                    for listener in all_listeners
-                    if listener.get("action_type") == action_type
-                ]
-
-            # Apply pagination manually
-            total_count = len(all_listeners)
-            listeners = all_listeners[offset : offset + limit]
+        # Always show all listeners (this is an admin interface)
+        # But allow filtering by conversation_id if specified
+        listeners, total_count = await db.events.get_all_event_listeners(
+            source_id=source_id,
+            action_type=action_type,
+            conversation_id=conversation_id,
+            enabled=enabled,
+            limit=limit,
+            offset=offset,
+        )
 
     # Format timestamps and add icons
     for listener in listeners:
@@ -111,6 +96,7 @@ async def listeners_list(
             "total_count": total_count,
             "source_id": source_id,
             "action_type": action_type,
+            "conversation_id": conversation_id,
             "enabled": enabled,
             "limit": limit,
             "offset": offset,
@@ -130,16 +116,11 @@ async def listener_detail(
     request: Request,
     listener_id: int,
 ) -> Any:
-    """Display listener details."""
+    """Display listener details (administrative view)."""
     user = request.session.get("user")
     async with DatabaseContext() as db:
-        # Get listener, checking permissions unless admin
-        if user and user.get("admin_mode"):
-            listener = await db.events.get_event_listener_by_id(listener_id)
-        else:
-            listener = await db.events.get_event_listener_by_id(
-                listener_id, user.get("conversation_id", "") if user else ""
-            )
+        # Always show the listener (this is an admin interface)
+        listener = await db.events.get_event_listener_by_id(listener_id)
 
         if not listener:
             raise HTTPException(status_code=404, detail="Event listener not found")

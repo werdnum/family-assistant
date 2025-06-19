@@ -127,19 +127,11 @@ async def event_detail(
         # Get all active listeners for this source to show why they didn't trigger
         user = request.session.get("user")
         potential_listeners = []
-        if user and user.get("admin_mode"):
-            # Admin sees all listeners
-            all_listeners, _ = await db.events.get_all_event_listeners(
-                source_id=event.get("source_id"),
-                enabled=True,
-            )
-        else:
-            # Regular user sees only their listeners
-            all_listeners = await db.events.get_event_listeners(
-                conversation_id=user.get("conversation_id", "") if user else "",
-                source_id=event.get("source_id"),
-                enabled=True,
-            )
+        # Always show all listeners (this is an admin interface)
+        all_listeners, _ = await db.events.get_all_event_listeners(
+            source_id=event.get("source_id"),
+            enabled=True,
+        )
 
         # Filter out triggered listeners to get potential ones
         triggered_ids = set(event.get("triggered_listener_ids", []))

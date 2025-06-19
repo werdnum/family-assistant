@@ -698,6 +698,7 @@ class EventsRepository(BaseRepository):
         self,
         source_id: str | None = None,
         action_type: str | None = None,
+        conversation_id: str | None = None,
         enabled: bool | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -714,6 +715,10 @@ class EventsRepository(BaseRepository):
                 stmt = stmt.where(event_listeners_table.c.source_id == source_id)
             if action_type:
                 stmt = stmt.where(event_listeners_table.c.action_type == action_type)
+            if conversation_id:
+                stmt = stmt.where(
+                    event_listeners_table.c.conversation_id == conversation_id
+                )
             if enabled is not None:
                 stmt = stmt.where(event_listeners_table.c.enabled == enabled)
 
