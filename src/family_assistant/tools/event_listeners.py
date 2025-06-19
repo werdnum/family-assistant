@@ -59,6 +59,27 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
                         },
                         "required": ["match_conditions"],
                     },
+                    "action_type": {
+                        "type": "string",
+                        "description": "Type of action to execute: 'wake_llm' (default) or 'script'",
+                        "enum": ["wake_llm", "script"],
+                        "default": "wake_llm",
+                    },
+                    "script_code": {
+                        "type": "string",
+                        "description": "Starlark script code to execute (required if action_type is 'script')",
+                    },
+                    "script_config": {
+                        "type": "object",
+                        "description": "Optional configuration for script execution",
+                        "properties": {
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Execution timeout in seconds (default: 600)",
+                                "default": 600,
+                            },
+                        },
+                    },
                     "one_time": {
                         "type": "boolean",
                         "description": "If true, the listener will be disabled after triggering once",
@@ -129,6 +150,49 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "validate_event_listener_script",
+            "description": "Validate Starlark script syntax before creating an event listener.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "script_code": {
+                        "type": "string",
+                        "description": "The Starlark script code to validate",
+                    },
+                },
+                "required": ["script_code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "test_event_listener_script",
+            "description": "Test a Starlark script with a sample event to see what it would do.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "script_code": {
+                        "type": "string",
+                        "description": "The Starlark script code to test",
+                    },
+                    "sample_event": {
+                        "type": "object",
+                        "description": "Sample event data to test the script with",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Execution timeout in seconds (default: 5)",
+                        "default": 5,
+                    },
+                },
+                "required": ["script_code", "sample_event"],
+            },
+        },
+    },
 ]
 
 
@@ -137,6 +201,9 @@ async def create_event_listener_tool(
     name: str,
     source: str,
     listener_config: dict[str, Any],
+    action_type: str = "wake_llm",
+    script_code: str | None = None,
+    script_config: dict[str, Any] | None = None,
     one_time: bool = False,
 ) -> str:
     """
@@ -147,6 +214,9 @@ async def create_event_listener_tool(
         name: Unique name for the listener
         source: Event source (must be valid EventSourceType)
         listener_config: Configuration with match_conditions and optional action_config
+        action_type: Type of action to execute ("wake_llm" or "script")
+        script_code: Starlark script code (required if action_type is "script")
+        script_config: Optional configuration for script execution
         one_time: Whether listener should auto-disable after first trigger
 
     Returns:
@@ -160,6 +230,20 @@ async def create_event_listener_tool(
                 "message": f"Invalid source '{source}'. Must be one of: {', '.join(e.value for e in EventSourceType)}",
             })
 
+        # Validate action_type
+        if action_type not in ["wake_llm", "script"]:
+            return json.dumps({
+                "success": False,
+                "message": f"Invalid action_type '{action_type}'. Must be 'wake_llm' or 'script'",
+            })
+
+        # Validate script_code if action_type is script
+        if action_type == "script" and not script_code:
+            return json.dumps({
+                "success": False,
+                "message": "script_code is required when action_type is 'script'",
+            })
+
         # Extract match_conditions and action_config
         match_conditions = listener_config.get("match_conditions")
         if not match_conditions:
@@ -168,7 +252,14 @@ async def create_event_listener_tool(
                 "message": "listener_config must contain 'match_conditions'",
             })
 
-        action_config = listener_config.get("action_config", {})
+        # Build action_config based on action_type
+        if action_type == "script":
+            action_config = {
+                "script_code": script_code,
+                **(script_config or {}),
+            }
+        else:
+            action_config = listener_config.get("action_config", {})
 
         # Create the listener
         listener_id = await create_event_listener(
@@ -178,6 +269,7 @@ async def create_event_listener_tool(
             match_conditions=match_conditions,
             conversation_id=exec_context.conversation_id,
             interface_type=exec_context.interface_type,
+            action_type=action_type,
             action_config=action_config,
             one_time=one_time,
             enabled=True,
@@ -388,4 +480,112 @@ async def toggle_event_listener_tool(
         return json.dumps({
             "success": False,
             "message": f"Failed to toggle listener: {str(e)}",
+        })
+
+
+async def validate_event_listener_script_tool(
+    exec_context: ToolExecutionContext,
+    script_code: str,
+) -> str:
+    """
+    Validate Starlark script syntax.
+
+    Args:
+        exec_context: Tool execution context
+        script_code: Starlark script code to validate
+
+    Returns:
+        JSON string with validation result
+    """
+    import re
+
+    try:
+        # Import starlark-pyo3 for syntax validation
+        import starlark
+
+        # Try to parse the script
+        starlark.parse("event_listener.star", script_code)
+
+        return json.dumps({
+            "success": True,
+            "message": "Script syntax is valid",
+        })
+
+    except starlark.StarlarkError as e:
+        # Extract error details from the error message
+        error_msg = str(e)
+        # Try to extract line/column info from error message
+        line_match = re.search(r"line (\d+)", error_msg)
+        line = int(line_match.group(1)) if line_match else None
+
+        logger.warning(f"Starlark script validation failed: {error_msg}")
+        return json.dumps({
+            "success": False,
+            "error": f"Syntax error: {error_msg}",
+            "line": line,
+        })
+    except Exception as e:
+        logger.error(f"Error validating script: {e}", exc_info=True)
+        return json.dumps({
+            "success": False,
+            "error": f"Validation error: {str(e)}",
+        })
+
+
+async def test_event_listener_script_tool(
+    exec_context: ToolExecutionContext,
+    script_code: str,
+    sample_event: dict[str, Any],
+    timeout: int = 5,
+) -> str:
+    """
+    Test a script with a sample event.
+
+    Args:
+        exec_context: Tool execution context
+        script_code: Starlark script code to test
+        sample_event: Sample event data
+        timeout: Execution timeout in seconds
+
+    Returns:
+        JSON string with test results
+    """
+    try:
+        from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+
+        # Create a test engine with limited timeout
+        engine = StarlarkEngine(
+            tools_provider=exec_context.tools_provider,
+            config=StarlarkConfig(
+                max_execution_time=timeout,
+                deny_all_tools=False,
+            ),
+        )
+
+        # Prepare test context
+        context = {
+            "event": sample_event,
+            "conversation_id": exec_context.conversation_id,
+            "listener_id": "test_listener",
+        }
+
+        # Execute the script
+        result = await engine.evaluate_async(
+            script=script_code,
+            globals_dict=context,
+            execution_context=exec_context if exec_context.tools_provider else None,
+        )
+
+        return json.dumps({
+            "success": True,
+            "message": "Script executed successfully",
+            "result": result if result is not None else "No return value",
+        })
+
+    except Exception as e:
+        error_type = type(e).__name__
+        return json.dumps({
+            "success": False,
+            "error": f"{error_type}: {str(e)}",
+            "message": "Script execution failed",
         })
