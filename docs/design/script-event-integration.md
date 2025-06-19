@@ -350,14 +350,17 @@ Script execution tasks use the standard task queue retry mechanism:
        raise ValueError(f"Script syntax error at line {e.line}: {e.msg}")
    ```
 
-2. **Limited Dry Run**: Test scripts up to first tool call:
+2. **Syntax Validation Only** (dry run may be added later):
 
    ```python
-   # Mock tools that log calls instead of executing
-   mock_provider = MockToolProvider(log_only=True)
-   engine = StarlarkEngine(tools_provider=mock_provider)
-   result = await engine.evaluate(script_code, test_event)
-   # Returns: {"tool_calls": ["add_or_update_note", "send_telegram_message"]}
+   def validate_event_script(script_code: str) -> str:
+       """Validate script syntax before creating a listener."""
+       try:
+           import starlark
+           starlark.parse(script_code)
+           return json.dumps({"success": True, "message": "Script syntax is valid"})
+       except Exception as e:
+           return json.dumps({"success": False, "error": f"Syntax error: {str(e)}"})
    ```
 
 3. **Task History Debugging**: All script executions appear in task history with:
@@ -384,7 +387,7 @@ Scripts are stored directly in the `action_config` JSON field. There's more than
 ### Phase 2: Tool Integration
 
 1. Extend `create_event_listener` tool for scripts
-2. Add `test_event_script` tool with limited dry-run capability
+2. Add `validate_event_script` tool for syntax checking
 3. Integrate with task history for debugging
 4. Update web UI to show script listeners
 
@@ -412,24 +415,29 @@ Assistant: "I can convert that to a script for faster execution and no API usage
 
 ## Future Enhancements
 
-1. **Wake LLM from Script**: Special tool to wake the LLM with filtered context:
+1. **Dry Run Capability**: Test scripts with mock tool responses
+   - Note: starlark-pyo3 wraps Python exceptions in StarlarkError, preserving type and message
+   - Could implement by catching specific exception types in error messages
+   - Would show what tools would be called with what arguments
+
+2. **Wake LLM from Script**: Special tool to wake the LLM with filtered context:
 
    ```starlark
    if complex_condition:
        wake_llm(prompt="Handle this complex situation", context=event)
    ```
 
-2. **Append Mode for Notes**: Add `append` parameter to `add_or_update_note`:
+3. **Append Mode for Notes**: Add `append` parameter to `add_or_update_note`:
 
    ```starlark
    add_or_update_note(title="Log", content="New entry\n", append=True)
    ```
 
-3. **Tool-level Rate Limiting**: Separate rate limits for tool calls vs script executions
+4. **Tool-level Rate Limiting**: Separate rate limits for tool calls vs script executions
 
-4. **Script Library**: Pre-built templates for common patterns (maybe)
+5. **Script Library**: Pre-built templates for common patterns (maybe)
 
-5. **State Storage**: If concrete use cases emerge for persistent script state
+6. **State Storage**: If concrete use cases emerge for persistent script state
 
 ## Example: Complete Temperature Monitoring Automation
 
