@@ -117,6 +117,21 @@ You can ask the assistant a wide variety of things:
         *"Show me recent events from home assistant"
         *"Test if person.alex state changes to 'Home' would have triggered in the last day"
 
+* **Automated Script Actions for Events:**
+    *For simple, deterministic actions, you can now create script-based event listeners that run instantly without waking the assistant:
+        *"Run a script to log all motion events to a note when motion is detected"
+        *"Create a script that sends me a Telegram message when the temperature goes above 25°C during business hours"
+        *"Set up a script to track daily energy usage in a note whenever the meter reading changes"
+    *Benefits of script-based listeners:
+        *Much faster execution (no LLM processing delay)
+        *No API costs
+        *Predictable, repeatable behavior
+        *Perfect for logging, simple notifications, and data collection
+    *Managing script listeners:
+        *"Show me the script for my temperature alert"
+        *"Test this script with a sample temperature event: [provide script code]"
+        *"Convert my garage door listener to use a script instead"
+
 ## 4. How the Assistant Stays Informed
 
 The assistant learns and gets information from a few places:

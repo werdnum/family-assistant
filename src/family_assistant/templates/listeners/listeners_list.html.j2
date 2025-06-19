@@ -1,0 +1,151 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Event Listeners{% endblock %}
+
+{% block content %}
+<h1>Event Listeners</h1>
+
+<!-- Filters Form -->
+<form method="get" action="/event-listeners" style="margin-bottom: 2rem;">
+    <details open>
+        <summary>Filters</summary>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 1rem;">
+            <div>
+                <label for="source_id">Event Source:</label>
+                <select name="source_id" id="source_id">
+                    <option value="">All Sources</option>
+                    <option value="home_assistant" {% if source_id == "home_assistant" %}selected{% endif %}>Home Assistant</option>
+                    <option value="indexing" {% if source_id == "indexing" %}selected{% endif %}>Document Indexing</option>
+                    <option value="webhook" {% if source_id == "webhook" %}selected{% endif %}>Webhook</option>
+                </select>
+            </div>
+            
+            <div>
+                <label for="action_type">Action Type:</label>
+                <select name="action_type" id="action_type">
+                    <option value="">All Types</option>
+                    <option value="wake_llm" {% if action_type == "wake_llm" %}selected{% endif %}>LLM Callback</option>
+                    <option value="script" {% if action_type == "script" %}selected{% endif %}>Script</option>
+                </select>
+            </div>
+            
+            <div>
+                <label for="enabled">Status:</label>
+                <select name="enabled" id="enabled">
+                    <option value="">All</option>
+                    <option value="true" {% if enabled == true %}selected{% endif %}>Enabled</option>
+                    <option value="false" {% if enabled == false %}selected{% endif %}>Disabled</option>
+                </select>
+            </div>
+        </div>
+        
+        <div style="margin-top: 1rem;">
+            <button type="submit">Apply Filters</button>
+            <a href="/event-listeners" class="button" style="margin-left: 0.5rem;">Clear Filters</a>
+        </div>
+    </details>
+</form>
+
+<!-- Results Summary -->
+<p>Found {{ total_count }} listener{% if total_count != 1 %}s{% endif %}</p>
+
+<!-- Listeners Table -->
+{% if listeners %}
+<div style="overflow-x: auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Source</th>
+                <th>Action</th>
+                <th>Status</th>
+                <th>Today / Limit</th>
+                <th>Last Triggered</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for listener in listeners %}
+            <tr>
+                <td>
+                    <a href="/event-listeners/{{ listener.id }}">{{ listener.name }}</a>
+                    {% if listener.description %}
+                        <br><small style="color: var(--text-light);">{{ listener.description[:50] }}{% if listener.description|length > 50 %}...{% endif %}</small>
+                    {% endif %}
+                </td>
+                <td>
+                    <span style="text-transform: capitalize;">
+                        {{ listener.source_id.replace('_', ' ') }}
+                    </span>
+                </td>
+                <td style="text-align: center;">
+                    <span title="{{ 'LLM Callback' if listener.action_type == 'wake_llm' else 'Script Execution' }}">
+                        {{ listener.action_icon }}
+                    </span>
+                </td>
+                <td>
+                    {% if listener.enabled %}
+                        <span style="color: var(--accent);">✓ Enabled</span>
+                    {% else %}
+                        <span style="color: var(--text-light);">✗ Disabled</span>
+                    {% endif %}
+                    {% if listener.one_time %}
+                        <br><small style="color: var(--text-light);">One-time</small>
+                    {% endif %}
+                </td>
+                <td>
+                    {{ listener.daily_executions or 0 }} / 5
+                    {% if listener.daily_executions >= 5 %}
+                        <br><small style="color: orange;">Rate limited</small>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if listener.last_execution_at %}
+                        {{ listener.last_execution_at.strftime('%Y-%m-%d %H:%M') }}
+                    {% else %}
+                        <span style="color: var(--text-light);">Never</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {{ listener.created_at.strftime('%Y-%m-%d') if listener.created_at else 'N/A' }}
+                </td>
+                <td>
+                    <a href="/event-listeners/{{ listener.id }}">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+<nav style="margin-top: 2rem; text-align: center;">
+    {% if has_prev %}
+    <a href="?source_id={{ source_id or '' }}&action_type={{ action_type or '' }}&enabled={{ enabled or '' }}&limit={{ limit }}&offset={{ prev_offset }}">← Previous</a>
+    {% endif %}
+    
+    <span style="margin: 0 1rem;">
+        Page {{ current_page }} of {{ total_pages }}
+    </span>
+    
+    {% if has_next %}
+    <a href="?source_id={{ source_id or '' }}&action_type={{ action_type or '' }}&enabled={{ enabled or '' }}&limit={{ limit }}&offset={{ next_offset }}">Next →</a>
+    {% endif %}
+</nav>
+
+{% else %}
+<p>No event listeners found matching your criteria.</p>
+{% endif %}
+
+<style>
+    /* Custom styles for listeners table */
+    table {
+        font-size: 0.95em;
+    }
+    
+    td a {
+        font-weight: 500;
+    }
+</style>
+{% endblock %}

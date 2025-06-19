@@ -1,0 +1,179 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Event Details{% endblock %}
+
+{% block content %}
+<h1>Event Details</h1>
+
+<nav style="margin-bottom: 2rem;">
+    <a href="/events">← Back to Events</a>
+</nav>
+
+<!-- Event Information -->
+<section>
+    <h2>Event Information</h2>
+    <dl>
+        <dt>Event ID:</dt>
+        <dd><code>{{ event.event_id }}</code></dd>
+        
+        <dt>Source:</dt>
+        <dd><span style="text-transform: capitalize;">{{ event.source_id.replace('_', ' ') }}</span></dd>
+        
+        <dt>Timestamp:</dt>
+        <dd>{{ event.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if event.timestamp else 'N/A' }}</dd>
+        
+        <dt>Created At:</dt>
+        <dd>{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if event.created_at else 'N/A' }}</dd>
+    </dl>
+</section>
+
+<!-- Event Data -->
+<section style="margin-top: 2rem;">
+    <h2>Event Data</h2>
+    <div id="event-data-container" style="background-color: var(--bg-secondary); padding: 1rem; border-radius: 8px; overflow-x: auto;">
+        <pre><code>{{ event.event_data | tojson(indent=2) }}</code></pre>
+    </div>
+</section>
+
+<!-- Triggered Listeners -->
+<section style="margin-top: 2rem;">
+    <h2>Triggered Listeners ({{ triggered_listeners | length }})</h2>
+    {% if triggered_listeners %}
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Action Type</th>
+                    <th>Status</th>
+                    <th>Execution Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for listener in triggered_listeners %}
+                <tr>
+                    <td>{{ listener.name }}</td>
+                    <td>
+                        {% if listener.action_type == "wake_llm" %}
+                            🤖 LLM Callback
+                        {% else %}
+                            📜 Script
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if listener.enabled %}
+                            <span style="color: var(--accent);">✓ Enabled</span>
+                        {% else %}
+                            <span style="color: var(--text-light);">✗ Disabled</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if listener.action_type == "script" and listener.last_execution %}
+                            {% if listener.last_execution.status == "done" %}
+                                <span style="color: green;">✓ Success</span>
+                            {% elif listener.last_execution.status == "failed" %}
+                                <span style="color: red;">✗ Failed</span>
+                            {% elif listener.last_execution.status == "processing" %}
+                                <span style="color: orange;">⟳ Processing</span>
+                            {% else %}
+                                <span style="color: var(--text-light);">⏳ Pending</span>
+                            {% endif %}
+                            {% if listener.last_execution.status == "failed" and listener.last_execution.error %}
+                                <br><small style="color: red;">{{ listener.last_execution.error[:100] }}...</small>
+                            {% endif %}
+                        {% else %}
+                            <span style="color: var(--text-light);">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="/event-listeners/{{ listener.id }}">View Listener</a>
+                        {% if listener.action_type == "script" and listener.last_execution %}
+                            <br><a href="/tasks?internal_id={{ listener.last_execution.id }}">View Task</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p>No listeners were triggered by this event.</p>
+    {% endif %}
+</section>
+
+<!-- Potential Listeners -->
+<section style="margin-top: 2rem;">
+    <h2>Potential Listeners ({{ potential_listeners | length }})</h2>
+    <p style="color: var(--text-light);">These are active listeners for {{ event.source_id }} events that didn't match this event.</p>
+    
+    {% if potential_listeners %}
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Match Conditions</th>
+                    <th>Action Type</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for listener in potential_listeners %}
+                <tr>
+                    <td>{{ listener.name }}</td>
+                    <td>
+                        <ul style="margin: 0; padding-left: 1.5rem; font-size: 0.9em;">
+                            {% for key, value in listener.match_conditions.items() %}
+                            <li><code>{{ key }} = {{ value }}</code></li>
+                            {% endfor %}
+                        </ul>
+                    </td>
+                    <td>
+                        {% if listener.action_type == "wake_llm" %}
+                            🤖 LLM Callback
+                        {% else %}
+                            📜 Script
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="/event-listeners/{{ listener.id }}">View Listener</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p>No other active listeners for {{ event.source_id }} events.</p>
+    {% endif %}
+</section>
+
+<style>
+    dl {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.5rem 1rem;
+    }
+    
+    dt {
+        font-weight: bold;
+        text-align: right;
+    }
+    
+    dd {
+        margin: 0;
+    }
+    
+    code {
+        background-color: var(--bg-secondary);
+        padding: 0.2rem 0.4rem;
+        border-radius: 3px;
+    }
+    
+    pre code {
+        background: none;
+        padding: 0;
+    }
+</style>
+{% endblock %}
