@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This proposal outlines the integration of Starlark as the single scripting language for Family Assistant. After careful analysis, we recommend using **Starlark for all scripting needs** - from simple event conditions to complex automations. This approach reduces complexity while providing a secure, performant, and LLM-friendly scripting environment.
+This proposal outlines the integration of Starlark as the single scripting language for Family Assistant. After careful analysis, we recommend using **Starlark for all scripting needs**- from simple event conditions to complex automations. This approach reduces complexity while providing a secure, performant, and LLM-friendly scripting environment.
 
 ## Why Scripting?
 
@@ -70,12 +70,13 @@ We'll use `starlark-pyo3` for the following reasons:
 
 ### Installation
 
-```toml
+```yaml
 [project]
 dependencies = [
     # ... existing dependencies
     "starlark-pyo3>=0.1.0",  # Rust-based Starlark implementation
 ]
+
 ```
 
 ## API Design
@@ -83,7 +84,8 @@ dependencies = [
 ### Script Context
 
 ```python
-# All scripts receive a context object with these APIs:
+
+# All scripts receive a context object with these APIs
 
 context = {
     # Event data (for event-triggered scripts)
@@ -93,7 +95,7 @@ context = {
         "data": dict,
         "metadata": dict
     },
-    
+
     # Time utilities
     "time": {
         "now": timestamp,
@@ -102,27 +104,28 @@ context = {
         "is_between(start_hour, end_hour)": bool,
         "since(timestamp)": seconds
     },
-    
+
     # Read-only database access
     "db": {
         "get_notes(query, limit=10)": list,
         "get_recent_events(type, hours=24)": list,
         "get_user_data(key)": any
     },
-    
+
     # State management
     "state": {
         "get(key, default=None)": any,
         "set(key, value)": None,
         "delete(key)": None
     },
-    
+
     # Tool execution (when enabled)
     "tools": {
         "execute(name, **args)": result,
         "is_available(name)": bool
     }
 }
+
 ```
 
 ## Usage Examples
@@ -131,8 +134,10 @@ context = {
 
 ```yaml
 event_listeners:
+
   - name: "High Temperature Alert"
     conditions:
+
       - source: home_assistant
         entity_id: sensor.outside_temperature
     # Simple one-line Starlark expression
@@ -140,16 +145,18 @@ event_listeners:
     action:
       type: notification
       message: "High temperature: {{event.data.state}}°C"
+
 ```
 
 ### Progressive Complexity
 
 ```python
+
 # Start simple - just a boolean expression
 event.temperature > 30
 
 # Add time restriction (same language!)
-event.temperature > 30 and time.hour >= 6 and time.hour <= 22  
+event.temperature > 30 and time.hour >= 6 and time.hour <= 22
 
 # Add state checking (still same language!)
 event.temperature > 30 and time.hour >= 6 and time.hour <= 22 and not state.get("alerted_today", False)
@@ -173,26 +180,29 @@ def should_alert():
         return False
     if state.get("alert_count_today", 0) >= 3:
         return False
-    
+
     # Check if temperature is rising
     recent = db.get_recent_events("temperature", hours=1)
     if len(recent) >= 2:
         trend = recent[-1].value - recent[0].value
         if trend < 2:  # Only alert if rising quickly
             return False
-    
+
     state.set("alert_count_today", state.get("alert_count_today", 0) + 1)
     return True
 
 should_alert()
+
 ```
 
 ### Complex Automation Script
 
 ```yaml
 event_listeners:
+
   - name: "Smart Motion Lights"
     conditions:
+
       - source: home_assistant
         entity_id: binary_sensor.motion
     action:
@@ -203,14 +213,14 @@ event_listeners:
         def handle_motion():
             room = event.metadata.get("room", "unknown")
             motion = event.data.state == "on"
-            
+
             if not motion:
                 return {"action": "none", "reason": "no motion"}
-            
+
             # Check context
             lights = tools.execute("get_lights", room=room)
             luminosity = tools.execute("get_sensor", entity="sensor.{}_luminosity".format(room))
-            
+
             # Decide based on conditions
             if time.hour >= 22 or time.hour < 6:
                 # Late night - minimal lighting
@@ -218,17 +228,18 @@ event_listeners:
                     tools.execute("turn_on_lights", room=room, brightness=10, color_temp=2000)
                     state.set("auto_lights_{}".format(room), time.now)
                     return {"action": "dim_lights", "brightness": 10}
-            
+
             elif luminosity and luminosity.value < 100:
                 # Dark enough to need lights
                 brightness = 100 if time.hour >= 8 and time.hour <= 20 else 60
                 tools.execute("turn_on_lights", room=room, brightness=brightness)
                 state.set("auto_lights_{}".format(room), time.now)
                 return {"action": "normal_lights", "brightness": brightness}
-            
+
             return {"action": "none", "reason": "bright enough"}
-        
+
         handle_motion()
+
 ```
 
 ## Implementation Architecture
@@ -236,49 +247,52 @@ event_listeners:
 ### Single Script Engine
 
 ```python
+
 # src/family_assistant/scripting/engine.py
 import starlark as sl
 from typing import Any, Dict, Optional
 
 class StarlarkEngine:
     """Unified Starlark execution engine"""
-    
+
     def __init__(self, db_context):
         self.db_context = db_context
         self._globals = sl.Globals.standard()
-        
+
     def evaluate(self, expression: str, context: Dict[str, Any]) -> Any:
         """Evaluate any Starlark code - simple or complex"""
         module = self._create_module(context)
         ast = sl.parse("script", expression)
         return sl.eval(module, ast, self._globals)
-    
+
     def _create_module(self, context: Dict[str, Any]) -> sl.Module:
         """Create Starlark module with context"""
         module = sl.Module()
-        
+
         # Add all context APIs
         module["event"] = context.get("event", {})
         module["time"] = TimeAPI()
         module["db"] = DatabaseAPI(self.db_context)
         module["state"] = StateAPI()
-        
+
         if context.get("allow_tools"):
             module["tools"] = ToolsAPI(context["tools_provider"])
-            
+
         return module
+
 ```
 
 ### Event Processor Integration
 
 ```python
+
 # Simplified - one language for all cases
 async def process_event_listener(listener, event):
     # Check filter condition (if present)
     if "filter" in listener:
         if not engine.evaluate(listener["filter"], {"event": event}):
             return
-    
+
     # Execute action
     action = listener.get("action", {})
     if action.get("type") == "script":
@@ -291,6 +305,7 @@ async def process_event_listener(listener, event):
             }
         )
         logger.info(f"Script result: {result}")
+
 ```
 
 ## Security Model
@@ -316,6 +331,7 @@ scripting:
     max_script_size: 50000
   security:
     allowed_tools:
+
       - get_weather
       - send_notification
       - get_lights
@@ -323,6 +339,7 @@ scripting:
     rate_limits:
       executions_per_minute: 30
       tool_calls_per_execution: 10
+
 ```
 
 ### Audit Logging

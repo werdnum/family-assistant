@@ -12,3 +12,8 @@ repos:
   rev: v0.45.0
   hooks:
     - id: markdownlint
+      exclude: |
+        (?x)^(
+          docs/python-telegram-bot-abridged\.md|
+          docs/python-telegram-bot-abridged-filtered\.md
+        )$

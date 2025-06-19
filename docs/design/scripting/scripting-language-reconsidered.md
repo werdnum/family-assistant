@@ -16,7 +16,7 @@ After realizing that Starlark's hermetic design principle conflicts with our nee
 
 ### Option 1: Lua (Reconsidered) ⭐ New Top Choice
 
-```lua
+```text
 -- Natural for automation with side effects
 if event.temperature > 30 and time.hour >= 6 then
     tools.send_notification("High temperature: " .. event.temperature .. "°C")
@@ -25,15 +25,16 @@ if event.temperature > 30 and time.hour >= 6 then
         state.set("ac_on", true)
     end
 end
+
 ```
 
 **Pros:**
 
-- **Designed for embedding** with controlled side effects
-- **Widely used** in game engines for exactly this pattern
-- **Simple syntax** that LLMs handle well
-- **Natural sandboxing** - only expose what you want
-- **Proven pattern** - Redis, Nginx, games all use Lua this way
+- **Designed for embedding**with controlled side effects
+- **Widely used**in game engines for exactly this pattern
+- **Simple syntax**that LLMs handle well
+- **Natural sandboxing**- only expose what you want
+- **Proven pattern**- Redis, Nginx, games all use Lua this way
 
 **Cons:**
 
@@ -50,13 +51,14 @@ if (event.temperature > 30 && time.hour >= 6) {
         state.set("ac_on", true);
     }
 }
+
 ```
 
 **Pros:**
 
-- **Async-native** - designed for I/O operations
-- **Ubiquitous** - most known language
-- **QuickJS** is small and embeddable
+- **Async-native**- designed for I/O operations
+- **Ubiquitous**- most known language
+- **QuickJS**is small and embeddable
 - **Natural for side effects**
 
 **Cons:**
@@ -70,16 +72,17 @@ if (event.temperature > 30 && time.hour >= 6) {
 Use Starlark as designed - scripts return action plans:
 
 ```python
+
 # Starlark script - pure logic, no side effects
 def process_event(event, context):
     actions = []
-    
+
     if event.temperature > 30 and context.time.hour >= 6:
         actions.append({
             "action": "notify",
             "message": "High temperature: {}°C".format(event.temperature)
         })
-        
+
         if not context.state.get("ac_on"):
             actions.append({"action": "turn_on_ac"})
             actions.append({
@@ -87,67 +90,74 @@ def process_event(event, context):
                 "key": "ac_on",
                 "value": True
             })
-    
+
     return actions
+
 ```
 
 **Pros:**
 
-- **Philosophically correct** - respects Starlark's design
-- **Purely deterministic** planning phase
-- **Safe parallelism** for evaluation
-- **Clear separation** of logic and effects
+- **Philosophically correct**- respects Starlark's design
+- **Purely deterministic**planning phase
+- **Safe parallelism**for evaluation
+- **Clear separation**of logic and effects
 
 **Cons:**
 
-- **Unnatural for LLM** - must return data structures, not execute
-- **More complex** - two-phase execution
-- **Verbose** - can't just call functions
+- **Unnatural for LLM**- must return data structures, not execute
+- **More complex**- two-phase execution
+- **Verbose**- can't just call functions
 
 ### Option 4: Minimal DSL
 
 Design exactly what we need:
 
-```
+```text
 WHEN event.temperature > 30 AND time.hour BETWEEN 6 AND 22:
     NOTIFY "High temperature: {event.temperature}°C"
     IF NOT state.ac_on:
         CALL turn_on_ac
         SET state.ac_on = true
+
 ```
 
 **Pros:**
 
-- **Purpose-built** for our use case
+- **Purpose-built**for our use case
 - **No impedance mismatch**
 - **Easiest to secure**
 
 **Cons:**
 
 - **High implementation effort**
-- **Yet another language** for LLM
+- **Yet another language**for LLM
 - **Limited ecosystem**
 
 ## Recommendation Revised
 
 ### For Simple Conditions: Still Starlark (Hermetic)
+
 ```python
+
 # Pure boolean expressions are fine
 event.temperature > 30 and time.hour >= 6 and not state.get("alerted_today")
+
 ```
 
 ### For Automation Scripts: Lua
 
 **Why Lua:**
 
-1. **Designed for this** - Embedding with controlled side effects is Lua's sweet spot
-2. **Proven pattern** - Games, Redis, Nginx all use Lua exactly this way
-3. **Simple enough** - LLMs can learn it easily
-4. **Natural control** - We expose exactly the functions we want
-5. **Lupa is mature** - Good Python integration
+1. **Designed for this**- Embedding with controlled side effects is Lua's sweet spot
+2. **Proven pattern**- Games, Redis, Nginx all use Lua exactly this way
+3. **Simple enough**- LLMs can learn it easily
+4. **Natural control**- We expose exactly the functions we want
+5. **Lupa is mature**- Good Python integration
 
 **Implementation approach:**
+
 ```python
+
 # Python side
 import lupa
 
@@ -161,11 +171,12 @@ lua.globals().state = state_api
 
 # Execute
 result = lua.execute(script_code)
+
 ```
 
 ### Architecture
 
-```
+```text
 ┌─────────────────────────┐
 │   Event Listener        │
 ├─────────────────────────┤
@@ -173,11 +184,12 @@ result = lua.execute(script_code)
 ├─────────────────────────┤
 │ Action Script (Lua)     │ ← Side effects, tool calls
 └─────────────────────────┘
+
 ```
 
 Or simpler:
 
-```
+```text
 ┌─────────────────────────┐
 │   Event Listener        │
 ├─────────────────────────┤
@@ -185,16 +197,17 @@ Or simpler:
 │ (returns true/false     │
 │  and executes actions)  │
 └─────────────────────────┘
+
 ```
 
 ## Why Not Starlark for Everything?
 
 Because using Starlark with side effects is:
 
-1. **Against its design philosophy** - It's meant to be hermetic
-2. **Losing its benefits** - No more determinism or safe parallelism  
-3. **Making it worse Python** - If we want side effects, use something designed for it
-4. **Creating impedance mismatch** - Fighting the tool's nature
+1. **Against its design philosophy**- It's meant to be hermetic
+2. **Losing its benefits**- No more determinism or safe parallelism
+3. **Making it worse Python**- If we want side effects, use something designed for it
+4. **Creating impedance mismatch**- Fighting the tool's nature
 
 ## Final Recommendation
 

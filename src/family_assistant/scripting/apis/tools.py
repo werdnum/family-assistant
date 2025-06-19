@@ -208,7 +208,7 @@ class ToolsAPI:
                     "Security: Attempted execution of denied tool '%s' from Starlark script",
                     tool_name,
                 )
-                raise Exception(error_msg)
+                raise PermissionError(error_msg)
 
             logger.info(
                 f"Executing tool '{tool_name}' from Starlark with args: {kwargs}"
@@ -229,7 +229,7 @@ class ToolsAPI:
         except Exception as e:
             error_msg = f"Error executing tool '{tool_name}': {str(e)}"
             logger.error(error_msg, exc_info=True)
-            raise Exception(error_msg) from e
+            raise RuntimeError(error_msg) from e
 
     def execute_json(self, tool_name: str, args_json: str) -> str:
         """
@@ -255,7 +255,7 @@ class ToolsAPI:
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON arguments: {str(e)}"
             logger.error(error_msg)
-            raise Exception(error_msg) from e
+            raise ValueError(error_msg) from e
 
     def __del__(self) -> None:
         """Clean up resources when the API is destroyed."""

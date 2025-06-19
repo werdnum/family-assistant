@@ -47,6 +47,7 @@ The web layer follows a modular FastAPI structure with clear separation of conce
 The `routers/` directory contains modular FastAPI routers organized by functionality:
 
 #### API Endpoints (`/api` prefix)
+
 - **`api.py`**: Main API router that aggregates other API routers
 - **`chat_api.py`**: Chat completion endpoints for conversational AI interactions
 - **`documents_api.py`**: Document upload and management API endpoints
@@ -55,6 +56,7 @@ The `routers/` directory contains modular FastAPI routers organized by functiona
 - **`webhooks.py`**: Webhook endpoints for external integrations
 
 #### Web UI Endpoints (no prefix)
+
 - **`documentation.py`**: Document viewing and management UI
 - **`documents_ui.py`**: Document upload interface
 - **`history.py`**: Message history and conversation management UI
@@ -65,32 +67,38 @@ The `routers/` directory contains modular FastAPI routers organized by functiona
 - **`vector_search.py`**: Vector similarity search interface
 
 #### Utility Endpoints
+
 - **`health.py`**: Health check and status endpoints
 
 ## Key Features
 
 ### Authentication System
+
 - **OIDC Integration**: Web-based authentication using OpenID Connect providers
 - **API Tokens**: Bearer token authentication for API access with configurable expiration
 - **Public Paths**: Configurable endpoints that bypass authentication (health checks, webhooks)
 - **Middleware**: Request-level authentication with proper error handling
 
 ### Chat API
+
 - **Multi-Profile Support**: Route requests to different processing service profiles
 - **Conversation Management**: Maintain conversation context with unique conversation IDs
 - **Streaming Support**: Real-time response streaming for better user experience
 
 ### Document Management
+
 - **Upload Interface**: Web UI and API for document ingestion
 - **Processing Pipeline**: Automatic document indexing and embedding generation
 - **Metadata Extraction**: Support for various document types with metadata parsing
 
 ### Vector Search
+
 - **Hybrid Search**: Combines vector similarity with full-text search using RRF (Reciprocal Rank Fusion)
 - **Multiple Embedding Types**: Support for different embedding models and strategies
 - **Search Interface**: Both API and web UI for semantic search capabilities
 
 ### Tool Integration
+
 - **MCP Support**: Integration with Model Context Protocol for external tools
 - **Tool Confirmation**: Safety mechanism for destructive operations
 - **Testing Interface**: Web UI for testing tool functionality
@@ -106,23 +114,27 @@ The web layer is configured through:
 ## Development Notes
 
 ### Adding New Endpoints
+
 1. Create router file in appropriate subdirectory of `routers/`
 2. Define Pydantic models in `models.py` if needed
 3. Import and register router in `app_creator.py`
 4. Add authentication requirements if needed
 
 ### Authentication Flow
+
 1. Requests hit `AuthMiddleware` for path-based auth checking
 2. OIDC users get session-based authentication
 3. API users provide Bearer tokens validated against database
 4. Public paths bypass authentication entirely
 
 ### Template System
+
 - Jinja2 templates located in `../templates/`
 - Base template provides common layout and styling
 - Context includes configuration, user info, and runtime data
 
 ### Static Files
+
 - CSS and JavaScript served from `../static/`
 - Custom styling in `css/custom.css`
 - Interactive functionality in various JS files
@@ -130,6 +142,7 @@ The web layer is configured through:
 ## Testing
 
 Web layer components should be tested through:
+
 - **Integration Tests**: Full request/response cycles in `tests/functional/web/`
 - **Router Tests**: Individual endpoint testing with mocked dependencies
 - **Authentication Tests**: Auth flow validation with test tokens

@@ -65,23 +65,24 @@ async def tool_name_tool(
 ) -> str:
     """
     Implementation of the tool.
-    
+
     Args:
         exec_context: The tool execution context
         param1: Description
         param2: Description with default
-        
+
     Returns:
         A string result (all tools must return strings)
     """
     logger.info(f"Executing tool with param1={param1}, param2={param2}")
-    
+
     # Tool implementation here
     # Access database: exec_context.db_context
     # Access user info: exec_context.user_name, exec_context.conversation_id
     # Send messages: exec_context.chat_interface
-    
+
     return "Success message or result"
+
 ```
 
 ### 2. Export the Tool in `__init__.py`
@@ -89,6 +90,7 @@ async def tool_name_tool(
 Add imports and exports to `src/family_assistant/tools/__init__.py`:
 
 ```python
+
 # Add import
 from family_assistant.tools.something import (
     SOMETHING_TOOLS_DEFINITION,
@@ -110,9 +112,11 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
 # Add to TOOLS_DEFINITION list
 TOOLS_DEFINITION: list[dict[str, Any]] = (
     # ... existing definitions ...
+
     + SOMETHING_TOOLS_DEFINITION
     # ... rest ...
 )
+
 ```
 
 ### 3. Enable the Tool in Configuration
@@ -122,23 +126,27 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
 Add the tool name to `config.yaml` under the appropriate profile's `enable_local_tools` list:
 
 ```yaml
+
 # config.yaml
 default_profile_settings:
   tools_config:
     enable_local_tools:
       # ... existing tools ...
+
       - "tool_name"  # Add your new tool here
 
 service_profiles:
+
   - id: "default_assistant"
     # This profile inherits from default_profile_settings
     # so it will have access to "tool_name"
-    
+
   - id: "browser_profile"
     tools_config:  # This REPLACES the default tools_config
       enable_local_tools:
         # Only tools listed here will be available
         # "tool_name" is NOT available unless listed
+
 ```
 
 **Note**: If `enable_local_tools` is not specified for a profile, ALL tools defined in the code are enabled by default. This dual registration system provides security and flexibility - different profiles can have different tool access.

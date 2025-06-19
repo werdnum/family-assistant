@@ -32,13 +32,17 @@ The performance argument (microseconds vs milliseconds) is largely irrelevant:
 ### 3. Starlark is Just as Simple for Simple Cases
 
 CEL expression:
-```cel
+
+```text
 event.temperature > 30 && time.hour >= 6 && time.hour <= 22
+
 ```
 
 Starlark expression:
+
 ```python
 event.temperature > 30 and time.hour >= 6 and time.hour <= 22
+
 ```
 
 They're virtually identical! Starlark doesn't require functions or complex logic for simple conditions.
@@ -67,6 +71,7 @@ I can't find examples of successful systems using two different languages for "s
 ### 1. Unified Mental Model
 
 ```python
+
 # Simple condition (what we thought needed CEL)
 event.state > 30 and time.hour >= 6
 
@@ -86,6 +91,7 @@ def should_alert():
     return len(recent) < 3  # Only alert if not consistently hot
 
 should_alert()
+
 ```
 
 The progression from simple to complex is natural, no language switch needed.
@@ -97,51 +103,64 @@ class StarlarkEngine:
     def evaluate_condition(self, expr: str, context: dict) -> bool:
         """Evaluate a boolean expression"""
         return self.execute(expr, context)
-    
+
     def execute_action(self, script: str, context: dict) -> Any:
         """Execute an action script"""
         return self.execute(script, context)
-    
+
     def execute(self, code: str, context: dict) -> Any:
         """Single execution method for all cases"""
         # One parser, one evaluator, one context binding
+
 ```
 
 ### 3. Better for LLM Prompting
 
 Instead of:
+
 ```yaml
 system_prompt: |
   For simple conditions, use CEL syntax (C-style expressions).
   For complex logic, use Starlark (Python-like syntax).
   CEL examples: event.value > 30, time.hour >= 6
   Starlark examples: def process(): ...
+
 ```
 
 We have:
+
 ```yaml
 system_prompt: |
   Use Starlark (Python-like syntax) for all automation logic.
   Simple: event.value > 30 and time.hour >= 6
   Complex: def process(): ...
+
 ```
 
 ### 4. Natural Feature Growth
 
 Starting simple:
+
 ```python
+
 # Version 1: Basic temperature alert
 event.temperature > 30
+
 ```
 
 Growing organically:
+
 ```python
+
 # Version 2: Add time restriction (no language change!)
 event.temperature > 30 and time.hour >= 6 and time.hour <= 22
+
 ```
 
 More complex:
+
 ```python
+
 # Version 3: Add rate limiting (still same language!)
 temp = event.temperature
 if temp > 30 and time.is_between(6, 22):
@@ -153,6 +172,7 @@ if temp > 30 and time.is_between(6, 22):
         False
 else:
     False
+
 ```
 
 ## Implementation Simplification
@@ -160,25 +180,29 @@ else:
 ### Before (Two Languages)
 
 ```python
+
 # In event processor
 if listener.get("cel_condition"):
     if not evaluate_cel(listener["cel_condition"], context):
         return
-        
+
 if listener.get("action_type") == "script":
     execute_starlark(listener["script"], context)
+
 ```
 
 ### After (Starlark Only)
 
 ```python
-# In event processor  
+
+# In event processor
 if listener.get("condition"):
     if not starlark_eval(listener["condition"], context):
         return
-        
+
 if listener.get("action"):
     starlark_exec(listener["action"], context)
+
 ```
 
 ## Security is Equivalent

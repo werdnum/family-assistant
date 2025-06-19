@@ -294,23 +294,200 @@ symbex 'handle_*' -f src/family_assistant/telegram_bot.py
 symbex -d src/family_assistant --function -s
 ```
 
+### Making large-scale changes: Prefer `ast-grep`
+
+`ast-grep` is available for making mechanical syntactic changes and is the tool of choice in most cases.
+
+### Removing a Keyword Argument
+
+**Task:** Reliably remove the `cache=...` keyword argument from all calls to `my_function`, regardless of its position.
+*(This requires `--inline-rules` because a single pattern cannot handle all comma variations.)*
+
+**Before:**
+
+```python
+my_function(arg1, cache=True, other_arg=123)
+my_function(cache=True, other_arg=123)
+my_function(cache=True)
+```
+
+**Command:**
+
+```bash
+ast-grep -U --inline-rules '
+id: remove-cache-kwarg-robust
+language: python
+rule:
+  any:
+    - pattern: my_function($$$START, cache=$_, $$$END)
+      fix: my_function($$$START, $$$END)
+    - pattern: my_function(cache=$_, $$$END)
+      fix: my_function($$$END)
+    - pattern: my_function(cache=$_)
+      fix: my_function()
+' .
+```
+
+**After:**
+
+```python
+my_function(arg1, other_arg=123)
+my_function(other_arg=123)
+my_function()
+```
+
+### Changing Module Method to Instance Method
+
+**Task:** Change calls from `mymodule.mymethod(object, ...)` to `object.mymethod(...)`.
+*(This is a direct transformation suitable for the simpler `-p`/`-r` flags.)*
+
+**Before:**
+
+```python
+my_instance = MyClass()
+mymodule.mymethod(my_instance, 'arg1', kwarg='value')
+```
+
+**Command:**
+
+```bash
+ast-grep -U -p 'mymodule.mymethod($OBJECT, $$$ARGS)' -r '$OBJECT.mymethod($$$ARGS)' .
+```
+
+**After:**
+
+```python
+my_instance = MyClass()
+my_instance.mymethod('arg1', kwarg='value')
+```
+
+### Adding a Keyword Argument Conditionally
+
+**Task:** Add `timeout=10` to `requests.get()` calls, but only if they don't already have one.
+*(This requires `--inline-rules` to use the relational `not` and `has` operators.)*
+
+**Before:**
+
+```python
+requests.get("https://api.example.com/status")
+requests.get("https://api.example.com/data", timeout=5)
+```
+
+**Command:**
+
+```bash
+ast-grep -U --inline-rules '
+id: add-timeout-to-requests-get
+language: python
+rule:
+  pattern: requests.get($$$ARGS)
+  not:
+    has:
+      pattern: timeout = $_
+  fix: requests.get($$$ARGS, timeout=10)
+' .
+```
+
+**After:**
+
+```python
+requests.get("https://api.example.com/status", timeout=10)
+requests.get("https://api.example.com/data", timeout=5)
+```
+
+### Unifying Renamed Functions (Order-Independent)
+
+**Task:** Unify `send_json_payload(...)` and `post_data_as_json(...)` to `api_client.post(...)`, regardless of keyword argument order.
+*(This requires `--inline-rules` to handle multiple conditions (`any`, `all`) and order-insensitivity (`has`).)*
+
+**Before:**
+
+```python
+send_json_payload(endpoint="/users", data={"name": "Alice"})
+post_data_as_json(json_body={"name": "Bob"}, url="/products")
+```
+
+**Command:**
+
+```bash
+ast-grep -U --inline-rules '
+id: unify-json-posting-functions-robust
+language: python
+rule:
+  any:
+    - all:
+        - pattern: send_json_payload($$$_)
+        - has: {pattern: endpoint = $URL}
+        - has: {pattern: data = $PAYLOAD}
+    - all:
+        - pattern: post_data_as_json($$$_)
+        - has: {pattern: url = $URL}
+        - has: {pattern: json_body = $PAYLOAD}
+  fix: api_client.post(url=$URL, json=$PAYLOAD)
+' .
+```
+
+**After:**
+
+```python
+api_client.post(url="/users", json={"name": "Alice"})
+api_client.post(url="/products", json={"name": "Bob"})
+```
+
+### Modernizing `unittest` Assertions to `pytest`
+
+**Task:** Convert `unittest` style assertions to modern `pytest` `assert` statements.
+*(Using `--inline-rules` is best here to bundle multiple, related transformations into a single command.)*
+
+**Before:**
+
+```python
+self.assertEqual(result, 4)
+self.assertTrue(is_active)
+self.assertIsNone(value)
+```
+
+**Command:**
+
+```bash
+ast-grep -U --inline-rules '
+- id: refactor-assertEqual
+  language: python
+  rule: {pattern: self.assertEqual($A, $B), fix: "assert $A == $B"}
+- id: refactor-assertTrue
+  language: python
+  rule: {pattern: self.assertTrue($A), fix: "assert $A"}
+- id: refactor-assertIsNone
+  language: python
+  rule: {pattern: self.assertIsNone($A), fix: "assert $A is None"}
+' .
+```
+
+**After:**
+
+```python
+assert result == 4
+assert is_active
+assert value is None
+```
+
 ## Architecture Overview
 
 Family Assistant is an LLM-powered application designed to centralize family information management and automate tasks. It provides multiple interfaces (Telegram, Web UI, Email webhooks) and uses a modular architecture built with Python, FastAPI, and SQLAlchemy.
 
 ### Core Components
 
-1. **Entry Point (`__main__.py`)**: 
+1. **Entry Point (`__main__.py`)**:
    - Handles configuration loading from multiple sources (defaults → config.yaml → environment variables → CLI args)
    - Manages application lifecycle through the `Assistant` class
    - Sets up signal handlers for graceful shutdown
 
-2. **Assistant (`assistant.py`)**: 
+2. **Assistant (`assistant.py`)**:
    - Orchestrates application lifecycle and dependency injection
    - Wires up all core components (LLM clients, tools, processing services, storage, etc.)
    - Manages service startup/shutdown coordination
 
-3. **Processing Layer (`processing.py`)**: 
+3. **Processing Layer (`processing.py`)**:
    - Core business logic for handling chat interactions
    - Manages conversation history and context aggregation
    - Supports multiple service profiles with different LLM models, tools, and prompts
@@ -321,7 +498,7 @@ Family Assistant is an LLM-powered application designed to centralize family inf
    - **Web UI (`web/`)**: FastAPI-based web interface with routers for various features
    - **Email Webhook**: Receives and processes emails via `/webhook/mail`
 
-5. **Storage Layer (`storage/`)**: 
+5. **Storage Layer (`storage/`)**:
    - Repository pattern architecture with SQLAlchemy (supports SQLite and PostgreSQL)
    - **DatabaseContext**: Central hub providing access to all repositories
    - **Repository Classes** (`storage/repositories/`):
@@ -336,30 +513,30 @@ Family Assistant is an LLM-powered application designed to centralize family inf
    - Includes retry logic, connection pooling, and transaction management
    - Database schema managed by Alembic migrations
 
-6. **Tools System (`tools/`)**: 
+6. **Tools System (`tools/`)**:
    - Modular tool architecture with local Python functions and MCP (Model Context Protocol) integration
    - Tools organized by category: notes, calendar, documents, communication, tasks, etc.
    - Supports tool confirmation requirements and delegation security levels
    - Composite tool provider system for flexible tool management
 
-7. **Task Queue (`task_worker.py`)**: 
+7. **Task Queue (`task_worker.py`)**:
    - Database-backed async task queue for background processing
    - Supports scheduled tasks, retries with exponential backoff, and recurring tasks
    - Handles LLM callbacks, email indexing, embedding generation, and system maintenance
 
-8. **Document Indexing (`indexing/`)**: 
+8. **Document Indexing (`indexing/`)**:
    - Pipeline-based document processing system
    - Supports multiple document types (PDFs, emails, web pages, notes)
    - Includes text extraction, chunking, embedding generation, and vector storage
    - Configurable processing pipeline with various processors
 
-9. **Event System (`events/`)**: 
+9. **Event System (`events/`)**:
    - Event-driven architecture for system notifications
    - Supports multiple event sources (Home Assistant, indexing pipeline)
    - Event listeners with flexible matching conditions and rate limiting
    - Event storage and processing with action execution
 
-10. **Context Providers (`context_providers.py`)**: 
+10. **Context Providers (`context_providers.py`)**:
     - Pluggable system for injecting dynamic context into LLM prompts
     - Includes providers for calendar events, notes, weather, known users, and Home Assistant
 
@@ -407,8 +584,13 @@ Family Assistant is an LLM-powered application designed to centralize family inf
 - ALWAYS make a plan before you make any nontrivial changes.
 - ALWAYS ask the user to approve the plan before you start work. In particular, you MUST stop and ask for approval before doing major rearchitecture or reimplementations, or making technical decisions that may require judgement calls.
 - Significant changes should have the plan written to docs/design for approval and future documentation.
-- When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the assistant how it works in the system prompt in prompts.yaml. This is NOT optional or low priority.
+- When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the assistant how it works in the system prompt in prompts.yaml or in tool descriptions. This is NOT optional or low priority.
 - When solving a problem, always consider whether there's a better long term fix and ask the user whether they prefer the tactical pragmatic fix or the "proper" long term fix. Look out for design or code smells. Refactoring is relatively cheap in this project - cheaper than leaving something broken.
+
+### Planning guidelines
+
+* Always break plans down into meaningful milestones that deliver incremental value, or at least which can be tested independently. This is key to maintaining momentum.
+* Do NOT give timelines in weeks or other units of time. Development on this project does not proceed in this manner as a hobby project predominantly developed using LLM assistance tools like Claude Code.
 
 ### Adding New Tools
 
@@ -425,11 +607,13 @@ See the detailed guide in `src/family_assistant/tools/README.md` for complete in
    - If `enable_local_tools` is not specified for a profile, ALL tools are enabled by default
 
 This dual registration system provides:
+
 - **Security**: Different profiles can have different tool access (e.g., browser profile has only browser tools)
 - **Flexibility**: Each profile can be tailored with specific tools without code changes
 - **Safety**: Destructive tools can be excluded from certain profiles
 
 Example:
+
 ```yaml
 # config.yaml
 service_profiles:
@@ -458,6 +642,7 @@ When adding new web UI endpoints that serve HTML pages:
 - **Important**: When adding new imports, add the code that uses the import first, then add the import. Otherwise, a linter running in another tab might remove the import as unused before you add the code that uses it.
 - Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL text may break across engines.
 - **Database Access Pattern**: Use the repository pattern via DatabaseContext:
+
   ```python
   from family_assistant.storage.context import DatabaseContext
   
@@ -470,6 +655,7 @@ When adding new web UI endpoints that serve HTML pages:
 
   Avoid using the old module-level functions directly.
 - **SQLAlchemy Count Queries**: When using `func.count()` in SQLAlchemy queries, always use `.label("count")` to give the column an alias:
+
   ```python
   query = select(func.count(table.c.id).label("count"))
   row = await db_context.fetch_one(query)
@@ -477,11 +663,15 @@ When adding new web UI endpoints that serve HTML pages:
   ```
 
   This avoids KeyError when accessing the result.
+
 - **SQLAlchemy func imports**: To avoid pylint errors about `func.count()` and `func.now()` not being callable, import func as:
+
   ```python
   from sqlalchemy.sql import functions as func
   ```
+
   instead of:
+
   ```python
   from sqlalchemy import func
   ```
@@ -538,6 +728,7 @@ The project provides several pytest fixtures for testing. These are defined in v
 ### Mock Utilities
 
 - **`RuleBasedMockLLMClient`**: A mock LLM client that returns responses based on rules. Useful for testing specific scenarios without API calls. Example:
+
   ```python
   mock_llm = RuleBasedMockLLMClient(
       rules=[

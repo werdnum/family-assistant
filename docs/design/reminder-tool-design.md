@@ -3,6 +3,7 @@
 ## Problem Statement
 
 The current callback tool with `skip_if_user_responded` parameter is not being used consistently by the LLM for reminder functionality. Common issues include:
+
 - LLM sets `skip_if_user_responded=true` on initial reminders, causing them to never be sent
 - LLM forgets to schedule follow-up reminders in callback handlers
 - Confusion between generic callbacks and reminder-specific functionality
@@ -23,6 +24,7 @@ schedule_reminder(
     follow_up_interval: str = "30 minutes",  # Time between follow-ups (e.g., "30 minutes", "1 hour")
     max_follow_ups: int = 2,  # Maximum number of follow-up reminders
 ) -> dict
+
 ```
 
 ### Key Differences from Callback Tool
@@ -37,6 +39,7 @@ schedule_reminder(
 #### Database Schema
 
 Add to the existing tasks table:
+
 - `task_type`: Use new type `"reminder"` (vs existing `"llm_callback"`)
 - `payload`: Store reminder configuration including follow-up settings
 - `metadata`: Track reminder state (attempts, last_sent, user_acknowledged)
@@ -61,6 +64,7 @@ Add to the existing tasks table:
 #### LLM Wake-up for Follow-ups
 
 When a follow-up is triggered:
+
 - System wakes the LLM with context about the original reminder
 - LLM can see conversation history since last reminder
 - LLM crafts appropriate follow-up message based on context
@@ -73,6 +77,7 @@ When a follow-up is triggered:
 Both reminder and callback tools can share the same underlying task implementation with different configurations:
 
 ```python
+
 # Unified task structure
 {
     "task_type": "llm_trigger",  # Single type for both
@@ -87,15 +92,18 @@ Both reminder and callback tools can share the same underlying task implementati
         }
     }
 }
+
 ```
 
 Benefits of shared implementation:
+
 - Reuse existing `handle_llm_callback` logic
 - Single code path for LLM wake-up
 - Easier to maintain and test
 - Natural migration path
 
 The task handler would:
+
 1. Wake LLM with appropriate context
 2. For reminders with follow-up enabled:
    - Check if user responded since last trigger
@@ -105,27 +113,34 @@ The task handler would:
 #### LLM Context for Wake-ups
 
 **For Callbacks:**
+
 ```
 System: Scheduled callback triggered
 Context: [original callback context provided by LLM]
+
 ```
 
 **For Reminders (initial):**
+
 ```
 System: Reminder triggered
 Task: Send a reminder about: [original reminder message]
+
 ```
 
 **For Reminders (follow-up):**
+
 ```
 System: Follow-up reminder triggered (attempt 2 of 3)
 Original reminder: [original reminder message]
 Note: User has not responded to previous reminder sent at [timestamp]
+
 ```
 
 ### Changes to Existing Tools
 
 #### Callback Tool
+
 - Remove `skip_if_user_responded` parameter
 - Update description to clarify it's for generic LLM re-engagement, not reminders
 - Examples should focus on non-reminder use cases (e.g., "check back on long-running task")
@@ -135,14 +150,16 @@ Note: User has not responded to previous reminder sent at [timestamp]
 Replace current reminder instructions (lines 17-18 in prompts.yaml) with:
 
 ```yaml
-  * For reminders:
-    * Use the `schedule_reminder` tool when users ask to be reminded of something
-    * Set `follow_up=true` for important reminders or when user says "don't let me forget"
-    * Use `schedule_future_callback` for continuing work or checking on tasks, not for reminders
-    * Examples:
+  *For reminders:
+    *Use the `schedule_reminder` tool when users ask to be reminded of something
+    *Set `follow_up=true` for important reminders or when user says "don't let me forget"
+    *Use `schedule_future_callback` for continuing work or checking on tasks, not for reminders
+    *Examples:
+
       - "Remind me to call mom" → schedule_reminder with follow_up=false
       - "Don't let me forget the meeting" → schedule_reminder with follow_up=true
       - "Check if the download finished in an hour" → schedule_future_callback
+
 ```
 
 ### Migration Strategy
@@ -155,17 +172,22 @@ Replace current reminder instructions (lines 17-18 in prompts.yaml) with:
 ### Tool Usage Examples
 
 #### Simple Reminder
+
 ```python
+
 # User: "Remind me to take my medication at 3pm"
 schedule_reminder(
     reminder_time="2024-01-10T15:00:00-05:00",
     message="Time to take your medication!",
     follow_up=False
 )
+
 ```
 
 #### Persistent Reminder
+
 ```python
+
 # User: "Don't let me forget to submit the report today"
 schedule_reminder(
     reminder_time="2024-01-10T14:00:00-05:00",
@@ -174,6 +196,7 @@ schedule_reminder(
     follow_up_interval="1 hour",
     max_follow_ups=3
 )
+
 ```
 
 ### Future Enhancements
@@ -204,6 +227,7 @@ schedule_reminder(
 ### Test Implementation
 
 A comprehensive test `test_schedule_reminder_with_follow_up` has been added to `tests/functional/test_smoke_callback.py` that covers:
+
 - Scheduling a reminder with follow-up enabled
 - Verifying reminder configuration in database
 - Executing initial reminder and verifying message sent

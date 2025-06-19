@@ -28,24 +28,27 @@ The current scripting system uses Starlark, a Python-like configuration language
 ### Technology Stack
 
 **Recommended**: `lupa` (LuaJIT integration)
+
 - PyPI package embedding LuaJIT
 - Bi-directional Python ↔ Lua object conversion
 - Coroutine support for async patterns
 - Mature and well-maintained
 
 **Alternatives Considered**:
+
 - `lua-python3`: Pure Python implementation (slower, limited features)
 - CFFI/ctypes: Direct Lua binding (complex, platform-specific)
 
 ### Component Design
 
-```
+```text
 src/family_assistant/scripting/
 ├── lua_engine.py       # Main Lua execution engine
 ├── lua_sandbox.py      # Security and sandboxing implementation
 ├── lua_tools_bridge.py # Bridge for tool access from Lua
 ├── lua_stdlib.py       # Standard library additions and overrides
 └── lua_utils.py        # Type conversion and utility functions
+
 ```
 
 ### Implementation Architecture
@@ -53,7 +56,7 @@ src/family_assistant/scripting/
 ```python
 class LuaEngine:
     """Main Lua scripting engine with sandboxing and tool integration."""
-    
+
     def __init__(self, config: LuaConfig):
         self.lua = lupa.LuaRuntime(
             unpack_returned_tuples=True,
@@ -63,32 +66,33 @@ class LuaEngine:
         self._setup_sandbox()
         self._setup_tools_bridge()
         self._setup_stdlib()
-    
+
     def _setup_sandbox(self):
         """Remove dangerous Lua functions and modules."""
         sandbox_script = """
         -- Remove file system access
         os = nil
         io = nil
-        
+
         -- Remove module loading
         require = nil
         loadfile = nil
         dofile = nil
         package = nil
-        
+
         -- Remove debugging capabilities
         debug = nil
-        
+
         -- Limit string metatable access
         getmetatable('').__index = nil
         """
         self.lua.execute(sandbox_script)
-    
+
     def _setup_tools_bridge(self):
         """Set up Family Assistant tools access from Lua."""
         # Similar to current ToolsAPI implementation
         pass
+
 ```
 
 ## Migration Requirements
@@ -96,6 +100,7 @@ class LuaEngine:
 ### 1. Core Engine Development
 
 **Tasks**:
+
 - Implement `LuaEngine` with lupa integration
 - Set up Lua runtime configuration
 - Implement execution timeout mechanism using debug hooks
@@ -106,12 +111,14 @@ class LuaEngine:
 ### 2. Security Sandbox
 
 **Tasks**:
+
 - Remove dangerous Lua built-ins (os, io, require, etc.)
 - Implement attribute access filtering
 - Set up execution limits (memory, instructions)
 - Create security test suite
 
 **Key Challenges**:
+
 - Lua provides more access by default than Starlark
 - Must carefully audit all standard library functions
 - Need to prevent metatable manipulation attacks
@@ -121,6 +128,7 @@ class LuaEngine:
 ### 3. Tools Bridge Implementation
 
 **Async-to-Sync Bridge Design**:
+
 ```python
 class LuaToolsBridge:
     def __init__(self, tools_provider, context):
@@ -129,7 +137,7 @@ class LuaToolsBridge:
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop)
         self._thread.start()
-    
+
     def execute_tool(self, tool_name, **kwargs):
         """Execute async tool from sync Lua context."""
         future = asyncio.run_coroutine_threadsafe(
@@ -137,6 +145,7 @@ class LuaToolsBridge:
             self._loop
         )
         return future.result(timeout=30)
+
 ```
 
 **Effort**: 3-4 days
@@ -156,6 +165,7 @@ class LuaToolsBridge:
 | async function | coroutine | Wrapper needed |
 
 **Special Handling**:
+
 - JSON serialization/deserialization
 - Date/time objects
 - Complex tool return values
@@ -165,7 +175,8 @@ class LuaToolsBridge:
 ### 5. Feature Parity Implementation
 
 **Required Lua Standard Library Additions**:
-```lua
+
+```text
 -- JSON support
 json = {
     encode = function(value) ... end,
@@ -180,6 +191,7 @@ string.trim = function(str) ... end
 table.keys = function(t) ... end
 table.values = function(t) ... end
 table.merge = function(t1, t2) ... end
+
 ```
 
 **Effort**: 2 days
@@ -187,6 +199,7 @@ table.merge = function(t1, t2) ... end
 ### 6. Testing & Edge Cases
 
 **Test Categories**:
+
 - Security sandbox verification
 - Tool execution correctness
 - Type conversion edge cases
@@ -199,6 +212,7 @@ table.merge = function(t1, t2) ... end
 ### 7. Migration Utilities
 
 **Requirements**:
+
 - Starlark to Lua syntax converter (basic)
 - Script validation tool
 - Side-by-side execution comparison
@@ -306,14 +320,14 @@ table.merge = function(t1, t2) ... end
 
 ## Recommendations
 
-### Proceed with Migration If:
+### Proceed with Migration If
 
 1. **Performance Critical**: Current scripts hit performance limitations
 2. **Feature Requirements**: Need advanced language features (coroutines, metatables)
 3. **User Base**: Users already familiar with Lua or requesting it
 4. **Long-term Vision**: Planning to build extensive scripting ecosystem
 
-### Stay with Starlark If:
+### Stay with Starlark If
 
 1. **Current System Adequate**: No pressing limitations in current implementation
 2. **Security Paramount**: Prefer built-in security over manual implementation

@@ -9,11 +9,13 @@ This document analyzes where a scripting language could be integrated into the f
 ### 1. Event Listener Actions (Highest Value)
 
 **Current State:**
+
 - Event listeners currently only support `wake_llm` action type
 - Actions are hardcoded in `EventProcessor._execute_action_in_context()` (lines 194-242)
 - The design document mentions future action types: `tool_call`, `notification`, `script`
 
 **Integration Opportunity:**
+
 - Add a `script` action type that executes user-defined scripts
 - Scripts could access event data and perform custom actions
 - Would enable complex automation logic without waking the LLM
@@ -21,6 +23,7 @@ This document analyzes where a scripting language could be integrated into the f
 **Code Reference:**
 
 ```python
+
 # src/family_assistant/events/processor.py:203-242
 if action_type == "wake_llm":
     # Current implementation
@@ -30,9 +33,10 @@ elif action_type == "script":
         listener.get("action_config", {}).get("script"),
         {"event": event_data, "listener": listener}
     )
+
 ```
 
-**Security Boundary:** Scripts would need sandboxed access to:
+**Security Boundary:**Scripts would need sandboxed access to:
 
 - Event data (read-only)
 - Tool execution via controlled API
@@ -41,11 +45,13 @@ elif action_type == "script":
 ### 2. Custom Tools via Scripting
 
 **Current State:**
+
 - Tools are Python functions with rigid structure
 - Adding new tools requires code changes and deployment
 - Tool definitions use JSON schema
 
 **Integration Opportunity:**
+
 - Allow users to define custom tools using scripts
 - Scripts would have access to a safe subset of tool context
 - Could enable domain-specific tools without modifying core code
@@ -53,13 +59,14 @@ elif action_type == "script":
 **Code Reference:**
 
 ```python
+
 # Potential script tool wrapper
 class ScriptedTool:
     def __init__(self, name: str, script: str, schema: dict):
         self.name = name
         self.script = script
         self.schema = schema
-    
+
     async def execute(self, exec_context: ToolExecutionContext, **kwargs):
         # Execute script with sandboxed context
         return await script_engine.execute(
@@ -70,16 +77,19 @@ class ScriptedTool:
                 "chat": SafeChatAPI(exec_context.chat_interface),
             }
         )
+
 ```
 
 ### 3. Context Providers
 
 **Current State:**
+
 - Context providers aggregate information for LLM prompts
 - Currently implemented as Python classes
 - Limited to predefined providers
 
 **Integration Opportunity:**
+
 - Allow custom context providers via scripts
 - Scripts could query APIs or transform data for context
 - Would enable user-specific context without code changes
@@ -87,6 +97,7 @@ class ScriptedTool:
 **Code Reference:**
 
 ```python
+
 # src/family_assistant/processing.py:138-170
 # Current context aggregation could support scripted providers
 class ScriptedContextProvider(ContextProvider):
@@ -95,16 +106,19 @@ class ScriptedContextProvider(ContextProvider):
             self.script,
             context={"db": self.safe_db_api}
         )
+
 ```
 
 ### 4. Data Transformation in Processing Pipeline
 
 **Current State:**
+
 - Document indexing pipeline has fixed processors
 - LLM processes messages with static logic
 - Limited customization of data flow
 
 **Integration Opportunity:**
+
 - Add scriptable processors to indexing pipeline
 - Allow pre/post-processing hooks for LLM interactions
 - Enable custom data transformations
@@ -112,6 +126,7 @@ class ScriptedContextProvider(ContextProvider):
 **Code Reference:**
 
 ```python
+
 # src/family_assistant/indexing/pipeline.py
 # Could add ScriptProcessor to the pipeline
 class ScriptProcessor(Processor):
@@ -121,16 +136,19 @@ class ScriptProcessor(Processor):
             self.script,
             context={"document": doc}
         )
+
 ```
 
 ### 5. Conditional Logic in Tools
 
 **Current State:**
+
 - Tools have fixed logic
 - Complex conditions require LLM evaluation
 - No user customization of tool behavior
 
 **Integration Opportunity:**
+
 - Allow scripts to define conditional tool behavior
 - Scripts could validate inputs or modify outputs
 - Would reduce LLM calls for simple logic
@@ -144,12 +162,13 @@ class SafeDatabaseAPI:
     """Read-only database access for scripts"""
     async def query_notes(self, limit: int = 10) -> list[dict]:
         # Safe wrapper around NotesRepository
-    
+
     async def get_recent_events(self, hours: int = 24) -> list[dict]:
         # Safe wrapper around EventsRepository
-    
+
     async def search_documents(self, query: str) -> list[dict]:
         # Safe wrapper around VectorRepository
+
 ```
 
 ### Safe Tool Execution API
@@ -161,6 +180,7 @@ class SafeToolAPI:
         # Execute allowed tools with validation
         # Respect confirmation requirements
         # Apply rate limiting
+
 ```
 
 ### Event Context API
@@ -170,12 +190,13 @@ class EventContextAPI:
     """Event data access for event scripts"""
     def get_event_data(self) -> dict:
         # Read-only event data
-    
+
     def get_listener_config(self) -> dict:
         # Listener configuration
-    
+
     async def emit_notification(self, message: str):
         # Send notification to user
+
 ```
 
 ## Security Requirements
@@ -209,17 +230,17 @@ class EventContextAPI:
 
 ### Language Choice Options
 
-1. **Lua** (via lupa or similar)
+1. **Lua**(via lupa or similar)
 
    - Pros: Designed for embedding, small, fast, battle-tested
    - Cons: Another language to learn
 
-2. **Restricted Python** (via RestrictedPython)
+2. **Restricted Python**(via RestrictedPython)
 
    - Pros: Same language as codebase, familiar to users
    - Cons: Harder to secure properly
 
-3. **JavaScript** (via pyduktape or Node.js subprocess)
+3. **JavaScript**(via pyduktape or Node.js subprocess)
 
    - Pros: Widely known, good sandboxing options
    - Cons: Heavier runtime, async complexity

@@ -11,7 +11,7 @@ python-telegram-bot Logo PyPi Package Version Supported Python versions Supporte
 
 We have a vibrant community of developers helping each other in our Telegram group (https://telegram.me/pythontelegrambotgroup) . Join us!
 
-*Stay tuned for library updates and new releases on our* Telegram Channel (https://t.me/pythontelegrambotchannel).
+*Stay tuned for library updates and new releases on our*Telegram Channel (https://t.me/pythontelegrambotchannel).
 
 ---
 
@@ -29,7 +29,7 @@ After installing the library, be sure to check out the section on working with P
 
 ### Telegram API support
 
-All types and methods of the Telegram Bot API **8.3** are natively supported by this library.
+All types and methods of the Telegram Bot API **8.3**are natively supported by this library.
 In addition, Bot API functionality not yet natively included can still be used as described in our wiki (https://github.com/python-telegram-bot/python-telegram-bot/wiki/Bot-API-Forward-Compatibility).
 
 ---
@@ -57,6 +57,7 @@ You can install or upgrade `python-telegram-bot` via
 
 ```text
 $ pip install python-telegram-bot --upgrade
+
 ```
 To install a pre-release, use the `--pre` flag (https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-pre) in addition.
 
@@ -64,9 +65,11 @@ You can also install `python-telegram-bot` from source, though this is usually n
 
 ```text
 $ git clone https://github.com/python-telegram-bot/python-telegram-bot
+
 $ cd python-telegram-bot
 $ pip install build
 $ python -m build
+
 ```
 ---
 
@@ -93,7 +96,7 @@ In addition, the GitHub release page also contains the sha1 hashes of the releas
 
 `python-telegram-bot` tries to use as few 3rd party dependencies as possible.
 However, for some features using a 3rd party library is more sane than implementing the functionality again.
-As these features are *optional* , the corresponding 3rd party dependencies are not installed by default.
+As these features are *optional*, the corresponding 3rd party dependencies are not installed by default.
 Instead, they are listed as optional dependencies.
 This allows to avoid unnecessary dependency conflicts for users who don’t need the optional features.
 
@@ -152,10 +155,12 @@ Moreover, the Tutorial: Your first Bot (https://github.com/python-telegram-bot/p
 
 - The package documentation (https://docs.python-telegram-bot.org/) is the technical reference for `python-telegram-bot`.
 It contains descriptions of all available classes, modules, methods and arguments as well as the changelog (https://docs.python-telegram-bot.org/changelog.html).
+
 - The wiki (https://github.com/python-telegram-bot/python-telegram-bot/wiki/) is home to number of more elaborate introductions of the different features of `python-telegram-bot` and other useful resources that go beyond the technical documentation.
 - Our examples section (https://docs.python-telegram-bot.org/examples.html) contains several examples that showcase the different features of both the Bot API and `python-telegram-bot`.
 Even if it is not your approach for learning, please take a look at `echobot.py`. It is the de facto base for most of the bots out there.
 The code for these examples is released to the public domain, so you can start by grabbing the code and building on top of it.
+
 - The official Telegram Bot API documentation (https://core.telegram.org/bots/api) is of course always worth a read.
 
 ---
@@ -227,6 +232,7 @@ Derivative works (including modifications or anything statically linked to the l
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -256,17 +262,16 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a message with 5 inline buttons attached."""
     number_list: list[int] = []
     await update.message.reply_text("Please choose:", reply_markup=build_keyboard(number_list))
-
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays info on how to use the bot."""
@@ -275,20 +280,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "what happens, if the button data is not available. "
     )
 
-
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Clears the callback data cache"""
     context.bot.callback_data_cache.clear_callback_data()
     context.bot.callback_data_cache.clear_callback_queries()
     await update.effective_message.reply_text("All clear!")
 
-
 def build_keyboard(current_list: list[int]) -> InlineKeyboardMarkup:
     """Helper function to build the next inline keyboard."""
     return InlineKeyboardMarkup.from_column(
         [InlineKeyboardButton(str(i), callback_data=(i, current_list)) for i in range(1, 6)]
     )
-
 
 async def list_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parses the CallbackQuery and updates the message text."""
@@ -309,14 +311,12 @@ async def list_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # we can delete the data stored for the query, because we've replaced the buttons
     context.drop_callback_data(query)
 
-
 async def handle_invalid_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Informs the user that the button is no longer available."""
     await update.callback_query.answer()
     await update.effective_message.edit_text(
         "Sorry, I could not process this button click 😕 Please send /start to get a new keyboard."
     )
-
 
 def main() -> None:
     """Run the bot."""
@@ -342,9 +342,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -355,6 +355,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -392,7 +393,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-
 def extract_status_change(chat_member_update: ChatMemberUpdated) -> Optional[tuple[bool, bool]]:
     """Takes a ChatMemberUpdated instance and extracts whether the 'old_chat_member' was a member
     of the chat and whether the 'new_chat_member' is a member of the chat. Returns None, if
@@ -417,7 +417,6 @@ def extract_status_change(chat_member_update: ChatMemberUpdated) -> Optional[tup
     ] or (new_status == ChatMember.RESTRICTED and new_is_member is True)
 
     return was_member, is_member
-
 
 async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Tracks the chats the bot is in."""
@@ -456,7 +455,6 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.info(" %s removed the bot from the channel %s ", cause_name, chat.title)
         context.bot_data.setdefault("channel_ids", set()).discard(chat.id)
 
-
 async def show_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Shows which chats the bot is in"""
     user_ids = ", ".join(str(uid) for uid in context.bot_data.setdefault("user_ids", set()))
@@ -468,7 +466,6 @@ async def show_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"and administrator in the channels with IDs {channel_ids}."
     )
     await update.effective_message.reply_text(text)
-
 
 async def greet_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Greets new users in chats and announces when someone leaves"""
@@ -491,7 +488,6 @@ async def greet_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode=ParseMode.HTML,
         )
 
-
 async def start_private_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Greets the user and records that they started a chat with the bot if it's a private chat.
     Since no `my_chat_member` update is issued when a user starts a private chat with the bot
@@ -508,7 +504,6 @@ async def start_private_chat(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text(
         f"Welcome {user_name}. Use /show_chats to see what chats I'm in."
     )
-
 
 def main() -> None:
     """Start the bot."""
@@ -527,13 +522,13 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.ALL, start_private_chat))
 
     # Run the bot until the user presses Ctrl-C
-    # We pass 'allowed_updates' handle *all* updates including `chat_member` updates
+    # We pass 'allowed_updates' handle *all*updates including `chat_member` updates
     # To reset this, simply pass `allowed_updates=[]`
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -544,6 +539,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -575,18 +571,17 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 class ChatData:
     """Custom class for chat_data. Here we store data per message."""
 
     def __init__(self) -> None:
         self.clicks_per_message: defaultdict[int, int] = defaultdict(int)
-
 
 # The [ExtBot, dict, ChatData, dict] is for type checkers like mypy
 class CustomContext(CallbackContext[ExtBot, dict, ChatData, dict]):
@@ -633,7 +628,6 @@ class CustomContext(CallbackContext[ExtBot, dict, ChatData, dict]):
         # Remember to return the object
         return context
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with a button."""
     await update.message.reply_html(
@@ -642,7 +636,6 @@ async def start(update: Update, context: CustomContext) -> None:
             InlineKeyboardButton(text="Click me!", callback_data="button")
         ),
     )
-
 
 async def count_click(update: Update, context: CustomContext) -> None:
     """Update the click count for the message."""
@@ -656,19 +649,16 @@ async def count_click(update: Update, context: CustomContext) -> None:
         parse_mode=ParseMode.HTML,
     )
 
-
 async def print_users(update: Update, context: CustomContext) -> None:
     """Show which users have been using this bot."""
     await update.message.reply_text(
         f"The following user IDs have used this bot: {', '.join(map(str, context.bot_user_ids))} "
     )
 
-
 async def track_users(update: Update, context: CustomContext) -> None:
     """Store the user id of the incoming update, if any."""
     if update.effective_user:
         context.bot_user_ids.add(update.effective_user.id)
-
 
 def main() -> None:
     """Run the bot."""
@@ -683,9 +673,9 @@ def main() -> None:
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -696,6 +686,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -727,6 +718,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -741,12 +733,10 @@ reply_keyboard = [
 ]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
-
 def facts_to_str(user_data: dict[str, str]) -> str:
     """Helper function for formatting the gathered user info."""
     facts = [f" {key} - {value} " for key, value in user_data.items()]
     return " \n ".join(facts).join([" \n ", " \n "])
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the conversation and ask user for input."""
@@ -758,7 +748,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     return CHOOSING
 
-
 async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for info about the selected predefined choice."""
     text = update.message.text
@@ -767,7 +756,6 @@ async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     return TYPING_REPLY
 
-
 async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for a description of a custom category."""
     await update.message.reply_text(
@@ -775,7 +763,6 @@ async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     )
 
     return TYPING_CHOICE
-
 
 async def received_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store info provided by user and ask for the next category."""
@@ -794,7 +781,6 @@ async def received_information(update: Update, context: ContextTypes.DEFAULT_TYP
 
     return CHOOSING
 
-
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Display the gathered info and end the conversation."""
     user_data = context.user_data
@@ -808,7 +794,6 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     user_data.clear()
     return ConversationHandler.END
-
 
 def main() -> None:
     """Run the bot."""
@@ -845,9 +830,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -864,6 +849,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -895,13 +881,13 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
 GENDER, PHOTO, LOCATION, BIO = range(4)
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the conversation and asks the user about their gender."""
@@ -918,7 +904,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     return GENDER
 
-
 async def gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the selected gender and asks for a photo."""
     user = update.message.from_user
@@ -930,7 +915,6 @@ async def gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
 
     return PHOTO
-
 
 async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the photo and asks for a location."""
@@ -944,7 +928,6 @@ async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     return LOCATION
 
-
 async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Skips the photo and asks for a location."""
     user = update.message.from_user
@@ -954,7 +937,6 @@ async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
 
     return LOCATION
-
 
 async def location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the location and asks for some info about the user."""
@@ -969,7 +951,6 @@ async def location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     return BIO
 
-
 async def skip_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Skips the location and asks for info about the user."""
     user = update.message.from_user
@@ -980,7 +961,6 @@ async def skip_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     return BIO
 
-
 async def bio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the info about the user and ends the conversation."""
     user = update.message.from_user
@@ -988,7 +968,6 @@ async def bio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Thank you! I hope we can talk again some day.")
 
     return ConversationHandler.END
-
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancels and ends the conversation."""
@@ -999,7 +978,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
 
     return ConversationHandler.END
-
 
 def main() -> None:
     """Run the bot."""
@@ -1026,9 +1004,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -1060,8 +1038,10 @@ Please understand them as starting points and use your expertise of the web fram
 You are of course also very welcome to help improve these examples!
 
 starlette
+
 ```python
 #!/usr/bin/env python
+
 # This program is dedicated to the public domain under the CC0 license.
 # pylint: disable=import-error,unused-argument
 """
@@ -1103,6 +1083,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -1114,14 +1095,12 @@ ADMIN_CHAT_ID = 123456
 PORT = 8000
 TOKEN = "123:ABC" # nosec B105
 
-
 @dataclass
 class WebhookUpdate:
     """Simple dataclass to wrap a custom update type"""
 
     user_id: int
     payload: str
-
 
 class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
     """
@@ -1139,7 +1118,6 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
             return cls(application=application, user_id=update.user_id)
         return super().from_update(update, application)
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with instructions on how to use this bot."""
     payload_url = html.escape(f" {URL} /submitpayload?user_id=<your user id>&payload=<payload>")
@@ -1148,7 +1126,6 @@ async def start(update: Update, context: CustomContext) -> None:
         f"To post a custom update, call <code> {payload_url} </code>."
     )
     await update.message.reply_html(text=text)
-
 
 async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     """Handle custom updates."""
@@ -1161,7 +1138,6 @@ async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
         f"So far they have sent the following payloads: \n\n • <code> {combined_payloads} </code>"
     )
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML)
-
 
 async def main() -> None:
     """Set up PTB application and a web application for handling the incoming requests."""
@@ -1235,13 +1211,15 @@ async def main() -> None:
         await webserver.serve()
         await application.stop()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 flask
+
 ```python
 #!/usr/bin/env python
+
 # This program is dedicated to the public domain under the CC0 license.
 # pylint: disable=import-error,unused-argument
 """
@@ -1281,6 +1259,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -1292,14 +1271,12 @@ ADMIN_CHAT_ID = 123456
 PORT = 8000
 TOKEN = "123:ABC" # nosec B105
 
-
 @dataclass
 class WebhookUpdate:
     """Simple dataclass to wrap a custom update type"""
 
     user_id: int
     payload: str
-
 
 class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
     """
@@ -1317,7 +1294,6 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
             return cls(application=application, user_id=update.user_id)
         return super().from_update(update, application)
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with instructions on how to use this bot."""
     payload_url = html.escape(f" {URL} /submitpayload?user_id=<your user id>&payload=<payload>")
@@ -1326,7 +1302,6 @@ async def start(update: Update, context: CustomContext) -> None:
         f"To post a custom update, call <code> {payload_url} </code>."
     )
     await update.message.reply_html(text=text)
-
 
 async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     """Handle custom updates."""
@@ -1339,7 +1314,6 @@ async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
         f"So far they have sent the following payloads: \n\n • <code> {combined_payloads} </code>"
     )
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML)
-
 
 async def main() -> None:
     """Set up PTB application and a web application for handling the incoming requests."""
@@ -1408,13 +1382,15 @@ async def main() -> None:
         await webserver.serve()
         await application.stop()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 quart
+
 ```python
 #!/usr/bin/env python
+
 # This program is dedicated to the public domain under the CC0 license.
 # pylint: disable=import-error,unused-argument
 """
@@ -1453,6 +1429,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -1464,14 +1441,12 @@ ADMIN_CHAT_ID = 123456
 PORT = 8000
 TOKEN = "123:ABC" # nosec B105
 
-
 @dataclass
 class WebhookUpdate:
     """Simple dataclass to wrap a custom update type"""
 
     user_id: int
     payload: str
-
 
 class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
     """
@@ -1489,7 +1464,6 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
             return cls(application=application, user_id=update.user_id)
         return super().from_update(update, application)
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with instructions on how to use this bot."""
     payload_url = html.escape(f" {URL} /submitpayload?user_id=<your user id>&payload=<payload>")
@@ -1498,7 +1472,6 @@ async def start(update: Update, context: CustomContext) -> None:
         f"To post a custom update, call <code> {payload_url} </code>."
     )
     await update.message.reply_html(text=text)
-
 
 async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     """Handle custom updates."""
@@ -1511,7 +1484,6 @@ async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
         f"So far they have sent the following payloads: \n\n • <code> {combined_payloads} </code>"
     )
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML)
-
 
 async def main() -> None:
     """Set up PTB application and a web application for handling the incoming requests."""
@@ -1582,13 +1554,15 @@ async def main() -> None:
         await webserver.serve()
         await application.stop()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 Django
+
 ```python
 #!/usr/bin/env python
+
 # This program is dedicated to the public domain under the CC0 license.
 # pylint: disable=import-error,unused-argument
 """
@@ -1631,6 +1605,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -1642,14 +1617,12 @@ ADMIN_CHAT_ID = 123456
 PORT = 8000
 TOKEN = "123:ABC" # nosec B105
 
-
 @dataclass
 class WebhookUpdate:
     """Simple dataclass to wrap a custom update type"""
 
     user_id: int
     payload: str
-
 
 class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
     """
@@ -1667,7 +1640,6 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
             return cls(application=application, user_id=update.user_id)
         return super().from_update(update, application)
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with instructions on how to use this bot."""
     payload_url = html.escape(f" {URL} /submitpayload?user_id=<your user id>&payload=<payload>")
@@ -1676,7 +1648,6 @@ async def start(update: Update, context: CustomContext) -> None:
         f"To post a custom update, call <code> {payload_url} </code>."
     )
     await update.message.reply_html(text=text)
-
 
 async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     """Handle custom updates."""
@@ -1690,14 +1661,12 @@ async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     )
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML)
 
-
 async def telegram(request: HttpRequest) -> HttpResponse:
     """Handle incoming Telegram updates by putting them into the `update_queue`"""
     await ptb_application.update_queue.put(
         Update.de_json(data=json.loads(request.body), bot=ptb_application.bot)
     )
     return HttpResponse()
-
 
 async def custom_updates(request: HttpRequest) -> HttpResponse:
     """
@@ -1717,15 +1686,14 @@ async def custom_updates(request: HttpRequest) -> HttpResponse:
     await ptb_application.update_queue.put(WebhookUpdate(user_id=user_id, payload=payload))
     return HttpResponse()
 
-
 async def health(_: HttpRequest) -> HttpResponse:
     """For the health endpoint, reply with a simple plain text message."""
     return HttpResponse("The bot is still running fine :)")
 
-
 # Set up PTB application and a web application for handling the incoming requests.
 
 context_types = ContextTypes(context=CustomContext)
+
 # Here we set updater to None because we want our custom webhook server to handle the updates
 # and hence we don't need an Updater instance
 ptb_application = (
@@ -1742,7 +1710,6 @@ urlpatterns = [
     path("healthcheck", health, name="health check"),
 ]
 settings.configure(ROOT_URLCONF=__name__, SECRET_KEY=uuid4().hex)
-
 
 async def main() -> None:
     """Finalize configuration and run the applications."""
@@ -1764,9 +1731,9 @@ async def main() -> None:
         await webserver.serve()
         await ptb_application.stop()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 
 ---
@@ -1777,6 +1744,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -1827,14 +1795,12 @@ SO_COOL = "so-cool"
 # Callback data to pass in 3rd level deep-linking
 KEYBOARD_CALLBACKDATA = "keyboard-callback-data"
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a deep-linked URL when the command /start is issued."""
     bot = context.bot
     url = helpers.create_deep_linked_url(bot.username, CHECK_THIS_OUT, group=True)
     text = "Feel free to tell your friends about it: \n\n " + url
     await update.message.reply_text(text)
-
 
 async def deep_linked_level_1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reached through the CHECK_THIS_OUT payload"""
@@ -1848,7 +1814,6 @@ async def deep_linked_level_1(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await update.message.reply_text(text, reply_markup=keyboard)
 
-
 async def deep_linked_level_2(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reached through the SO_COOL payload"""
     bot = context.bot
@@ -1857,7 +1822,6 @@ async def deep_linked_level_2(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(
         text, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
-
 
 async def deep_linked_level_3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reached through the USING_ENTITIES payload"""
@@ -1868,13 +1832,11 @@ async def deep_linked_level_3(update: Update, context: ContextTypes.DEFAULT_TYPE
         ),
     )
 
-
 async def deep_link_level_3_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Answers CallbackQuery with deeplinking url."""
     bot = context.bot
     url = helpers.create_deep_linked_url(bot.username, USING_KEYBOARD)
     await update.callback_query.answer(url=url)
-
 
 async def deep_linked_level_4(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reached through the USING_KEYBOARD payload"""
@@ -1882,7 +1844,6 @@ async def deep_linked_level_4(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(
         f"Congratulations! This is as deep as it gets 👏🏻 \n\n The payload was: {payload} "
     )
-
 
 def main() -> None:
     """Start the bot."""
@@ -1915,15 +1876,15 @@ def main() -> None:
         CallbackQueryHandler(deep_link_level_3_callback, pattern=KEYBOARD_CALLBACKDATA)
     )
 
-    # Make sure the deep-linking handlers occur *before* the normal /start handler.
+    # Make sure the deep-linking handlers occur *before*the normal /start handler.
     application.add_handler(CommandHandler("start", start))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -1934,6 +1895,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -1959,11 +1921,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
@@ -1975,16 +1937,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=ForceReply(selective=True),
     )
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     await update.message.reply_text("Help!")
 
-
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Echo the user message."""
     await update.message.reply_text(update.message.text)
-
 
 def main() -> None:
     """Start the bot."""
@@ -2001,9 +1960,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -2014,6 +1973,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -2031,6 +1991,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -2039,7 +2000,6 @@ logger = logging.getLogger(__name__)
 # This can be your own ID, or one for a developer group/channel.
 # You can use the /start command of this bot to see your chat id.
 DEVELOPER_CHAT_ID = 123456789
-
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to notify the developer."""
@@ -2068,11 +2028,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         chat_id=DEVELOPER_CHAT_ID, text=message, parse_mode=ParseMode.HTML
     )
 
-
 async def bad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Raise an error to trigger the error handler."""
     await context.bot.wrong_method_name() # type: ignore[attr-defined]
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays info on how to trigger an error."""
@@ -2080,7 +2038,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Use /bad_command to cause an error. \n "
         f"Your chat id is <code> {update.effective_chat.id} </code>."
     )
-
 
 def main() -> None:
     """Run the bot."""
@@ -2097,9 +2054,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -2110,6 +2067,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -2137,11 +2095,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes, InlineQueryH
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
@@ -2149,11 +2107,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     await update.message.reply_text("Hi!")
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     await update.message.reply_text("Help!")
-
 
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the inline query. This is run when you type: @botusername <query>"""
@@ -2186,7 +2142,6 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     await update.inline_query.answer(results)
 
-
 def main() -> None:
     """Run the bot."""
     # Create the Application and pass it your bot's token.
@@ -2202,9 +2157,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -2215,6 +2170,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -2245,6 +2201,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -2252,9 +2209,9 @@ logger = logging.getLogger(__name__)
 
 # Stages
 START_ROUTES, END_ROUTES = range(2)
+
 # Callback data
 ONE, TWO, THREE, FOUR = range(4)
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Send message on `/start`."""
@@ -2277,7 +2234,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Tell ConversationHandler that we're in state `FIRST` now
     return START_ROUTES
 
-
 async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Prompt same text & keyboard as `start` does but not as new message"""
     # Get CallbackQuery from Update
@@ -2298,7 +2254,6 @@ async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await query.edit_message_text(text="Start handler, Choose a route", reply_markup=reply_markup)
     return START_ROUTES
 
-
 async def one(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show new choice of buttons"""
     query = update.callback_query
@@ -2315,7 +2270,6 @@ async def one(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     return START_ROUTES
 
-
 async def two(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show new choice of buttons"""
     query = update.callback_query
@@ -2331,7 +2285,6 @@ async def two(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         text="Second CallbackQueryHandler, Choose a route", reply_markup=reply_markup
     )
     return START_ROUTES
-
 
 async def three(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show new choice of buttons. This is the end point of the conversation."""
@@ -2350,7 +2303,6 @@ async def three(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Transfer to conversation state `SECOND`
     return END_ROUTES
 
-
 async def four(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show new choice of buttons"""
     query = update.callback_query
@@ -2367,7 +2319,6 @@ async def four(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     return START_ROUTES
 
-
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Returns `ConversationHandler.END`, which tells the
     ConversationHandler that the conversation is over.
@@ -2376,7 +2327,6 @@ async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await query.answer()
     await query.edit_message_text(text="See you next time!")
     return ConversationHandler.END
-
 
 def main() -> None:
     """Run the bot."""
@@ -2412,9 +2362,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -2425,6 +2375,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -2441,11 +2392,11 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a message with three inline buttons attached."""
@@ -2461,7 +2412,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text("Please choose:", reply_markup=reply_markup)
 
-
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parses the CallbackQuery and updates the message text."""
     query = update.callback_query
@@ -2472,11 +2422,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await query.edit_message_text(text=f"Selected option: {query.data}")
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays info on how to use the bot."""
     await update.message.reply_text("Use /start to test this bot.")
-
 
 def main() -> None:
     """Run the bot."""
@@ -2490,9 +2438,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -2503,6 +2451,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -2536,6 +2485,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -2543,12 +2493,16 @@ logger = logging.getLogger(__name__)
 
 # State definitions for top level conversation
 SELECTING_ACTION, ADDING_MEMBER, ADDING_SELF, DESCRIBING_SELF = map(chr, range(4))
+
 # State definitions for second level conversation
 SELECTING_LEVEL, SELECTING_GENDER = map(chr, range(4, 6))
+
 # State definitions for descriptions conversation
 SELECTING_FEATURE, TYPING = map(chr, range(6, 8))
+
 # Meta states
 STOPPING, SHOWING = map(chr, range(8, 10))
+
 # Shortcut for ConversationHandler.END
 END = ConversationHandler.END
 
@@ -2568,13 +2522,11 @@ END = ConversationHandler.END
     CURRENT_LEVEL,
 ) = map(chr, range(10, 22))
 
-
 # Helper
 def _name_switcher(level: str) -> tuple[str, str]:
     if level == PARENTS:
         return "Father", "Mother"
     return "Brother", "Sister"
-
 
 # Top level conversation callbacks
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -2609,7 +2561,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     context.user_data[START_OVER] = False
     return SELECTING_ACTION
 
-
 async def adding_self(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Add information about yourself."""
     context.user_data[CURRENT_LEVEL] = SELF
@@ -2621,7 +2572,6 @@ async def adding_self(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str
     await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
 
     return DESCRIBING_SELF
-
 
 async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Pretty print gathered data."""
@@ -2659,13 +2609,11 @@ async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
     return SHOWING
 
-
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """End Conversation by command."""
     await update.message.reply_text("Okay, bye.")
 
     return END
-
 
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """End conversation from InlineKeyboardButton."""
@@ -2675,7 +2623,6 @@ async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.edit_message_text(text=text)
 
     return END
-
 
 # Second level conversation callbacks
 async def select_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -2697,7 +2644,6 @@ async def select_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
     await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
 
     return SELECTING_LEVEL
-
 
 async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Choose to add mother or father."""
@@ -2725,14 +2671,12 @@ async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
 
     return SELECTING_GENDER
 
-
 async def end_second_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Return to top level conversation."""
     context.user_data[START_OVER] = True
     await start(update, context)
 
     return END
-
 
 # Third level callbacks
 async def select_feature(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -2761,7 +2705,6 @@ async def select_feature(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data[START_OVER] = False
     return SELECTING_FEATURE
 
-
 async def ask_for_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Prompt user to input data for selected feature."""
     context.user_data[CURRENT_FEATURE] = update.callback_query.data
@@ -2772,7 +2715,6 @@ async def ask_for_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
 
     return TYPING
 
-
 async def save_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Save input for feature and return to feature selection."""
     user_data = context.user_data
@@ -2781,7 +2723,6 @@ async def save_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     user_data[START_OVER] = True
 
     return await select_feature(update, context)
-
 
 async def end_describing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """End gathering of features and return to parent conversation."""
@@ -2800,13 +2741,11 @@ async def end_describing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     return END
 
-
 async def stop_nested(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Completely end conversation from within nested conversation."""
     await update.message.reply_text("Okay, bye.")
 
     return STOPPING
-
 
 def main() -> None:
     """Run the bot."""
@@ -2888,9 +2827,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -2922,8 +2861,10 @@ Please understand them as starting points and use your expertise of the web fram
 You are of course also very welcome to help improve these examples!
 
 starlette
+
 ```python
 #!/usr/bin/env python
+
 # This program is dedicated to the public domain under the CC0 license.
 # pylint: disable=import-error,unused-argument
 """
@@ -2965,6 +2906,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -2976,14 +2918,12 @@ ADMIN_CHAT_ID = 123456
 PORT = 8000
 TOKEN = "123:ABC" # nosec B105
 
-
 @dataclass
 class WebhookUpdate:
     """Simple dataclass to wrap a custom update type"""
 
     user_id: int
     payload: str
-
 
 class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
     """
@@ -3001,7 +2941,6 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
             return cls(application=application, user_id=update.user_id)
         return super().from_update(update, application)
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with instructions on how to use this bot."""
     payload_url = html.escape(f" {URL} /submitpayload?user_id=<your user id>&payload=<payload>")
@@ -3010,7 +2949,6 @@ async def start(update: Update, context: CustomContext) -> None:
         f"To post a custom update, call <code> {payload_url} </code>."
     )
     await update.message.reply_html(text=text)
-
 
 async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     """Handle custom updates."""
@@ -3023,7 +2961,6 @@ async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
         f"So far they have sent the following payloads: \n\n • <code> {combined_payloads} </code>"
     )
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML)
-
 
 async def main() -> None:
     """Set up PTB application and a web application for handling the incoming requests."""
@@ -3097,13 +3034,15 @@ async def main() -> None:
         await webserver.serve()
         await application.stop()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 flask
+
 ```python
 #!/usr/bin/env python
+
 # This program is dedicated to the public domain under the CC0 license.
 # pylint: disable=import-error,unused-argument
 """
@@ -3143,6 +3082,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -3154,14 +3094,12 @@ ADMIN_CHAT_ID = 123456
 PORT = 8000
 TOKEN = "123:ABC" # nosec B105
 
-
 @dataclass
 class WebhookUpdate:
     """Simple dataclass to wrap a custom update type"""
 
     user_id: int
     payload: str
-
 
 class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
     """
@@ -3179,7 +3117,6 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
             return cls(application=application, user_id=update.user_id)
         return super().from_update(update, application)
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with instructions on how to use this bot."""
     payload_url = html.escape(f" {URL} /submitpayload?user_id=<your user id>&payload=<payload>")
@@ -3188,7 +3125,6 @@ async def start(update: Update, context: CustomContext) -> None:
         f"To post a custom update, call <code> {payload_url} </code>."
     )
     await update.message.reply_html(text=text)
-
 
 async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     """Handle custom updates."""
@@ -3201,7 +3137,6 @@ async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
         f"So far they have sent the following payloads: \n\n • <code> {combined_payloads} </code>"
     )
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML)
-
 
 async def main() -> None:
     """Set up PTB application and a web application for handling the incoming requests."""
@@ -3270,13 +3205,15 @@ async def main() -> None:
         await webserver.serve()
         await application.stop()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 quart
+
 ```python
 #!/usr/bin/env python
+
 # This program is dedicated to the public domain under the CC0 license.
 # pylint: disable=import-error,unused-argument
 """
@@ -3315,6 +3252,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -3326,14 +3264,12 @@ ADMIN_CHAT_ID = 123456
 PORT = 8000
 TOKEN = "123:ABC" # nosec B105
 
-
 @dataclass
 class WebhookUpdate:
     """Simple dataclass to wrap a custom update type"""
 
     user_id: int
     payload: str
-
 
 class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
     """
@@ -3351,7 +3287,6 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
             return cls(application=application, user_id=update.user_id)
         return super().from_update(update, application)
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with instructions on how to use this bot."""
     payload_url = html.escape(f" {URL} /submitpayload?user_id=<your user id>&payload=<payload>")
@@ -3360,7 +3295,6 @@ async def start(update: Update, context: CustomContext) -> None:
         f"To post a custom update, call <code> {payload_url} </code>."
     )
     await update.message.reply_html(text=text)
-
 
 async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     """Handle custom updates."""
@@ -3373,7 +3307,6 @@ async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
         f"So far they have sent the following payloads: \n\n • <code> {combined_payloads} </code>"
     )
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML)
-
 
 async def main() -> None:
     """Set up PTB application and a web application for handling the incoming requests."""
@@ -3444,13 +3377,15 @@ async def main() -> None:
         await webserver.serve()
         await application.stop()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 Django
+
 ```python
 #!/usr/bin/env python
+
 # This program is dedicated to the public domain under the CC0 license.
 # pylint: disable=import-error,unused-argument
 """
@@ -3493,6 +3428,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -3504,14 +3440,12 @@ ADMIN_CHAT_ID = 123456
 PORT = 8000
 TOKEN = "123:ABC" # nosec B105
 
-
 @dataclass
 class WebhookUpdate:
     """Simple dataclass to wrap a custom update type"""
 
     user_id: int
     payload: str
-
 
 class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
     """
@@ -3529,7 +3463,6 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
             return cls(application=application, user_id=update.user_id)
         return super().from_update(update, application)
 
-
 async def start(update: Update, context: CustomContext) -> None:
     """Display a message with instructions on how to use this bot."""
     payload_url = html.escape(f" {URL} /submitpayload?user_id=<your user id>&payload=<payload>")
@@ -3538,7 +3471,6 @@ async def start(update: Update, context: CustomContext) -> None:
         f"To post a custom update, call <code> {payload_url} </code>."
     )
     await update.message.reply_html(text=text)
-
 
 async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     """Handle custom updates."""
@@ -3552,14 +3484,12 @@ async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
     )
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML)
 
-
 async def telegram(request: HttpRequest) -> HttpResponse:
     """Handle incoming Telegram updates by putting them into the `update_queue`"""
     await ptb_application.update_queue.put(
         Update.de_json(data=json.loads(request.body), bot=ptb_application.bot)
     )
     return HttpResponse()
-
 
 async def custom_updates(request: HttpRequest) -> HttpResponse:
     """
@@ -3579,15 +3509,14 @@ async def custom_updates(request: HttpRequest) -> HttpResponse:
     await ptb_application.update_queue.put(WebhookUpdate(user_id=user_id, payload=payload))
     return HttpResponse()
 
-
 async def health(_: HttpRequest) -> HttpResponse:
     """For the health endpoint, reply with a simple plain text message."""
     return HttpResponse("The bot is still running fine :)")
 
-
 # Set up PTB application and a web application for handling the incoming requests.
 
 context_types = ContextTypes(context=CustomContext)
+
 # Here we set updater to None because we want our custom webhook server to handle the updates
 # and hence we don't need an Updater instance
 ptb_application = (
@@ -3604,7 +3533,6 @@ urlpatterns = [
     path("healthcheck", health, name="health check"),
 ]
 settings.configure(ROOT_URLCONF=__name__, SECRET_KEY=uuid4().hex)
-
 
 async def main() -> None:
     """Finalize configuration and run the applications."""
@@ -3626,9 +3554,9 @@ async def main() -> None:
         await webserver.serve()
         await ptb_application.stop()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 
 ---
@@ -3639,6 +3567,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -3689,14 +3618,12 @@ SO_COOL = "so-cool"
 # Callback data to pass in 3rd level deep-linking
 KEYBOARD_CALLBACKDATA = "keyboard-callback-data"
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a deep-linked URL when the command /start is issued."""
     bot = context.bot
     url = helpers.create_deep_linked_url(bot.username, CHECK_THIS_OUT, group=True)
     text = "Feel free to tell your friends about it: \n\n " + url
     await update.message.reply_text(text)
-
 
 async def deep_linked_level_1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reached through the CHECK_THIS_OUT payload"""
@@ -3710,7 +3637,6 @@ async def deep_linked_level_1(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await update.message.reply_text(text, reply_markup=keyboard)
 
-
 async def deep_linked_level_2(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reached through the SO_COOL payload"""
     bot = context.bot
@@ -3719,7 +3645,6 @@ async def deep_linked_level_2(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(
         text, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
-
 
 async def deep_linked_level_3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reached through the USING_ENTITIES payload"""
@@ -3730,13 +3655,11 @@ async def deep_linked_level_3(update: Update, context: ContextTypes.DEFAULT_TYPE
         ),
     )
 
-
 async def deep_link_level_3_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Answers CallbackQuery with deeplinking url."""
     bot = context.bot
     url = helpers.create_deep_linked_url(bot.username, USING_KEYBOARD)
     await update.callback_query.answer(url=url)
-
 
 async def deep_linked_level_4(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reached through the USING_KEYBOARD payload"""
@@ -3744,7 +3667,6 @@ async def deep_linked_level_4(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(
         f"Congratulations! This is as deep as it gets 👏🏻 \n\n The payload was: {payload} "
     )
-
 
 def main() -> None:
     """Start the bot."""
@@ -3777,15 +3699,15 @@ def main() -> None:
         CallbackQueryHandler(deep_link_level_3_callback, pattern=KEYBOARD_CALLBACKDATA)
     )
 
-    # Make sure the deep-linking handlers occur *before* the normal /start handler.
+    # Make sure the deep-linking handlers occur *before*the normal /start handler.
     application.add_handler(CommandHandler("start", start))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -3796,6 +3718,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -3821,11 +3744,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
@@ -3837,16 +3760,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=ForceReply(selective=True),
     )
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     await update.message.reply_text("Help!")
 
-
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Echo the user message."""
     await update.message.reply_text(update.message.text)
-
 
 def main() -> None:
     """Start the bot."""
@@ -3863,9 +3783,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -3876,6 +3796,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -3893,6 +3814,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -3901,7 +3823,6 @@ logger = logging.getLogger(__name__)
 # This can be your own ID, or one for a developer group/channel.
 # You can use the /start command of this bot to see your chat id.
 DEVELOPER_CHAT_ID = 123456789
-
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to notify the developer."""
@@ -3930,11 +3851,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         chat_id=DEVELOPER_CHAT_ID, text=message, parse_mode=ParseMode.HTML
     )
 
-
 async def bad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Raise an error to trigger the error handler."""
     await context.bot.wrong_method_name() # type: ignore[attr-defined]
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays info on how to trigger an error."""
@@ -3942,7 +3861,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Use /bad_command to cause an error. \n "
         f"Your chat id is <code> {update.effective_chat.id} </code>."
     )
-
 
 def main() -> None:
     """Run the bot."""
@@ -3959,9 +3877,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -3972,6 +3890,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -3999,11 +3918,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes, InlineQueryH
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
@@ -4011,11 +3930,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     await update.message.reply_text("Hi!")
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     await update.message.reply_text("Help!")
-
 
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the inline query. This is run when you type: @botusername <query>"""
@@ -4048,7 +3965,6 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     await update.inline_query.answer(results)
 
-
 def main() -> None:
     """Run the bot."""
     # Create the Application and pass it your bot's token.
@@ -4064,9 +3980,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -4077,6 +3993,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -4107,6 +4024,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -4114,9 +4032,9 @@ logger = logging.getLogger(__name__)
 
 # Stages
 START_ROUTES, END_ROUTES = range(2)
+
 # Callback data
 ONE, TWO, THREE, FOUR = range(4)
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Send message on `/start`."""
@@ -4139,7 +4057,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Tell ConversationHandler that we're in state `FIRST` now
     return START_ROUTES
 
-
 async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Prompt same text & keyboard as `start` does but not as new message"""
     # Get CallbackQuery from Update
@@ -4160,7 +4077,6 @@ async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await query.edit_message_text(text="Start handler, Choose a route", reply_markup=reply_markup)
     return START_ROUTES
 
-
 async def one(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show new choice of buttons"""
     query = update.callback_query
@@ -4177,7 +4093,6 @@ async def one(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     return START_ROUTES
 
-
 async def two(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show new choice of buttons"""
     query = update.callback_query
@@ -4193,7 +4108,6 @@ async def two(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         text="Second CallbackQueryHandler, Choose a route", reply_markup=reply_markup
     )
     return START_ROUTES
-
 
 async def three(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show new choice of buttons. This is the end point of the conversation."""
@@ -4212,7 +4126,6 @@ async def three(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Transfer to conversation state `SECOND`
     return END_ROUTES
 
-
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Returns `ConversationHandler.END`, which tells the
     ConversationHandler that the conversation is over.
@@ -4221,7 +4134,6 @@ async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await query.answer()
     await query.edit_message_text(text="See you next time!")
     return ConversationHandler.END
-
 
 def main() -> None:
     """Run the bot."""
@@ -4257,9 +4169,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -4270,6 +4182,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -4286,11 +4199,11 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a message with three inline buttons attached."""
@@ -4306,7 +4219,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text("Please choose:", reply_markup=reply_markup)
 
-
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parses the CallbackQuery and updates the message text."""
     query = update.callback_query
@@ -4317,11 +4229,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await query.edit_message_text(text=f"Selected option: {query.data}")
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays info on how to use the bot."""
     await update.message.reply_text("Use /start to test this bot.")
-
 
 def main() -> None:
     """Run the bot."""
@@ -4335,9 +4245,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -4348,6 +4258,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -4381,6 +4292,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -4388,12 +4300,16 @@ logger = logging.getLogger(__name__)
 
 # State definitions for top level conversation
 SELECTING_ACTION, ADDING_MEMBER, ADDING_SELF, DESCRIBING_SELF = map(chr, range(4))
+
 # State definitions for second level conversation
 SELECTING_LEVEL, SELECTING_GENDER = map(chr, range(4, 6))
+
 # State definitions for descriptions conversation
 SELECTING_FEATURE, TYPING = map(chr, range(6, 8))
+
 # Meta states
 STOPPING, SHOWING = map(chr, range(8, 10))
+
 # Shortcut for ConversationHandler.END
 END = ConversationHandler.END
 
@@ -4413,13 +4329,11 @@ END = ConversationHandler.END
     CURRENT_LEVEL,
 ) = map(chr, range(10, 22))
 
-
 # Helper
 def _name_switcher(level: str) -> tuple[str, str]:
     if level == PARENTS:
         return "Father", "Mother"
     return "Brother", "Sister"
-
 
 # Top level conversation callbacks
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -4454,7 +4368,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     context.user_data[START_OVER] = False
     return SELECTING_ACTION
 
-
 async def adding_self(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Add information about yourself."""
     context.user_data[CURRENT_LEVEL] = SELF
@@ -4466,7 +4379,6 @@ async def adding_self(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str
     await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
 
     return DESCRIBING_SELF
-
 
 async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Pretty print gathered data."""
@@ -4504,13 +4416,11 @@ async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
     return SHOWING
 
-
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """End Conversation by command."""
     await update.message.reply_text("Okay, bye.")
 
     return END
-
 
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """End conversation from InlineKeyboardButton."""
@@ -4520,7 +4430,6 @@ async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.edit_message_text(text=text)
 
     return END
-
 
 # Second level conversation callbacks
 async def select_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -4542,7 +4451,6 @@ async def select_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
     await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
 
     return SELECTING_LEVEL
-
 
 async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Choose to add mother or father."""
@@ -4570,14 +4478,12 @@ async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
 
     return SELECTING_GENDER
 
-
 async def end_second_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Return to top level conversation."""
     context.user_data[START_OVER] = True
     await start(update, context)
 
     return END
-
 
 # Third level callbacks
 async def select_feature(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -4606,7 +4512,6 @@ async def select_feature(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data[START_OVER] = False
     return SELECTING_FEATURE
 
-
 async def ask_for_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Prompt user to input data for selected feature."""
     context.user_data[CURRENT_FEATURE] = update.callback_query.data
@@ -4617,7 +4522,6 @@ async def ask_for_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
 
     return TYPING
 
-
 async def save_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Save input for feature and return to feature selection."""
     user_data = context.user_data
@@ -4626,7 +4530,6 @@ async def save_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     user_data[START_OVER] = True
 
     return await select_feature(update, context)
-
 
 async def end_describing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """End gathering of features and return to parent conversation."""
@@ -4645,13 +4548,11 @@ async def end_describing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     return END
 
-
 async def stop_nested(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Completely end conversation from within nested conversation."""
     await update.message.reply_text("Okay, bye.")
 
     return STOPPING
-
 
 def main() -> None:
     """Run the bot."""
@@ -4733,9 +4634,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -4752,6 +4653,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -4783,7 +4685,6 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 async def msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Downloads and prints the received passport data."""
@@ -4859,7 +4760,6 @@ async def msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 logger.info(actual_file)
                 await actual_file.download_to_drive()
 
-
 def main() -> None:
     """Start the bot."""
     # Create the Application and pass it your token and private key
@@ -4874,9 +4774,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -4885,6 +4785,7 @@ if __name__ == "__main__":
 
 ```html
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
     <title>Telegram passport test!</title>
@@ -4918,6 +4819,7 @@ Telegram.Passport.createAuthButton('telegram_passport_auth', {
 
 </script>
 </html>
+
 ```
 
 ---
@@ -4928,6 +4830,7 @@ Telegram.Passport.createAuthButton('telegram_passport_auth', {
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -4950,6 +4853,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -4959,7 +4863,6 @@ logger = logging.getLogger(__name__)
 # In order to get a provider_token see https://core.telegram.org/bots/payments#getting-a-token
 PAYMENT_PROVIDER_TOKEN = "PAYMENT_PROVIDER_TOKEN"
 
-
 async def start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Provides instructions on how to use the bot."""
     msg = (
@@ -4967,7 +4870,6 @@ async def start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "invoice without shipping."
     )
     await update.message.reply_text(msg)
-
 
 async def start_with_shipping_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends an invoice which triggers a shipping query."""
@@ -4982,7 +4884,7 @@ async def start_with_shipping_callback(update: Update, context: ContextTypes.DEF
     # Price in dollars
     price = 1
     # Convert price to cents from dollars.
-    prices = [LabeledPrice("Test", price * 100)]
+    prices = [LabeledPrice("Test", price *100)]
     # Optional parameters like need_shipping_address and is_flexible trigger extra user prompts
     # https://docs.python-telegram-bot.org/en/stable/telegram.bot.html#telegram.Bot.send_invoice
     await context.bot.send_invoice(
@@ -5000,7 +4902,6 @@ async def start_with_shipping_callback(update: Update, context: ContextTypes.DEF
         is_flexible=True,
     )
 
-
 async def start_without_shipping_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -5014,7 +4915,7 @@ async def start_without_shipping_callback(
     # Price in dollars
     price = 1
     # Convert price to cents from dollars.
-    prices = [LabeledPrice("Test", price * 100)]
+    prices = [LabeledPrice("Test", price *100)]
 
     # optionally pass need_name=True, need_phone_number=True,
     # need_email=True, need_shipping_address=True, is_flexible=True
@@ -5027,7 +4928,6 @@ async def start_without_shipping_callback(
         prices,
         provider_token=PAYMENT_PROVIDER_TOKEN,
     )
-
 
 async def shipping_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles the ShippingQuery with available shipping options."""
@@ -5046,7 +4946,6 @@ async def shipping_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     options.append(ShippingOption("2", "Shipping Option B", price_list))
     await query.answer(ok=True, shipping_options=options)
 
-
 # After (optional) shipping, process the pre-checkout step
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Responds to the PreCheckoutQuery as the final confirmation for checkout."""
@@ -5058,12 +4957,10 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         await query.answer(ok=True)
 
-
 # Final callback after successful payment
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Acknowledges successful payment and thanks the user."""
     await update.message.reply_text("Thank you for your payment.")
-
 
 def main() -> None:
     """Starts the bot and sets up handlers."""
@@ -5091,9 +4988,9 @@ def main() -> None:
     # Start polling for updates until interrupted (CTRL+C)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -5104,6 +5001,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -5136,6 +5034,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -5150,12 +5049,10 @@ reply_keyboard = [
 ]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
-
 def facts_to_str(user_data: dict[str, str]) -> str:
     """Helper function for formatting the gathered user info."""
     facts = [f" {key} - {value} " for key, value in user_data.items()]
     return " \n ".join(facts).join([" \n ", " \n "])
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the conversation, display any stored data and ask user for input."""
@@ -5174,7 +5071,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     return CHOOSING
 
-
 async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for info about the selected predefined choice."""
     text = update.message.text.lower()
@@ -5189,7 +5085,6 @@ async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     return TYPING_REPLY
 
-
 async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for a description of a custom category."""
     await update.message.reply_text(
@@ -5197,7 +5092,6 @@ async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     )
 
     return TYPING_CHOICE
-
 
 async def received_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store info provided by user and ask for the next category."""
@@ -5215,13 +5109,11 @@ async def received_information(update: Update, context: ContextTypes.DEFAULT_TYP
 
     return CHOOSING
 
-
 async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Display the gathered info."""
     await update.message.reply_text(
         f"This is what you already told me: {facts_to_str(context.user_data)} "
     )
-
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Display the gathered info and end the conversation."""
@@ -5233,7 +5125,6 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=ReplyKeyboardRemove(),
     )
     return ConversationHandler.END
-
 
 def main() -> None:
     """Run the bot."""
@@ -5276,9 +5167,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -5289,6 +5180,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -5322,14 +5214,13 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-
 TOTAL_VOTER_COUNT = 3
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Inform user about what this bot can do"""
@@ -5337,7 +5228,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Please select /poll to get a Poll, /quiz to get a Quiz or /preview"
         " to generate a preview for your poll"
     )
-
 
 async def poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a predefined poll"""
@@ -5359,7 +5249,6 @@ async def poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         }
     }
     context.bot_data.update(payload)
-
 
 async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Summarize a users poll vote"""
@@ -5387,7 +5276,6 @@ async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
     if answered_poll["answers"] == TOTAL_VOTER_COUNT:
         await context.bot.stop_poll(answered_poll["chat_id"], answered_poll["message_id"])
 
-
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a predefined poll"""
     questions = ["1", "2", "4", "20"]
@@ -5399,7 +5287,6 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message.poll.id: {"chat_id": update.effective_chat.id, "message_id": message.message_id}
     }
     context.bot_data.update(payload)
-
 
 async def receive_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Close quiz after three participants took it"""
@@ -5414,7 +5301,6 @@ async def receive_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
         await context.bot.stop_poll(quiz_data["chat_id"], quiz_data["message_id"])
 
-
 async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Ask user to create a poll and display a preview of it"""
     # using this without a type lets the user chooses what he wants (quiz or poll)
@@ -5424,7 +5310,6 @@ async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         message, reply_markup=ReplyKeyboardMarkup(button, one_time_keyboard=True)
     )
-
 
 async def receive_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """On receiving polls, reply to it by a closed poll copying the received poll"""
@@ -5439,11 +5324,9 @@ async def receive_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply_markup=ReplyKeyboardRemove(),
     )
 
-
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Display a help message"""
     await update.message.reply_text("Use /quiz, /poll or /preview to test this bot.")
-
 
 def main() -> None:
     """Run bot."""
@@ -5461,9 +5344,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -5474,6 +5357,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -5506,6 +5390,7 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -5520,12 +5405,10 @@ reply_keyboard = [
 ]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
-
 def facts_to_str(user_data: dict[str, str]) -> str:
     """Helper function for formatting the gathered user info."""
     facts = [f" {key} - {value} " for key, value in user_data.items()]
     return " \n ".join(facts).join([" \n ", " \n "])
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the conversation, display any stored data and ask user for input."""
@@ -5544,7 +5427,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     return CHOOSING
 
-
 async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for info about the selected predefined choice."""
     text = update.message.text.lower()
@@ -5559,7 +5441,6 @@ async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     return TYPING_REPLY
 
-
 async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for a description of a custom category."""
     await update.message.reply_text(
@@ -5567,7 +5448,6 @@ async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     )
 
     return TYPING_CHOICE
-
 
 async def received_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store info provided by user and ask for the next category."""
@@ -5585,13 +5465,11 @@ async def received_information(update: Update, context: ContextTypes.DEFAULT_TYP
 
     return CHOOSING
 
-
 async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Display the gathered info."""
     await update.message.reply_text(
         f"This is what you already told me: {facts_to_str(context.user_data)} "
     )
-
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Display the gathered info and end the conversation."""
@@ -5603,7 +5481,6 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=ReplyKeyboardRemove(),
     )
     return ConversationHandler.END
-
 
 def main() -> None:
     """Run the bot."""
@@ -5646,9 +5523,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -5659,6 +5536,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -5692,14 +5570,13 @@ from telegram.ext import (
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-
 TOTAL_VOTER_COUNT = 3
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Inform user about what this bot can do"""
@@ -5707,7 +5584,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Please select /poll to get a Poll, /quiz to get a Quiz or /preview"
         " to generate a preview for your poll"
     )
-
 
 async def poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a predefined poll"""
@@ -5729,7 +5605,6 @@ async def poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         }
     }
     context.bot_data.update(payload)
-
 
 async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Summarize a users poll vote"""
@@ -5757,7 +5632,6 @@ async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
     if answered_poll["answers"] == TOTAL_VOTER_COUNT:
         await context.bot.stop_poll(answered_poll["chat_id"], answered_poll["message_id"])
 
-
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a predefined poll"""
     questions = ["1", "2", "4", "20"]
@@ -5769,7 +5643,6 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message.poll.id: {"chat_id": update.effective_chat.id, "message_id": message.message_id}
     }
     context.bot_data.update(payload)
-
 
 async def receive_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Close quiz after three participants took it"""
@@ -5784,7 +5657,6 @@ async def receive_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
         await context.bot.stop_poll(quiz_data["chat_id"], quiz_data["message_id"])
 
-
 async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Ask user to create a poll and display a preview of it"""
     # using this without a type lets the user chooses what he wants (quiz or poll)
@@ -5794,7 +5666,6 @@ async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         message, reply_markup=ReplyKeyboardMarkup(button, one_time_keyboard=True)
     )
-
 
 async def receive_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """On receiving polls, reply to it by a closed poll copying the received poll"""
@@ -5809,11 +5680,9 @@ async def receive_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply_markup=ReplyKeyboardRemove(),
     )
 
-
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Display a help message"""
     await update.message.reply_text("Use /quiz, /poll or /preview to test this bot.")
-
 
 def main() -> None:
     """Run bot."""
@@ -5831,9 +5700,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -5846,6 +5715,7 @@ This example uses only the pure, “bare-metal” API wrapper.
 
 ```python
 #!/usr/bin/env python
+
 """Simple Bot to reply to Telegram messages.
 
 This is built on the API wrapper, see echobot.py to see the same example built
@@ -5863,11 +5733,11 @@ from telegram.error import Forbidden, NetworkError
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 async def main() -> NoReturn:
     """Run the bot."""
@@ -5890,7 +5760,6 @@ async def main() -> NoReturn:
                 # The user has removed or blocked the bot.
                 update_id += 1
 
-
 async def echo(bot: Bot, update_id: int) -> int:
     """Echo the message the user sent."""
     # Request updates after the last update_id
@@ -5907,10 +5776,10 @@ async def echo(bot: Bot, update_id: int) -> int:
             return next_update_id
     return update_id
 
-
 if __name__ == "__main__":
     with contextlib.suppress(KeyboardInterrupt): # Ignore exception when Ctrl-C is pressed
         asyncio.run(main())
+
 ```
 
 ---
@@ -5921,6 +5790,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -5954,7 +5824,6 @@ logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
 
-
 # Define a few command handlers. These usually take the two arguments update and
 # context.
 # Best practice would be to replace context with an underscore,
@@ -5965,12 +5834,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends explanation on how to use the bot."""
     await update.message.reply_text("Hi! Use /set <seconds> to set a timer")
 
-
 async def alarm(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send the alarm message."""
     job = context.job
     await context.bot.send_message(job.chat_id, text=f"Beep! {job.data} seconds are over!")
-
 
 def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Remove job with given name. Returns whether job was removed."""
@@ -5980,7 +5847,6 @@ def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     for job in current_jobs:
         job.schedule_removal()
     return True
-
 
 async def set_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Add a job to the queue."""
@@ -6003,14 +5869,12 @@ async def set_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except (IndexError, ValueError):
         await update.effective_message.reply_text("Usage: /set <seconds>")
 
-
 async def unset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove the job if the user changed their mind."""
     chat_id = update.message.chat_id
     job_removed = remove_job_if_exists(str(chat_id), context)
     text = "Timer successfully cancelled!" if job_removed else "You have no active timer."
     await update.message.reply_text(text)
-
 
 def main() -> None:
     """Run bot."""
@@ -6025,9 +5889,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -6038,6 +5902,7 @@ if __name__ == "__main__":
 
 ```python
 #!/usr/bin/env python
+
 # pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
@@ -6057,11 +5922,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 logging.basicConfig(
     format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
 )
+
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
 
 # Define a `/start` command handler.
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -6075,7 +5940,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
         ),
     )
-
 
 # Handle incoming WebAppData
 async def web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -6091,7 +5955,6 @@ async def web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply_markup=ReplyKeyboardRemove(),
     )
 
-
 def main() -> None:
     """Start the bot."""
     # Create the Application and pass it your bot's token.
@@ -6103,9 +5966,9 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
     main()
+
 ```
 
 ---
@@ -6114,6 +5977,7 @@ if __name__ == "__main__":
 
 ```html
 <!--
+
 Simple static Telegram WebApp. Does not verify the WebAppInitData, as a bot token would be needed for that.
 -->
 <!DOCTYPE html>
@@ -6151,6 +6015,7 @@ Simple static Telegram WebApp. Does not verify the WebAppInitData, as a bot toke
     Telegram.WebApp.expand();
 </script>
 </html>
+
 ```
 
 ---
@@ -6180,6 +6045,7 @@ Note
 to the Telegram API. This can be used to access new features of the API before they are
 incorporated into PTB. The limitations to this argument are the same as the ones
 described in do_api_request().
+
 - Bots should not be serialized since if you for e.g. change the bots token, then your
 serialized instance will not reflect that change. Trying to pickle a bot instance will
 raise pickle.PicklingError. Trying to deepcopy a bot instance will raise TypeError.
@@ -6214,6 +6080,7 @@ Changed in version 20.0:
 - Attempting to deepcopy a bot instance will now raise TypeError.
 - The following are now keyword-only arguments in Bot methods: `location`, `filename`, `venue`, `contact`, `{read, write, connect, pool}_timeout`, `api_kwargs`. Use a named argument for those,
 and notice that some positional arguments changed position as a result.
+
 - For uploading files, file paths are now always accepted. If local_mode is False, the file contents will be read in binary mode and uploaded. Otherwise,
 the file path will be passed in the file URI scheme.
 
@@ -6221,6 +6088,7 @@ Changed in version 20.5: Removed deprecated methods `set_sticker_set_thumb` and 
 Use set_sticker_set_thumbnail() and setStickerSetThumbnail() instead.
 
 Parameters:
+
 - token (str) - Bot’s unique authentication token.
 - base_url (str | Callable[[str], str], optional) -
   Telegram Bot API
@@ -6232,6 +6100,7 @@ string. Defaults to `"https://api.telegram.org/bot"`.
   Customizing the base URL can be used to run a bot against Local Bot API Server or using Telegrams test environment.
   Example: `"https://api.telegram.org/bot{token}/test"`
   Changed in version 21.11: Supports callable input and string formatting.
+
 - base_file_url (str, optional) -
   Telegram Bot API file URL.
 If the string contains `{token}`, it will be replaced with the bot’s
@@ -6242,7 +6111,8 @@ string. Defaults to `"https://api.telegram.org/bot"`.
   Customizing the base URL can be used to run a bot against Local Bot API Server or using Telegrams test environment.
   Example: `"https://api.telegram.org/file/bot{token}/test"`
   Changed in version 21.11: Supports callable input and string formatting.
-- request (telegram.request.BaseRequest, optional) - Pre initialized telegram.request.BaseRequest instances. Will be used for all bot methods *except* for get_updates(). If not passed, an instance of telegram.request.HTTPXRequest will be used.
+
+- request (telegram.request.BaseRequest, optional) - Pre initialized telegram.request.BaseRequest instances. Will be used for all bot methods *except*for get_updates(). If not passed, an instance of telegram.request.HTTPXRequest will be used.
 - get_updates_request (telegram.request.BaseRequest, optional) - Pre initialized telegram.request.BaseRequest instances. Will be used exclusively for get_updates(). If not passed, an instance of telegram.request.HTTPXRequest will be used.
 - private_key (bytes, optional) - Private key for decryption of telegram passport data.
 - private_key_password (bytes, optional) - Password for above private key.
@@ -6256,6 +6126,7 @@ Defaults to False.
 Since this class has a large number of methods and attributes, below you can find a quick overview.
 
 Sending Messages
+
 - send_animation() - Used for sending animations
 - send_audio() - Used for sending audio files
 - send_chat_action() - Used for sending chat actions
@@ -6282,6 +6153,7 @@ Sending Messages
 - forward_messages() - Used for forwarding multiple messages at once
 
 Updating Messages
+
 - answer_callback_query() - Used for answering the callback query
 - answer_inline_query() - Used for answering the inline query
 - answer_pre_checkout_query() - Used for answering a pre checkout query
@@ -6298,6 +6170,7 @@ Updating Messages
 - set_message_reaction() - Used for setting reactions on messages
 
 Chat Moderation and information
+
 - approve_chat_join_request() - Used for approving a chat join request
 - decline_chat_join_request() - Used for declining a chat join request
 - ban_chat_member() - Used for banning a member from the chat
@@ -6330,12 +6203,14 @@ Chat Moderation and information
 - leave_chat() - Used for leaving a chat
 
 Verification on behalf of an organization
+
 - verify_chat() - Used for verifying a chat
 - verify_user() - Used for verifying a user
 - remove_chat_verification() - Used for removing the verification from a chat
 - remove_user_verification() - Used for removing the verification from a user
 
 Bot settings
+
 - set_my_commands() - Used for setting the list of commands
 - delete_my_commands() - Used for deleting the list of commands
 - get_my_commands() - Used for obtaining the list of commands
@@ -6351,6 +6226,7 @@ Bot settings
 - get_my_name() - Used for obtaining the name of the bot
 
 Stickerset management
+
 - add_sticker_to_set() - Used for adding a sticker to a set
 - delete_sticker_from_set() - Used for deleting a sticker from a set
 - create_new_sticker_set() - Used for creating a new sticker set
@@ -6370,16 +6246,19 @@ Stickerset management
 - get_custom_emoji_stickers() - Used for getting custom emoji files based on their IDs
 
 Games
+
 - get_game_high_scores() - Used for getting the game high scores
 - set_game_score() - Used for setting the game score
 
 Getting updates
+
 - get_updates() - Used for getting updates using long polling
 - get_webhook_info() - Used for getting current webhook status
 - set_webhook() - Used for setting a webhook to receive updates
 - delete_webhook() - Used for removing webhook integration
 
 Forum topic management
+
 - close_forum_topic() - Used for closing a forum topic
 - close_general_forum_topic() - Used for closing the general forum topic
 - create_forum_topic() - Used to create a topic
@@ -6395,12 +6274,14 @@ Forum topic management
 - unpin_all_general_forum_topic_messages() - Used to unpin all messages in the general forum topic
 
 Payments and Stars
+
 - create_invoice_link() - Used to generate an HTTP link for an invoice
 - edit_user_star_subscription() - Used for editing a user’s star subscription
 - get_star_transactions() - Used for obtaining the bot’s Telegram Stars transactions
 - refund_star_payment() - Used for refunding a payment in Telegram Stars
 
 Miscellaneous
+
 - close() - Used for closing server instance when switching to another local server
 - log_out() - Used for logging out from cloud Bot API server
 - get_file() - Used for getting basic info about a file
@@ -6409,6 +6290,7 @@ Miscellaneous
 - save_prepared_inline_message() - Used for storing a message to be sent by a user of a Mini App
 
 Properties
+
 - base_file_url - Telegram Bot API file URL
 - base_url - Telegram Bot API service URL
 - bot - The user instance of the bot as returned by get_me()
@@ -6482,6 +6364,7 @@ Changed in version 20.2: Since Bot API 6.6, the parameter sticker replace the pa
 Changed in version 20.5: Removed deprecated parameters `png_sticker`, `tgs_sticker`, `webm_sticker`, `emojis`, and `mask_position`.
 
 Parameters:
+
 - user_id (int) - User identifier of created sticker set owner.
 - name (str) - Sticker set name.
 - sticker (telegram.InputSticker) -
@@ -6491,10 +6374,12 @@ set isn’t changed.
   Added in version 20.2.
 
 Keyword Arguments:
+
 - read_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
 - write_timeout (float | None, optional) -
   Value to pass to telegram.request.BaseRequest.post.write_timeout. By default, `20` seconds are used as write timeout.
   Changed in version 22.0: The default value changed to DEFAULT_NONE.
+
 - connect_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
 - pool_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.pool_timeout. Defaults to DEFAULT_NONE.
 - api_kwargs (dict, optional) - Arbitrary keyword arguments to be passed to the Telegram API. See do_api_request() for limitations.
@@ -6533,17 +6418,21 @@ Shortcuts
 telegram.CallbackQuery.answer()
 
 Parameters:
+
 - callback_query_id (str) - Unique identifier for the query to be answered.
 - text (str, optional) - Text of the notification. If not specified, nothing will
 be shown to the user, 0-200 characters.
+
 - show_alert (bool, optional) - If True, an alert will be shown by the
 client instead of a notification at the top of the chat screen. Defaults to False.
+
 - url (str, optional) -
   URL that will be opened by the user’s client. If you have
 created a Game and accepted the conditions via @BotFather, specify the URL that
 opens your game - note that this will only work if the query comes from a callback
 game button. Otherwise, you may use links like t.me/your_bot?start=XXXX that open
 your bot with a parameter.
+
 - cache_time (int | datetime.timedelta, optional) -
   The maximum amount of
 time in seconds that the
@@ -6551,6 +6440,7 @@ result of the callback query may be cached client-side. Defaults to 0.
   Changed in version 21.11: datetime.timedelta objects are accepted in addition to plain int values.
 
 Keyword Arguments:
+
 - read_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
 - write_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.write_timeout. Defaults to DEFAULT_NONE.
 - connect_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
@@ -6583,34 +6473,41 @@ telegram.InlineQuery.answer()
 Changed in version 20.5: Removed deprecated arguments `switch_pm_text` and `switch_pm_parameter`.
 
 Parameters:
+
 - inline_query_id (str) - Unique identifier for the answered query.
 - results (list[telegram.InlineQueryResult] | Callable) - A list of results for
 the inline query. In case current_offset is passed, results may also be
 a callable that accepts the current page index starting from 0. It must return
 either a list of telegram.InlineQueryResult instances or None if
 there are no more results.
+
 - cache_time (int | datetime.timedelta, optional) -
   The maximum amount of
 time in seconds that the
 result of the inline query may be cached on the server. Defaults to `300`.
   Changed in version 21.11: datetime.timedelta objects are accepted in addition to plain int values.
+
 - is_personal (bool, optional) - Pass True, if results may be cached on
 the server side only for the user that sent the query. By default,
 results may be returned to any user who sends the same query.
+
 - next_offset (str, optional) - Pass the offset that a client should send in the
 next query with the same text to receive more results. Pass an empty string if
 there are no more results or if you don’t support pagination. Offset length can’t
 exceed 64 bytes.
+
 - button (telegram.inlinequeryresultsbutton.InlineQueryResultsButton, optional) -
   A button to be shown
 above the inline query results.
   Added in version 20.3.
 
 Keyword Arguments:
+
 - current_offset (str, optional) - The telegram.InlineQuery.offset of
 the inline query to answer. If passed, PTB will automatically take care of
 the pagination for you, i.e. pass the correct next_offset and truncate
 the results list/get the results from the callable you passed.
+
 - read_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
 - write_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.write_timeout. Defaults to DEFAULT_NONE.
 - connect_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
@@ -6638,8 +6535,10 @@ Shortcuts
 telegram.precheckoutquery.PreCheckoutQuery.answer()
 
 Parameters:
+
 - pre_checkout_query_id (str) - Unique identifier for the query to be answered.
 - ok (bool) - Specify True if everything is alright
 (goods are available, etc.) and the bot is ready to proceed with the order. Use False if there are any problems.
+
 - error_message (str, optional) - Required if ok is False. Error
 message in human readable form

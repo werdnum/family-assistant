@@ -2,19 +2,19 @@
 
 ## Final Recommendation: Starlark-Only
 
-After thorough analysis, we recommend implementing **Starlark as the single scripting language** for Family Assistant, using the `starlark-pyo3` library.
+After thorough analysis, we recommend implementing **Starlark as the single scripting language**for Family Assistant, using the `starlark-pyo3` library.
 
 ## Key Insights
 
-1. **The LLM is the primary "developer"** - It doesn't benefit from "simpler" syntax or need different languages for different complexity levels
+1. **The LLM is the primary "developer"**- It doesn't benefit from "simpler" syntax or need different languages for different complexity levels
 
-2. **Maintenance overhead of two languages isn't justified** - We'd need double the integration code, testing, documentation, and security auditing
+2. **Maintenance overhead of two languages isn't justified**- We'd need double the integration code, testing, documentation, and security auditing
 
-3. **Starlark scales naturally** - From simple one-line expressions to complex multi-function scripts without language switching
+3. **Starlark scales naturally**- From simple one-line expressions to complex multi-function scripts without language switching
 
-4. **Performance difference is negligible** - Event automation doesn't need microsecond-level optimization; milliseconds are fine
+4. **Performance difference is negligible**- Event automation doesn't need microsecond-level optimization; milliseconds are fine
 
-5. **Industry precedent** - Successful automation systems (Bazel, Terraform, Ansible) use one language that scales, not two
+5. **Industry precedent**- Successful automation systems (Bazel, Terraform, Ansible) use one language that scales, not two
 
 ## Implementation Plan
 
@@ -22,6 +22,7 @@ After thorough analysis, we recommend implementing **Starlark as the single scri
 
 ```bash
 pip install starlark-pyo3
+
 ```
 
 ### Simple Example
@@ -42,11 +43,12 @@ module["time"] = {"hour": 14}
 ast = sl.parse("filter", code)
 result = sl.eval(module, ast, globals)
 print(result)  # True
+
 ```
 
 ### Architecture
 
-```
+```text
 ┌─────────────────┐
 │ Event Listener  │
 ├─────────────────┤
@@ -63,6 +65,7 @@ print(result)  # True
 │ • Context APIs  │
 │ • Security      │
 └─────────────────┘
+
 ```
 
 ## Benefits

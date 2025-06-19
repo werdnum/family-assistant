@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-After thorough analysis including the hermiticity concern, we recommend **Starlark (via starlark-pyo3)** as the single scripting language for Family Assistant.
+After thorough analysis including the hermiticity concern, we recommend **Starlark (via starlark-pyo3)**as the single scripting language for Family Assistant.
 
 ## Key Insights
 
@@ -49,6 +49,7 @@ if event.temperature > 30 and time.hour >= 6:
 # Execute - it works fine!
 ast = sl.parse("automation", script)
 result = sl.eval(module, ast, globals)
+
 ```
 
 ## Why This Works
@@ -68,39 +69,41 @@ result = sl.eval(module, ast, globals)
 
 ## Implementation Plan
 
-1. **Use starlark-pyo3** - Rust-based, fast, well-maintained
-2. **Expose necessary APIs** - Tools, state, database queries
-3. **Single language everywhere** - Conditions and actions both use Starlark
-4. **Clear documentation** - Be upfront about side effects
+1. **Use starlark-pyo3**- Rust-based, fast, well-maintained
+2. **Expose necessary APIs**- Tools, state, database queries
+3. **Single language everywhere**- Conditions and actions both use Starlark
+4. **Clear documentation**- Be upfront about side effects
 
 ## Example Configuration
 
 ```yaml
 event_listeners:
+
   - name: "Temperature Control"
     # Simple condition - just an expression
     condition: "event.temperature > 30 and time.hour >= 6"
-    
+
     # Complex action - full script with side effects
     action: |
       # This is fine! We want side effects!
       tools.send_notification("Temperature: " + str(event.temperature))
-      
+
       if event.temperature > 35:
           tools.turn_on_ac()
           tools.set_fan("high")
       else:
           tools.set_fan("medium")
-      
+
       state.set("last_temp_alert", time.now)
+
 ```
 
 ## Bottom Line
 
 Starlark with side-effecting functions is:
 
-- **Practically sound** - Widely used pattern
-- **Theoretically impure** - But we don't need purity
-- **The right tool** - Simpler than alternatives
+- **Practically sound**- Widely used pattern
+- **Theoretically impure**- But we don't need purity
+- **The right tool**- Simpler than alternatives
 
 The hermiticity principle is about what Starlark can do directly, not what we choose to expose to it. Our approach is pragmatic, secure, and aligned with how embedded scripting languages are actually used in production.

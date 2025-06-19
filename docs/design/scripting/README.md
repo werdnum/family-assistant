@@ -2,9 +2,10 @@
 
 ## Executive Summary
 
-After extensive analysis and design iteration, **we recommend implementing Starlark as the single scripting language** for Family Assistant. This provides a secure, performant, and LLM-friendly scripting environment for event automation, custom tools, and workflow orchestration.
+After extensive analysis and design iteration, **we recommend implementing Starlark as the single scripting language**for Family Assistant. This provides a secure, performant, and LLM-friendly scripting environment for event automation, custom tools, and workflow orchestration.
 
 ### Key Decision
+
 - **Language**: Starlark (Python-like syntax, designed for configuration and automation)
 - **Implementation**: `starlark-pyo3` (Rust-based with Python bindings)
 - **Scope**: Single language for all scripting needs (simple conditions to complex workflows)
@@ -32,11 +33,13 @@ After extensive analysis and design iteration, **we recommend implementing Starl
 ### Quick Start
 
 ```bash
+
 # Add to pyproject.toml
 [project]
 dependencies = [
     "starlark-pyo3>=0.1.0",  # Rust-based Starlark implementation
 ]
+
 ```
 
 ### Basic Integration
@@ -46,46 +49,49 @@ import starlark as sl
 
 class StarlarkEngine:
     """Unified Starlark execution engine for Family Assistant"""
-    
+
     def __init__(self, db_context):
         self.db_context = db_context
         self._globals = sl.Globals.standard()
-        
+
     def evaluate(self, code: str, context: dict) -> Any:
         """Execute Starlark code with provided context"""
         module = self._create_module(context)
         ast = sl.parse("script", code)
         return sl.eval(module, ast, self._globals)
-    
+
     def _create_module(self, context: dict) -> sl.Module:
         """Create Starlark module with safe APIs"""
         module = sl.Module()
-        
+
         # Core context
         module["event"] = context.get("event", {})
         module["time"] = TimeAPI()
         module["state"] = StateAPI()
         module["db"] = DatabaseReadAPI(self.db_context)
-        
+
         # Tools (when enabled)
         if context.get("allow_tools"):
             module["tools"] = ToolsAPI(context["tools_provider"])
-            
+
         return module
+
 ```
 
 ### Event Automation Example
 
 ```yaml
 event_listeners:
+
   - name: "Smart Temperature Control"
     conditions:
+
       - source: home_assistant
         entity_id: sensor.outside_temperature
-    
+
     # Simple condition (Starlark expression)
     filter: "event.state > 30 and time.hour >= 6 and time.hour <= 22"
-    
+
     # Complex action (Starlark script with side effects)
     action:
       type: script
@@ -94,40 +100,44 @@ event_listeners:
         # Check if we should take action
         temp = event.state
         already_notified = state.get("temp_notified_today", False)
-        
+
         if temp > 35 and not already_notified:
             # Send notification
             tools.send_notification(
                 "High temperature alert: {}°C".format(temp)
             )
             state.set("temp_notified_today", True)
-            
+
             # Turn on AC if not already on
             if not state.get("ac_on"):
                 tools.turn_on_ac()
                 state.set("ac_on", True)
-                
+
                 # Schedule turn-off for later
                 tools.schedule_task(
                     "turn_off_ac",
                     delay_hours=4,
                     params={"reason": "auto_scheduled"}
                 )
+
 ```
 
 ## Key Design Decisions
 
 ### 1. Single Language Approach
+
 - **Decision**: Use Starlark for both simple conditions and complex scripts
 - **Rationale**: Reduces complexity, enables natural progression from simple to complex
 - **Trade-off**: Slightly more overhead for simple expressions (1ms vs microseconds)
 
 ### 2. Pragmatic Side Effects
+
 - **Decision**: Allow scripts to have side effects through provided APIs
 - **Rationale**: Automation requires side effects (notifications, device control, etc.)
 - **Trade-off**: Not purely functional, but that's not needed for our use case
 
 ### 3. Controlled API Surface
+
 - **Decision**: Scripts can only access explicitly provided APIs
 - **Rationale**: Security through capability-based access control
 - **Implementation**: Each script execution gets a tailored module with allowed APIs
@@ -137,6 +147,7 @@ event_listeners:
 ### Core APIs Available to Scripts
 
 ```python
+
 # Time utilities
 time = {
     "now": timestamp,
@@ -169,11 +180,13 @@ tools = {
     "turn_on_lights(room, **kwargs)": None,
     "schedule_task(name, **kwargs)": str,  # task_id
 }
+
 ```
 
 ## Security Model
 
 ### Sandboxing Guarantees
+
 - No filesystem access
 - No network access
 - No process execution
@@ -181,6 +194,7 @@ tools = {
 - Resource limits (CPU, memory, execution time)
 
 ### Configuration
+
 ```yaml
 scripting:
   enabled: true
@@ -188,26 +202,29 @@ scripting:
     max_execution_time_ms: 5000
     max_memory_mb: 50
     max_script_size: 50000
-    
+
   security:
     allowed_tools:
+
       - send_notification
       - turn_on_lights
       - turn_on_ac
       - get_weather
-      
+
     rate_limits:
       executions_per_minute: 30
       tool_calls_per_execution: 10
-      
+
     audit:
       log_all_executions: true
       retain_logs_days: 30
+
 ```
 
 ## Implementation Phases
 
 ### Phase 1: Foundation (Weeks 1-2)
+
 - [ ] Install starlark-pyo3
 - [ ] Create StarlarkEngine class
 - [ ] Implement core context APIs (time, state)
@@ -215,6 +232,7 @@ scripting:
 - [ ] Basic security configuration
 
 ### Phase 2: Integration (Weeks 3-4)
+
 - [ ] Database read API
 - [ ] Tool execution API
 - [ ] Script storage and versioning
@@ -222,6 +240,7 @@ scripting:
 - [ ] Rate limiting
 
 ### Phase 3: User Features (Weeks 5-6)
+
 - [ ] Web UI for script editing
 - [ ] Script templates library
 - [ ] Testing and debugging tools
@@ -229,6 +248,7 @@ scripting:
 - [ ] Documentation
 
 ### Phase 4: Advanced (Weeks 7-8)
+
 - [ ] Custom tool definitions via scripts
 - [ ] Scheduled script execution
 - [ ] Script composition/importing
@@ -238,21 +258,22 @@ scripting:
 
 ### Design Evolution
 
-1. **[Initial Proposal](./scripting-language-proposal.md)** - Original CEL + Starlark recommendation
-2. **[Integration Analysis](./scripting-integration-analysis.md)** - Where to integrate scripting in the codebase
-3. **[Starlark Python Bindings](./starlark-python-bindings-comparison.md)** - Comparison of starlark-pyo3 vs python-starlark-go
-4. **[Integration Example](./starlark-integration-example.md)** - Detailed implementation example with starlark-pyo3
-5. **[Practical Examples](./scripting-practical-examples.md)** - Real-world use cases and code examples
-6. **[Starlark-Only Analysis](./starlark-only-analysis.md)** - Why one language is better than two
-7. **[Revised Proposal](./scripting-language-proposal-v2.md)** - Starlark-only recommendation
-8. **[Comparison Analysis](./scripting-comparison.md)** - Detailed comparison of single vs dual language
-9. **[Hermetic Problem](./starlark-hermetic-problem.md)** - Initial concern about Starlark's hermetic design
-10. **[Hermetic Concerns](./scripting-language-reconsidered.md)** - Reconsidering due to Starlark's hermetic design
-11. **[Hermetic Analysis](./hermetic-practical-analysis.md)** - Why hermeticity isn't a practical problem
-12. **[Final Recommendation](./final-scripting-recommendation.md)** - Addressing hermiticity with pragmatic approach
-13. **[Summary](./scripting-recommendation-summary.md)** - Concise recommendation summary
+1. **[Initial Proposal](./scripting-language-proposal.md)**- Original CEL + Starlark recommendation
+2. **[Integration Analysis](./scripting-integration-analysis.md)**- Where to integrate scripting in the codebase
+3. **[Starlark Python Bindings](./starlark-python-bindings-comparison.md)**- Comparison of starlark-pyo3 vs python-starlark-go
+4. **[Integration Example](./starlark-integration-example.md)**- Detailed implementation example with starlark-pyo3
+5. **[Practical Examples](./scripting-practical-examples.md)**- Real-world use cases and code examples
+6. **[Starlark-Only Analysis](./starlark-only-analysis.md)**- Why one language is better than two
+7. **[Revised Proposal](./scripting-language-proposal-v2.md)**- Starlark-only recommendation
+8. **[Comparison Analysis](./scripting-comparison.md)**- Detailed comparison of single vs dual language
+9. **[Hermetic Problem](./starlark-hermetic-problem.md)**- Initial concern about Starlark's hermetic design
+10. **[Hermetic Concerns](./scripting-language-reconsidered.md)**- Reconsidering due to Starlark's hermetic design
+11. **[Hermetic Analysis](./hermetic-practical-analysis.md)**- Why hermeticity isn't a practical problem
+12. **[Final Recommendation](./final-scripting-recommendation.md)**- Addressing hermiticity with pragmatic approach
+13. **[Summary](./scripting-recommendation-summary.md)**- Concise recommendation summary
 
 ### Key Evolution Points
+
 - Started with CEL + Starlark for different complexity levels
 - Realized dual-language approach doubles complexity
 - Discovered Starlark's hermetic design principle
@@ -262,23 +283,30 @@ scripting:
 ## Quick Start Examples
 
 ### Simple Event Filter
+
 ```python
+
 # One-line condition
 event.temperature > 30 and time.hour >= 6
+
 ```
 
 ### Stateful Condition
+
 ```python
+
 # Check rate limiting
 last_alert = state.get("last_temp_alert", 0)
 event.temperature > 30 and time.since(last_alert) > 3600  # 1 hour
+
 ```
 
 ### Multi-Step Automation
+
 ```python
 def handle_motion():
     room = event.metadata.get("room")
-    
+
     if event.state == "detected":
         # Different behavior based on time
         if time.hour >= 22 or time.hour < 6:
@@ -287,7 +315,7 @@ def handle_motion():
         else:
             # Daytime - normal lights
             tools.turn_on_lights(room, brightness=100)
-        
+
         # Auto-off after delay
         tools.schedule_task(
             "lights_off",
@@ -296,6 +324,7 @@ def handle_motion():
         )
 
 handle_motion()
+
 ```
 
 ## Success Metrics

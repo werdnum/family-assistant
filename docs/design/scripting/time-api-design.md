@@ -63,13 +63,15 @@ Since we cannot create custom Time objects, we'll represent times as dictionarie
     "unix_nano": 1705329045000000000,
     "timezone": "America/New_York"
 }
+
 ```
 
 ### Core Functions
 
 #### Time Creation
 
-```starlark
+```python
+
 # Create a time object
 t = time_create(year=2024, month=1, day=15, hour=14, minute=30, timezone="America/New_York")
 
@@ -85,11 +87,13 @@ t_with_nanos = time_from_timestamp(1705329045, 500000000)
 t = time_parse("2024-01-15 14:30:45")
 t = time_parse("Jan 15, 2024 2:30 PM", format="%b %d, %Y %I:%M %p")
 t = time_parse("2024-01-15T14:30:45-05:00", timezone="America/New_York")
+
 ```
 
 #### Time Manipulation
 
-```starlark
+```python
+
 # Convert timezone
 t_utc = time_in_location(t, "UTC")
 t_tokyo = time_in_location(t, "Asia/Tokyo")
@@ -114,11 +118,13 @@ hour = time_get_hour(t)
 minute = time_get_minute(t)
 second = time_get_second(t)
 weekday = time_get_weekday(t)  # 0=Sunday, 6=Saturday
+
 ```
 
 #### Duration Functions
 
-```starlark
+```python
+
 # Parse duration strings
 d = duration_parse("1h30m")  # Returns seconds: 5400
 d = duration_parse("2d12h")  # Returns seconds: 216000
@@ -132,11 +138,13 @@ half = duration_divide(3600, 2)  # 1 hour ÷ 2
 # Human-readable duration
 readable = duration_human(5400)  # Returns "1h30m"
 readable = duration_human(90)  # Returns "1m30s"
+
 ```
 
 #### Comparison Functions
 
-```starlark
+```python
+
 # Compare times
 is_before = time_before(t1, t2)
 is_after = time_after(t1, t2)
@@ -144,24 +152,28 @@ is_equal = time_equal(t1, t2)
 
 # Time difference
 diff_seconds = time_diff(t2, t1)  # Returns seconds between times
+
 ```
 
 #### Timezone Functions
 
-```starlark
+```python
+
 # Check timezone validity
 valid = timezone_is_valid("America/New_York")  # Returns True
 valid = timezone_is_valid("Invalid/Zone")  # Returns False
 
 # Get timezone offset
 offset = timezone_offset("America/New_York", t)  # Returns offset in seconds
+
 ```
 
 ### Duration Constants
 
 We'll provide duration constants as a convenience:
 
-```starlark
+```python
+
 # Duration constants (in seconds)
 NANOSECOND = 0.000000001
 MICROSECOND = 0.000001
@@ -171,13 +183,15 @@ MINUTE = 60
 HOUR = 3600
 DAY = 86400
 WEEK = 604800
+
 ```
 
 ### Example Usage
 
 Here's how common time operations would look in practice:
 
-```starlark
+```python
+
 # Get current time and format it
 now = time_now()
 formatted = time_format(now, "%Y-%m-%d %H:%M:%S")
@@ -209,6 +223,7 @@ work_duration = duration_parse("8h30m")
 break_duration = duration_parse("1h")
 actual_work = duration_subtract(work_duration, break_duration)
 print("Actual work time:", duration_human(actual_work))
+
 ```
 
 ## Differences from starlark-go
@@ -243,21 +258,25 @@ These differences exist because:
 ## Implementation Plan
 
 ### Phase 1: Core Time Functions
+
 - Implement basic time creation and manipulation functions
 - Add timezone support using Python's `zoneinfo` module
 - Create comprehensive test suite
 
 ### Phase 2: Duration Support
+
 - Implement duration parsing and arithmetic
 - Add human-readable duration formatting
 - Support common duration calculations
 
 ### Phase 3: Integration
+
 - Add time module to Starlark engine
 - Create example scripts demonstrating usage
 - Document in user guide
 
 ### Phase 4: Extended Features (Future)
+
 - Add calendar-aware operations (next Monday, last day of month)
 - Support for recurring time patterns
 - Integration with calendar tools
@@ -287,6 +306,7 @@ These differences exist because:
 This design provides a comprehensive time API that balances familiarity for Starlark users with the technical constraints of our implementation. While we cannot perfectly replicate starlark-go's object-oriented API, our function-based approach provides equivalent functionality with clear, explicit operations.
 
 The API is designed to be:
+
 - **Intuitive**: Functions names clearly indicate their purpose
 - **Complete**: Covers all common time manipulation needs
 - **Efficient**: Minimal overhead in the Python-Starlark bridge

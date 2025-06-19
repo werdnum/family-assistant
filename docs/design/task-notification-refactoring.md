@@ -1,7 +1,9 @@
 # Task Notification System Refactoring
 
 ## Date: 2025-01-14
+
 ## Author: Development Team
+
 ## Status: Approved for Implementation
 
 ## Executive Summary
@@ -20,7 +22,7 @@ This document outlines the refactoring of the task notification system in Family
 ### Affected Components
 
 - System tasks (cleanup, maintenance) - no notifications
-- Web API endpoints (document upload, email ingestion) - no notifications  
+- Web API endpoints (document upload, email ingestion) - no notifications
 - Event-triggered callbacks - no notifications
 - Note/email indexing from storage modules - explicitly passes `None`
 
@@ -39,6 +41,7 @@ This document outlines the refactoring of the task notification system in Family
 Add a module-level event in `storage/tasks.py` that is automatically triggered when immediate tasks are enqueued:
 
 ```python
+
 # storage/tasks.py
 import asyncio
 from typing import TYPE_CHECKING
@@ -51,10 +54,10 @@ _task_event: Event | None = None
 
 def get_task_event() -> Event:
     """Get the event that's set when new tasks are available.
-    
+
     This event is automatically set when immediate tasks are enqueued.
     Task workers can wait on this event to be notified of new work.
-    
+
     Returns:
         The global task notification event
     """
@@ -76,7 +79,7 @@ async def enqueue_task(
     notify_event: asyncio.Event | None = None,  # DEPRECATED - will be removed
 ) -> None:
     """Enqueue a task for processing.
-    
+
     Args:
         ... (existing args) ...
         notify_event: DEPRECATED - Notification is now automatic. This parameter
@@ -90,9 +93,9 @@ async def enqueue_task(
             DeprecationWarning,
             stacklevel=2
         )
-    
+
     # ... existing enqueue logic ...
-    
+
     # Automatically notify for immediate tasks
     is_immediate = scheduled_at is None or scheduled_at <= datetime.now(timezone.utc)
     if is_immediate:
@@ -103,6 +106,7 @@ async def enqueue_task(
             event = get_task_event()
             db_context.on_commit(lambda: event.set())
             logger.info(f"Scheduled notification for immediate task {task_id}")
+
 ```
 
 ### TaskWorker Integration
@@ -110,6 +114,7 @@ async def enqueue_task(
 Update `TaskWorker` to use the global event:
 
 ```python
+
 # task_worker.py
 from family_assistant.storage.tasks import get_task_event
 
@@ -117,18 +122,19 @@ class TaskWorker:
     def __init__(self, ...):
         # Remove new_task_event parameter
         # ... other init code ...
-        
+
     async def run(self, wake_up_event: asyncio.Event | None = None) -> None:
         """Run the task worker loop.
-        
+
         Args:
             wake_up_event: Optional override event for testing. If not provided,
                           uses the global task event.
         """
         if wake_up_event is None:
             wake_up_event = get_task_event()
-            
+
         # ... rest of run method uses wake_up_event as before ...
+
 ```
 
 ### Testing Support
@@ -136,17 +142,18 @@ class TaskWorker:
 Add fixture to reset the global event between tests:
 
 ```python
+
 # tests/conftest.py
 @pytest.fixture(autouse=True)
 def reset_task_event():
     """Reset the global task event for each test to ensure isolation."""
     import family_assistant.storage.tasks as tasks_module
-    
+
     # Reset before test
     tasks_module._task_event = None
-    
+
     yield
-    
+
     # Reset after test
     if tasks_module._task_event is not None:
         # Clear any pending notifications
@@ -155,30 +162,35 @@ def reset_task_event():
         except:
             pass
     tasks_module._task_event = None
+
 ```
 
 ## Implementation Plan
 
 ### Phase 1: Core Changes (Day 1)
+
 1. Add `get_task_event()` function to `storage/tasks.py`
 2. Modify `enqueue_task` to auto-notify with deprecation warning
 3. Update `TaskWorker` to use global event by default
 4. Add test fixture to `tests/conftest.py`
 
 ### Phase 2: Update Callers (Day 1-2)
+
 1. Remove `new_task_event` from `Assistant.__init__`
-2. Remove from `ProcessingService` constructor  
+2. Remove from `ProcessingService` constructor
 3. Remove from `ToolExecutionContext`
 4. Remove from web API endpoints
 5. Update all `enqueue_task` calls to stop passing `notify_event`
 
 ### Phase 3: Testing and Validation (Day 2-3)
+
 1. Run full test suite to ensure no regressions
 2. Add specific tests for notification behavior
 3. Measure performance improvements
 4. Update any failing tests
 
 ### Phase 4: Cleanup (Day 3-4)
+
 1. Remove deprecated `notify_event` parameter
 2. Remove `new_task_event` from all remaining contexts
 3. Update documentation
@@ -187,7 +199,9 @@ def reset_task_event():
 ## Migration Guide
 
 ### For Internal Code
+
 ```python
+
 # Before
 await enqueue_task(
     db_context=db,
@@ -196,23 +210,27 @@ await enqueue_task(
     notify_event=self.new_task_event  # Remove this
 )
 
-# After  
+# After
 await enqueue_task(
     db_context=db,
     task_id="task-123",
     task_type="process_email"
     # Notification is automatic!
 )
+
 ```
 
 ### For Tests
+
 ```python
+
 # Before
 new_task_event = asyncio.Event()
 worker = TaskWorker(
     new_task_event=new_task_event,
     # ... other params ...
 )
+
 # ... enqueue task ...
 new_task_event.set()  # Manual notification
 
@@ -220,8 +238,10 @@ new_task_event.set()  # Manual notification
 worker = TaskWorker(
     # ... other params ...
 )
+
 # ... enqueue task ...
 # Notification is automatic!
+
 ```
 
 ## Alternatives Considered
@@ -234,14 +254,17 @@ worker = TaskWorker(
 ## Risks and Mitigations
 
 ### Event Loop Binding
+
 - **Risk**: Events are bound to specific event loops
 - **Mitigation**: Lazy initialization ensures event is created in correct loop
 
-### Test Isolation  
+### Test Isolation
+
 - **Risk**: Global state could leak between tests
 - **Mitigation**: Auto-reset fixture ensures clean state
 
 ### Multi-Process Deployment
+
 - **Risk**: Events don't work across processes
 - **Mitigation**: Document as single-process limitation; future enhancement possible
 
@@ -261,13 +284,16 @@ worker = TaskWorker(
 ## Appendix: Performance Analysis
 
 Current test durations showing impact:
+
 ```
 7.45s test_vector_ranking
-7.19s test_document_indexing_and_query_e2e  
+7.19s test_document_indexing_and_query_e2e
 6.83s test_notes_indexing_graceful_degradation
+
 ```
 
 Expected improvements:
+
 - Remove 0-5s polling delays
 - Reduce test times by 50-70%
 - Improve user experience with instant task processing
