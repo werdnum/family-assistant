@@ -487,6 +487,83 @@ elif temp <= 25 and prev_temp > 25:
 4. Clear debugging tools help users understand script behavior
 5. Performance is measurably better than wake_llm for simple tasks
 
+## Implementation Progress
+
+### ✅ Phase 1: Core Infrastructure (Complete)
+
+1. **Database Schema** ✓
+   - Added `SCRIPT` to `EventActionType` enum
+   - Created Alembic migration (`add_script_enum`)
+   - Updated event listeners table to support script action type
+
+2. **Event Handler Profile** ✓
+   - Created `event_handler` processing profile in config
+   - Configured with restricted tool access for safety
+   - Using fast Haiku model for script execution
+
+3. **Script Execution Task** ✓
+   - Implemented `handle_script_execution` in task_worker.py
+   - Full StarlarkEngine integration with tool access
+   - Proper error handling and retry mechanism
+   - Comprehensive logging for debugging
+
+4. **Event Processor Integration** ✓
+   - Updated EventProcessor to handle script actions
+   - Scripts execute via task queue (non-blocking)
+   - Proper task ID generation and payload structure
+
+5. **Testing Infrastructure** ✓
+   - Created comprehensive functional tests in `test_script_execution_handler.py`
+   - Tests cover: successful execution, syntax errors, multiple tool calls
+   - Fixed test helper `wait_for_tasks_to_complete` to filter by task type
+   - All tests passing reliably
+
+### 🚧 Phase 2: Tool Integration (Next)
+
+1. **Tool Updates** (TODO)
+   - Extend `create_event_listener` tool to support script actions
+   - Add `validate_event_script` tool for syntax checking
+   - Add `test_event_script` tool for dry runs
+
+2. **Web UI** (TODO)
+   - Update event listeners UI to show script code
+   - Add script editor with syntax highlighting
+   - Show script execution history in task UI
+
+### 📋 Phase 3: Production Hardening (Future)
+
+1. **Monitoring** (TODO)
+   - Performance metrics for script execution
+   - Alert thresholds for failed scripts
+   - Script execution analytics
+
+2. **Documentation** (TODO)
+   - User guide for writing event scripts
+   - Common patterns and examples
+   - Troubleshooting guide
+
+### Key Implementation Details
+
+1. **Script Context**: Scripts receive:
+   - `event`: Full event data dictionary
+   - `conversation_id`: Associated conversation
+   - `listener_id`: ID of triggering listener
+   - Access to all time/date APIs and allowed tools
+
+2. **Security Model**:
+   - Scripts use event_handler profile tools only
+   - No destructive operations by default
+   - 10-minute timeout for long-running operations
+   - Full audit trail in task history
+
+3. **Error Handling**:
+   - Syntax errors prevent script creation
+   - Runtime errors trigger task retry with backoff
+   - Clear error messages with line numbers
+   - Failed scripts don't affect other listeners
+
 ## Conclusion
 
 This integration provides a powerful automation capability while maintaining the simplicity and security of the existing system. By leveraging the task queue and existing permission model, we can add scripting without major architectural changes. The design prioritizes user safety and system reliability while enabling sophisticated automation workflows.
+
+Phase 1 is now complete with full test coverage. The core infrastructure is ready for tool integration and UI enhancements in Phase 2.
