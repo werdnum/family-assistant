@@ -37,6 +37,11 @@
                     <option value="false" {% if enabled == false %}selected{% endif %}>Disabled</option>
                 </select>
             </div>
+            
+            <div>
+                <label for="conversation_id">Conversation ID:</label>
+                <input type="text" name="conversation_id" id="conversation_id" value="{{ conversation_id or '' }}" placeholder="Filter by conversation ID">
+            </div>
         </div>
         
         <div style="margin-top: 1rem;">
@@ -70,6 +75,10 @@
             <div class="meta-item">
                 <span class="meta-label">Source:</span>
                 <span class="meta-value">{{ listener.source_id.replace('_', ' ').title() }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Conversation:</span>
+                <span class="meta-value">{{ listener.conversation_id or 'None' }}</span>
             </div>
             <div class="meta-item">
                 <span class="meta-label">Status:</span>
