@@ -132,9 +132,7 @@ The `action_config` JSON field for script actions:
 ```json
 {
     "script_code": "# Starlark code here\nadd_or_update_note(...)",
-    "timeout": 600,  // Optional, defaults to 10 minutes for event scripts (same as manual scripts)
-    "allowed_tools": ["add_or_update_note", "search_notes"],  // Optional
-    "fail_strategy": "retry_and_alert"  // or "log_and_continue" or "alert_only"
+    "timeout": 600  // Optional, defaults to 10 minutes
 }
 
 ```
@@ -172,10 +170,12 @@ async def handle_script_execution(
         logger.info(f"Script execution completed for listener {payload['listener_id']}")
     except ScriptTimeoutError:
         logger.error(f"Script timeout for listener {payload['listener_id']}")
-        # Handle based on fail_strategy
+        # Task will be retried automatically by task queue
+        raise
     except ScriptError as e:
         logger.error(f"Script error for listener {payload['listener_id']}: {e}")
-        # Handle based on fail_strategy
+        # Task will be retried automatically by task queue
+        raise
 
 ```
 
@@ -325,19 +325,18 @@ For simple scripts, we could auto-wrap in a function, but the explicit requireme
 2. **Resource Limits**:
    - Same timeout as manual scripts (10 minutes) to support long-running operations
    - Rate limiting applies to script-triggered tool calls
-   - Script size limited to 10KB to prevent storage abuse
    - Note: Memory limits are not enforceable with starlark-pyo3
 3. **Sandboxing**: No file system, network, or process access
-4. **Audit Trail**: All script executions logged with results
+4. **Audit Trail**: All script executions visible in task queue UI
 5. **Rate Limiting**: Script actions count against the same daily limits as wake_llm actions
 
 ### 9. Error Handling
 
-Three failure strategies configurable per listener:
+Script execution tasks use the standard task queue retry mechanism:
 
-1. **retry_and_alert** (default): Retry with exponential backoff (max 3 attempts), alert user on final failure
-2. **log_and_continue**: Log error, mark task failed, continue processing (for non-critical scripts)
-3. **alert_only**: Alert user immediately on first failure (for critical scripts)
+- Automatic retry with exponential backoff
+- Alert user if final retry fails
+- All execution history visible in task UI
 
 ### 10. Script Validation and Testing
 
@@ -368,18 +367,9 @@ Three failure strategies configurable per listener:
    - Execution time
    - Any errors with line numbers
 
-4. **Auto-disable on Repeated Failures**: After 5 consecutive failures, listener is disabled with user notification
-
 ## Storage Considerations
 
-Since scripts are stored in the `action_config` JSON field:
-
-1. **Size Limits**: 10KB max script size (enforced at creation time)
-2. **Validation**: Scripts are syntax-checked before storage
-3. **Compression**: Large scripts could be gzip-compressed if needed (future enhancement)
-4. **Separate Table**: If scripts grow beyond JSON limits, consider separate script storage table (future)
-
-For MVP, storing scripts directly in `action_config` is sufficient given the 10KB limit.
+Scripts are stored directly in the `action_config` JSON field. There's more than enough space for any reasonable automation script.
 
 ## Implementation Plan
 
@@ -400,8 +390,8 @@ For MVP, storing scripts directly in `action_config` is sufficient given the 10K
 
 ### Phase 3: Production Hardening
 
-1. Implement retry_and_alert error handling strategy
-2. Add auto-disable after repeated failures
+1. Use standard task retry mechanism
+2. Alert user on final retry failure
 3. Performance monitoring and alerts
 4. Documentation and examples
 
