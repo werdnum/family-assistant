@@ -48,58 +48,44 @@
 <!-- Results Summary -->
 <p>Found {{ total_count }} event{% if total_count != 1 %}s{% endif %}</p>
 
-<!-- Events Table -->
+<!-- Events List -->
 {% if events %}
-<div style="overflow-x: auto;">
-    <table>
-        <thead>
-            <tr>
-                <th>Timestamp</th>
-                <th>Source</th>
-                <th>Event Data</th>
-                <th>Triggered Listeners</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for event in events %}
-            <tr>
-                <td style="white-space: nowrap;">
-                    {{ event.timestamp.strftime('%Y-%m-%d %H:%M:%S') if event.timestamp else 'N/A' }}
-                </td>
-                <td>
-                    <span style="text-transform: capitalize;">
-                        {{ event.source_id.replace('_', ' ') }}
-                    </span>
-                </td>
-                <td>
-                    <details>
-                        <summary style="cursor: pointer;">
-                            <code style="font-size: 0.9em;">{{ event.summary }}</code>
-                        </summary>
-                        <div style="margin-top: 0.5rem; padding: 0.5rem; background-color: var(--bg-secondary); border-radius: 4px; overflow-x: auto;">
-                            <pre style="margin: 0; font-size: 0.85em;"><code>{{ event.event_data | tojson(indent=2) }}</code></pre>
-                        </div>
-                    </details>
-                </td>
-                <td>
-                    {% if event.triggered_listener_names %}
-                        <ul style="margin: 0; padding-left: 1.5rem;">
-                            {% for name in event.triggered_listener_names %}
-                            <li>{{ name }}</li>
-                            {% endfor %}
-                        </ul>
-                    {% else %}
-                        <span style="color: var(--text-light);">None</span>
-                    {% endif %}
-                </td>
-                <td>
-                    <a href="/events/{{ event.event_id }}">View Details</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+<div class="events-container">
+    {% for event in events %}
+    <div class="event-card">
+        <div class="event-header">
+            <div class="event-meta">
+                <span class="event-time">{{ event.timestamp.strftime('%Y-%m-%d %H:%M:%S') if event.timestamp else 'N/A' }}</span>
+                <span class="event-source">{{ event.source_id.replace('_', ' ').title() }}</span>
+            </div>
+            <a href="/events/{{ event.event_id }}" class="event-link">View Details →</a>
+        </div>
+        
+        <div class="event-content">
+            <details class="event-data">
+                <summary>
+                    <code>{{ event.summary }}</code>
+                </summary>
+                <div class="event-payload">
+                    <pre><code>{{ event.event_data | tojson(indent=2) }}</code></pre>
+                </div>
+            </details>
+        </div>
+        
+        <div class="event-listeners">
+            <strong>Triggered Listeners:</strong>
+            {% if event.triggered_listener_names %}
+                <ul>
+                    {% for name in event.triggered_listener_names %}
+                    <li>{{ name }}</li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <span class="none-text">None</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
 </div>
 
 <!-- Pagination -->
@@ -122,32 +108,201 @@
 {% endif %}
 
 <style>
-    /* Custom styles for events table */
-    table {
-        font-size: 0.95em;
+    /* Events container and cards */
+    .events-container {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
     }
     
-    code {
+    .event-card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1rem;
+        background-color: var(--bg);
+    }
+    
+    .event-card:hover {
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Event header */
+    .event-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    
+    .event-meta {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    .event-time {
+        font-family: monospace;
+        font-size: 0.9em;
+        color: var(--text-light);
+    }
+    
+    .event-source {
+        background-color: var(--accent-bg);
+        color: var(--accent);
+        padding: 0.2rem 0.6rem;
+        border-radius: 4px;
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+    
+    .event-link {
+        white-space: nowrap;
+    }
+    
+    /* Event content */
+    .event-content {
+        margin-bottom: 0.75rem;
+    }
+    
+    .event-data {
         background-color: var(--bg-secondary);
-        padding: 0.2rem 0.4rem;
-        border-radius: 3px;
+        padding: 0.75rem;
+        border-radius: 4px;
     }
     
-    details summary {
+    .event-data summary {
+        cursor: pointer;
         user-select: none;
     }
     
-    details summary:hover {
+    .event-data summary:hover {
         text-decoration: underline;
     }
     
-    details[open] summary {
-        margin-bottom: 0.5rem;
-    }
-    
-    pre code {
+    .event-data summary code {
         background: none;
         padding: 0;
+        font-size: 0.9em;
+    }
+    
+    .event-payload {
+        margin-top: 0.75rem;
+        padding: 0.75rem;
+        background-color: var(--bg);
+        border-radius: 4px;
+        overflow-x: auto;
+    }
+    
+    .event-payload pre {
+        margin: 0;
+        font-size: 0.85em;
+    }
+    
+    .event-payload code {
+        background: none;
+        padding: 0;
+    }
+    
+    /* Event listeners */
+    .event-listeners {
+        font-size: 0.9em;
+    }
+    
+    .event-listeners ul {
+        margin: 0.25rem 0 0 0;
+        padding-left: 1.5rem;
+    }
+    
+    .none-text {
+        color: var(--text-light);
+    }
+    
+    /* Desktop layout - display as table */
+    @media (min-width: 768px) {
+        .events-container {
+            display: table;
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+        
+        .event-card {
+            display: table-row;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+        }
+        
+        .event-card:hover {
+            box-shadow: none;
+            background-color: var(--bg-secondary);
+        }
+        
+        .event-header,
+        .event-content,
+        .event-listeners {
+            display: table-cell;
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+        
+        .event-header {
+            width: 25%;
+            margin-bottom: 0;
+        }
+        
+        .event-meta {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.5rem;
+        }
+        
+        .event-content {
+            width: 45%;
+            margin-bottom: 0;
+        }
+        
+        .event-listeners {
+            width: 30%;
+        }
+        
+        /* Add table headers */
+        .events-container::before {
+            content: "";
+            display: table-row;
+            font-weight: bold;
+        }
+        
+        .events-container::before .event-header::before {
+            content: "Time & Source";
+        }
+        
+        .events-container::before .event-content::before {
+            content: "Event Data";
+        }
+        
+        .events-container::before .event-listeners::before {
+            content: "Triggered Listeners";
+        }
+    }
+    
+    /* Very wide screens - add more spacing */
+    @media (min-width: 1200px) {
+        .event-header {
+            width: 20%;
+        }
+        
+        .event-content {
+            width: 50%;
+        }
+        
+        .event-listeners {
+            width: 30%;
+        }
     }
 </style>
 {% endblock %}

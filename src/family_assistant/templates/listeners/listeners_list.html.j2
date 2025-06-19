@@ -49,74 +49,69 @@
 <!-- Results Summary -->
 <p>Found {{ total_count }} listener{% if total_count != 1 %}s{% endif %}</p>
 
-<!-- Listeners Table -->
+<!-- Listeners List -->
 {% if listeners %}
-<div style="overflow-x: auto;">
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Source</th>
-                <th>Action</th>
-                <th>Status</th>
-                <th>Today / Limit</th>
-                <th>Last Triggered</th>
-                <th>Created</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for listener in listeners %}
-            <tr>
-                <td>
-                    <a href="/event-listeners/{{ listener.id }}">{{ listener.name }}</a>
-                    {% if listener.description %}
-                        <br><small style="color: var(--text-light);">{{ listener.description[:50] }}{% if listener.description|length > 50 %}...{% endif %}</small>
-                    {% endif %}
-                </td>
-                <td>
-                    <span style="text-transform: capitalize;">
-                        {{ listener.source_id.replace('_', ' ') }}
-                    </span>
-                </td>
-                <td style="text-align: center;">
-                    <span title="{{ 'LLM Callback' if listener.action_type == 'wake_llm' else 'Script Execution' }}">
-                        {{ listener.action_icon }}
-                    </span>
-                </td>
-                <td>
-                    {% if listener.enabled %}
-                        <span style="color: var(--accent);">✓ Enabled</span>
-                    {% else %}
-                        <span style="color: var(--text-light);">✗ Disabled</span>
-                    {% endif %}
-                    {% if listener.one_time %}
-                        <br><small style="color: var(--text-light);">One-time</small>
-                    {% endif %}
-                </td>
-                <td>
-                    {{ listener.daily_executions or 0 }} / 5
+<div class="listeners-container">
+    {% for listener in listeners %}
+    <div class="listener-card">
+        <div class="listener-header">
+            <div class="listener-title">
+                <h3><a href="/event-listeners/{{ listener.id }}">{{ listener.name }}</a></h3>
+                {% if listener.description %}
+                    <p class="listener-description">{{ listener.description[:100] }}{% if listener.description|length > 100 %}...{% endif %}</p>
+                {% endif %}
+            </div>
+            <span class="listener-action-type" title="{{ 'LLM Callback' if listener.action_type == 'wake_llm' else 'Script Execution' }}">
+                {{ listener.action_icon }}
+            </span>
+        </div>
+        
+        <div class="listener-meta">
+            <div class="meta-item">
+                <span class="meta-label">Source:</span>
+                <span class="meta-value">{{ listener.source_id.replace('_', ' ').title() }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Status:</span>
+                {% if listener.enabled %}
+                    <span class="status-badge enabled">✓ Enabled</span>
+                {% else %}
+                    <span class="status-badge disabled">✗ Disabled</span>
+                {% endif %}
+                {% if listener.one_time %}
+                    <span class="status-badge one-time">One-time</span>
+                {% endif %}
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Executions:</span>
+                <span class="meta-value">
+                    {{ listener.daily_executions or 0 }} / 5 today
                     {% if listener.daily_executions >= 5 %}
-                        <br><small style="color: orange;">Rate limited</small>
+                        <span class="rate-limited">(Rate limited)</span>
                     {% endif %}
-                </td>
-                <td>
+                </span>
+            </div>
+        </div>
+        
+        <div class="listener-footer">
+            <div class="listener-timestamps">
+                <span class="timestamp">
+                    <strong>Last triggered:</strong>
                     {% if listener.last_execution_at %}
                         {{ listener.last_execution_at.strftime('%Y-%m-%d %H:%M') }}
                     {% else %}
-                        <span style="color: var(--text-light);">Never</span>
+                        Never
                     {% endif %}
-                </td>
-                <td>
+                </span>
+                <span class="timestamp">
+                    <strong>Created:</strong>
                     {{ listener.created_at.strftime('%Y-%m-%d') if listener.created_at else 'N/A' }}
-                </td>
-                <td>
-                    <a href="/event-listeners/{{ listener.id }}">View</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                </span>
+            </div>
+            <a href="/event-listeners/{{ listener.id }}" class="view-link">View Details →</a>
+        </div>
+    </div>
+    {% endfor %}
 </div>
 
 <!-- Pagination -->
@@ -139,13 +134,164 @@
 {% endif %}
 
 <style>
-    /* Custom styles for listeners table */
-    table {
-        font-size: 0.95em;
+    /* Listeners container and cards */
+    .listeners-container {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
     }
     
-    td a {
+    .listener-card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1rem;
+        background-color: var(--bg);
+    }
+    
+    .listener-card:hover {
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Listener header */
+    .listener-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 1rem;
+        gap: 1rem;
+    }
+    
+    .listener-title h3 {
+        margin: 0 0 0.25rem 0;
+        font-size: 1.1em;
+    }
+    
+    .listener-title a {
+        text-decoration: none;
+        color: var(--text);
+    }
+    
+    .listener-title a:hover {
+        text-decoration: underline;
+    }
+    
+    .listener-description {
+        margin: 0;
+        color: var(--text-light);
+        font-size: 0.9em;
+    }
+    
+    .listener-action-type {
+        font-size: 1.5em;
+        flex-shrink: 0;
+    }
+    
+    /* Listener meta */
+    .listener-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+        margin-bottom: 1rem;
+        font-size: 0.9em;
+    }
+    
+    .meta-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    
+    .meta-label {
+        color: var(--text-light);
+        font-size: 0.85em;
+    }
+    
+    .meta-value {
         font-weight: 500;
+    }
+    
+    /* Status badges */
+    .status-badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+    
+    .status-badge.enabled {
+        background-color: var(--accent-bg);
+        color: var(--accent);
+    }
+    
+    .status-badge.disabled {
+        background-color: var(--bg-secondary);
+        color: var(--text-light);
+    }
+    
+    .status-badge.one-time {
+        background-color: var(--bg-secondary);
+        color: var(--text);
+        margin-left: 0.25rem;
+    }
+    
+    .rate-limited {
+        color: orange;
+        font-size: 0.85em;
+    }
+    
+    /* Listener footer */
+    .listener-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+    }
+    
+    .listener-timestamps {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+        font-size: 0.85em;
+        color: var(--text-light);
+    }
+    
+    .timestamp strong {
+        font-weight: 500;
+        color: var(--text);
+    }
+    
+    .view-link {
+        white-space: nowrap;
+    }
+    
+    /* Desktop layout - more compact */
+    @media (min-width: 768px) {
+        .listener-meta {
+            gap: 2rem;
+        }
+        
+        .meta-item {
+            flex-direction: row;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .meta-label::after {
+            content: ":";
+        }
+    }
+    
+    /* Wide screens - grid layout */
+    @media (min-width: 1200px) {
+        .listeners-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+            gap: 1.5rem;
+        }
     }
 </style>
 {% endblock %}
