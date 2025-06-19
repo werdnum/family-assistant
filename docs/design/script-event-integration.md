@@ -518,12 +518,13 @@ elif temp <= 25 and prev_temp > 25:
    - Fixed test helper `wait_for_tasks_to_complete` to filter by task type
    - All tests passing reliably
 
-### 🚧 Phase 2: Tool Integration (Next)
+### ✅ Phase 2: Tool Integration (Complete)
 
-1. **Tool Updates** (TODO)
-   - Extend `create_event_listener` tool to support script actions
-   - Add `validate_event_script` tool for syntax checking
-   - Add `test_event_script` tool for dry runs
+1. **Tool Updates** ✓
+   - Extended `create_event_listener` tool to support script actions
+   - Added `validate_event_listener_script` tool for syntax checking
+   - Added `test_event_listener_script` tool for dry runs
+   - All tools fully tested with comprehensive integration tests
 
 2. **Web UI** (TODO)
    - Update event listeners UI to show script code
