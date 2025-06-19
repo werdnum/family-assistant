@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-This proposal outlines options for integrating a restricted scripting language into Family Assistant to enable user customization, reduce LLM costs, and improve security. Based on extensive research, we recommend **CEL (Common Expression Language)** for simple expressions and **Starlark** for more complex scripting needs, with a phased implementation starting with event listener actions.
+This proposal outlines options for integrating a restricted scripting language into Family Assistant to enable user customization, reduce LLM costs, and improve security. Based on extensive research, we recommend **CEL (Common Expression Language)**for simple expressions and **Starlark**for more complex scripting needs, with a phased implementation starting with event listener actions.
 
 ## Use Case Analysis
 
@@ -29,27 +29,30 @@ This proposal outlines options for integrating a restricted scripting language i
 
 | Language | Security | Performance | Python Integration | Learning Curve | Use Case Fit |
 |----------|----------|-------------|-------------------|----------------|--------------|
-| **CEL** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Event conditions, simple rules |
-| **Starlark** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Complex automation, workflows |
-| **Lua (lupa)** | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | General scripting |
-| **RestrictedPython** | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Python compatibility |
-| **JavaScript (pyduktape)** | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | Web developers |
-| **WebAssembly** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | Maximum isolation |
+| **CEL**| ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Event conditions, simple rules |
+| **Starlark**| ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Complex automation, workflows |
+| **Lua (lupa)**| ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | General scripting |
+| **RestrictedPython**| ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Python compatibility |
+| **JavaScript (pyduktape)**| ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | Web developers |
+| **WebAssembly**| ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | Maximum isolation |
 
 ### Detailed Analysis
 
 #### CEL (Common Expression Language)
+
 - **Pros**: Non-Turing complete, designed for security, nanosecond evaluation, Google-backed
 - **Cons**: Limited to expressions, no loops or complex logic
 - **Best for**: Event conditions, validation rules, simple transformations
 
 #### Starlark
+
 - **Pros**: Python-like syntax, deterministic execution, designed for configuration + logic
 - **Cons**: Requires external bindings (Rust or Go implementation)
 - **Best for**: Complex automations, multi-step workflows, tool orchestration
 - **Recommended Implementation**: `starlark-pyo3` (Rust-based with PyO3 bindings)
 
 #### Lua
+
 - **Pros**: Mature embedding story, good performance, smaller attack surface than Python
 - **Cons**: Different syntax from Python, sandboxing requires care with lupa
 - **Best for**: General-purpose scripting if Python syntax not required
@@ -60,7 +63,7 @@ This proposal outlines options for integrating a restricted scripting language i
 
 We evaluated two main options for Starlark integration:
 
-1. **starlark-pyo3** (Recommended)
+1. **starlark-pyo3**(Recommended)
    - Built on Facebook's Rust implementation with PyO3 bindings
    - Simple installation via binary wheels (no build dependencies)
    - Active maintenance (35K+ weekly PyPI downloads)
@@ -78,6 +81,7 @@ We evaluated two main options for Starlark integration:
 ### Why starlark-pyo3
 
 The Rust-based implementation provides:
+
 - **Security**: True sandboxing with no filesystem, network, or system access
 - **Performance**: Excellent performance without Python GIL restrictions
 - **Ease of Use**: Simple pip install, no build dependencies
@@ -87,19 +91,23 @@ The Rust-based implementation provides:
 ## Recommended Solution: Hybrid Approach
 
 ### Phase 1: CEL for Event Conditions
+
 Use CEL for event listener conditions and simple rules:
 
-```cel
+```text
 // Example: Only notify if temperature > 30 and during daytime
-event.temperature > 30 && 
+event.temperature > 30 &&
 time.hour >= 6 && time.hour <= 22 &&
 !has(state.notifications_sent_today)
+
 ```
 
 ### Phase 2: Starlark for Complex Scripts
+
 Use Starlark for multi-step automations and workflows:
 
 ```python
+
 # Starlark script for complex automation
 def handle_event(event, context):
     if event.type == "motion_detected":
@@ -111,6 +119,7 @@ def handle_event(event, context):
                 room=event.room,
                 delay_minutes=10
             )
+
 ```
 
 ## API Design
@@ -132,6 +141,7 @@ class AutomationContext(ScriptContext):
     tools: SafeToolsAPI      # Tool execution
     notify: NotificationAPI  # Send notifications
     schedule: SchedulerAPI   # Schedule tasks
+
 ```
 
 ### Safe Database API
@@ -139,19 +149,20 @@ class AutomationContext(ScriptContext):
 ```python
 class DatabaseReadAPI:
     """Read-only database access for scripts"""
-    
-    async def get_notes(self, 
+
+    async def get_notes(self,
                        query: Optional[str] = None,
                        limit: int = 10) -> List[Note]:
         """Search notes with optional query"""
-    
+
     async def get_recent_events(self,
                                event_type: Optional[str] = None,
                                hours: int = 24) -> List[Event]:
         """Get recent events, optionally filtered by type"""
-    
+
     async def get_user_data(self, key: str) -> Optional[Any]:
         """Get user-defined data by key"""
+
 ```
 
 ### Safe Tools API
@@ -159,7 +170,7 @@ class DatabaseReadAPI:
 ```python
 class SafeToolsAPI:
     """Controlled tool execution for scripts"""
-    
+
     async def execute(self,
                      tool_name: str,
                      **kwargs) -> ToolResult:
@@ -167,14 +178,16 @@ class SafeToolsAPI:
         # Validates tool is allowed for scripts
         # Applies rate limiting
         # Logs execution for audit
-    
+
     def is_available(self, tool_name: str) -> bool:
         """Check if tool is available for script use"""
+
 ```
 
 ## Implementation Plan
 
 ### Stage 1: Foundation (Week 1-2)
+
 1. Set up CEL-python for expression evaluation
 2. Install starlark-pyo3 (`pip install starlark-pyo3`)
 3. Create base ScriptContext and API classes
@@ -182,12 +195,14 @@ class SafeToolsAPI:
 5. Add configuration for enabling/disabling scripting
 
 ### Stage 2: Event Integration (Week 3-4)
+
 1. Add `script` action type to event listeners
 2. Implement CEL condition evaluation for events
 3. Create script execution environment with context
 4. Add logging and error handling
 
 ### Stage 3: Starlark Integration (Week 5-6)
+
 1. Integrate starlark-pyo3 for complex scripts
 2. Implement script storage and management
 3. Create script editor UI (web interface)
@@ -195,6 +210,7 @@ class SafeToolsAPI:
 5. Create comprehensive API documentation
 
 ### Stage 4: Advanced Features (Week 7-8)
+
 1. Custom tool creation via scripts
 2. Scheduled script execution
 3. Script sharing and templates
@@ -232,18 +248,19 @@ class SafeToolsAPI:
 ```yaml
 scripting:
   enabled: true
-  
+
   cel:
     max_expression_length: 1000
     evaluation_timeout_ms: 100
-    
+
   starlark:
     max_script_size: 10000
     execution_timeout_ms: 5000
     memory_limit_mb: 50
-    
+
   security:
     allowed_tools:
+
       - get_weather
       - send_notification
       - query_calendar
@@ -253,16 +270,21 @@ scripting:
     audit:
       log_all_executions: true
       retain_logs_days: 30
+
 ```
 
 ## Migration Strategy
 
 ### For Event Listeners
+
 ```yaml
+
 # Before: LLM-based condition
 listeners:
+
   - name: "Temperature Alert"
     conditions:
+
       - source: home_assistant
         entity_id: sensor.outside_temperature
     action:
@@ -272,8 +294,10 @@ listeners:
 
 # After: CEL expression
 listeners:
+
   - name: "Temperature Alert"
     conditions:
+
       - source: home_assistant
         entity_id: sensor.outside_temperature
         cel_filter: "event.state > 30 && time.hour >= 6 && time.hour <= 22"
@@ -281,10 +305,13 @@ listeners:
       type: notification
       config:
         template: "High temperature alert: {{event.state}}°C"
+
 ```
 
 ### For Complex Automations
+
 ```yaml
+
 # Before: Multiple LLM calls
 action:
   type: wake_llm
@@ -297,23 +324,27 @@ action:
   config:
     language: starlark
     script_id: "motion_light_automation"
+
 ```
 
 ## Performance Considerations
 
 ### CEL Performance
+
 - Expression evaluation: 10-100 microseconds
 - Suitable for high-frequency event filtering
 - Minimal memory overhead
 
 ### Starlark Performance
-- Script execution: 1-10 milliseconds  
+
+- Script execution: 1-10 milliseconds
 - No Python GIL restrictions (parallel execution possible)
 - Rust-based implementation provides excellent performance
 - Memory usage proportional to script complexity
 - Suitable for complex automations
 
 ### Optimization Strategies
+
 1. Cache compiled expressions/scripts
 2. Pre-validate scripts on save
 3. Use CEL for hot paths, Starlark for complex logic
@@ -343,13 +374,14 @@ action:
 
 Add to `pyproject.toml`:
 
-```toml
+```yaml
 [project]
 dependencies = [
     # ... existing dependencies
     "cel-python>=0.1.5",      # For simple expression evaluation
     "starlark-pyo3>=0.1.0",   # For complex scripting (Rust-based)
 ]
+
 ```
 
 ### Example Starlark Integration
@@ -369,6 +401,7 @@ module["db"] = DatabaseReadAPI(db_context)
 # Parse and execute script
 ast = sl.parse("user_script.star", script_code)
 result = sl.eval(module, ast, globals)
+
 ```
 
 ## Conclusion

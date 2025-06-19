@@ -21,8 +21,8 @@ This fundamentally violates hermeticity.
 
 ### Bazel (Starlark's Origin)
 
-- BUILD files use Starlark **hermeticly** to define the build graph
-- Actual build actions (with side effects) execute **outside** Starlark
+- BUILD files use Starlark **hermeticly**to define the build graph
+- Actual build actions (with side effects) execute **outside**Starlark
 - Starlark describes WHAT to do, not HOW to do it
 
 ### Terraform
@@ -36,39 +36,45 @@ This fundamentally violates hermeticity.
 ### Option 1: Pure Hermetic Starlark (Correct Pattern)
 
 ```python
+
 # Starlark returns a plan, doesn't execute
 def handle_event(event, context):
     actions = []
-    
+
     if event.temperature > 30 and context.time.hour >= 6:
         # Don't execute, just plan
         actions.append({
             "type": "notification",
             "message": "High temperature: {}°C".format(event.temperature)
         })
-        
+
         if context.state.get("lights_on"):
             actions.append({
                 "type": "tool_call",
                 "tool": "turn_off_lights",
                 "args": {"room": "all"}
             })
-    
+
     return {"actions": actions}
+
 ```
 
 Then execute outside Starlark:
+
 ```python
+
 # In Python, not Starlark
 result = starlark_eval(script, context)
 for action in result.get("actions", []):
     if action["type"] == "tool_call":
         await execute_tool(action["tool"], action["args"])
+
 ```
 
 ### Option 2: Non-Hermetic Functions (Pragmatic but "Wrong")
 
 ```python
+
 # Register side-effecting functions
 module["tools"] = {
     "turn_on_lights": lambda room: lights_api.turn_on(room),  # Side effect!
@@ -79,17 +85,19 @@ module["tools"] = {
 if event.temperature > 30:
     tools.send_notification("High temp!")  # Breaks hermeticity
     tools.turn_on_ac()                     # Non-deterministic
+
 ```
 
 ### Option 3: Hybrid - Read-Only + Action List
 
 ```python
+
 # Starlark gets read-only access and returns actions
 def process_event(event, ctx):
     # Reading is "okay-ish" (still breaks pure hermeticity)
     recent_temps = ctx.db.get_recent("temperature", hours=1)
     avg_temp = sum(t.value for t in recent_temps) / len(recent_temps)
-    
+
     # But writes must be returned as actions
     if event.temperature > avg_temp + 5:
         return {
@@ -99,13 +107,14 @@ def process_event(event, ctx):
                 {"tool": "log_metric", "args": {"metric": "temp_spike", "value": event.temperature}}
             ]
         }
-    
+
     return {"condition_met": False, "actions": []}
+
 ```
 
 ## Why This Matters
 
-### If We Break Hermeticity:
+### If We Break Hermeticity
 
 1. **Lost Determinism**: Same script might behave differently based on external state
 2. **No Safe Parallelism**: Can't safely evaluate multiple scripts concurrently
@@ -113,7 +122,7 @@ def process_event(event, ctx):
 4. **Security Risks**: Scripts could probe the system through side effects
 5. **Against Design Philosophy**: We're misusing the tool
 
-### If We Keep Hermeticity:
+### If We Keep Hermeticity
 
 1. **More Complex Architecture**: Need execution layer outside Starlark
 2. **Less "Natural" Scripts**: Can't just `tools.turn_on_lights()`
@@ -153,8 +162,10 @@ def process_event(event, ctx):
 If we respect Starlark's hermetic principle:
 
 ```yaml
+
 # Event listener returns action plan
 listeners:
+
   - name: "Temperature Alert"
     condition:
       starlark: "event.temp > 30 and time.hour >= 6"
@@ -166,7 +177,7 @@ listeners:
                 severity = "high"
             else:
                 severity = "medium"
-                
+
             return {
                 "execute": True,
                 "actions": [{
@@ -175,8 +186,9 @@ listeners:
                     "message": "Temperature: {}°C".format(event.temp)
                 }]
             }
-        
+
         create_plan(event, context)
+
 ```
 
 The system would then:
@@ -187,7 +199,7 @@ The system would then:
 
 ## The Uncomfortable Truth
 
-Using Starlark for scripting with side effects is **philosophically wrong** according to its design principles. We have three choices:
+Using Starlark for scripting with side effects is **philosophically wrong**according to its design principles. We have three choices:
 
 1. **Respect the design**: Use Starlark properly with two-phase execution
 2. **Violate the design**: Add side-effecting functions and lose guarantees

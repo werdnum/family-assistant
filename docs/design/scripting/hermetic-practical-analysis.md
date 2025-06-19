@@ -11,21 +11,26 @@
 ### How Others Actually Use Starlark
 
 #### Example 1: Skycfg (Stripe's Config Management)
-```go
+
+```text
 // They expose functions with side effects
 globals["http_get"] = starlark.NewBuiltin("http_get", httpGet)
 globals["read_file"] = starlark.NewBuiltin("read_file", readFile)
+
 ```
 
 #### Example 2: Starlight (Starlark in Go projects)
-```go
+
+```text
 // Common pattern - expose whatever functions you need
 globals["log"] = StarLogger()        // Side effect
 globals["fetch"] = HTTPFetcher()     // Network I/O
 globals["save"] = DataSaver()        // Database writes
+
 ```
 
 #### Example 3: Various Game Engines
+
 - Expose functions to modify game state
 - Call rendering functions
 - Play sounds
@@ -35,10 +40,10 @@ globals["save"] = DataSaver()        // Database writes
 
 | Property | Do We Need It? | Why/Why Not |
 |----------|----------------|-------------|
-| **Determinism** | No | Event automation inherently depends on external state (time, sensors, etc.) |
-| **Safe Parallelism** | No | We're not evaluating thousands of scripts simultaneously |
-| **Reproducible Builds** | No | We're not building software |
-| **Pure Functions** | No | The whole point is to have side effects |
+| **Determinism**| No | Event automation inherently depends on external state (time, sensors, etc.) |
+| **Safe Parallelism**| No | We're not evaluating thousands of scripts simultaneously |
+| **Reproducible Builds**| No | We're not building software |
+| **Pure Functions**| No | The whole point is to have side effects |
 
 ### What We DO Need
 
@@ -52,19 +57,21 @@ globals["save"] = DataSaver()        // Database writes
 #### "Breaking Hermeticity" - Not Really a Problem
 
 ```python
+
 # This works fine in practice
 def setup_starlark():
     # Scripts can't do I/O directly
     # ✅ No file access
     # ✅ No network access
     # ✅ No process execution
-    
+
     # But they CAN call our functions that do I/O
     module["tools"] = {
         "turn_on_lights": lambda: api.lights_on(),     # We control this
         "send_notification": lambda m: api.notify(m),   # We control this
         "get_weather": lambda: api.weather(),           # We control this
     }
+
 ```
 
 The sandbox is intact - scripts can only do what we explicitly allow.
@@ -72,10 +79,12 @@ The sandbox is intact - scripts can only do what we explicitly allow.
 #### "Loss of Determinism" - Acceptable Trade-off
 
 ```python
+
 # Non-deterministic? Yes. Problem? No.
 if time.hour >= sunset_hour():  # Changes daily
     if motion_detected():        # External state
         turn_on_lights()         # Side effect
+
 ```
 
 Event automation is inherently non-deterministic. That's not a bug, it's the feature.
@@ -83,6 +92,7 @@ Event automation is inherently non-deterministic. That's not a bug, it's the fea
 #### "No Parallel Execution" - Non-issue
 
 We're not running thousands of scripts in parallel. Event processing is:
+
 - Sequential (one event at a time)
 - Fast enough (milliseconds per script)
 - Not CPU-bound
@@ -90,6 +100,7 @@ We're not running thousands of scripts in parallel. Event processing is:
 ### The Pragmatic View
 
 ```python
+
 # What we want to write (natural, clear, LLM-friendly)
 if event.temperature > 30:
     tools.send_notification("High temp: " + str(event.temperature))
@@ -101,7 +112,9 @@ if event.temperature > 30:
         {"action": "notify", "message": "High temp: " + str(event.temperature)},
         {"action": "turn_on_ac"}
     ]
+
 # Then execute actions outside Starlark - why?
+
 ```
 
 The second approach adds complexity for no practical benefit.
@@ -123,6 +136,7 @@ The second approach adds complexity for no practical benefit.
 ### But Document the Trade-offs
 
 Be clear that our Starlark scripts:
+
 - Are not deterministic (they depend on external state)
 - Cannot be safely executed in parallel (due to side effects)
 - Are not "pure" in the functional programming sense

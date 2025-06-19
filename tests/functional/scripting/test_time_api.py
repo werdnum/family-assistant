@@ -232,13 +232,13 @@ class TestTimeComparison:
         t2 = time_api.time_create(year=2024, month=12, day=25, hour=16)
         t3 = time_api.time_create(year=2024, month=12, day=25, hour=15)
 
-        assert time_api.time_before(t1, t2)
-        assert not time_api.time_before(t2, t1)
-        assert not time_api.time_before(t1, t3)
+        assert time_api.time_before(t1, t2) is True
+        assert time_api.time_before(t2, t1) is False  # pylint: disable=arguments-out-of-order
+        assert time_api.time_before(t1, t3) is False
 
-        assert time_api.time_after(t2, t1)
-        assert not time_api.time_after(t1, t2)
-        assert not time_api.time_after(t1, t3)
+        assert time_api.time_after(t2, t1) is True  # pylint: disable=arguments-out-of-order
+        assert time_api.time_after(t1, t2) is False
+        assert time_api.time_after(t1, t3) is False
 
         assert time_api.time_equal(t1, t3)
         assert not time_api.time_equal(t1, t2)
@@ -248,11 +248,11 @@ class TestTimeComparison:
         t1 = time_api.time_create(year=2024, month=12, day=25, hour=15)
         t2 = time_api.time_create(year=2024, month=12, day=25, hour=16)
 
-        diff = time_api.time_diff(t2, t1)
+        diff = time_api.time_diff(t2, t1)  # pylint: disable=arguments-out-of-order
         assert diff == 3600  # 1 hour in seconds
 
-        diff = time_api.time_diff(t1, t2)
-        assert diff == -3600
+        diff2 = time_api.time_diff(t1, t2)
+        assert diff2 == -3600
 
 
 class TestDurationFunctions:
