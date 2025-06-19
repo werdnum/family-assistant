@@ -323,7 +323,7 @@ class TasksRepository(BaseRepository):
                 status="pending",
                 scheduled_at=next_scheduled_at,
                 retry_count=new_retry_count,
-                last_error=error,
+                error=error,
             )
         )
 
@@ -433,7 +433,7 @@ class TasksRepository(BaseRepository):
                 status="pending",
                 max_retries=new_max_retries,
                 scheduled_at=current_time,  # Schedule for immediate execution
-                last_error=None,  # Clear the error to give it a fresh start
+                error=None,  # Clear the error to give it a fresh start
             )
         )
 
