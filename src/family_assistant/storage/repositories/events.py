@@ -107,6 +107,7 @@ class EventsRepository(BaseRepository):
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
+        action_type: EventActionType = EventActionType.wake_llm,
         action_config: dict | None = None,
         one_time: bool = False,
         enabled: bool = True,
@@ -121,6 +122,7 @@ class EventsRepository(BaseRepository):
             conversation_id: Conversation ID this listener belongs to
             interface_type: Interface type (telegram, web, email)
             description: Optional description
+            action_type: Type of action to trigger (wake_llm or script)
             action_config: Configuration for the action
             one_time: If true, listener is disabled after first trigger
             enabled: Whether the listener is enabled
@@ -140,7 +142,7 @@ class EventsRepository(BaseRepository):
                     description=description,
                     source_id=source_id,
                     match_conditions=match_conditions,
-                    action_type=EventActionType.wake_llm,  # Default for now
+                    action_type=action_type,
                     action_config=action_config,
                     conversation_id=conversation_id,
                     interface_type=interface_type,

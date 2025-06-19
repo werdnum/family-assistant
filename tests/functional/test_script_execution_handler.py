@@ -24,6 +24,7 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
+from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
@@ -126,7 +127,7 @@ add_or_update_note(
 
     # Signal worker and wait for processing
     new_task_event.set()
-    await asyncio.sleep(0.5)
+    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
 
     # Step 4: Verify user-visible outcome - note was created
     async with DatabaseContext(engine=test_db_engine) as db_ctx:
@@ -234,7 +235,12 @@ async def test_script_with_syntax_error_creates_no_note(
     )
 
     new_task_event.set()
-    await asyncio.sleep(0.5)
+
+    # Expect the task to fail due to syntax error
+    with pytest.raises(RuntimeError, match="Task.*failed"):
+        await wait_for_tasks_to_complete(
+            test_db_engine, task_types={"script_execution"}
+        )
 
     # Step 4: Verify no notes were created
     async with DatabaseContext(engine=test_db_engine) as db_ctx:
@@ -354,7 +360,7 @@ add_or_update_note(
     )
 
     new_task_event.set()
-    await asyncio.sleep(0.5)
+    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
 
     # Step 4: Verify both notes were created
     async with DatabaseContext(engine=test_db_engine) as db_ctx:
