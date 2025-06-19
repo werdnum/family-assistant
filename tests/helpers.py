@@ -29,6 +29,7 @@ async def wait_for_tasks_to_complete(
     timeout_seconds: float = 30.0,
     poll_interval_seconds: float = 0.5,
     task_ids: set[str] | None = None,
+    task_types: set[str] | None = None,
 ) -> None:
     """
     Waits until all specified tasks (or all tasks if none specified)
@@ -42,6 +43,8 @@ async def wait_for_tasks_to_complete(
         task_ids: An optional set of specific task IDs to wait for. If None,
                   waits for *all* tasks currently in the table that are not
                   in a terminal state to complete.
+        task_types: An optional set of task types to wait for. If specified,
+                    only tasks with these types will be considered.
 
     Raises:
         asyncio.TimeoutError: If the timeout is reached before all relevant
@@ -52,9 +55,15 @@ async def wait_for_tasks_to_complete(
     start_time = datetime.now(timezone.utc)
     end_time = start_time + timedelta(seconds=timeout_seconds)
 
+    filters = []
+    if task_ids:
+        filters.append(f"IDs: {task_ids}")
+    if task_types:
+        filters.append(f"Types: {task_types}")
+
+    filter_msg = f" ({', '.join(filters)})" if filters else " (All non-terminal tasks)"
     logger.info(
-        f"Waiting up to {timeout_seconds}s for tasks to complete..."
-        f"{' (Specific IDs: ' + str(task_ids) + ')' if task_ids else ' (All non-terminal tasks)'}"
+        f"Waiting up to {timeout_seconds}s for tasks to complete...{filter_msg}"
     )
 
     while datetime.now(timezone.utc) < end_time:
@@ -73,6 +82,11 @@ async def wait_for_tasks_to_complete(
                     failed_query = failed_query.where(
                         tasks_table.c.task_id.in_(task_ids)
                     )
+                # Filter by task types if provided
+                if task_types:
+                    failed_query = failed_query.where(
+                        tasks_table.c.task_type.in_(task_types)
+                    )
 
                 failed_result = await db.execute_with_retry(failed_query)
                 failed_count = failed_result.scalar_one_or_none()
@@ -86,6 +100,10 @@ async def wait_for_tasks_to_complete(
                     if task_ids:
                         failed_task_details_query = failed_task_details_query.where(
                             tasks_table.c.task_id.in_(task_ids)
+                        )
+                    if task_types:
+                        failed_task_details_query = failed_task_details_query.where(
+                            tasks_table.c.task_type.in_(task_types)
                         )
 
                     failed_tasks_rows = await db.execute_with_retry(
@@ -121,6 +139,9 @@ async def wait_for_tasks_to_complete(
                 # Filter by specific task IDs if provided
                 if task_ids:
                     query = query.where(tasks_table.c.task_id.in_(task_ids))
+                # Filter by task types if provided
+                if task_types:
+                    query = query.where(tasks_table.c.task_type.in_(task_types))
 
                 result = await db.execute_with_retry(query)
                 pending_count = result.scalar_one_or_none()
@@ -173,6 +194,10 @@ async def wait_for_tasks_to_complete(
             )
             if task_ids:
                 pending_query = pending_query.where(tasks_table.c.task_id.in_(task_ids))
+            if task_types:
+                pending_query = pending_query.where(
+                    tasks_table.c.task_type.in_(task_types)
+                )
 
             pending_results = await db.fetch_all(pending_query)
             if pending_results:

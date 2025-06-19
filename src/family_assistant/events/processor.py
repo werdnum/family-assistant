@@ -236,6 +236,28 @@ class EventProcessor:
             )
 
             logger.info(f"Enqueued wake_llm callback for listener {listener['id']}")
+        elif action_type == "script":
+            # Extract configuration
+            action_config = listener.get("action_config", {})
+
+            # Generate task ID
+            task_id = f"script_listener_{listener['id']}_{int(time.time() * 1000)}"
+
+            # Enqueue script_execution task
+            await enqueue_task(
+                db_context=db_ctx,
+                task_id=task_id,
+                task_type="script_execution",
+                payload={
+                    "script_code": action_config.get("script_code", ""),
+                    "event_data": event_data,
+                    "config": action_config,
+                    "listener_id": listener["id"],
+                    "conversation_id": listener["conversation_id"],
+                },
+            )
+
+            logger.info(f"Enqueued script execution for listener {listener['id']}")
         else:
             logger.warning(
                 f"Unknown action type '{action_type}' for listener {listener['id']}"
