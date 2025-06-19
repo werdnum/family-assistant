@@ -416,8 +416,16 @@ Assistant: "I can convert that to a script for faster execution and no API usage
 ## Future Enhancements
 
 1. **Dry Run Capability**: Test scripts with mock tool responses
-   - Note: starlark-pyo3 wraps Python exceptions in StarlarkError, preserving type and message
-   - Could implement by catching specific exception types in error messages
+   - starlark-pyo3 exception handling behavior:
+     - All Python exceptions are wrapped in StarlarkError
+     - Original exception type and message preserved as: `error: <ExceptionType>: <message>`
+     - Includes Starlark traceback with line numbers and visual indicators
+     - Python traceback is not included, only exception type and message
+     - Custom exception attributes are lost
+   - Implementation approach:
+     - Could use a custom exception type (e.g., `DryRunStop`) thrown after first tool
+     - Script would catch it as `error: DryRunStop: <details>`
+     - Would need to handle in StarlarkEngine.evaluate() error processing
    - Would show what tools would be called with what arguments
 
 2. **Wake LLM from Script**: Special tool to wake the LLM with filtered context:
