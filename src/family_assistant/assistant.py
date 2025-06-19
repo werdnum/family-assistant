@@ -45,6 +45,7 @@ from family_assistant.storage.context import (
 from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
+    handle_script_execution,
     handle_system_error_log_cleanup,
     handle_system_event_cleanup,
 )
@@ -721,6 +722,9 @@ class Assistant:
         )
         self.task_worker_instance.register_task_handler(
             "system_error_log_cleanup", handle_system_error_log_cleanup
+        )
+        self.task_worker_instance.register_task_handler(
+            "script_execution", handle_script_execution
         )
         logger.info(
             f"Registered task handlers for worker {self.task_worker_instance.worker_id}"
