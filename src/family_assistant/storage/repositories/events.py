@@ -107,7 +107,7 @@ class EventsRepository(BaseRepository):
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
-        action_type: EventActionType = EventActionType.wake_llm,
+        action_type: str | EventActionType = EventActionType.wake_llm,
         action_config: dict | None = None,
         one_time: bool = False,
         enabled: bool = True,
