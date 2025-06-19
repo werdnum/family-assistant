@@ -1,0 +1,129 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Recent Events{% endblock %}
+
+{% block content %}
+<h1>Recent Events</h1>
+
+<!-- Filters Form -->
+<form method="get" action="/events" style="margin-bottom: 2rem;">
+    <details open>
+        <summary>Filters</summary>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 1rem;">
+            <div>
+                <label for="source_id">Event Source:</label>
+                <select name="source_id" id="source_id">
+                    <option value="">All Sources</option>
+                    <option value="home_assistant" {% if source_id == "home_assistant" %}selected{% endif %}>Home Assistant</option>
+                    <option value="indexing" {% if source_id == "indexing" %}selected{% endif %}>Document Indexing</option>
+                    <option value="webhook" {% if source_id == "webhook" %}selected{% endif %}>Webhook</option>
+                </select>
+            </div>
+            
+            <div>
+                <label for="hours">Time Range:</label>
+                <select name="hours" id="hours">
+                    <option value="1" {% if hours == 1 %}selected{% endif %}>Last Hour</option>
+                    <option value="6" {% if hours == 6 %}selected{% endif %}>Last 6 Hours</option>
+                    <option value="24" {% if hours == 24 %}selected{% endif %}>Last 24 Hours</option>
+                    <option value="48" {% if hours == 48 %}selected{% endif %}>Last 48 Hours</option>
+                </select>
+            </div>
+            
+            <div>
+                <label>
+                    <input type="checkbox" name="only_triggered" value="true" {% if only_triggered %}checked{% endif %}>
+                    Only Triggered Events
+                </label>
+            </div>
+        </div>
+        
+        <div style="margin-top: 1rem;">
+            <button type="submit">Apply Filters</button>
+            <a href="/events" class="button" style="margin-left: 0.5rem;">Clear Filters</a>
+        </div>
+    </details>
+</form>
+
+<!-- Results Summary -->
+<p>Found {{ total_count }} event{% if total_count != 1 %}s{% endif %}</p>
+
+<!-- Events Table -->
+{% if events %}
+<div style="overflow-x: auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Source</th>
+                <th>Event Summary</th>
+                <th>Triggered Listeners</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for event in events %}
+            <tr>
+                <td style="white-space: nowrap;">
+                    {{ event.timestamp.strftime('%Y-%m-%d %H:%M:%S') if event.timestamp else 'N/A' }}
+                </td>
+                <td>
+                    <span style="text-transform: capitalize;">
+                        {{ event.source_id.replace('_', ' ') }}
+                    </span>
+                </td>
+                <td>
+                    <code style="font-size: 0.9em;">{{ event.summary }}</code>
+                </td>
+                <td>
+                    {% if event.triggered_listener_names %}
+                        <ul style="margin: 0; padding-left: 1.5rem;">
+                            {% for name in event.triggered_listener_names %}
+                            <li>{{ name }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <span style="color: var(--text-light);">None</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="/events/{{ event.event_id }}">View Details</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+<nav style="margin-top: 2rem; text-align: center;">
+    {% if has_prev %}
+    <a href="?source_id={{ source_id or '' }}&hours={{ hours }}&only_triggered={{ only_triggered|lower }}&limit={{ limit }}&offset={{ prev_offset }}">← Previous</a>
+    {% endif %}
+    
+    <span style="margin: 0 1rem;">
+        Page {{ current_page }} of {{ total_pages }}
+    </span>
+    
+    {% if has_next %}
+    <a href="?source_id={{ source_id or '' }}&hours={{ hours }}&only_triggered={{ only_triggered|lower }}&limit={{ limit }}&offset={{ next_offset }}">Next →</a>
+    {% endif %}
+</nav>
+
+{% else %}
+<p>No events found matching your criteria.</p>
+{% endif %}
+
+<style>
+    /* Custom styles for events table */
+    table {
+        font-size: 0.95em;
+    }
+    
+    code {
+        background-color: var(--bg-secondary);
+        padding: 0.2rem 0.4rem;
+        border-radius: 3px;
+    }
+</style>
+{% endblock %}

@@ -564,3 +564,177 @@ class EventsRepository(BaseRepository):
                 event["metadata"] = {}
 
         return event
+
+    async def get_events_with_listeners(
+        self,
+        source_id: str | None = None,
+        hours: int = 24,
+        limit: int = 50,
+        offset: int = 0,
+        only_triggered: bool = False,
+    ) -> tuple[list[dict], int]:
+        """Get events with listener information."""
+        from datetime import timezone
+
+        from sqlalchemy.sql import functions as func
+
+        try:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+            # Build base query
+            stmt = select(recent_events_table).where(
+                recent_events_table.c.timestamp >= cutoff_time
+            )
+
+            if source_id:
+                stmt = stmt.where(recent_events_table.c.source_id == source_id)
+
+            if only_triggered:
+                stmt = stmt.where(
+                    recent_events_table.c.triggered_listener_ids.isnot(None)
+                )
+
+            # Get total count
+            count_stmt = select(func.count().label("count")).select_from(
+                stmt.alias("events_subquery")
+            )
+            count_result = await self._db.fetch_one(count_stmt)
+            total_count = count_result["count"] if count_result else 0
+
+            # Apply pagination and ordering
+            stmt = stmt.order_by(recent_events_table.c.timestamp.desc())
+            stmt = stmt.limit(limit).offset(offset)
+
+            rows = await self._db.fetch_all(stmt)
+
+            # Process events and add listener names
+            events = []
+            for row in rows:
+                event = dict(row)
+
+                # Get listener names if any were triggered
+                if event.get("triggered_listener_ids"):
+                    listener_names = []
+                    for lid in event["triggered_listener_ids"]:
+                        listener = await self.get_event_listener_by_id(lid)
+                        if listener:
+                            listener_names.append(listener["name"])
+                    event["triggered_listener_names"] = listener_names
+                else:
+                    event["triggered_listener_names"] = []
+
+                events.append(event)
+
+            return events, total_count
+
+        except SQLAlchemyError as e:
+            self._logger.error(
+                f"Database error in get_events_with_listeners: {e}", exc_info=True
+            )
+            raise
+
+    async def get_listener_execution_stats(
+        self,
+        listener_id: int,
+    ) -> dict:
+        """Get execution statistics for a listener."""
+        from sqlalchemy.sql import functions as func
+
+        try:
+            # Get the listener first
+            listener = await self.get_event_listener_by_id(listener_id)
+            if not listener:
+                return {}
+
+            # Count total executions from recent_events
+            stmt = select(func.count().label("count")).select_from(recent_events_table)
+            stmt = stmt.where(
+                recent_events_table.c.triggered_listener_ids.contains([listener_id])
+            )
+
+            result = await self._db.fetch_one(stmt)
+            total_executions = result["count"] if result else 0
+
+            # Get recent events that triggered this listener
+            recent_stmt = select(recent_events_table).where(
+                recent_events_table.c.triggered_listener_ids.contains([listener_id])
+            )
+            recent_stmt = recent_stmt.order_by(
+                recent_events_table.c.timestamp.desc()
+            ).limit(10)
+
+            recent_events = await self._db.fetch_all(recent_stmt)
+
+            return {
+                "total_executions": total_executions,
+                "daily_executions": listener.get("daily_executions", 0),
+                "daily_limit": 5,  # Hardcoded in check_and_update_rate_limit
+                "last_execution_at": listener.get("last_execution_at"),
+                "recent_events": [dict(row) for row in recent_events],
+            }
+
+        except SQLAlchemyError as e:
+            self._logger.error(
+                f"Database error in get_listener_execution_stats: {e}", exc_info=True
+            )
+            raise
+
+    async def get_event_by_id(self, event_id: str) -> dict[str, Any] | None:
+        """Get a specific event by ID."""
+        try:
+            stmt = select(recent_events_table).where(
+                recent_events_table.c.event_id == event_id
+            )
+            row = await self._db.fetch_one(stmt)
+            if row:
+                return dict(row)
+            return None
+
+        except SQLAlchemyError as e:
+            self._logger.error(f"Database error in get_event_by_id: {e}", exc_info=True)
+            raise
+
+    async def get_all_event_listeners(
+        self,
+        source_id: str | None = None,
+        action_type: str | None = None,
+        enabled: bool | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Get all event listeners (admin view) with pagination."""
+        from sqlalchemy.sql import functions as func
+
+        try:
+            # Build base query
+            stmt = select(event_listeners_table)
+
+            # Apply filters
+            if source_id:
+                stmt = stmt.where(event_listeners_table.c.source_id == source_id)
+            if action_type:
+                stmt = stmt.where(event_listeners_table.c.action_type == action_type)
+            if enabled is not None:
+                stmt = stmt.where(event_listeners_table.c.enabled == enabled)
+
+            # Get total count
+            count_stmt = select(func.count().label("count")).select_from(
+                stmt.alias("listeners_subquery")
+            )
+            count_result = await self._db.fetch_one(count_stmt)
+            total_count = count_result["count"] if count_result else 0
+
+            # Apply pagination and ordering
+            stmt = stmt.order_by(event_listeners_table.c.created_at.desc())
+            stmt = stmt.limit(limit).offset(offset)
+
+            rows = await self._db.fetch_all(stmt)
+
+            listeners = [dict(row) for row in rows]
+            return listeners, total_count
+
+        except SQLAlchemyError as e:
+            self._logger.error(
+                f"Database error in get_all_event_listeners: {e}", exc_info=True
+            )
+            raise

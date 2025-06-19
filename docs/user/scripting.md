@@ -213,13 +213,165 @@ smart_reminder("Team standup", check_calendar=True)
 
 ```
 
+## Event-Triggered Scripts
+
+Scripts can now be automatically triggered by events from Home Assistant, document indexing, and other sources. This enables powerful automation without the delay and cost of LLM processing.
+
+### Creating Event-Triggered Scripts
+
+Ask the assistant to create a script-based event listener:
+
+```
+"Create a script that logs all motion events when motion is detected in the living room"
+"Run a script to send me a Telegram message when the temperature exceeds 25°C"
+"Set up a script to track energy usage whenever the meter reading changes"
+```
+
+### Event Script Context
+
+When triggered by an event, scripts receive special global variables:
+
+```starlark
+# Available global variables in event scripts:
+# event - Dictionary containing all event data
+# conversation_id - The conversation this listener belongs to
+# listener_id - ID of the event listener that triggered this script
+
+# Example: Log temperature changes
+temp = float(event["new_state"]["state"])
+old_temp = float(event["old_state"]["state"]) if event["old_state"] else 0
+
+add_or_update_note(
+    title="Temperature Log - " + time_format(time_now(), "%Y-%m-%d"),
+    content=time_format(time_now(), "%H:%M") + " - " + str(temp) + "°C (was " + str(old_temp) + "°C)\n",
+    append=True  # If available
+)
+```
+
+### Example Event Scripts
+
+#### Motion Logging
+
+```starlark
+# Log all motion events with timestamps
+def log_motion():
+    entity = event.get("entity_id", "unknown")
+    timestamp = event.get("timestamp", time_format(time_now(), "%Y-%m-%d %H:%M:%S"))
+    
+    add_or_update_note(
+        title="Motion Log - " + time_format(time_now(), "%Y-%m-%d"),
+        content="Motion detected: " + entity + " at " + timestamp + "\n",
+        append=True
+    )
+    return "Motion logged"
+
+log_motion()
+```
+
+#### Temperature Alerts
+
+```starlark
+# Alert on high temperature during business hours
+def check_temperature():
+    temp = float(event["new_state"]["state"])
+    hour = time_hour(time_now())
+    
+    if temp > 25 and hour >= 9 and hour < 18:
+        send_telegram_message(
+            message="🌡️ High temperature alert: " + str(temp) + "°C in " + event["entity_id"]
+        )
+        return "Alert sent"
+    return "Temperature OK"
+
+check_temperature()
+```
+
+#### Document Processing
+
+```starlark
+# Process newly indexed documents
+def process_document():
+    if event.get("source_id") != "indexing":
+        return "Not an indexing event"
+    
+    metadata = event.get("metadata", {})
+    doc_type = metadata.get("type", "unknown")
+    
+    if doc_type == "email" and "invoice" in metadata.get("subject", "").lower():
+        # Extract and log invoice information
+        add_or_update_note(
+            title="Invoice Log",
+            content="New invoice from: " + metadata.get("sender", "Unknown") + "\n",
+            append=True
+        )
+        send_telegram_message(message="📧 New invoice received")
+    
+    return "Document processed"
+
+process_document()
+```
+
+#### Energy Usage Tracking
+
+```starlark
+# Track hourly energy usage
+def track_energy():
+    reading = float(event["new_state"]["state"])
+    hour_str = time_format(time_now(), "%Y-%m-%d %H:00")
+    
+    # Log the reading
+    add_or_update_note(
+        title="Energy Log - " + time_format(time_now(), "%Y-%m-%d"),
+        content=hour_str + ": " + str(reading) + " kWh\n",
+        append=True
+    )
+    
+    # Alert on high usage
+    if reading > 5.0:
+        send_telegram_message(
+            message="⚡ High energy usage: " + str(reading) + " kWh"
+        )
+    
+    return "Energy tracked"
+
+track_energy()
+```
+
+### Security and Limitations
+
+Event scripts run with the `event_handler` profile which has restricted tools:
+
+- Can read/write notes
+- Can send Telegram messages (not emails, to prevent spam)
+- Can read documents and calendar events
+- Cannot delete data or control devices (to prevent automation loops)
+- Cannot delegate to other services
+
+Scripts have a 10-minute timeout to support long-running operations but should aim to complete quickly.
+
+### Testing Event Scripts
+
+Before creating an event listener, test your script:
+
+```
+"Test this event script with a sample temperature event: [paste your script]"
+"Validate this script syntax: [paste your script]"
+```
+
+### Managing Script Listeners
+
+```
+"Show me all my script-based event listeners"
+"Disable the temperature monitoring script"
+"Convert my motion listener from wake_llm to a script"
+```
+
 ## Important Notes
 
 ### Currently Not Available
 
 - **TimeAPI**: No `now()`, `today()`, or time comparison functions yet
 - **StateAPI**: No persistent storage between script runs
-- **Event Triggers**: Scripts must be manually executed
 
 ### Working with Tool Results
 

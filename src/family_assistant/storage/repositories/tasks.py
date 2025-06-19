@@ -392,6 +392,47 @@ class TasksRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [dict(row) for row in rows]
 
+    async def get_tasks_for_listener(
+        self,
+        listener_id: int,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Get script execution tasks for a specific listener."""
+        from sqlalchemy.sql import functions as func
+
+        try:
+            # Build query for script execution tasks that match the listener
+            # Task IDs for script listeners follow format: script_listener_{listener_id}_{timestamp}
+            task_id_pattern = f"script_listener_{listener_id}_%"
+
+            stmt = select(tasks_table).where(
+                (tasks_table.c.task_type == "script_execution")
+                & (tasks_table.c.task_id.like(task_id_pattern))
+            )
+
+            # Get total count
+            count_stmt = select(func.count().label("count")).select_from(
+                stmt.alias("tasks_subquery")
+            )
+            count_result = await self._db.fetch_one(count_stmt)
+            total_count = count_result["count"] if count_result else 0
+
+            # Apply pagination and ordering
+            stmt = stmt.order_by(tasks_table.c.created_at.desc())
+            stmt = stmt.limit(limit).offset(offset)
+
+            rows = await self._db.fetch_all(stmt)
+            tasks = [dict(row) for row in rows]
+
+            return tasks, total_count
+
+        except SQLAlchemyError as e:
+            self._logger.error(
+                f"Database error in get_tasks_for_listener: {e}", exc_info=True
+            )
+            raise
+
     async def manually_retry(self, internal_task_id: int) -> bool:
         """
         Manually retries a task that has failed or exhausted its retries.

@@ -28,6 +28,10 @@ BASE_UI_ENDPOINTS = [
     ("/vector-search", "Vector Search Page"),
     ("/documents/upload", "Document Upload Page"),  # New endpoint
     ("/settings/tokens", "Manage API Tokens UI Page"),
+    ("/events", "Events List Page"),
+    ("/events/non_existent_event", "Event Detail Page"),
+    ("/event-listeners", "Event Listeners List Page"),
+    ("/event-listeners/99999", "Event Listener Detail Page"),
     ("/errors/", "Error Logs List Page"),
 ]
 

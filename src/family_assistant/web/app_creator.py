@@ -27,8 +27,10 @@ from family_assistant.web.routers.documents_ui import (  # New import for docume
     router as documents_ui_router,
 )
 from family_assistant.web.routers.errors import router as errors_router
+from family_assistant.web.routers.events_ui import router as events_ui_router
 from family_assistant.web.routers.health import health_router
 from family_assistant.web.routers.history import history_router
+from family_assistant.web.routers.listeners_ui import router as listeners_ui_router
 from family_assistant.web.routers.notes import notes_router
 from family_assistant.web.routers.tasks_ui import tasks_ui_router
 from family_assistant.web.routers.tools_ui import tools_ui_router
@@ -153,6 +155,8 @@ app.include_router(
     documents_ui_router, prefix="/documents", tags=["Documents UI"]
 )  # New router
 app.include_router(errors_router, tags=["Error Logs UI"])
+app.include_router(events_ui_router, tags=["Events UI"])
+app.include_router(listeners_ui_router, tags=["Event Listeners UI"])
 app.include_router(health_router, tags=["Health Check"])
 
 # General API endpoints (like /api/tools/execute, /api/documents/upload)

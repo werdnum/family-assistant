@@ -33,6 +33,14 @@
             <a href="{{ request.app.url_path_for('ui_message_history') }}">History</a>
             <span class="nav-separator">|</span>
             
+            <!-- Automation -->
+            <div class="nav-group">
+                <span class="nav-label">Automation</span>
+                <a href="{{ request.app.url_path_for('events_list') }}">Events</a>
+                <a href="{{ request.app.url_path_for('listeners_list') }}">Event Listeners</a>
+            </div>
+            <span class="nav-separator">|</span>
+            
             <!-- Internal/Admin -->
             <div class="nav-group">
                 <span class="nav-label">Internal</span>
@@ -59,7 +67,7 @@
     </header>
 
     <main>
-        {% block main_content %}{% endblock %}
+        {% block main_content %}{% block content %}{% endblock %}{% endblock %}
     </main>
 
     <footer>
