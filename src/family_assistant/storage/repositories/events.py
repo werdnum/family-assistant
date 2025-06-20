@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import JSON, String, insert, select, update
+from sqlalchemy import String, insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.storage.events import (
@@ -639,6 +639,7 @@ class EventsRepository(BaseRepository):
     ) -> dict:
         """Get execution statistics for a listener."""
         from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB
         from sqlalchemy.sql import functions as func
 
         try:
@@ -672,7 +673,7 @@ class EventsRepository(BaseRepository):
                 )
                 stmt = stmt.where(
                     recent_events_table.c.triggered_listener_ids.op("@>")(
-                        cast([listener_id], JSON)
+                        cast([listener_id], JSONB)
                     )
                 )
 
@@ -689,7 +690,7 @@ class EventsRepository(BaseRepository):
             else:
                 recent_stmt = select(recent_events_table).where(
                     recent_events_table.c.triggered_listener_ids.op("@>")(
-                        cast([listener_id], JSON)
+                        cast([listener_id], JSONB)
                     )
                 )
 
