@@ -132,9 +132,11 @@ class ToolsAPI:
 
             # Get tool definitions from provider
             if self._tool_definitions is None:
-                self._tool_definitions = self._run_async(
-                    self.tools_provider.get_tool_definitions()
-                )
+                # Create a wrapper function that creates the coroutine when called
+                async def get_definitions() -> list[dict[str, Any]]:
+                    return await self.tools_provider.get_tool_definitions()
+
+                self._tool_definitions = self._run_async(get_definitions())
 
             # Convert to ToolInfo objects, filtering by allowed tools
             tools = []
@@ -214,14 +216,16 @@ class ToolsAPI:
                 f"Executing tool '{tool_name}' from Starlark with args: {kwargs}"
             )
 
-            # Run the async tool execution
-            result = self._run_async(
-                self.tools_provider.execute_tool(
+            # Create a wrapper function that creates the coroutine when called
+            async def execute_tool_async() -> Any:
+                return await self.tools_provider.execute_tool(
                     name=tool_name,
                     arguments=kwargs,
                     context=self.execution_context,
                 )
-            )
+
+            # Run the async tool execution
+            result = self._run_async(execute_tool_async())
 
             logger.debug(f"Tool '{tool_name}' executed successfully")
             return str(result)
