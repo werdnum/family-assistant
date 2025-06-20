@@ -188,13 +188,14 @@ class ToolsAPI:
                 return tool
         return None
 
-    def execute(self, tool_name: str, **kwargs: Any) -> str:
+    def execute(self, tool_name: str, *args: Any, **kwargs: Any) -> str:
         """
         Execute a tool with the given arguments.
 
         Args:
             tool_name: Name of the tool to execute
-            **kwargs: Arguments to pass to the tool
+            *args: Positional arguments to pass to the tool
+            **kwargs: Keyword arguments to pass to the tool
 
         Returns:
             String result from tool execution
@@ -212,6 +213,25 @@ class ToolsAPI:
                 )
                 raise PermissionError(error_msg)
 
+            # If positional args are provided, map them to parameter names
+            if args:
+                # Get tool definition to find parameter names
+                tool_info = self.get_tool(tool_name)
+                if tool_info and tool_info.parameters:
+                    required = tool_info.parameters.get("required", [])
+
+                    # Map positional args to required parameters in order
+                    for i, arg in enumerate(args):
+                        if i < len(required):
+                            param_name = required[i]
+                            kwargs[param_name] = arg
+                        else:
+                            # If more positional args than required params, log warning
+                            logger.warning(
+                                f"Tool '{tool_name}' received more positional args than required parameters"
+                            )
+                            break
+
             logger.info(
                 f"Executing tool '{tool_name}' from Starlark with args: {kwargs}"
             )
@@ -228,7 +248,12 @@ class ToolsAPI:
             result = self._run_async(execute_tool_async())
 
             logger.debug(f"Tool '{tool_name}' executed successfully")
-            return str(result)
+
+            # Convert result to JSON string if it's a dict or list
+            if isinstance(result, (dict, list)):
+                return json.dumps(result)
+            else:
+                return str(result)
 
         except Exception as e:
             error_msg = f"Error executing tool '{tool_name}': {str(e)}"
@@ -302,9 +327,9 @@ class StarlarkToolsAPI:
             }
         return None
 
-    def execute(self, tool_name: str, **kwargs: Any) -> str:
+    def execute(self, tool_name: str, *args: Any, **kwargs: Any) -> str:
         """Execute a tool."""
-        return self._api.execute(tool_name, **kwargs)
+        return self._api.execute(tool_name, *args, **kwargs)
 
     def execute_json(self, tool_name: str, args_json: str) -> str:
         """Execute a tool with JSON arguments."""

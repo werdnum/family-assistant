@@ -207,8 +207,14 @@ class StarlarkEngine:
 
                     # Create a closure to capture the tool name
                     def make_tool_wrapper(name: str) -> Any:
-                        def tool_wrapper(**kwargs: Any) -> str:
+                        def tool_wrapper(*args: Any, **kwargs: Any) -> str:
                             """Execute the tool with the given arguments."""
+                            # If positional args are provided, we need to map them to kwargs
+                            # This requires knowing the parameter names of the tool
+                            if args:
+                                # For now, we'll pass positional args as-is to the execute method
+                                # The tools API will need to handle the mapping
+                                return tools_api.execute(name, *args, **kwargs)
                             return tools_api.execute(name, **kwargs)
 
                         return tool_wrapper
