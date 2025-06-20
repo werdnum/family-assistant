@@ -58,6 +58,13 @@ class ToolsAPI:
         self.allowed_tools = allowed_tools
         self.deny_all_tools = deny_all_tools
 
+        # Try to get the current event loop that created the tools
+        try:
+            self._main_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop, we'll need to handle this differently
+            self._main_loop = None
+
         # Create a thread-local event loop for async operations
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: Thread | None = None
@@ -67,9 +74,10 @@ class ToolsAPI:
         self._tool_definitions: list[dict[str, Any]] | None = None
 
         logger.info(
-            "Initialized ToolsAPI bridge for Starlark scripts (deny_all_tools=%s, allowed_tools=%s)",
+            "Initialized ToolsAPI bridge for Starlark scripts (deny_all_tools=%s, allowed_tools=%s, main_loop=%s)",
             self.deny_all_tools,
             self.allowed_tools,
+            self._main_loop is not None,
         )
 
     def _ensure_event_loop(self) -> asyncio.AbstractEventLoop:
@@ -92,9 +100,36 @@ class ToolsAPI:
 
     def _run_async(self, coro: Any) -> Any:
         """Run an async coroutine from sync context."""
-        loop = self._ensure_event_loop()
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        return future.result(timeout=30.0)  # 30 second timeout for tool operations
+        import threading
+
+        # First, check if we're already running in an event loop
+        try:
+            current_loop = asyncio.get_running_loop()
+            # Check if we're in the same thread as the event loop
+            # If we are, we can't use run_coroutine_threadsafe - it would deadlock
+            if threading.current_thread() is threading.main_thread():
+                # We're being called from sync code in the main thread while an event loop is running
+                # This typically happens in tests or when evaluate() is called from async context
+                # We need to run in a separate thread to avoid deadlock
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(asyncio.run, coro)
+                    return future.result(timeout=30.0)
+            else:
+                # We're in a different thread, safe to use run_coroutine_threadsafe
+                future = asyncio.run_coroutine_threadsafe(coro, current_loop)
+                return future.result(timeout=30.0)
+        except RuntimeError:
+            # No running loop, check if we have a main loop from initialization
+            if self._main_loop and self._main_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
+                return future.result(timeout=30.0)
+            else:
+                # Last resort: create our own loop
+                loop = self._ensure_event_loop()
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+                return future.result(timeout=30.0)
 
     def _is_tool_allowed(self, tool_name: str) -> bool:
         """
@@ -132,11 +167,10 @@ class ToolsAPI:
 
             # Get tool definitions from provider
             if self._tool_definitions is None:
-                # Create a wrapper function that creates the coroutine when called
-                async def get_definitions() -> list[dict[str, Any]]:
-                    return await self.tools_provider.get_tool_definitions()
-
-                self._tool_definitions = self._run_async(get_definitions())
+                # Create the coroutine directly - _run_async expects a coroutine
+                self._tool_definitions = self._run_async(
+                    self.tools_provider.get_tool_definitions()
+                )
 
             # Convert to ToolInfo objects, filtering by allowed tools
             tools = []
@@ -236,16 +270,14 @@ class ToolsAPI:
                 f"Executing tool '{tool_name}' from Starlark with args: {kwargs}"
             )
 
-            # Create a wrapper function that creates the coroutine when called
-            async def execute_tool_async() -> Any:
-                return await self.tools_provider.execute_tool(
+            # Create the coroutine directly - _run_async expects a coroutine
+            result = self._run_async(
+                self.tools_provider.execute_tool(
                     name=tool_name,
                     arguments=kwargs,
                     context=self.execution_context,
                 )
-
-            # Run the async tool execution
-            result = self._run_async(execute_tool_async())
+            )
 
             logger.debug(f"Tool '{tool_name}' executed successfully")
 
