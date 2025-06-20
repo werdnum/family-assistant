@@ -1,21 +1,24 @@
-# Unified Action Scheduling Design
+# Unified Action Scheduling Design (Revised)
 
 ## Overview
 
 This document describes the implementation plan for unifying the action model across scheduled tasks and event listeners in Family Assistant. Currently, event listeners support multiple action types (wake_llm, script) while scheduled tasks only support LLM callbacks. This design extends scheduled tasks to use the same action abstraction.
+
+**Key Insight**: The existing task system already provides everything we need for scheduled actions. Tasks ARE actions - we don't need database changes, just a thin abstraction layer that maps action types to task types.
 
 ## Goals
 
 1. **Consistency**: Same action model for both event-based and time-based triggers
 2. **Code Reuse**: Share action execution logic between systems
 3. **Type Safety**: Use enums for action types
-4. **Incremental Implementation**: Each step leaves the system in a working state
+4. **Simplicity**: No database migrations or schema changes
+5. **Incremental Implementation**: Each step leaves the system in a working state
 
 ## Implementation Plan
 
-### Step 1: Create Shared Action Executor
+### Step 1: Create Shared Action Executor ✓ COMPLETED
 
-Create a new module `src/family_assistant/actions.py` to house shared action logic:
+Create a new module `src/family_assistant/actions.py` to house shared action logic that maps actions to existing task types:
 
 ```python
 # src/family_assistant/actions.py
@@ -103,7 +106,7 @@ async def execute_action(
         raise ValueError(f"Unknown action type: {action_type}")
 ```
 
-### Step 2: Refactor Event Processor
+### Step 2: Refactor Event Processor ✓ COMPLETED
 
 Update `src/family_assistant/events/processor.py` to use the shared executor:
 
@@ -148,203 +151,72 @@ async def _execute_action_in_context(
 
 **Verification**: Run all event listener tests after this change. They should pass without modification.
 
-### Step 3: Create Database Migration
+### Step 3: Extend Action Executor for Scheduling
 
-Create a new Alembic migration to add action columns to the tasks table:
-
-```python
-# alembic/versions/xxxx_add_action_columns_to_tasks.py
-"""Add action columns to tasks table
-
-Revision ID: xxxx
-Revises: yyyy
-Create Date: 2024-12-20 xx:xx:xx
-
-"""
-from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-
-# revision identifiers
-revision = 'xxxx'
-down_revision = 'yyyy'
-branch_labels = None
-depends_on = None
-
-
-def upgrade():
-    # Add action columns with defaults
-    op.add_column('tasks', 
-        sa.Column('action_type', sa.String(), nullable=True))
-    op.add_column('tasks',
-        sa.Column('action_config', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-    
-    # Set defaults for existing rows
-    op.execute(
-        sa.text("UPDATE tasks SET action_type = 'wake_llm' WHERE action_type IS NULL")
-    )
-    op.execute(
-        sa.text("UPDATE tasks SET action_config = '{}' WHERE action_config IS NULL")
-    )
-    
-    # Migrate existing llm_callback tasks
-    tasks_table = sa.table('tasks',
-        sa.column('task_type', sa.String),
-        sa.column('action_type', sa.String),
-        sa.column('action_config', postgresql.JSONB),
-        sa.column('payload', postgresql.JSONB)
-    )
-    
-    # Build the update using SQLAlchemy constructs
-    op.execute(
-        tasks_table.update()
-        .where(tasks_table.c.task_type == 'llm_callback')
-        .where(tasks_table.c.action_type == 'wake_llm')
-        .values(
-            action_config=sa.func.jsonb_build_object(
-                'context', tasks_table.c.payload['callback_context']
-            )
-        )
-    )
-    
-    # Add constraints
-    op.create_check_constraint(
-        'tasks_action_type_check',
-        'tasks',
-        sa.text("action_type IN ('wake_llm', 'script')")
-    )
-    
-    # Set NOT NULL after migration
-    op.alter_column('tasks', 'action_type',
-        existing_type=sa.String(),
-        nullable=False,
-        server_default='wake_llm')
-    op.alter_column('tasks', 'action_config',
-        existing_type=postgresql.JSONB(astext_type=sa.Text()),
-        nullable=False,
-        server_default=sa.text("'{}'::jsonb"))
-
-
-def downgrade():
-    # Drop constraints
-    op.drop_constraint('tasks_action_type_check', 'tasks', type_='check')
-    
-    # Remove columns
-    op.drop_column('tasks', 'action_config')
-    op.drop_column('tasks', 'action_type')
-```
-
-### Step 4: Update Tasks Repository
-
-Update `src/family_assistant/storage/repositories/tasks.py` to handle the new columns:
+Update `src/family_assistant/actions.py` to support scheduled execution:
 
 ```python
-# In TasksRepository.enqueue method, add parameters:
-async def enqueue(
-    self,
-    task_id: str,
-    task_type: str,
-    payload: dict[str, Any],
-    scheduled_at: datetime | None = None,
-    max_retries_override: int | None = None,
-    recurrence_rule: str | None = None,
-    action_type: str = "wake_llm",  # New parameter
-    action_config: dict[str, Any] | None = None,  # New parameter
+# Add scheduled_at and recurrence_rule parameters to execute_action:
+async def execute_action(
+    db_ctx: DatabaseContext,
+    action_type: ActionType,
+    action_config: dict[str, Any],
+    conversation_id: str,
+    interface_type: str = "telegram",
+    context: dict[str, Any] | None = None,
+    scheduled_at: datetime | None = None,  # New parameter
+    recurrence_rule: str | None = None,  # New parameter
 ) -> None:
-    """Enqueue a new task with optional action configuration."""
+    """
+    Execute an action. Used by both event listeners and scheduled tasks.
     
-    if action_config is None:
-        action_config = {}
+    Args:
+        db_ctx: Database context
+        action_type: Type of action to execute
+        action_config: Configuration for the action
+        conversation_id: Conversation to execute in
+        interface_type: Interface type (telegram, web, etc)
+        context: Additional context (e.g., event data, trigger info)
+        scheduled_at: When to execute (None for immediate)
+        recurrence_rule: RRULE for recurring tasks (None for one-time)
+    """
+    # ... existing code ...
     
-    # Add to insert statement
-    stmt = tasks_table.insert().values(
-        task_id=task_id,
-        task_type=task_type,
-        payload=payload,
-        scheduled_at=scheduled_at or datetime.now(timezone.utc),
-        max_retries=max_retries_override or 3,
-        recurrence_rule=recurrence_rule,
-        action_type=action_type,  # New column
-        action_config=action_config,  # New column
-        # ... other columns
-    )
+    if action_type == ActionType.WAKE_LLM:
+        # ... existing payload building ...
+        
+        await enqueue_task(
+            db_context=db_ctx,
+            task_id=task_id,
+            task_type="llm_callback",
+            payload=payload,
+            scheduled_at=scheduled_at,  # Pass through
+            recurrence_rule=recurrence_rule,  # Pass through
+        )
+        
+    elif action_type == ActionType.SCRIPT:
+        # ... existing payload building ...
+        
+        await enqueue_task(
+            db_context=db_ctx,
+            task_id=task_id,
+            task_type="script_execution",
+            payload=payload,
+            scheduled_at=scheduled_at,  # Pass through
+            recurrence_rule=recurrence_rule,  # Pass through
+        )
 ```
 
-### Step 5: Update Task Worker
+**Note**: No database changes needed! The existing `tasks` table already has `scheduled_at` and `recurrence_rule` columns.
 
-Update `src/family_assistant/task_worker.py` to handle scheduled actions:
+### Step 4: Update Scheduling Tools
+
+Update `src/family_assistant/tools/tasks.py` to support action-based scheduling. The key insight is that we're just adding a convenience layer over the existing task system:
 
 ```python
-# Add import
 from family_assistant.actions import ActionType, execute_action
 
-# Add method to ToolExecutionContext to get current task
-class ToolExecutionContext:
-    async def get_current_task(self) -> dict[str, Any]:
-        """Get the current task being executed."""
-        if hasattr(self, 'task_id') and self.task_id:
-            async with DatabaseContext() as db_ctx:
-                result = await db_ctx.fetch_one(
-                    text("SELECT * FROM tasks WHERE task_id = :task_id"),
-                    {"task_id": self.task_id}
-                )
-                return dict(result) if result else None
-        return None
-
-# Create new handler for scheduled actions
-async def handle_scheduled_action(
-    exec_context: ToolExecutionContext,
-    payload: dict[str, Any]
-) -> None:
-    """Execute scheduled actions using shared action executor."""
-    
-    # Get action details from task
-    task = await exec_context.get_current_task()
-    if not task:
-        raise ValueError("Could not find current task")
-    
-    action_type = ActionType(task["action_type"])
-    action_config = task["action_config"]
-    
-    # Build context
-    context = {
-        "trigger": "Scheduled action",
-        "task_id": task["task_id"],
-        "scheduled_at": task["scheduled_at"].isoformat(),
-    }
-    
-    # Add reminder config if present (for backward compatibility)
-    if "reminder_config" in payload:
-        context["reminder_config"] = payload["reminder_config"]
-    
-    # Execute using shared executor
-    async with DatabaseContext() as db_ctx:
-        await execute_action(
-            db_ctx=db_ctx,
-            action_type=action_type,
-            action_config=action_config,
-            conversation_id=payload["conversation_id"],
-            interface_type=payload.get("interface_type", "telegram"),
-            context=context,
-        )
-
-# Update handle_llm_callback to delegate to handle_scheduled_action
-async def handle_llm_callback(
-    exec_context: ToolExecutionContext,
-    payload: dict[str, Any]
-) -> None:
-    """Legacy handler - delegates to handle_scheduled_action."""
-    await handle_scheduled_action(exec_context, payload)
-```
-
-### Step 6: Update Scheduling Tools
-
-Update `src/family_assistant/tools/tasks.py` to support action-based scheduling:
-
-```python
-from family_assistant.actions import ActionType
-
-# Update tool definitions
+# Add new tool definition
 TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -352,7 +224,7 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "schedule_action",
             "description": (
                 "Schedule any action (wake_llm or script) to execute at a specific time. "
-                "This is the general-purpose scheduling tool that replaces schedule_future_callback."
+                "This is the general-purpose scheduling tool that complements schedule_future_callback."
             ),
             "parameters": {
                 "type": "object",
@@ -381,7 +253,7 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
             },
         },
     },
-    # Similar updates for schedule_recurring_action and schedule_reminder
+    # Keep existing tools for backward compatibility
 ]
 
 # New implementation
@@ -423,99 +295,156 @@ async def schedule_action_tool(
     except ValueError as e:
         return f"Error: Invalid schedule_time format: {e}"
     
-    # Create task with action details
-    task_id = f"scheduled_action_{uuid.uuid4()}"
-    
-    # Minimal payload - just identifiers
-    payload = {
-        "interface_type": exec_context.interface_type,
-        "conversation_id": exec_context.conversation_id,
-    }
-    
-    await exec_context.db_context.tasks.enqueue(
-        task_id=task_id,
-        task_type="scheduled_action",  # New generic task type
-        payload=payload,
-        scheduled_at=scheduled_dt,
-        action_type=action_type,
+    # Use the shared action executor with scheduling
+    await execute_action(
+        db_ctx=exec_context.db_context,
+        action_type=action_type_enum,
         action_config=action_config,
+        conversation_id=exec_context.conversation_id,
+        interface_type=exec_context.interface_type,
+        context={"scheduled_via": "schedule_action tool"},
+        scheduled_at=scheduled_dt,
     )
     
     return f"OK. {action_type} action scheduled for {schedule_time}"
+```
 
-# Keep backward compatibility aliases
-async def schedule_future_callback_tool(
+**Note**: The existing `schedule_future_callback` tool continues to work as before. We're adding new capabilities without breaking existing ones.
+
+### Step 5: Add Recurring Action Support
+
+Extend the scheduling tools to support recurring actions:
+
+```python
+# Add tool for recurring actions
+{
+    "type": "function",
+    "function": {
+        "name": "schedule_recurring_action",
+        "description": "Schedule a recurring action (wake_llm or script) using RRULE format",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_time": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When to start the recurring schedule",
+                },
+                "recurrence_rule": {
+                    "type": "string",
+                    "description": "RRULE format string (e.g., 'FREQ=DAILY;INTERVAL=1')",
+                },
+                "action_type": {
+                    "type": "string",
+                    "enum": ["wake_llm", "script"],
+                    "description": "Type of action to execute",
+                    "default": "wake_llm",
+                },
+                "action_config": {
+                    "type": "object",
+                    "description": "Configuration for the action",
+                },
+            },
+            "required": ["start_time", "recurrence_rule", "action_config"],
+        },
+    },
+}
+
+# Implementation
+async def schedule_recurring_action_tool(
     exec_context: ToolExecutionContext,
-    callback_time: str,
-    context: str,
+    start_time: str,
+    recurrence_rule: str,
+    action_type: str = "wake_llm",
+    action_config: dict[str, Any] = None,
 ) -> str:
-    """Legacy tool - delegates to schedule_action."""
-    return await schedule_action_tool(
-        exec_context=exec_context,
-        schedule_time=callback_time,
-        action_type="wake_llm",
-        action_config={"context": context},
+    """Schedule a recurring action."""
+    # Similar validation as schedule_action_tool...
+    
+    # Use the shared action executor with recurrence
+    await execute_action(
+        db_ctx=exec_context.db_context,
+        action_type=action_type_enum,
+        action_config=action_config,
+        conversation_id=exec_context.conversation_id,
+        interface_type=exec_context.interface_type,
+        context={"scheduled_via": "schedule_recurring_action tool"},
+        scheduled_at=start_dt,
+        recurrence_rule=recurrence_rule,
     )
+    
+    return f"OK. Recurring {action_type} action scheduled starting {start_time}"
 ```
 
 ## Testing Strategy
 
-### Step 1 & 2: Refactor Event System
+### Step 1 & 2: Refactor Event System ✓ COMPLETED
 
-- Run existing event listener tests after refactoring
-- No new tests needed, all should pass
+- Existing event listener tests pass after refactoring
+- No new tests needed
 
-### Step 3 & 4: Database Migration
+### Step 3: Extended Action Executor
 
-- Test migration on development database
-- Verify existing tasks are migrated correctly
-- Test repository with new columns
+- Test that `execute_action` correctly passes `scheduled_at` and `recurrence_rule` to `enqueue_task`
+- Verify immediate execution still works when these parameters are None
 
-### Step 5: Task Worker
+### Step 4: Scheduling Tools
 
-- Update existing callback tests to verify they still work
-- Add new tests for script scheduling:
+- Add tests for `schedule_action_tool`:
+  - Test scheduling wake_llm actions
+  - Test scheduling script actions
+  - Test validation of action types and configs
+  - Test timezone handling
 
-```python
-async def test_schedule_and_execute_script_action(test_db_engine):
-    """Test scheduling and executing a script action."""
-    # Schedule a script action
-    # Verify it executes correctly
-    # Check that script was run with correct context
-```
+### Step 5: Recurring Actions
 
-### Step 6: Tools Update
+- Test `schedule_recurring_action_tool`:
+  - Test RRULE parsing and validation
+  - Test that recurring tasks are created correctly
+  - Verify task worker handles recurring execution
 
-- Update tool tests to use new action-based tools
-- Add tests for both wake_llm and script actions
-- Verify backward compatibility tools still work
+### Integration Tests
+
+- Test end-to-end flow:
+  1. Schedule a script action for future execution
+  2. Wait for scheduled time
+  3. Verify script executes with correct context
+  4. Test recurring script execution
 
 ## Benefits
 
 1. **Unified Model**: Single action abstraction used everywhere
 2. **Type Safety**: Enum prevents invalid action types
 3. **Code Reuse**: Shared executor reduces duplication
-4. **Extensibility**: Easy to add new action types
-5. **Clean Migration**: Existing data is properly migrated
+4. **Simplicity**: No database changes required
+5. **Backward Compatibility**: Existing scheduled tasks continue to work
+6. **Extensibility**: Easy to add new action types
+
+## Key Design Decisions
+
+1. **No Database Migration**: The existing task system already has all the fields we need (`task_type`, `payload`, `scheduled_at`, `recurrence_rule`)
+2. **Actions as Task Types**: Actions map directly to existing task types (`wake_llm` → `llm_callback`, `script` → `script_execution`)
+3. **Thin Abstraction Layer**: The action system is just a convenience layer over the task system
+4. **Preserve Existing APIs**: All existing scheduling tools continue to work
 
 ## Future Extensions
 
 Once this foundation is in place, it becomes easy to:
 
-- Add new action types (e.g., "webhook", "email")
+- Add new action types (e.g., "webhook", "email") by:
+  1. Adding to the ActionType enum
+  2. Adding a new task type and handler
+  3. Updating `execute_action` to map the new action
 - Add action composition (multiple actions in sequence)
-- Add conditional actions (though scripts can handle this)
 - Track action execution history uniformly
 
-## Migration Checklist
+## Implementation Checklist
 
-- [ ] Create actions.py with shared executor
-- [ ] Refactor EventProcessor and verify tests pass
-- [ ] Create and run database migration
-- [ ] Update TasksRepository
-- [ ] Update task worker with new handler
-- [ ] Update scheduling tools
-- [ ] Add new tests for script scheduling
+- [x] Create actions.py with shared executor
+- [x] Refactor EventProcessor and verify tests pass
+- [ ] Extend execute_action to support scheduling
+- [ ] Update scheduling tools to use actions
+- [ ] Add tests for scheduled script execution
+- [ ] Add support for recurring actions
 - [ ] Update documentation
-- [ ] Deploy to staging and test
-- [ ] Deploy to production
+- [ ] Deploy and test
