@@ -71,14 +71,9 @@ async def wait_for_tasks_to_complete(
             # Use the provided engine to get a context
             async with get_db_context(engine=engine) as db:
                 # First check for tasks that have failed or have a recorded error
-                # Only consider tasks that should have already executed
-                current_time = datetime.now(timezone.utc)
-                failure_condition = sa.and_(
-                    sa.or_(
-                        tasks_table.c.status == "failed",
-                        tasks_table.c.error.is_not(None),
-                    ),
-                    tasks_table.c.scheduled_at <= current_time,
+                failure_condition = sa.or_(
+                    tasks_table.c.status == "failed",
+                    tasks_table.c.error.is_not(None),
                 )
                 failed_query = select(sql_count(tasks_table.c.id)).where(
                     failure_condition
@@ -137,14 +132,24 @@ async def wait_for_tasks_to_complete(
                         )
 
                 # Build the query to count non-terminal tasks
-                # Only consider tasks that should have already executed (scheduled_at <= now)
+                # For recurring tasks, only consider those that should have already executed
+                # For non-recurring tasks, include all of them (to catch spawned tasks)
                 current_time = datetime.now(timezone.utc)
+                time_with_fudge = current_time + timedelta(seconds=30)
                 query = select(
                     sql_count(tasks_table.c.id)
                 ).where(  # Pass column to count
                     sa.and_(
                         tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
-                        tasks_table.c.scheduled_at <= current_time,
+                        sa.or_(
+                            # Include all non-recurring tasks
+                            tasks_table.c.recurrence_rule.is_(None),
+                            # For recurring tasks, only include those scheduled to run soon
+                            sa.and_(
+                                tasks_table.c.recurrence_rule.is_not(None),
+                                tasks_table.c.scheduled_at <= time_with_fudge,
+                            ),
+                        ),
                     )
                 )
                 # Filter by specific task IDs if provided
@@ -197,16 +202,26 @@ async def wait_for_tasks_to_complete(
                 sa.column("status"),
                 sa.column("scheduled_at"),
                 sa.column("retry_count"),
+                sa.column("recurrence_rule"),
             ]
-            # Only show pending tasks that should have already executed
+            # Show pending tasks, but for recurring tasks only show those that should have already executed
             current_time = datetime.now(timezone.utc)
+            time_with_fudge = current_time + timedelta(seconds=30)
             pending_query = (
                 select(*cols_to_select)
                 .select_from(tasks_table)
                 .where(
                     sa.and_(
                         tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
-                        tasks_table.c.scheduled_at <= current_time,
+                        sa.or_(
+                            # Include all non-recurring tasks
+                            tasks_table.c.recurrence_rule.is_(None),
+                            # For recurring tasks, only include those scheduled to run soon
+                            sa.and_(
+                                tasks_table.c.recurrence_rule.is_not(None),
+                                tasks_table.c.scheduled_at <= time_with_fudge,
+                            ),
+                        ),
                     )
                 )
             )
@@ -220,7 +235,9 @@ async def wait_for_tasks_to_complete(
             pending_results = await db.fetch_all(pending_query)
             if pending_results:
                 details_list = [
-                    f"  - ID: {row['task_id']}, Type: {row['task_type']}, Status: {row['status']}, Scheduled: {row['scheduled_at']}, Retries: {row['retry_count']}"
+                    f"  - ID: {row['task_id']}, Type: {row['task_type']}, Status: {row['status']}, "
+                    f"Scheduled: {row['scheduled_at']}, Retries: {row['retry_count']}, "
+                    f"Recurring: {'Yes' if row.get('recurrence_rule') else 'No'}"
                     for row in pending_results
                 ]
                 pending_tasks_details = "Pending tasks:\n" + "\n".join(details_list)
