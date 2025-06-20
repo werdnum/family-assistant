@@ -168,6 +168,13 @@ class StarlarkEngine:
             if self.config.enable_print:
                 module.add_callable("print", self._create_print_function())
 
+            # Initialize wake_llm accumulator and store globals for later access
+            self._wake_llm_contexts: list[dict[str, Any]] = []
+            self._script_globals = globals_dict or {}
+
+            # Add wake_llm function
+            module.add_callable("wake_llm", self._create_wake_llm_function())
+
             # Add tools API if we have both provider and context
             if self.tools_provider and execution_context:
                 tools_api = create_tools_api(
@@ -221,11 +228,24 @@ class StarlarkEngine:
                     len(available_tools),
                 )
 
+            # Configure dialect with useful features
+            dialect = starlark.Dialect.extended()
+            dialect.enable_f_strings = True
+            dialect.enable_lambda = True
+            dialect.enable_def = True
+            dialect.enable_keyword_only_arguments = True
+
             # Parse the script first
-            ast = starlark.parse("script.star", script)
+            ast = starlark.parse("script.star", script, dialect=dialect)
 
             # Evaluate the parsed AST
             result = starlark.eval(module, ast, globals_dict_to_use)
+
+            # Store wake_llm contexts for the caller to process
+            if self._wake_llm_contexts:
+                self._pending_wake_contexts = self._wake_llm_contexts.copy()
+            else:
+                self._pending_wake_contexts = []
 
             return result
 
@@ -310,3 +330,27 @@ class StarlarkEngine:
                 print(f"[SCRIPT] {message}")
 
         return starlark_print
+
+    def _create_wake_llm_function(self) -> Any:
+        """Create a wake_llm function for scripts."""
+
+        def wake_llm(context: dict[str, Any], include_event: bool = True) -> None:
+            """Request to wake the LLM with context."""
+            # Validate context is a dict
+            if not isinstance(context, dict):
+                raise TypeError("wake_llm context must be a dictionary")
+
+            # Store the wake request
+            wake_request = {
+                "context": dict(context),  # Make a copy
+                "include_event": include_event,
+            }
+            self._wake_llm_contexts.append(wake_request)
+
+            logger.debug(f"Script requested LLM wake with context: {context}")
+
+        return wake_llm
+
+    def get_pending_wake_contexts(self) -> list[dict[str, Any]]:
+        """Get any pending wake_llm contexts from the last script execution."""
+        return getattr(self, "_pending_wake_contexts", [])

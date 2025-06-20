@@ -298,7 +298,45 @@ Scripts receive a rich context:
 
 ```
 
-### 7. Script Limitations and Workarounds
+### 7. Wake LLM from Scripts
+
+Scripts can wake the LLM when complex decision-making or context-aware responses are needed:
+
+```starlark
+# Wake LLM with simple context
+temp = float(event["new_state"]["state"])
+if temp > 30:
+    wake_llm({
+        "alert": "High temperature detected",
+        "temperature": temp,
+        "action_needed": "Check cooling system"
+    })
+
+# Multiple wake calls accumulate into single LLM wake
+if humidity > 80:
+    wake_llm({
+        "sensor": "humidity",
+        "value": humidity,
+        "threshold": 80
+    })
+
+if air_quality < 50:
+    wake_llm({
+        "sensor": "air_quality", 
+        "value": air_quality,
+        "threshold": 50
+    })
+# LLM will be woken once with all accumulated contexts
+```
+
+**wake_llm API**:
+
+- `wake_llm(context: dict, include_event: bool = True)` - Request to wake LLM with context
+- Multiple calls within a script accumulate - LLM is woken at most once per script execution
+- The `context` dict is passed to the LLM along with the original event data (if `include_event=True`)
+- This enables hybrid automation: deterministic logic in scripts, complex decisions delegated to LLM
+
+### 8. Script Limitations and Workarounds
 
 **starlark-pyo3 Restriction**: Loops and certain constructs must be inside functions. This is actually beneficial for event handlers as it encourages modular code:
 
@@ -319,7 +357,7 @@ process_all()
 
 For simple scripts, we could auto-wrap in a function, but the explicit requirement helps prevent accidentally complex top-level code.
 
-### 8. Security Considerations
+### 9. Security Considerations
 
 1. **Permission Model**: Scripts use the event_handler profile with restricted tools by default
 2. **Resource Limits**:
@@ -330,7 +368,7 @@ For simple scripts, we could auto-wrap in a function, but the explicit requireme
 4. **Audit Trail**: All script executions visible in task queue UI
 5. **Rate Limiting**: Script actions count against the same daily limits as wake_llm actions
 
-### 9. Error Handling
+### 10. Error Handling
 
 Script execution tasks use the standard task queue retry mechanism:
 
@@ -338,7 +376,7 @@ Script execution tasks use the standard task queue retry mechanism:
 - Alert user if final retry fails
 - All execution history visible in task UI
 
-### 10. Script Validation and Testing
+### 11. Script Validation and Testing
 
 1. **Syntax Validation**: Scripts are linted before saving:
 
@@ -428,24 +466,17 @@ Assistant: "I can convert that to a script for faster execution and no API usage
      - Would need to handle in StarlarkEngine.evaluate() error processing
    - Would show what tools would be called with what arguments
 
-2. **Wake LLM from Script**: Special tool to wake the LLM with filtered context:
-
-   ```starlark
-   if complex_condition:
-       wake_llm(prompt="Handle this complex situation", context=event)
-   ```
-
-3. **Append Mode for Notes**: Add `append` parameter to `add_or_update_note`:
+2. **Append Mode for Notes**: Add `append` parameter to `add_or_update_note`:
 
    ```starlark
    add_or_update_note(title="Log", content="New entry\n", append=True)
    ```
 
-4. **Tool-level Rate Limiting**: Separate rate limits for tool calls vs script executions
+3. **Tool-level Rate Limiting**: Separate rate limits for tool calls vs script executions
 
-5. **Script Library**: Pre-built templates for common patterns (maybe)
+4. **Script Library**: Pre-built templates for common patterns (maybe)
 
-6. **State Storage**: If concrete use cases emerge for persistent script state
+5. **State Storage**: If concrete use cases emerge for persistent script state
 
 ## Example: Complete Temperature Monitoring Automation
 
@@ -470,6 +501,16 @@ if temp > 28 and prev_temp <= 28:
         message=f"🔥 Server room temperature critical: {temp}°C"
     )
     # Could also: control_device(entity_id="switch.server_room_fan", action="turn_on")
+
+# Critical temperature - wake LLM for complex response
+if temp > 35:
+    wake_llm({
+        "alert_type": "critical_temperature",
+        "location": "server_room",
+        "temperature": temp,
+        "previous_temperature": prev_temp,
+        "instruction": "Analyze the situation and take appropriate emergency actions"
+    })
 
 # All-clear notification
 elif temp <= 25 and prev_temp > 25:
