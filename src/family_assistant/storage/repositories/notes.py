@@ -86,9 +86,16 @@ class NotesRepository(BaseRepository):
         title: str,
         content: str,
         include_in_prompt: bool = True,
+        append: bool = False,
     ) -> str:
         """Adds a new note or updates an existing note with the given title (upsert)."""
         now = datetime.now(timezone.utc)
+
+        # If append is True, fetch existing content first
+        if append:
+            existing_note = await self.get_by_title(title)
+            if existing_note:
+                content = existing_note["content"] + "\n" + content
 
         if self._db.engine.dialect.name == "postgresql":
             # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert

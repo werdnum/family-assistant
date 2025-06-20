@@ -65,6 +65,7 @@ You can ask the assistant a wide variety of things:
         *"Remember: The plumber's number is 555-1234."
         *"Add a note titled 'Vacation Ideas' with the content 'Visit the Grand Canyon'."
         *"Update the note 'Meeting Notes' with 'Discuss budget'."
+        *"Append to the note 'Meeting Notes' with 'Also discuss timeline'." (NEW: You can append content to existing notes instead of replacing them!)
     *These notes act as the assistant's long-term memory for specific facts you provide. You can view and manage them easily through the Web Interface.
 
 * **Ingest Documents (Files and URLs):**
