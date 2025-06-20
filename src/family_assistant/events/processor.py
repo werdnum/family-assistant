@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from family_assistant.actions import ActionType, execute_action
 from family_assistant.events.sources import EventSource
 from family_assistant.events.storage import EventStorage
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -198,70 +199,35 @@ class EventProcessor:
         event_data: dict[str, Any],
     ) -> None:
         """Execute the action defined in the listener within existing DB context."""
-        from family_assistant.storage.tasks import enqueue_task
+        action_type = ActionType(listener["action_type"])
+        action_config = listener.get("action_config", {})
 
-        action_type = listener["action_type"]
+        # Build context for action
+        context = {
+            "trigger": f"Event listener '{listener['name']}' matched",
+            "listener_id": listener["id"],
+            "source": listener["source_id"],
+        }
 
-        if action_type == "wake_llm":
-            # Extract configuration
-            action_config = listener.get("action_config", {})
-            include_event_data = action_config.get("include_event_data", True)
+        if (
+            action_type == ActionType.WAKE_LLM
+            and action_config.get("include_event_data", True)
+            or action_type == ActionType.SCRIPT
+        ):
+            context["event_data"] = event_data
 
-            # Prepare callback context
-            callback_context = {
-                "trigger": f"Event listener '{listener['name']}' matched",
-                "listener_id": listener["id"],
-                "source": listener["source_id"],
-            }
+        await execute_action(
+            db_ctx=db_ctx,
+            action_type=action_type,
+            action_config=action_config,
+            conversation_id=listener["conversation_id"],
+            interface_type=listener.get("interface_type", "telegram"),
+            context=context,
+        )
 
-            if include_event_data:
-                callback_context["event_data"] = event_data
-
-            # Generate task ID
-            task_id = f"event_listener_{listener['id']}_{int(time.time() * 1000)}"
-
-            # Enqueue llm_callback task
-            from datetime import datetime, timezone
-
-            await enqueue_task(
-                db_context=db_ctx,
-                task_id=task_id,
-                task_type="llm_callback",
-                payload={
-                    "interface_type": listener.get("interface_type", "telegram"),
-                    "conversation_id": listener["conversation_id"],
-                    "callback_context": callback_context,
-                    "scheduling_timestamp": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-
-            logger.info(f"Enqueued wake_llm callback for listener {listener['id']}")
-        elif action_type == "script":
-            # Extract configuration
-            action_config = listener.get("action_config", {})
-
-            # Generate task ID
-            task_id = f"script_listener_{listener['id']}_{int(time.time() * 1000)}"
-
-            # Enqueue script_execution task
-            await enqueue_task(
-                db_context=db_ctx,
-                task_id=task_id,
-                task_type="script_execution",
-                payload={
-                    "script_code": action_config.get("script_code", ""),
-                    "event_data": event_data,
-                    "config": action_config,
-                    "listener_id": listener["id"],
-                    "conversation_id": listener["conversation_id"],
-                },
-            )
-
-            logger.info(f"Enqueued script execution for listener {listener['id']}")
-        else:
-            logger.warning(
-                f"Unknown action type '{action_type}' for listener {listener['id']}"
-            )
+        logger.info(
+            f"Executed {action_type.value} action for listener {listener['id']}"
+        )
 
     async def _disable_listener(self, listener_id: int) -> None:
         """Disable a one-time listener after it triggers (opens new DB context)."""
