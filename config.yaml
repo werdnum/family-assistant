@@ -256,7 +256,9 @@ default_profile_settings:
             {%- set significant_periods = significant_periods + [{
                 "type": current_period.type,
                 "start": current_period.start_time,
-                "end": current_period.end_time
+                "end": current_period.end_time,
+                "min": current_period.min,
+                "max": current_period.max,
               }] -%}
             {%- set current_period.start_time = none -%}
             {%- set current_period.raw_end_time_for_comparison = none -%}
