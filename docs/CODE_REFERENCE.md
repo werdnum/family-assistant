@@ -656,8 +656,11 @@ The core architecture consists of:
 - `ToolConfirmationRequired`: Exception raised when confirmation is needed.
 - `ToolConfirmationFailed`: Exception raised when confirmation fails.
 - `ToolsProvider` (Protocol): Interface for tool providers.
-- `schedule_recurring_task_tool()`: Local tool to schedule recurring tasks.
-- `schedule_future_callback_tool()`: Local tool to schedule LLM callbacks, accepting `skip_if_user_responded` and `scheduling_timestamp`, and using the injected `clock`.
+- `schedule_recurring_task_tool()`: Local tool to schedule recurring LLM callbacks with RRULE support.
+- `schedule_future_callback_tool()`: Local tool to schedule one-time LLM callbacks at a specific time.
+- `schedule_reminder_tool()`: Local tool to schedule reminders with optional follow-up support.
+- `schedule_action_tool()`: Local tool to schedule any action type (wake_llm or script) at a specific time.
+- `schedule_recurring_action_tool()`: Local tool to schedule recurring actions (wake_llm or script) using RRULE format.
 - `list_pending_callbacks_tool()`: Local tool to list pending LLM callback tasks.
 - `modify_pending_callback_tool()`: Local tool to modify a pending LLM callback task.
 - `cancel_pending_callback_tool()`: Local tool to cancel a pending LLM callback task.

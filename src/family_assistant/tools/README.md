@@ -182,7 +182,15 @@ Some parameters are automatically injected by the `LocalToolsProvider`:
 ## Tool Categories
 
 - **Notes**: Managing personal notes (`notes.py`)
-- **Tasks**: Scheduling callbacks and reminders (`tasks.py`)
+- **Tasks**: Scheduling callbacks, reminders, and actions (`tasks.py`)
+  - `schedule_reminder`: Simple time-based reminders with optional follow-ups
+  - `schedule_future_callback`: One-time LLM callbacks for continuing work
+  - `schedule_recurring_task`: Recurring LLM callbacks with RRULE support
+  - `schedule_action`: Schedule any action type (wake_llm or script) for one-time execution
+  - `schedule_recurring_action`: Schedule recurring actions (wake_llm or script) with RRULE
+  - `list_pending_callbacks`: View all scheduled tasks
+  - `modify_pending_callback`: Change time or context of scheduled tasks
+  - `cancel_pending_callback`: Cancel scheduled tasks
 - **Documents**: Searching and ingesting documents (`documents.py`)
 - **Communication**: Sending messages and viewing history (`communication.py`)
 - **Calendar**: Managing calendar events (implemented in `calendar_integration.py`)
