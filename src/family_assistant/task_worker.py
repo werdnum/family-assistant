@@ -846,7 +846,7 @@ async def _process_script_wake_llm(
     exec_context: ToolExecutionContext,
     wake_contexts: list[dict[str, Any]],
     event_data: dict[str, Any],
-    listener_id: str,
+    listener_id: str | None,
 ) -> None:
     """Process wake_llm calls accumulated during script execution.
 
@@ -856,6 +856,7 @@ async def _process_script_wake_llm(
         event_data: The original event data that triggered the script
         listener_id: ID of the event listener that ran the script
     """
+    listener_id = listener_id or "scheduled"
     # Combine all wake contexts into a single message
     combined_context = {
         "source": "script_wake_llm",
@@ -955,15 +956,14 @@ async def handle_script_execution(
         )
         raise ValueError("Missing required field in payload: script_code")
 
-    if not listener_id:
-        logger.error(
-            f"Invalid payload for script_execution task (missing listener_id): {payload}"
+    if listener_id:
+        logger.info(
+            f"Starting script execution for listener {listener_id} in conversation {conversation_id}"
         )
-        raise ValueError("Missing required field in payload: listener_id")
-
-    logger.info(
-        f"Starting script execution for listener {listener_id} in conversation {conversation_id}"
-    )
+    else:
+        logger.info(
+            f"Starting scheduled script execution in conversation {conversation_id}"
+        )
 
     # Get the event_handler processing service if available
     processing_service = exec_context.processing_service
