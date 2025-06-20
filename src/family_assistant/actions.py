@@ -3,6 +3,7 @@ Shared action execution logic for both event listeners and scheduled tasks.
 """
 
 import logging
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -26,6 +27,8 @@ async def execute_action(
     conversation_id: str,
     interface_type: str = "telegram",
     context: dict[str, Any] | None = None,
+    scheduled_at: datetime | None = None,
+    recurrence_rule: str | None = None,
 ) -> None:
     """
     Execute an action. Used by both event listeners and scheduled tasks.
@@ -37,6 +40,8 @@ async def execute_action(
         conversation_id: Conversation to execute in
         interface_type: Interface type (telegram, web, etc)
         context: Additional context (e.g., event data, trigger info)
+        scheduled_at: When to execute the action (None for immediate)
+        recurrence_rule: RRULE for recurring tasks (None for one-time)
     """
     import time
     from datetime import datetime, timezone
@@ -67,6 +72,8 @@ async def execute_action(
                 "callback_context": callback_context,
                 "scheduling_timestamp": datetime.now(timezone.utc).isoformat(),
             },
+            scheduled_at=scheduled_at,
+            recurrence_rule=recurrence_rule,
         )
 
     elif action_type == ActionType.SCRIPT:
@@ -82,6 +89,8 @@ async def execute_action(
                 "conversation_id": conversation_id,
                 **context,
             },
+            scheduled_at=scheduled_at,
+            recurrence_rule=recurrence_rule,
         )
     else:
         raise ValueError(f"Unknown action type: {action_type}")

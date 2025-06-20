@@ -311,6 +311,8 @@ default_profile_settings:
       - "schedule_future_callback"
       - "schedule_recurring_task"
       - "schedule_reminder"
+      - "schedule_action"
+      - "schedule_recurring_action"
       - "list_pending_callbacks"
       - "modify_pending_callback"
       - "cancel_pending_callback"

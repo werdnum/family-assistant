@@ -235,6 +235,92 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_action",
+            "description": (
+                "Schedule any action (wake_llm or script) to execute at a specific time. "
+                "This is the general-purpose scheduling tool that complements schedule_future_callback. "
+                "Use this when you need to schedule script execution or want more control over LLM callbacks."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "schedule_time": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "When to execute the action (ISO 8601 format with timezone, e.g., '2025-05-10T14:30:00+02:00')",
+                    },
+                    "action_type": {
+                        "type": "string",
+                        "enum": ["wake_llm", "script"],
+                        "description": "Type of action to execute",
+                        "default": "wake_llm",
+                    },
+                    "action_config": {
+                        "type": "object",
+                        "description": (
+                            "Configuration for the action. "
+                            "For wake_llm: {'context': 'message for LLM'}. "
+                            "For script: {'script_code': 'Starlark code', 'timeout': 600}"
+                        ),
+                    },
+                },
+                "required": ["schedule_time", "action_config"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_recurring_action",
+            "description": (
+                "Schedule a recurring action (wake_llm or script) using RRULE format. "
+                "This tool allows scheduling scripts to run on a recurring basis, "
+                "complementing schedule_recurring_task which only supports LLM callbacks."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_time": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "When to start the recurring schedule (ISO 8601 format with timezone)",
+                    },
+                    "recurrence_rule": {
+                        "type": "string",
+                        "description": (
+                            "RRULE format string (e.g., 'FREQ=DAILY;INTERVAL=1', 'FREQ=WEEKLY;BYDAY=MO,WE,FR', "
+                            "'FREQ=HOURLY;INTERVAL=4')"
+                        ),
+                    },
+                    "action_type": {
+                        "type": "string",
+                        "enum": ["wake_llm", "script"],
+                        "description": "Type of action to execute",
+                        "default": "wake_llm",
+                    },
+                    "action_config": {
+                        "type": "object",
+                        "description": (
+                            "Configuration for the action. "
+                            "For wake_llm: {'context': 'message for LLM'}. "
+                            "For script: {'script_code': 'Starlark code', 'timeout': 600}"
+                        ),
+                    },
+                    "task_name": {
+                        "type": "string",
+                        "description": (
+                            "Optional. A short, URL-safe description to help identify the recurring task "
+                            "(e.g., 'daily_weather_check', 'hourly_metrics')"
+                        ),
+                    },
+                },
+                "required": ["start_time", "recurrence_rule", "action_config"],
+            },
+        },
+    },
 ]
 
 
@@ -756,3 +842,154 @@ async def cancel_pending_callback_tool(
             exc_info=True,
         )
         return f"Error: Failed to cancel callback task. {e}"
+
+
+async def schedule_action_tool(
+    exec_context: ToolExecutionContext,
+    schedule_time: str,
+    action_type: str = "wake_llm",
+    action_config: dict[str, Any] | None = None,
+) -> str:
+    """Schedule any action for future execution.
+
+    Args:
+        exec_context: The ToolExecutionContext containing execution details
+        schedule_time: ISO 8601 formatted datetime string (including timezone)
+        action_type: Type of action to execute ("wake_llm" or "script")
+        action_config: Configuration for the action
+
+    Returns:
+        Success message or error description
+    """
+    from family_assistant.actions import ActionType, execute_action
+
+    if action_config is None:
+        action_config = {}
+
+    # Validate action type using enum
+    try:
+        action_type_enum = ActionType(action_type)
+    except ValueError:
+        return f"Error: Invalid action_type. Must be one of: {[e.value for e in ActionType]}"
+
+    # Validate action config based on type
+    if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
+        return "Error: wake_llm action requires 'context' in action_config"
+    elif action_type_enum == ActionType.SCRIPT and "script_code" not in action_config:
+        return "Error: script action requires 'script_code' in action_config"
+
+    # Parse and validate time
+    clock = exec_context.clock or SystemClock()
+    try:
+        scheduled_dt = isoparse(schedule_time)
+        if scheduled_dt.tzinfo is None:
+            logger.warning(
+                f"Schedule time lacks timezone, assuming {exec_context.timezone_str}"
+            )
+            scheduled_dt = scheduled_dt.replace(
+                tzinfo=ZoneInfo(exec_context.timezone_str)
+            )
+
+        if scheduled_dt <= clock.now():
+            return "Error: Schedule time must be in the future"
+    except ValueError as e:
+        return f"Error: Invalid schedule_time format: {e}"
+
+    # Use the shared action executor with scheduling
+    try:
+        await execute_action(
+            db_ctx=exec_context.db_context,
+            action_type=action_type_enum,
+            action_config=action_config,
+            conversation_id=exec_context.conversation_id,
+            interface_type=exec_context.interface_type,
+            context={"scheduled_via": "schedule_action tool"},
+            scheduled_at=scheduled_dt,
+        )
+
+        return f"OK. {action_type} action scheduled for {schedule_time}"
+    except Exception as e:
+        logger.error(f"Error scheduling action: {e}", exc_info=True)
+        return f"Error: Failed to schedule action. {e}"
+
+
+async def schedule_recurring_action_tool(
+    exec_context: ToolExecutionContext,
+    start_time: str,
+    recurrence_rule: str,
+    action_type: str = "wake_llm",
+    action_config: dict[str, Any] | None = None,
+    task_name: str | None = None,
+) -> str:
+    """Schedule a recurring action.
+
+    Args:
+        exec_context: The ToolExecutionContext containing execution details
+        start_time: ISO 8601 formatted datetime string for first occurrence
+        recurrence_rule: RRULE format string
+        action_type: Type of action to execute ("wake_llm" or "script")
+        action_config: Configuration for the action
+        task_name: Optional identifier for the recurring task
+
+    Returns:
+        Success message or error description
+    """
+    from family_assistant.actions import ActionType, execute_action
+
+    if action_config is None:
+        action_config = {}
+
+    # Validate action type using enum
+    try:
+        action_type_enum = ActionType(action_type)
+    except ValueError:
+        return f"Error: Invalid action_type. Must be one of: {[e.value for e in ActionType]}"
+
+    # Validate action config based on type
+    if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
+        return "Error: wake_llm action requires 'context' in action_config"
+    elif action_type_enum == ActionType.SCRIPT and "script_code" not in action_config:
+        return "Error: script action requires 'script_code' in action_config"
+
+    # Parse and validate start time
+    clock = exec_context.clock or SystemClock()
+    try:
+        start_dt = isoparse(start_time)
+        if start_dt.tzinfo is None:
+            logger.warning(
+                f"Start time lacks timezone, assuming {exec_context.timezone_str}"
+            )
+            start_dt = start_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
+
+        if start_dt <= clock.now():
+            return "Error: Start time must be in the future"
+    except ValueError as e:
+        return f"Error: Invalid start_time format: {e}"
+
+    # Validate RRULE
+    try:
+        rrule.rrulestr(recurrence_rule, dtstart=start_dt)
+    except Exception as e:
+        return f"Error: Invalid recurrence rule: {e}"
+
+    # Use the shared action executor with recurrence
+    try:
+        await execute_action(
+            db_ctx=exec_context.db_context,
+            action_type=action_type_enum,
+            action_config=action_config,
+            conversation_id=exec_context.conversation_id,
+            interface_type=exec_context.interface_type,
+            context={
+                "scheduled_via": "schedule_recurring_action tool",
+                "task_name": task_name,
+            },
+            scheduled_at=start_dt,
+            recurrence_rule=recurrence_rule,
+        )
+
+        task_desc = f" ('{task_name}')" if task_name else ""
+        return f"OK. Recurring {action_type} action{task_desc} scheduled starting {start_time}"
+    except Exception as e:
+        logger.error(f"Error scheduling recurring action: {e}", exc_info=True)
+        return f"Error: Failed to schedule recurring action. {e}"
