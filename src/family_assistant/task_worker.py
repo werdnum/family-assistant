@@ -3,6 +3,7 @@ Task worker implementation for background processing.
 """
 
 import asyncio
+import json
 import logging
 import random
 import traceback
@@ -841,6 +842,74 @@ async def handle_system_error_log_cleanup(
         raise
 
 
+async def _process_script_wake_llm(
+    exec_context: ToolExecutionContext,
+    wake_contexts: list[dict[str, Any]],
+    event_data: dict[str, Any],
+    listener_id: str,
+) -> None:
+    """Process wake_llm calls accumulated during script execution.
+
+    Args:
+        exec_context: The execution context with DB access
+        wake_contexts: List of wake context dictionaries from script
+        event_data: The original event data that triggered the script
+        listener_id: ID of the event listener that ran the script
+    """
+    # Combine all wake contexts into a single message
+    combined_context = {
+        "source": "script_wake_llm",
+        "listener_id": listener_id,
+        "accumulated_contexts": wake_contexts,
+    }
+
+    # Add event data if any context requested it
+    include_event = any(ctx.get("include_event", True) for ctx in wake_contexts)
+    if include_event:
+        combined_context["event_data"] = event_data
+
+    # Format the wake message
+    wake_message = "Script wake_llm call:\n\n"
+
+    if len(wake_contexts) == 1:
+        # Single context - show it directly
+        ctx = wake_contexts[0]
+        wake_message += json.dumps(ctx.get("context", {}), indent=2)
+    else:
+        # Multiple contexts - show them as a list
+        wake_message += f"Multiple wake requests ({len(wake_contexts)}):\n"
+        for i, ctx in enumerate(wake_contexts, 1):
+            wake_message += f"\n{i}. {json.dumps(ctx.get('context', {}), indent=2)}"
+
+    if include_event:
+        wake_message += f"\n\nTriggering event:\n{json.dumps(event_data, indent=2)}"
+
+    # Generate unique task ID for the callback
+    callback_task_id = f"script_wake_llm_{listener_id}_{uuid.uuid4().hex[:8]}"
+
+    # Get current timestamp for scheduling
+    from datetime import datetime, timezone
+
+    scheduling_timestamp = datetime.now(timezone.utc).isoformat()
+
+    # Enqueue LLM callback task
+    await exec_context.db_context.tasks.enqueue(
+        task_id=callback_task_id,
+        task_type="llm_callback",
+        payload={
+            "interface_type": exec_context.interface_type,
+            "conversation_id": exec_context.conversation_id,
+            "callback_context": wake_message,
+            "scheduling_timestamp": scheduling_timestamp,
+            "metadata": combined_context,
+        },
+    )
+
+    logger.info(
+        f"Enqueued LLM callback for script wake_llm from listener {listener_id}"
+    )
+
+
 async def handle_script_execution(
     exec_context: ToolExecutionContext,
     payload: dict[str, Any],
@@ -940,7 +1009,7 @@ async def handle_script_execution(
             f"Executing script for listener {listener_id} with event data: {event_data}"
         )
 
-        result = engine.evaluate(
+        result = await engine.evaluate_async(
             script_code,
             globals_dict=script_globals,
             execution_context=exec_context,
@@ -954,6 +1023,22 @@ async def handle_script_execution(
         # Log script output if it returned something meaningful
         if result is not None:
             logger.debug(f"Script returned: {result}")
+
+        # Check for any wake_llm calls made during script execution
+        if hasattr(engine, "get_pending_wake_contexts"):
+            wake_contexts = engine.get_pending_wake_contexts()
+            if wake_contexts:
+                logger.info(
+                    f"Script requested LLM wake with {len(wake_contexts)} context(s)"
+                )
+
+                # Process accumulated wake contexts
+                await _process_script_wake_llm(
+                    exec_context=exec_context,
+                    wake_contexts=wake_contexts,
+                    event_data=event_data,
+                    listener_id=listener_id,
+                )
 
     except ScriptTimeoutError as e:
         logger.error(
