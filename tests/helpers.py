@@ -71,8 +71,14 @@ async def wait_for_tasks_to_complete(
             # Use the provided engine to get a context
             async with get_db_context(engine=engine) as db:
                 # First check for tasks that have failed or have a recorded error
-                failure_condition = sa.or_(
-                    tasks_table.c.status == "failed", tasks_table.c.error.is_not(None)
+                # Only consider tasks that should have already executed
+                current_time = datetime.now(timezone.utc)
+                failure_condition = sa.and_(
+                    sa.or_(
+                        tasks_table.c.status == "failed",
+                        tasks_table.c.error.is_not(None),
+                    ),
+                    tasks_table.c.scheduled_at <= current_time,
                 )
                 failed_query = select(sql_count(tasks_table.c.id)).where(
                     failure_condition
@@ -131,10 +137,15 @@ async def wait_for_tasks_to_complete(
                         )
 
                 # Build the query to count non-terminal tasks
+                # Only consider tasks that should have already executed (scheduled_at <= now)
+                current_time = datetime.now(timezone.utc)
                 query = select(
                     sql_count(tasks_table.c.id)
                 ).where(  # Pass column to count
-                    tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES)
+                    sa.and_(
+                        tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
+                        tasks_table.c.scheduled_at <= current_time,
+                    )
                 )
                 # Filter by specific task IDs if provided
                 if task_ids:
@@ -187,10 +198,17 @@ async def wait_for_tasks_to_complete(
                 sa.column("scheduled_at"),
                 sa.column("retry_count"),
             ]
+            # Only show pending tasks that should have already executed
+            current_time = datetime.now(timezone.utc)
             pending_query = (
                 select(*cols_to_select)
                 .select_from(tasks_table)
-                .where(tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES))
+                .where(
+                    sa.and_(
+                        tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
+                        tasks_table.c.scheduled_at <= current_time,
+                    )
+                )
             )
             if task_ids:
                 pending_query = pending_query.where(tasks_table.c.task_id.in_(task_ids))
