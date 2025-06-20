@@ -42,7 +42,7 @@ dependencies = [
     # HTML templating
     "python-multipart",
     # Required by FastAPI for form data
-    "mcp>=1.5.0",
+    "mcp>=1.6.0",
     # Model Context Protocol SDK
     "caldav>=1.2.0",
     # CalDAV client library

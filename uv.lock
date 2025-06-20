@@ -990,7 +990,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.38.1,<1.67.3" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "markitdown", extras = ["all"], specifier = ">=0.1.1" },
-    { name = "mcp", specifier = ">=1.5.0" },
+    { name = "mcp", specifier = ">=1.6.0" },
     { name = "mcp-proxy", marker = "extra == 'dev'", specifier = ">=0.3.0" },
     { name = "mcp-server-time", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "mdit-py-plugins", specifier = ">=0.4.0" },
