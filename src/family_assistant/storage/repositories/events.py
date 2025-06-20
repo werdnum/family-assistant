@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import JSON, String, insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.storage.events import (
@@ -638,6 +638,7 @@ class EventsRepository(BaseRepository):
         listener_id: int,
     ) -> dict:
         """Get execution statistics for a listener."""
+        from sqlalchemy import cast
         from sqlalchemy.sql import functions as func
 
         try:
@@ -646,19 +647,52 @@ class EventsRepository(BaseRepository):
             if not listener:
                 return {}
 
-            # Count total executions from recent_events
-            stmt = select(func.count().label("count")).select_from(recent_events_table)
-            stmt = stmt.where(
-                recent_events_table.c.triggered_listener_ids.contains([listener_id])
-            )
+            # Check if we're using SQLite or PostgreSQL
+            is_sqlite = self._db.engine.dialect.name == "sqlite"
+
+            if is_sqlite:
+                # For SQLite, we need to use LIKE on the JSON string representation
+                # SQLite stores JSON as text, so we can search for the listener ID
+                # We need to search for both "[listener_id]" and "[listener_id," patterns
+                search_pattern = f"%{listener_id}%"
+
+                # Count total executions from recent_events
+                stmt = select(func.count().label("count")).select_from(
+                    recent_events_table
+                )
+                stmt = stmt.where(
+                    cast(recent_events_table.c.triggered_listener_ids, String).like(
+                        search_pattern
+                    )
+                )
+            else:
+                # For PostgreSQL, use the proper JSONB contains operator
+                stmt = select(func.count().label("count")).select_from(
+                    recent_events_table
+                )
+                stmt = stmt.where(
+                    recent_events_table.c.triggered_listener_ids.op("@>")(
+                        cast([listener_id], JSON)
+                    )
+                )
 
             result = await self._db.fetch_one(stmt)
             total_executions = result["count"] if result else 0
 
             # Get recent events that triggered this listener
-            recent_stmt = select(recent_events_table).where(
-                recent_events_table.c.triggered_listener_ids.contains([listener_id])
-            )
+            if is_sqlite:
+                recent_stmt = select(recent_events_table).where(
+                    cast(recent_events_table.c.triggered_listener_ids, String).like(
+                        search_pattern
+                    )
+                )
+            else:
+                recent_stmt = select(recent_events_table).where(
+                    recent_events_table.c.triggered_listener_ids.op("@>")(
+                        cast([listener_id], JSON)
+                    )
+                )
+
             recent_stmt = recent_stmt.order_by(
                 recent_events_table.c.timestamp.desc()
             ).limit(10)
