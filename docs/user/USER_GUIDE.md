@@ -80,11 +80,19 @@ You can ask the assistant a wide variety of things:
         *"Remind me to call the dentist in 2 hours"
         *"Set a reminder for tomorrow at 3pm to pick up groceries"
         *"Remind me about the meeting at 4:30 PM"
+        *"Don't let me forget to submit the report" - Creates a reminder with automatic follow-ups if you don't respond
+
+    * **Schedule Script Execution:**You can now schedule scripts to run at specific times or on recurring schedules:
+        *"Schedule a script to clean up old notes every Sunday at midnight"
+        *"Run a script tomorrow at 9am that summarizes all my TODO notes"
+        *"Execute a script every hour to check if any tasks are overdue"
+        *Scripts run automatically without waking the assistant, making them perfect for automated maintenance tasks
 
     * **Managing Scheduled Tasks:**You can view and manage all scheduled tasks:
-        *"Show me my pending callbacks" - Lists all scheduled tasks and reminders
+        *"Show me my pending callbacks" - Lists all scheduled tasks, reminders, and script executions
         *"Cancel the daily weather update" - The assistant will find and cancel matching tasks
         *"Stop all recurring tasks about X" - The assistant will cancel all matching instances
+        *"Modify the reminder about the dentist to 3pm instead" - Changes the time of a scheduled task
         *For recurring tasks, each future instance is listed separately and can be cancelled individually
     *If a scheduled task fails, you can often retry it manually from the "Tasks" page in the Web Interface.
 
@@ -227,5 +235,10 @@ While most interaction happens via Telegram, the web interface is useful for spe
 * **If it doesn't understand:**Try rephrasing your request. Sometimes slightly different wording makes a big difference.
 * **If it makes a mistake or gives wrong information:**You can often correct it by giving it the right information ("Actually, the appointment is at 3 PM") or by updating a relevant note via the Web UI or a command ("Update the note 'Plumber Number' with content '555-9876'").
 * **If you need more help:**Contact the family member who set up and manages the assistant for your family. They can help with configuration issues or more complex problems.
+
+## Additional Resources
+
+* [Scheduling and Task Management Guide](scheduling.md) - Detailed guide on using reminders, callbacks, and automated scripts
+* [Scripting Guide](scripting.md) - Learn how to write automation scripts for the assistant
 
 We hope you find your family assistant helpful!
