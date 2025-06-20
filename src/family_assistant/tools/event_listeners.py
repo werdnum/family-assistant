@@ -26,8 +26,12 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "create_event_listener",
             "description": (
-                "Create a new event listener that will wake you when specific events occur. "
-                "The listener will only wake conversations in the same context where it was created."
+                "Create a new event listener that responds to specific events. "
+                "Two action types are available:\n"
+                "- wake_llm: Wakes the LLM to handle complex situations requiring reasoning and judgment\n"
+                "- script: Runs Starlark code automatically for simple, deterministic tasks\n\n"
+                "Scripts can also use wake_llm() function to conditionally wake the LLM with custom context. "
+                "The listener will only affect conversations in the same context where it was created."
             ),
             "parameters": {
                 "type": "object",

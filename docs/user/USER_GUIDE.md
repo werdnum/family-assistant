@@ -203,6 +203,10 @@ While most interaction happens via Telegram, the web interface is useful for spe
     *Test your conditions before creating the listener: "Test if entity_id equals 'person.andrew' would match recent events"
     *Be specific with field names - use the exact names you see in the event data
     *You can filter by event type: "Test if event_type equals 'state_changed' and entity_id equals 'person.andrew'"
+    *Choose between two action types:
+        - **wake_llm**: Wakes the assistant to handle complex situations requiring reasoning
+        - **script**: Runs automated Starlark code for simple, deterministic tasks
+    *Scripts can also use wake_llm() to conditionally wake the assistant with specific context
 
 * **Reply Directly:**If you're responding to something the assistant just said, use Telegram's "Reply" feature so it knows exactly what message you're referring to. This is especially helpful if the assistant was using a special mode (activated by a slash command), as it helps keep the conversation in that mode.
 * **Provide Full URLs:**When asking about web content, always include the full address (e.g., `https://www.example.com/article`).
