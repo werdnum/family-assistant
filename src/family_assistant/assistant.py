@@ -144,6 +144,9 @@ class Assistant:
         self.event_processor: EventProcessor | None = None
         self.home_assistant_clients: dict[str, Any] = {}  # profile_id -> HA client
 
+        # Logging handler
+        self.error_logging_handler = None
+
     async def setup_dependencies(self) -> None:
         """Initializes and wires up all core application components."""
         logger.info(f"Using model: {self.config['model']}")
@@ -220,7 +223,7 @@ class Assistant:
         ):
             from family_assistant.utils.logging_handler import setup_error_logging
 
-            setup_error_logging(get_db_context)
+            self.error_logging_handler = setup_error_logging(get_db_context)
             logger.info("Database error logging handler initialized")
 
         resolved_profiles = self.config.get("service_profiles", [])
@@ -902,6 +905,12 @@ class Assistant:
         if self.shared_httpx_client:
             await self.shared_httpx_client.aclose()
             logger.info("Shared httpx client closed.")
+
+        # Close the error logging handler if it exists
+        if self.error_logging_handler:
+            self.error_logging_handler.close()
+            logging.getLogger().removeHandler(self.error_logging_handler)
+            logger.info("Error logging handler closed.")
 
         self._is_shutdown_complete = True
         logger.info("Assistant stop_services finished.")
