@@ -35,7 +35,6 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
-from tests.test_helpers.task_worker import managed_task_worker
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +160,12 @@ print("Script executed - note created: " + str(result))
     # Register the script execution handler
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
-    async with managed_task_worker(task_worker, test_new_task_event, "ScriptWorker"):
+    # Start the task worker
+    worker_task = None
+    try:
+        worker_task = asyncio.create_task(task_worker.run(test_new_task_event))
+        logger.info("Started ScriptWorker")
+        await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the script
         async with DatabaseContext(engine=test_db_engine) as db_context:
             resp, _, _, error = await processing_service.handle_chat_interaction(
@@ -209,6 +213,23 @@ print("Script executed - note created: " + str(result))
             )
             assert note["title"] == test_note_title
             assert "scheduled script" in note["content"]
+    finally:
+        if worker_task:
+            logger.info("Stopping ScriptWorker...")
+            test_shutdown_event.set()
+            test_new_task_event.set()  # Wake up worker if it's waiting
+            try:
+                await asyncio.wait_for(worker_task, timeout=5.0)
+                logger.info("ScriptWorker stopped gracefully.")
+            except asyncio.TimeoutError:
+                logger.warning("Timeout stopping ScriptWorker. Cancelling.")
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    logger.info("ScriptWorker cancellation confirmed.")
+            except Exception as e:
+                logger.error(f"Error during ScriptWorker shutdown: {e}", exc_info=True)
 
 
 @pytest.mark.asyncio
@@ -326,7 +347,12 @@ print("Recurring script executed - note created")
     # Register the script execution handler
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
-    async with managed_task_worker(task_worker, test_new_task_event, "RecurringWorker"):
+    # Start the task worker
+    worker_task = None
+    try:
+        worker_task = asyncio.create_task(task_worker.run(test_new_task_event))
+        logger.info("Started RecurringWorker")
+        await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the recurring script
         async with DatabaseContext(engine=test_db_engine) as db_context:
             resp, _, _, error = await processing_service.handle_chat_interaction(
@@ -358,26 +384,45 @@ print("Recurring script executed - note created")
         # Give a moment for any pending transactions to complete
         await asyncio.sleep(0.5)
 
-    # Verify that the script created a note (outside the task worker context)
-    async with DatabaseContext(engine=test_db_engine) as db_context:
-        # First get all notes to find the exact title
-        all_notes = await db_context.notes.get_all()
-        logger.info(f"Total notes in database: {len(all_notes)}")
+        # Verify that the script created a note (outside the task worker context)
+        async with DatabaseContext(engine=test_db_engine) as db_context:
+            # First get all notes to find the exact title
+            all_notes = await db_context.notes.get_all()
+            logger.info(f"Total notes in database: {len(all_notes)}")
 
-        # Find notes with "Recurring Script Execution" in the title
-        recurring_notes = [
-            n for n in all_notes if "Recurring Script Execution" in n["title"]
-        ]
-        assert len(recurring_notes) >= 1, (
-            f"Expected at least 1 note with 'Recurring Script Execution' in title, found {len(recurring_notes)}. All notes: {[n['title'] for n in all_notes]}"
-        )
+            # Find notes with "Recurring Script Execution" in the title
+            recurring_notes = [
+                n for n in all_notes if "Recurring Script Execution" in n["title"]
+            ]
+            assert len(recurring_notes) >= 1, (
+                f"Expected at least 1 note with 'Recurring Script Execution' in title, found {len(recurring_notes)}. All notes: {[n['title'] for n in all_notes]}"
+            )
 
-        # Get the first one by its exact title
-        note_title = recurring_notes[0]["title"]
-        note = await db_context.notes.get_by_title(note_title)
-        assert note is not None, f"Could not retrieve note by title: {note_title}"
-        assert "Recurring Script Execution" in note["title"]
-        assert "unix timestamp" in note["content"]
+            # Get the first one by its exact title
+            note_title = recurring_notes[0]["title"]
+            note = await db_context.notes.get_by_title(note_title)
+            assert note is not None, f"Could not retrieve note by title: {note_title}"
+            assert "Recurring Script Execution" in note["title"]
+            assert "unix timestamp" in note["content"]
+    finally:
+        if worker_task:
+            logger.info("Stopping RecurringWorker...")
+            test_shutdown_event.set()
+            test_new_task_event.set()  # Wake up worker if it's waiting
+            try:
+                await asyncio.wait_for(worker_task, timeout=5.0)
+                logger.info("RecurringWorker stopped gracefully.")
+            except asyncio.TimeoutError:
+                logger.warning("Timeout stopping RecurringWorker. Cancelling.")
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    logger.info("RecurringWorker cancellation confirmed.")
+            except Exception as e:
+                logger.error(
+                    f"Error during RecurringWorker shutdown: {e}", exc_info=True
+                )
 
 
 @pytest.mark.asyncio
@@ -487,9 +532,12 @@ if True  # Missing colon
     # Register the script execution handler
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
-    async with managed_task_worker(
-        task_worker, test_new_task_event, "InvalidScriptWorker"
-    ):
+    # Start the task worker
+    worker_task = None
+    try:
+        worker_task = asyncio.create_task(task_worker.run(test_new_task_event))
+        logger.info("Started InvalidScriptWorker")
+        await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the invalid script
         async with DatabaseContext(engine=test_db_engine) as db_context:
             resp, _, _, error = await processing_service.handle_chat_interaction(
@@ -516,3 +564,22 @@ if True  # Missing colon
 
         # The task should have failed due to syntax error
         # We're testing that the system handles script errors gracefully
+    finally:
+        if worker_task:
+            logger.info("Stopping InvalidScriptWorker...")
+            test_shutdown_event.set()
+            test_new_task_event.set()  # Wake up worker if it's waiting
+            try:
+                await asyncio.wait_for(worker_task, timeout=5.0)
+                logger.info("InvalidScriptWorker stopped gracefully.")
+            except asyncio.TimeoutError:
+                logger.warning("Timeout stopping InvalidScriptWorker. Cancelling.")
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    logger.info("InvalidScriptWorker cancellation confirmed.")
+            except Exception as e:
+                logger.error(
+                    f"Error during InvalidScriptWorker shutdown: {e}", exc_info=True
+                )

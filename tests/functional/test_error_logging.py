@@ -63,7 +63,10 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
         # Test 4: Log a warning (should not be stored as min_level is ERROR)
         test_logger.warning("This is just a warning")
 
-        # Give async logging handler time to write to database
+        # Flush the handler to ensure all logs are written
+        handler.flush()
+
+        # Give async logging handler time to complete writes
         import asyncio
 
         await asyncio.sleep(0.5)
@@ -130,6 +133,7 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
 
     finally:
         # Clean up the handler and reset logger state
+        handler.close()  # Properly close the handler to stop worker thread
         test_logger.removeHandler(handler)
         # Remove any other handlers that might have been added
         test_logger.handlers.clear()
