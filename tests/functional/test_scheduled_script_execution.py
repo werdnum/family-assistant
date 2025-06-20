@@ -13,7 +13,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.task_worker import TaskWorker
+from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -54,10 +54,16 @@ async def test_schedule_script_execution(test_db_engine: AsyncEngine) -> None:
     script_dt = initial_time + timedelta(seconds=SCRIPT_DELAY_SECONDS)
     script_time_iso = script_dt.isoformat()
 
-    test_script = """
-# Test script that sets a global variable
-set_global("test_executed", True)
-set_global("execution_time", now().isoformat())
+    # Unique note title to verify script execution
+    test_note_title = f"Test Script Note {TEST_CHAT_ID}_{script_time_iso}"
+
+    test_script = f"""
+# Test script that creates a note
+result = add_or_update_note(
+    title="{test_note_title}",
+    content="This note was created by a scheduled script at " + str(time_now_utc()["unix"])
+)
+print("Script executed - note created: " + str(result))
 """
 
     # Define LLM rule to schedule script
@@ -85,8 +91,24 @@ set_global("execution_time", now().isoformat())
         ],
     )
 
+    # Add a rule to handle the tool response
+    def tool_response_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if messages and len(messages) >= 2:
+            last_msg = messages[-1]
+            if last_msg.get("role") == "tool":
+                return True
+        return False
+
+    tool_response_output = MockLLMOutput(
+        content="The script has been scheduled successfully."
+    )
+
     llm_client: LLMInterface = RuleBasedMockLLMClient(
-        rules=[(schedule_script_matcher, schedule_response)],
+        rules=[
+            (schedule_script_matcher, schedule_response),
+            (tool_response_matcher, tool_response_output),
+        ],
         default_response=MockLLMOutput(content="I can help with that."),
     )
 
@@ -136,6 +158,9 @@ set_global("execution_time", now().isoformat())
         engine=test_db_engine,
     )
 
+    # Register the script execution handler
+    task_worker.register_task_handler("script_execution", handle_script_execution)
+
     async with managed_task_worker(task_worker, test_new_task_event, "ScriptWorker"):
         # Act - Schedule the script
         async with DatabaseContext(engine=test_db_engine) as db_context:
@@ -154,16 +179,36 @@ set_global("execution_time", now().isoformat())
         # Assert - Script was scheduled
         assert error is None
         assert resp is not None
-        assert "schedule the script" in resp.lower()
+        # The response should indicate the script was scheduled
+        assert "scheduled" in resp.lower()
 
         # Act - Advance time and execute the script
         mock_clock.advance(timedelta(seconds=SCRIPT_DELAY_SECONDS + 1))
         test_new_task_event.set()
 
-        # Wait for task completion
+        # Wait for script execution to complete (increased timeout)
         await wait_for_tasks_to_complete(
-            engine=test_db_engine, timeout_seconds=5.0, task_types={"script_execution"}
+            engine=test_db_engine, timeout_seconds=15.0, task_types={"script_execution"}
         )
+
+        # Add a small delay to ensure any async operations complete
+        await asyncio.sleep(0.1)
+
+        # Verify the script created the note
+        async with DatabaseContext(engine=test_db_engine) as db_context:
+            # First, let's check all notes to debug
+            all_notes = await db_context.notes.get_all()
+            logger.info(f"All notes after script execution: {len(all_notes)}")
+            for n in all_notes:
+                logger.info(f"  Note title: '{n['title']}'")
+
+            # Now look for our specific note
+            note = await db_context.notes.get_by_title(test_note_title)
+            assert note is not None, (
+                f"Expected to find note with title '{test_note_title}'. Found notes: {[n['title'] for n in all_notes]}"
+            )
+            assert note["title"] == test_note_title
+            assert "scheduled script" in note["content"]
 
 
 @pytest.mark.asyncio
@@ -177,9 +222,13 @@ async def test_schedule_recurring_script(test_db_engine: AsyncEngine) -> None:
     recurrence_rule = "FREQ=HOURLY;INTERVAL=1"
 
     test_script = """
-# Recurring test script
-counter = get_global("run_count", 0)
-set_global("run_count", counter + 1)
+# Recurring test script  
+execution_time = time_now_utc()["unix"]
+result = add_or_update_note(
+    title="Recurring Script Execution " + str(execution_time),
+    content="Recurring script executed at unix timestamp " + str(execution_time)
+)
+print("Recurring script executed - note created")
 """
 
     # Define LLM rule
@@ -209,8 +258,24 @@ set_global("run_count", counter + 1)
         ],
     )
 
+    # Add a rule to handle the tool response
+    def tool_response_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if messages and len(messages) >= 2:
+            last_msg = messages[-1]
+            if last_msg.get("role") == "tool":
+                return True
+        return False
+
+    tool_response_output = MockLLMOutput(
+        content="The hourly script has been scheduled successfully."
+    )
+
     llm_client = RuleBasedMockLLMClient(
-        rules=[(schedule_recurring_matcher, schedule_response)],
+        rules=[
+            (schedule_recurring_matcher, schedule_response),
+            (tool_response_matcher, tool_response_output),
+        ],
         default_response=MockLLMOutput(content="I can help with that."),
     )
 
@@ -243,6 +308,7 @@ set_global("run_count", counter + 1)
     )
 
     mock_chat_interface = AsyncMock(spec=ChatInterface)
+    mock_chat_interface.send_message.return_value = "mock_message_id"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
 
@@ -256,6 +322,9 @@ set_global("run_count", counter + 1)
         shutdown_event_instance=test_shutdown_event,
         engine=test_db_engine,
     )
+
+    # Register the script execution handler
+    task_worker.register_task_handler("script_execution", handle_script_execution)
 
     async with managed_task_worker(task_worker, test_new_task_event, "RecurringWorker"):
         # Act - Schedule the recurring script
@@ -275,16 +344,40 @@ set_global("run_count", counter + 1)
         # Assert - Recurring script was scheduled
         assert error is None
         assert resp is not None
-        assert "hourly script" in resp.lower()
+        assert "scheduled" in resp.lower()
 
         # Act - Execute first occurrence
         mock_clock.advance(timedelta(seconds=3))
         test_new_task_event.set()
 
-        # Wait for first execution
+        # Wait for first execution (increased timeout)
         await wait_for_tasks_to_complete(
-            engine=test_db_engine, timeout_seconds=5.0, task_types={"script_execution"}
+            engine=test_db_engine, timeout_seconds=15.0, task_types={"script_execution"}
         )
+
+        # Give a moment for any pending transactions to complete
+        await asyncio.sleep(0.5)
+
+    # Verify that the script created a note (outside the task worker context)
+    async with DatabaseContext(engine=test_db_engine) as db_context:
+        # First get all notes to find the exact title
+        all_notes = await db_context.notes.get_all()
+        logger.info(f"Total notes in database: {len(all_notes)}")
+
+        # Find notes with "Recurring Script Execution" in the title
+        recurring_notes = [
+            n for n in all_notes if "Recurring Script Execution" in n["title"]
+        ]
+        assert len(recurring_notes) >= 1, (
+            f"Expected at least 1 note with 'Recurring Script Execution' in title, found {len(recurring_notes)}. All notes: {[n['title'] for n in all_notes]}"
+        )
+
+        # Get the first one by its exact title
+        note_title = recurring_notes[0]["title"]
+        note = await db_context.notes.get_by_title(note_title)
+        assert note is not None, f"Could not retrieve note by title: {note_title}"
+        assert "Recurring Script Execution" in note["title"]
+        assert "unix timestamp" in note["content"]
 
 
 @pytest.mark.asyncio
@@ -300,7 +393,7 @@ async def test_schedule_script_with_invalid_syntax(test_db_engine: AsyncEngine) 
     invalid_script = """
 # Invalid script
 if True  # Missing colon
-    set_global("test", True)
+    add_or_update_note(title="Test", content="This won't work")
 """
 
     # Define LLM rule
@@ -328,8 +421,22 @@ if True  # Missing colon
         ],
     )
 
+    # Add a rule to handle the tool response
+    def tool_response_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if messages and len(messages) >= 2:
+            last_msg = messages[-1]
+            if last_msg.get("role") == "tool":
+                return True
+        return False
+
+    tool_response_output = MockLLMOutput(content="The script has been scheduled.")
+
     llm_client = RuleBasedMockLLMClient(
-        rules=[(schedule_invalid_matcher, schedule_response)],
+        rules=[
+            (schedule_invalid_matcher, schedule_response),
+            (tool_response_matcher, tool_response_output),
+        ],
         default_response=MockLLMOutput(content="I can help with that."),
     )
 
@@ -362,6 +469,7 @@ if True  # Missing colon
     )
 
     mock_chat_interface = AsyncMock(spec=ChatInterface)
+    mock_chat_interface.send_message.return_value = "mock_message_id"
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
 
@@ -375,6 +483,9 @@ if True  # Missing colon
         shutdown_event_instance=test_shutdown_event,
         engine=test_db_engine,
     )
+
+    # Register the script execution handler
+    task_worker.register_task_handler("script_execution", handle_script_execution)
 
     async with managed_task_worker(
         task_worker, test_new_task_event, "InvalidScriptWorker"
