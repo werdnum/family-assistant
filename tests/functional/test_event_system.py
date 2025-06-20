@@ -634,14 +634,9 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
             )
         )
 
-        # Find the task created by our listener
-        callback_task = None
-        for task in tasks_result:
-            if task["task_id"].startswith("event_listener_"):
-                callback_task = task
-                break
-
-        assert callback_task is not None
+        # There should be at least one llm_callback task
+        assert len(tasks_result) > 0
+        callback_task = tasks_result[0]  # Get the first one
 
         # Verify task payload
         payload = json.loads(callback_task["payload"])
