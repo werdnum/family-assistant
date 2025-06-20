@@ -364,9 +364,58 @@ Before creating an event listener, test your script:
 "Show me all my script-based event listeners"
 "Disable the temperature monitoring script"
 "Convert my motion listener from wake_llm to a script"
+"Create a script that uses wake_llm when the garage door opens"
 ```
 
 ## Important Notes
+
+### wake_llm Function
+
+The `wake_llm` function allows scripts to wake the LLM with custom context when certain conditions are met. This is particularly useful in event-triggered scripts where you want to provide the LLM with specific information about what happened.
+
+```starlark
+# Wake the LLM with custom context
+wake_llm(context, include_event=True)
+```
+
+**Parameters:**
+
+- `context` (dict): A dictionary of key-value pairs to provide to the LLM as context
+- `include_event` (bool, optional): Whether to include the original event data in the wake context (default: True)
+
+**Usage in Event Scripts:**
+
+```starlark
+# Example: Wake LLM when temperature is too high
+temp = float(event["new_state"]["state"])
+if temp > 30:
+    wake_llm({
+        "alert": "High temperature detected",
+        "temperature": temp,
+        "location": event["entity_id"],
+        "suggestion": "Consider turning on the AC"
+    })
+```
+
+```starlark
+# Example: Process important emails
+if event.get("source_id") == "indexing":
+    metadata = event.get("metadata", {})
+    if metadata.get("type") == "email" and "urgent" in metadata.get("subject", "").lower():
+        wake_llm({
+            "urgent_email": True,
+            "from": metadata.get("sender"),
+            "subject": metadata.get("subject"),
+            "action_needed": "Please review this urgent email"
+        }, include_event=False)  # Don't include full event details
+```
+
+**Important Notes:**
+
+- The wake_llm function can be called multiple times in a script
+- Each call adds to a queue of wake contexts that will be processed
+- The LLM will receive all contexts when the script completes
+- Use meaningful keys in your context dictionary for clarity
 
 ### Currently Not Available
 
