@@ -20,6 +20,7 @@ async def add_or_update_note_tool(
     title: str,
     content: str,
     include_in_prompt: bool = True,
+    append: bool = False,
 ) -> str:
     """
     Adds a new note or updates an existing note with the given title.
@@ -29,6 +30,7 @@ async def add_or_update_note_tool(
         title: The title of the note
         content: The content of the note
         include_in_prompt: Whether to include the note in system prompts
+        append: Whether to append to existing content instead of replacing it
 
     Returns:
         A string indicating success or failure
@@ -39,6 +41,7 @@ async def add_or_update_note_tool(
             title=title,
             content=content,
             include_in_prompt=include_in_prompt,
+            append=append,
         )
         return f"Note '{title}' has been {'updated' if result == 'Success' else 'created'} successfully."
     except Exception as e:
@@ -71,6 +74,11 @@ NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
                         "type": "boolean",
                         "description": "Whether to include this note in the system prompt context. Default is true. Set to false for notes that should be searchable but not always visible.",
                         "default": True,
+                    },
+                    "append": {
+                        "type": "boolean",
+                        "description": "Whether to append the content to an existing note instead of replacing it. Default is false. When true, the content will be added to the end of the existing note with a newline separator.",
+                        "default": False,
                     },
                 },
                 "required": ["title", "content"],
