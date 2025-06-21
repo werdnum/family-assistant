@@ -53,10 +53,27 @@ This script runs:
 # Run all tests with verbose output
 poe test # Note: You will need a long timeout for this - something like 15 minutes
 
+# Run tests with PostgreSQL (production database)
+poe test-postgres  # Quick mode with -xq
+poe test-postgres-verbose  # Verbose mode with -xvs
+
+# Run tests with PostgreSQL using pytest directly
+pytest --postgres -xq  # All tests with PostgreSQL
+pytest --postgres tests/functional/test_specific.py -xq  # Specific tests with PostgreSQL
+
 # Run specific test files
 pytest tests/functional/test_specific.py -xq
 
 ```
+
+#### Database Backend Selection
+
+By default, tests run with an in-memory SQLite database for speed. However, production uses PostgreSQL, so it's important to test with PostgreSQL to catch database-specific issues:
+
+- Use `--postgres` flag to run tests with PostgreSQL instead of SQLite
+- PostgreSQL container starts automatically when the flag is used (requires Docker)
+- Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will get a warning if run without `--postgres` flag
+- The unified `test_db_engine` fixture automatically provides the appropriate database based on the flag
 
 ### Test Fixtures
 
@@ -66,7 +83,9 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 
 **`test_db_engine`** (function scope, autouse)
 
-- Automatically creates an in-memory SQLite database for each test
+- Automatically provides either SQLite or PostgreSQL database based on `--postgres` flag
+- Default: Creates an in-memory SQLite database for each test
+- With `--postgres` flag: Uses PostgreSQL container with pgvector support
 - Patches the global storage engine to use the test database
 - Initializes the database schema
 - Cleans up after the test completes
@@ -81,9 +100,9 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 
 **`pg_vector_db_engine`** (function scope)
 
-- Creates an AsyncEngine connected to the test PostgreSQL container
-- Initializes both main schema and vector database components
-- Patches the global storage engine to use PostgreSQL
+- Legacy fixture that now delegates to `test_db_engine`
+- Will use PostgreSQL if `--postgres` flag is provided, otherwise uses SQLite with a warning
+- Maintained for backward compatibility with tests that specifically need PostgreSQL
 - Usage: `async def test_something(pg_vector_db_engine):`
 
 #### Task Worker Fixtures

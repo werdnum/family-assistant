@@ -44,6 +44,16 @@ os.environ["FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"] = "1"
 logger = logging.getLogger(__name__)
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Add custom command line options for pytest."""
+    parser.addoption(
+        "--postgres",
+        action="store_true",
+        default=False,
+        help="Run tests with PostgreSQL instead of SQLite",
+    )
+
+
 def find_free_port() -> int:
     """Finds a free port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -72,32 +82,52 @@ def reset_task_event() -> Generator[None, None, None]:
 @pytest_asyncio.fixture(scope="function", autouse=True)  # Use pytest_asyncio.fixture
 async def test_db_engine(
     request: pytest.FixtureRequest,
+    postgres_container: PostgresContainer | None = None,  # Optional dependency
 ) -> AsyncGenerator[AsyncEngine, None]:  # Add request fixture
     """
-    Pytest fixture to set up an in-memory SQLite database for testing.
+    Pytest fixture to set up a test database for testing.
 
     This fixture runs automatically for each test function (`autouse=True`).
-    It creates an in-memory SQLite engine, initializes the schema,
-    and monkeypatches the global `storage.base.engine` to use this
-    test engine during the test. It ensures cleanup afterwards.
+    It creates either a SQLite or PostgreSQL engine based on the --postgres flag,
+    initializes the schema, and monkeypatches the global `storage.base.engine`
+    to use this test engine during the test. It ensures cleanup afterwards.
     """
-    # Create an in-memory SQLite engine for testing
-    # Using file DB can sometimes be easier for inspection, but memory is faster
-    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    logger.info(f"\n--- Test DB Setup ({request.node.name}) ---")
-    logger.info(f"Created test engine: {test_engine.url}")
+    # Check if --postgres flag was provided
+    use_postgres = request.config.getoption("--postgres", default=False)
+
+    if use_postgres:
+        # Use PostgreSQL
+        if postgres_container is None:
+            # Request the postgres_container fixture dynamically
+            postgres_container = request.getfixturevalue("postgres_container")
+
+        assert postgres_container is not None
+        async_url = postgres_container.get_connection_url()
+        test_engine = create_async_engine(async_url, echo=False)
+        logger.info(f"\n--- PostgreSQL Test DB Setup ({request.node.name}) ---")
+        logger.info(f"Created PostgreSQL test engine: {async_url.split('@')[-1]}")
+
+        # Initialize vector extension first for PostgreSQL
+        async with DatabaseContext(engine=test_engine) as db_context:
+            await init_vector_db(db_context)
+        logger.info("PostgreSQL vector database components initialized.")
+    else:
+        # Use SQLite (default)
+        test_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        logger.info(f"\n--- SQLite Test DB Setup ({request.node.name}) ---")
+        logger.info(f"Created SQLite test engine: {test_engine.url}")
 
     # Patch the global engine used by storage modules
-    # The patch needs to target where the 'engine' object is *looked up*
-    # by the storage functions. Since they import from .base, we patch it there.
     patcher = patch("family_assistant.storage.base.engine", test_engine)
     patcher.start()  # Start the patch manually
-    logger.info("Patched storage.base.engine with test engine.")
+    logger.info(
+        f"Patched storage.base.engine with {'PostgreSQL' if use_postgres else 'SQLite'} test engine."
+    )
 
     try:
-        # Initialize the database schema using the test engine via the patched global
+        # Initialize the database schema using the patched engine
         await init_db()
-        logger.info("Database schema initialized in memory.")
+        logger.info("Database schema initialized.")
 
         # Yield control to the test function
         yield test_engine  # Test function can optionally use this engine directly
@@ -159,58 +189,25 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
     scope="function"
 )  # Use function scope for engine to ensure isolation
 async def pg_vector_db_engine(
-    postgres_container: PostgresContainer,
+    request: pytest.FixtureRequest,
+    test_db_engine: AsyncEngine,  # Get the unified test engine
 ) -> AsyncGenerator[AsyncEngine, None]:
     """
-    Creates an AsyncEngine connected to the test PostgreSQL container,
-    initializes the schema (including vector components), and yields the engine.
+    Legacy fixture for PostgreSQL with vector support.
+    Now delegates to the unified test_db_engine fixture.
+
+    When --postgres flag is used, this will provide PostgreSQL.
+    Without the flag, it provides SQLite and logs a warning.
     """
-    # Get the connection URL directly from the container (should include +asyncpg)
-    async_url = postgres_container.get_connection_url()
-    logger.info(
-        f"Creating async engine for test PostgreSQL using URL from container: {async_url.split('@')[-1]}"
-    )
-    engine = create_async_engine(
-        async_url, echo=False
-    )  # Set echo=True for debugging SQL
-    patcher = None
-    try:
-        # Patch the global engine used by storage modules to use the PG engine
-        # The patch needs to target where the 'engine' object is *looked up*
-        # by the storage functions (i.e., in storage.base).
-        patcher = patch("family_assistant.storage.base.engine", engine)
-        patcher.start()
-        logger.info("Patched storage.base.engine with PostgreSQL test engine.")
+    # Check if we're actually using PostgreSQL
+    if "sqlite" in str(test_db_engine.url):
+        logger.warning(
+            f"Test {request.node.name} requested pg_vector_db_engine but got SQLite. "
+            f"Use --postgres flag to run with PostgreSQL."
+        )
 
-        # --- Ensure Vector Extension Exists FIRST ---
-        # Initialize vector-specific components (extension, indexes) BEFORE creating tables
-        logger.info("Initializing vector database components (extension, indexes)...")
-        # Use DatabaseContext to manage transaction for init_vector_db
-        # We use the test engine directly here for this initial setup step.
-        async with DatabaseContext(engine=engine) as db_context:
-            await init_vector_db(db_context)
-        logger.info("Vector database components initialized.")
-
-        # --- Initialize the main database schema (all tables) ---
-        # Now that the vector extension exists, create all tables using the patched engine
-        logger.info("Initializing main database schema on PostgreSQL...")
-        await init_db()  # Call without engine argument, relies on patch
-        logger.info("Main database schema initialized on PostgreSQL.")
-
-        # Note: Removed manual creation of HNSW/FTS indexes here.
-        # init_db() is now responsible for bringing the schema to 'head' via Alembic,
-        # which should include the creation of necessary indexes defined in migrations.
-
-        yield engine  # Provide the initialized engine to tests
-
-    finally:
-        # Cleanup: Stop the patch and dispose the engine
-        if patcher:
-            patcher.stop()
-            logger.info("Restored original storage.base.engine after PG test.")
-        logger.info("Disposing PostgreSQL test engine...")
-        await engine.dispose()
-        logger.info("PostgreSQL test engine disposed.")
+    # Just yield the engine from test_db_engine - it's already set up
+    yield test_db_engine
 
 
 # Note: We don't provide a DatabaseContext fixture directly.
@@ -417,7 +414,7 @@ backtrace_on_debug = True
 @pytest_asyncio.fixture(scope="function")
 async def radicale_server(
     radicale_server_session: tuple[str, str, str],  # Now yields 3 items
-    pg_vector_db_engine: AsyncEngine,
+    test_db_engine: AsyncEngine,  # Use the unified test engine
     request: pytest.FixtureRequest,  # To get test name for unique calendar
 ) -> AsyncGenerator[tuple[str, str, str, str], None]:
     """
