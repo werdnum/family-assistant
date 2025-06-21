@@ -8,7 +8,7 @@ This document analyzes test failures that occur when running the test suite with
 
 ### Remaining Issue
 
-- 1 test failure in `test_indexing_event_listener_integration` - appears to be a document ID mismatch issue
+- 1 test failure in `test_indexing_event_listener_integration` - PostgreSQL sequence (auto-increment) state persists across tests in the same session, causing document ID mismatches. This is a test isolation issue, not a production bug. The test passes when run in isolation.
 
 ### Resolved Issues
 
