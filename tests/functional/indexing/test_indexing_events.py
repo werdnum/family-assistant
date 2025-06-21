@@ -521,34 +521,25 @@ async def test_json_extraction_compatibility(test_db_engine: AsyncEngine) -> Non
 
 
 @pytest.mark.asyncio
-async def test_json_extraction_postgresql(
-    pg_vector_db_engine: AsyncEngine, request: pytest.FixtureRequest
-) -> None:
-    """Test JSON extraction specifically with PostgreSQL."""
-    # Skip this test if not running with --postgres flag
-    if not request.config.getoption("--postgres", default=False):
-        pytest.skip("This test requires --postgres flag")
-
+async def test_json_extraction_cross_database(test_db_engine: AsyncEngine) -> None:
+    """Test JSON extraction works with both SQLite and PostgreSQL."""
     async with get_db_context() as db_ctx:
-        # This test will only run when PostgreSQL fixtures are available
-        assert db_ctx.engine.dialect.name == "postgresql", (
-            "This test requires PostgreSQL"
-        )
-
         # Clean up any existing test tasks
         await db_ctx.execute_with_retry(
-            tasks_table.delete().where(tasks_table.c.task_id.like("test_pg_json_%"))
+            tasks_table.delete().where(
+                tasks_table.c.task_id.like("test_json_extract_%")
+            )
         )
 
         # Create test task
         test_doc_id = 12345
         await db_ctx.tasks.enqueue(
-            task_id="test_pg_json_1",
+            task_id="test_json_extract_1",
             task_type="embed_and_store_batch",
             payload={"document_id": test_doc_id, "other_field": "test"},
         )
 
-        # Don't test PostgreSQL internals, just verify our implementation works
+        # Verify our cross-database JSON extraction implementation works
 
         # Test that our check_document_completion function works
         from family_assistant.indexing.tasks import check_document_completion
@@ -558,5 +549,7 @@ async def test_json_extraction_postgresql(
 
         # Clean up
         await db_ctx.execute_with_retry(
-            tasks_table.delete().where(tasks_table.c.task_id.like("test_pg_json_%"))
+            tasks_table.delete().where(
+                tasks_table.c.task_id.like("test_json_extract_%")
+            )
         )
