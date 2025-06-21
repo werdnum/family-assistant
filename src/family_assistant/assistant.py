@@ -769,75 +769,86 @@ class Assistant:
         import zoneinfo
         from datetime import timedelta
 
-        async with get_db_context() as db_ctx:
-            # Get the timezone from the default profile
-            if not self.default_processing_service:
-                logger.error(
-                    "Default processing service not available for system tasks setup"
+        try:
+            async with get_db_context() as db_ctx:
+                # Get the timezone from the default profile
+                if not self.default_processing_service:
+                    logger.error(
+                        "Default processing service not available for system tasks setup"
+                    )
+                    return
+
+                default_profile_conf = next(
+                    p
+                    for p in self.config["service_profiles"]
+                    if p["id"] == self.default_processing_service.service_config.id
                 )
-                return
+                timezone_str = default_profile_conf["processing_config"]["timezone"]
+                local_tz = zoneinfo.ZoneInfo(timezone_str)
 
-            default_profile_conf = next(
-                p
-                for p in self.config["service_profiles"]
-                if p["id"] == self.default_processing_service.service_config.id
-            )
-            timezone_str = default_profile_conf["processing_config"]["timezone"]
-            local_tz = zoneinfo.ZoneInfo(timezone_str)
-
-            # Get current time in local timezone and calculate next 3 AM local time
-            now_local = datetime.now(local_tz)
-            next_3am_local = now_local.replace(
-                hour=3, minute=0, second=0, microsecond=0
-            )
-
-            # If it's already past 3 AM today, schedule for tomorrow
-            if now_local >= next_3am_local:
-                next_3am_local += timedelta(days=1)
-
-            # Convert to UTC for storage
-            next_3am_utc = next_3am_local.astimezone(timezone.utc)
-
-            # Upsert the system event cleanup task
-            try:
-                await db_ctx.tasks.enqueue(
-                    task_id="system_event_cleanup_daily",
-                    task_type="system_event_cleanup",
-                    payload={"retention_hours": 48},
-                    scheduled_at=next_3am_utc,
-                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
-                    max_retries_override=5,  # Higher retry count for system tasks
-                )
-                logger.info(
-                    f"System event cleanup task scheduled for {next_3am_local} ({timezone_str})"
-                )
-            except Exception as e:
-                # If task already exists, this is fine - just log it
-                logger.info(f"System event cleanup task setup: {e}")
-
-            # Upsert the error log cleanup task
-            try:
-                # Get retention days from config
-                error_log_retention_days = (
-                    self.config.get("logging", {})
-                    .get("database_errors", {})
-                    .get("retention_days", 30)
+                # Get current time in local timezone and calculate next 3 AM local time
+                now_local = datetime.now(local_tz)
+                next_3am_local = now_local.replace(
+                    hour=3, minute=0, second=0, microsecond=0
                 )
 
-                await db_ctx.tasks.enqueue(
-                    task_id="system_error_log_cleanup_daily",
-                    task_type="system_error_log_cleanup",
-                    payload={"retention_days": error_log_retention_days},
-                    scheduled_at=next_3am_utc,
-                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
-                    max_retries_override=5,  # Higher retry count for system tasks
+                # If it's already past 3 AM today, schedule for tomorrow
+                if now_local >= next_3am_local:
+                    next_3am_local += timedelta(days=1)
+
+                # Convert to UTC for storage
+                next_3am_utc = next_3am_local.astimezone(timezone.utc)
+
+                # Upsert the system event cleanup task
+                try:
+                    await db_ctx.tasks.enqueue(
+                        task_id="system_event_cleanup_daily",
+                        task_type="system_event_cleanup",
+                        payload={"retention_hours": 48},
+                        scheduled_at=next_3am_utc,
+                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                        max_retries_override=5,  # Higher retry count for system tasks
+                    )
+                    logger.info(
+                        f"System event cleanup task scheduled for {next_3am_local} ({timezone_str})"
+                    )
+                except Exception as e:
+                    # If task already exists, this is fine - just log it
+                    logger.info(f"System event cleanup task setup: {e}")
+
+                # Upsert the error log cleanup task
+                try:
+                    # Get retention days from config
+                    error_log_retention_days = (
+                        self.config.get("logging", {})
+                        .get("database_errors", {})
+                        .get("retention_days", 30)
+                    )
+
+                    await db_ctx.tasks.enqueue(
+                        task_id="system_error_log_cleanup_daily",
+                        task_type="system_error_log_cleanup",
+                        payload={"retention_days": error_log_retention_days},
+                        scheduled_at=next_3am_utc,
+                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                        max_retries_override=5,  # Higher retry count for system tasks
+                    )
+                    logger.info(
+                        f"System error log cleanup task scheduled for {next_3am_local} ({timezone_str}) with {error_log_retention_days} day retention"
+                    )
+                except Exception as e:
+                    # If task already exists, this is fine - just log it
+                    logger.info(f"System error log cleanup task setup: {e}")
+        except RuntimeError as e:
+            if "different loop" in str(e):
+                logger.warning(
+                    "Skipping system tasks setup due to event loop mismatch. "
+                    "This can happen during startup and tasks will be set up on next restart."
                 )
-                logger.info(
-                    f"System error log cleanup task scheduled for {next_3am_local} ({timezone_str}) with {error_log_retention_days} day retention"
-                )
-            except Exception as e:
-                # If task already exists, this is fine - just log it
-                logger.info(f"System error log cleanup task setup: {e}")
+            else:
+                logger.error(f"Failed to setup system tasks: {e}")
+        except Exception as e:
+            logger.error(f"Failed to setup system tasks: {e}")
 
     async def stop_services(self) -> None:
         """Gracefully stops all managed services."""
