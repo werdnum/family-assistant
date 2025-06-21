@@ -24,6 +24,7 @@ from testcontainers.postgres import PostgresContainer  # type: ignore[import-unt
 
 # Import for task_worker_manager fixture
 from family_assistant.processing import ProcessingService  # Import ProcessingService
+from family_assistant.storage import base as storage_base  # Import storage base module
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
@@ -189,25 +190,45 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
     scope="function"
 )  # Use function scope for engine to ensure isolation
 async def pg_vector_db_engine(
-    request: pytest.FixtureRequest,
-    test_db_engine: AsyncEngine,  # Get the unified test engine
+    postgres_container: PostgresContainer,
 ) -> AsyncGenerator[AsyncEngine, None]:
     """
-    Legacy fixture for PostgreSQL with vector support.
-    Now delegates to the unified test_db_engine fixture.
-
-    When --postgres flag is used, this will provide PostgreSQL.
-    Without the flag, it provides SQLite and logs a warning.
+    PostgreSQL database engine with vector support for tests that require pgvector.
+    Always provides PostgreSQL regardless of --postgres flag.
     """
-    # Check if we're actually using PostgreSQL
-    if "sqlite" in str(test_db_engine.url):
-        logger.warning(
-            f"Test {request.node.name} requested pg_vector_db_engine but got SQLite. "
-            f"Use --postgres flag to run with PostgreSQL."
-        )
+    # Get connection URL from the container
+    sync_url = postgres_container.get_connection_url()
+    # Replace postgresql:// with postgresql+asyncpg://
+    async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-    # Just yield the engine from test_db_engine - it's already set up
-    yield test_db_engine
+    logger.info("Creating PostgreSQL engine with pgvector support")
+
+    from family_assistant.storage.base import create_engine_with_sqlite_optimizations
+
+    engine = create_engine_with_sqlite_optimizations(async_url)
+
+    # Patch the global engine
+    original_engine = storage_base.engine
+    storage_base.engine = engine
+    logger.info("Patched storage.base.engine with PostgreSQL test engine.")
+
+    try:
+        # Initialize vector extension first for PostgreSQL
+        async with DatabaseContext(engine=engine) as db_context:
+            await init_vector_db(db_context)
+        logger.info("PostgreSQL vector database components initialized.")
+
+        # Initialize the database schema
+        logger.info("Initializing PostgreSQL database schema...")
+        await init_db()  # init_db uses the global engine
+        logger.info("PostgreSQL database schema initialized.")
+
+        yield engine
+    finally:
+        logger.info("--- PostgreSQL Test DB Teardown ---")
+        await engine.dispose()
+        storage_base.engine = original_engine
+        logger.info("Restored original storage.base.engine.")
 
 
 # Note: We don't provide a DatabaseContext fixture directly.
