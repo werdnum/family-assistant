@@ -61,9 +61,16 @@ class StarlarkEngine:
         self.tools_provider = tools_provider
         self.config = config or StarlarkConfig()
 
+        # Capture the main event loop if available
+        try:
+            self._main_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._main_loop = None
+
         logger.info(
-            "Initialized StarlarkEngine with config: max_execution_time=%s",
+            "Initialized StarlarkEngine with config: max_execution_time=%s, main_loop=%s",
             self.config.max_execution_time,
+            self._main_loop is not None,
         )
 
     def evaluate(
@@ -182,6 +189,7 @@ class StarlarkEngine:
                     execution_context,
                     allowed_tools=self.config.allowed_tools,
                     deny_all_tools=self.config.deny_all_tools,
+                    main_loop=self._main_loop,
                 )
 
                 # Create a dictionary structure to simulate the tools object
