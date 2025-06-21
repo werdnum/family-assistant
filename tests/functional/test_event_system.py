@@ -530,15 +530,20 @@ async def test_cleanup_old_events(test_db_engine: AsyncEngine) -> None:
         )
 
         # Update the created_at timestamp for the old event
-        from sqlalchemy import text
+        from sqlalchemy import update
 
-        await db_ctx.execute_with_retry(
-            text(
-                "UPDATE recent_events SET created_at = :old_time "
-                "WHERE json_extract(event_data, '$.entity_id') = 'test.old'"
-            ),
-            {"old_time": now - timedelta(hours=72)},
+        from family_assistant.storage.events import recent_events_table
+
+        # Use SQLAlchemy's JSON operators for cross-database compatibility
+        stmt = (
+            update(recent_events_table)
+            .where(
+                recent_events_table.c.event_data["entity_id"].as_string() == "test.old"
+            )
+            .values(created_at=now - timedelta(hours=72))
         )
+
+        await db_ctx.execute_with_retry(stmt)
 
     # Act - run cleanup with 48 hour retention
     async with get_db_context() as db_ctx:

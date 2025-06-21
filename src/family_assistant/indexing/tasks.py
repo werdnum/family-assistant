@@ -29,16 +29,11 @@ async def check_document_completion(
     Returns:
         Number of pending tasks for the document
     """
-    # Use JSON extraction that works with both SQLite and PostgreSQL
-    if db_context.engine.dialect.name == "postgresql":
-        # PostgreSQL: Use ->> operator for JSON text extraction
-        # Cast to integer for proper comparison
-        json_extract_expr = sa.cast(
-            tasks_table.c.payload.op("->>")(sa.text("'document_id'")), sa.Integer
-        )
-    else:
-        # SQLite: Use json_extract function (returns actual INTEGER)
-        json_extract_expr = func.json_extract(tasks_table.c.payload, "$.document_id")
+    # Use SQLAlchemy's JSON operators for cross-database compatibility
+    # Cast to integer for proper comparison
+    json_extract_expr = sa.cast(
+        tasks_table.c.payload["document_id"].as_string(), sa.Integer
+    )
 
     # Query for pending tasks with matching document_id
     result = await db_context.fetch_one(
