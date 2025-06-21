@@ -124,6 +124,7 @@ class ToolsAPI:
                     import concurrent.futures
 
                     def run_in_main_loop() -> Any:
+                        assert self._main_loop is not None  # Already checked above
                         future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
                         return future.result(timeout=30.0)
 
