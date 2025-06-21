@@ -199,27 +199,30 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
 
         # Check that DOCUMENT_READY event was stored
         async with get_db_context() as db_ctx:
-            from sqlalchemy import text
+            from sqlalchemy import and_, select
 
-            # Check recent_events table
-            result = await db_ctx.fetch_all(
-                text("""
-                    SELECT event_data 
-                    FROM recent_events 
-                    WHERE source_id = :source_id
-                    AND json_extract(event_data, '$.event_type') = :event_type
-                    AND json_extract(event_data, '$.document_id') = :doc_id
-                """),
-                {
-                    "source_id": "indexing",
-                    "event_type": IndexingEventType.DOCUMENT_READY.value,
-                    "doc_id": doc_id,
-                },
+            from family_assistant.storage.events import recent_events_table
+
+            # Use SQLAlchemy's JSON operators for cross-database compatibility
+            stmt = select(recent_events_table.c.event_data).where(
+                and_(
+                    recent_events_table.c.source_id == "indexing",
+                    recent_events_table.c.event_data["event_type"].as_string()
+                    == IndexingEventType.DOCUMENT_READY.value,
+                    recent_events_table.c.event_data["document_id"].as_integer()
+                    == doc_id,
+                )
             )
+
+            result = await db_ctx.fetch_all(stmt)
 
             assert len(result) > 0, "No DOCUMENT_READY event found in recent_events"
 
-            event_data = json.loads(result[0]["event_data"])
+            # The event_data might already be a dict or might be a JSON string
+            if isinstance(result[0]["event_data"], str):
+                event_data = json.loads(result[0]["event_data"])
+            else:
+                event_data = result[0]["event_data"]
             assert event_data["document_id"] == doc_id
             assert event_data["document_title"] == TEST_DOC_TITLE
             assert event_data["metadata"]["total_embeddings"] == 4  # 1 title + 3 chunks
@@ -442,27 +445,31 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
 
             # Check that the event was stored in recent_events
             async with get_db_context() as db_ctx:
-                from sqlalchemy import text
+                from sqlalchemy import and_, select
 
-                result = await db_ctx.fetch_all(
-                    text("""
-                        SELECT event_data 
-                        FROM recent_events 
-                        WHERE source_id = :source_id
-                        AND json_extract(event_data, '$.event_type') = :event_type
-                        AND json_extract(event_data, '$.document_id') = :doc_id
-                    """),
-                    {
-                        "source_id": "indexing",
-                        "event_type": IndexingEventType.DOCUMENT_READY.value,
-                        "doc_id": doc_id,
-                    },
+                from family_assistant.storage.events import recent_events_table
+
+                # Use SQLAlchemy's JSON operators for cross-database compatibility
+                stmt = select(recent_events_table.c.event_data).where(
+                    and_(
+                        recent_events_table.c.source_id == "indexing",
+                        recent_events_table.c.event_data["event_type"].as_string()
+                        == IndexingEventType.DOCUMENT_READY.value,
+                        recent_events_table.c.event_data["document_id"].as_integer()
+                        == doc_id,
+                    )
                 )
+
+                result = await db_ctx.fetch_all(stmt)
 
                 assert len(result) > 0, (
                     "DOCUMENT_READY event not found in recent_events"
                 )
-                event_data = json.loads(result[0]["event_data"])
+                # The event_data might already be a dict or might be a JSON string
+                if isinstance(result[0]["event_data"], str):
+                    event_data = json.loads(result[0]["event_data"])
+                else:
+                    event_data = result[0]["event_data"]
                 assert (
                     event_data["document_title"] == "School Newsletter - December 2024"
                 )

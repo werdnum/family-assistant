@@ -411,7 +411,7 @@ if temp > 30 or temp < 10:
     wake_llm({
         "alert_type": "extreme_temperature",
         "temperature": temp,
-        "is_high": temp > 30,
+        "temp_is_high": temp > 30,
         "recommendation": "immediate_action"
     })
 """
