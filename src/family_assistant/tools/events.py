@@ -264,10 +264,14 @@ async def test_event_listener_tool(
         for row in result:
             total_tested += 1
 
-            # Parse event data
-            try:
-                event_data = json.loads(row["event_data"])
-            except json.JSONDecodeError:
+            # Parse event data - handle both string and dict (some DB drivers auto-parse JSON)
+            event_data = row["event_data"]
+            if isinstance(event_data, str):
+                try:
+                    event_data = json.loads(event_data)
+                except json.JSONDecodeError:
+                    continue
+            elif not isinstance(event_data, dict):
                 continue
 
             # Check if event matches conditions
@@ -294,21 +298,28 @@ async def test_event_listener_tool(
         if total_tested > 0 and len(matched_events) == 0:
             # Get a sample event to show what fields are available
             try:
-                sample_data = json.loads(result[0]["event_data"])
-                analysis.append("No events matched your conditions.")
-                analysis.append(
-                    f"Sample event structure: {_get_event_structure(sample_data)}"
-                )
+                # Handle both string and dict (some DB drivers auto-parse JSON)
+                sample_data = result[0]["event_data"]
+                if isinstance(sample_data, str):
+                    sample_data = json.loads(sample_data)
+                elif not isinstance(sample_data, dict):
+                    sample_data = None
 
-                # Check if any condition keys exist in the data
-                for key, expected_value in match_conditions.items():
-                    actual_value = _get_nested_value(sample_data, key)
-                    if actual_value is None:
-                        analysis.append(f"Field '{key}' not found in events")
-                    elif actual_value != expected_value:
-                        analysis.append(
-                            f"Field '{key}' exists but has value: {repr(actual_value)}"
-                        )
+                if sample_data:
+                    analysis.append("No events matched your conditions.")
+                    analysis.append(
+                        f"Sample event structure: {_get_event_structure(sample_data)}"
+                    )
+
+                    # Check if any condition keys exist in the data
+                    for key, expected_value in match_conditions.items():
+                        actual_value = _get_nested_value(sample_data, key)
+                        if actual_value is None:
+                            analysis.append(f"Field '{key}' not found in events")
+                        elif actual_value != expected_value:
+                            analysis.append(
+                                f"Field '{key}' exists but has value: {repr(actual_value)}"
+                            )
             except Exception:
                 pass
 
