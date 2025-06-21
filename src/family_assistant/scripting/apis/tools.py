@@ -43,6 +43,7 @@ class ToolsAPI:
         execution_context: "ToolExecutionContext",
         allowed_tools: set[str] | None = None,
         deny_all_tools: bool = False,
+        main_loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         """
         Initialize the Tools API.
@@ -52,18 +53,23 @@ class ToolsAPI:
             execution_context: The context for tool execution
             allowed_tools: If specified, only these tools can be executed
             deny_all_tools: If True, no tools can be executed
+            main_loop: The main event loop to use for async operations
         """
         self.tools_provider = tools_provider
         self.execution_context = execution_context
         self.allowed_tools = allowed_tools
         self.deny_all_tools = deny_all_tools
 
-        # Try to get the current event loop that created the tools
-        try:
-            self._main_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop, we'll need to handle this differently
-            self._main_loop = None
+        # Use provided main loop or try to get the current one
+        if main_loop is not None:
+            self._main_loop = main_loop
+        else:
+            # Try to get the current event loop that created the tools
+            try:
+                self._main_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop, we'll need to handle this differently
+                self._main_loop = None
 
         # Create a thread-local event loop for async operations
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -111,11 +117,30 @@ class ToolsAPI:
                 # We're being called from sync code in the main thread while an event loop is running
                 # This typically happens in tests or when evaluate() is called from async context
                 # We need to run in a separate thread to avoid deadlock
-                import concurrent.futures
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(asyncio.run, coro)
-                    return future.result(timeout=30.0)
+                # If we have access to the main loop, use it to avoid creating a new event loop
+                if self._main_loop and self._main_loop.is_running():
+                    # Run in executor but use run_coroutine_threadsafe with the main loop
+                    import concurrent.futures
+
+                    def run_in_main_loop() -> Any:
+                        future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
+                        return future.result(timeout=30.0)
+
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=1
+                    ) as executor:
+                        exec_future = executor.submit(run_in_main_loop)
+                        return exec_future.result(timeout=30.0)
+                else:
+                    # Fallback to creating a new event loop if we don't have access to the main one
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=1
+                    ) as executor:
+                        future = executor.submit(asyncio.run, coro)
+                        return future.result(timeout=30.0)
             else:
                 # We're in a different thread, safe to use run_coroutine_threadsafe
                 future = asyncio.run_coroutine_threadsafe(coro, current_loop)
@@ -373,6 +398,7 @@ def create_tools_api(
     execution_context: "ToolExecutionContext",
     allowed_tools: set[str] | None = None,
     deny_all_tools: bool = False,
+    main_loop: asyncio.AbstractEventLoop | None = None,
 ) -> StarlarkToolsAPI:
     """
     Create a tools API object suitable for use in Starlark scripts.
@@ -382,6 +408,7 @@ def create_tools_api(
         execution_context: The execution context for tools
         allowed_tools: If specified, only these tools can be executed
         deny_all_tools: If True, no tools can be executed
+        main_loop: The main event loop to use for async operations
 
     Returns:
         StarlarkToolsAPI wrapper object
@@ -391,5 +418,6 @@ def create_tools_api(
         execution_context,
         allowed_tools=allowed_tools,
         deny_all_tools=deny_all_tools,
+        main_loop=main_loop,
     )
     return StarlarkToolsAPI(api)
