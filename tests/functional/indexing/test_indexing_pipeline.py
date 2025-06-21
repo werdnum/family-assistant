@@ -186,6 +186,16 @@ async def test_indexing_pipeline_e2e(
     3. Verifies embeddings for title and chunks are stored in the DB.
     4. Verifies the content can be retrieved via vector search.
     """
+    # Clean up any leftover tasks from previous tests to ensure isolation
+    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
+        from family_assistant.storage.tasks import tasks_table
+
+        await db_ctx.execute_with_retry(
+            tasks_table.delete().where(
+                tasks_table.c.task_type == "embed_and_store_batch"
+            )
+        )
+
     # --- Arrange ---
     doc_content = "Apples are red. Bananas are yellow. Oranges are orange and tasty."
     doc_title = "Fruit Facts"
@@ -395,6 +405,16 @@ async def test_indexing_pipeline_pdf_processing(
     2. Runs an IndexableContent item for this PDF through a pipeline including PDFTextExtractor.
     3. Verifies that text is extracted and embedding tasks are created for the extracted content.
     """
+    # Clean up any leftover tasks from previous tests to ensure isolation
+    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
+        from family_assistant.storage.tasks import tasks_table
+
+        await db_ctx.execute_with_retry(
+            tasks_table.delete().where(
+                tasks_table.c.task_type == "embed_and_store_batch"
+            )
+        )
+
     # --- Arrange ---
     # Create a dummy PDF file for testing (or copy a test PDF)
     # For simplicity, we'll use the existing test_doc.pdf from tests/data
