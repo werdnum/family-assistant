@@ -71,9 +71,17 @@ pytest tests/functional/test_specific.py -xq
 By default, tests run with an in-memory SQLite database for speed. However, production uses PostgreSQL, so it's important to test with PostgreSQL to catch database-specific issues:
 
 - Use `--postgres` flag to run tests with PostgreSQL instead of SQLite
-- PostgreSQL container starts automatically when the flag is used (requires Docker)
+- PostgreSQL container starts automatically when the flag is used (requires Docker/Podman)
 - Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will get a warning if run without `--postgres` flag
 - The unified `test_db_engine` fixture automatically provides the appropriate database based on the flag
+
+**Important**: Running tests with `--postgres` has already revealed PostgreSQL-specific issues like:
+
+- Event loop conflicts in error logging when using PostgreSQL
+- Different transaction handling between SQLite and PostgreSQL
+- Schema differences that only manifest with PostgreSQL
+
+It's recommended to run tests with `--postgres` before pushing changes that touch database operations.
 
 ### Test Fixtures
 
