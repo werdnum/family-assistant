@@ -521,8 +521,14 @@ async def test_json_extraction_compatibility(test_db_engine: AsyncEngine) -> Non
 
 
 @pytest.mark.asyncio
-async def test_json_extraction_postgresql(pg_vector_db_engine: AsyncEngine) -> None:
+async def test_json_extraction_postgresql(
+    pg_vector_db_engine: AsyncEngine, request: pytest.FixtureRequest
+) -> None:
     """Test JSON extraction specifically with PostgreSQL."""
+    # Skip this test if not running with --postgres flag
+    if not request.config.getoption("--postgres", default=False):
+        pytest.skip("This test requires --postgres flag")
+
     async with get_db_context() as db_ctx:
         # This test will only run when PostgreSQL fixtures are available
         assert db_ctx.engine.dialect.name == "postgresql", (
