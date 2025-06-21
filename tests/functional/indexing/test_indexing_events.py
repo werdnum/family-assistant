@@ -339,6 +339,14 @@ async def test_document_ready_not_emitted_with_pending_tasks(
 @pytest.mark.asyncio
 async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) -> None:
     """Test full integration with event listeners triggering on document ready."""
+    # Clean up any leftover tasks from previous tests to ensure isolation
+    async with get_db_context() as db_ctx:
+        await db_ctx.execute_with_retry(
+            tasks_table.delete().where(
+                tasks_table.c.task_type == "embed_and_store_batch"
+            )
+        )
+
     # Create components
     indexing_source = IndexingSource()
 
@@ -407,6 +415,8 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
             current_time=datetime.now(timezone.utc),
         )
 
+        assert task is not None
+
         exec_context = ToolExecutionContext(
             interface_type="web",
             conversation_id="test-conv",
@@ -437,7 +447,6 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
             await asyncio.sleep(0.1)
 
             # Process embedding task - should emit event
-            assert task is not None
             await handle_embed_and_store_batch(exec_context, task["payload"])
 
             # Give event processor time to handle event
