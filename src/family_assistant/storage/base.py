@@ -20,7 +20,7 @@ from sqlalchemy import (
     event,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 from sqlalchemy.sql import func
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,13 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.d
 
 def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
     """Create engine with SQLite optimizations if applicable."""
+    # Determine pool class based on database type
+    # Use StaticPool for SQLite to reuse connections
+    # Use NullPool for PostgreSQL to avoid event loop affinity issues
+    # NullPool creates a new connection for each request, which is less efficient
+    # but avoids the "Future attached to a different loop" errors with asyncpg
+    pool_class = StaticPool if database_url.startswith("sqlite") else NullPool
+
     # Create the engine first
     engine = create_async_engine(
         database_url,
@@ -44,9 +51,8 @@ def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
         }
         if database_url.startswith("sqlite")
         else {},
-        pool_pre_ping=True,
-        # Use StaticPool for SQLite to reuse connections
-        poolclass=StaticPool if database_url.startswith("sqlite") else None,
+        pool_pre_ping=pool_class != NullPool,
+        poolclass=pool_class,
     )
 
     # Add SQLite-specific optimizations using dialect detection
@@ -80,8 +86,13 @@ def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
 
 
 engine = create_engine_with_sqlite_optimizations(DATABASE_URL)
+pool_info = (
+    "StaticPool"
+    if DATABASE_URL.startswith("sqlite")
+    else "NullPool (no connection reuse)"
+)
 logger.info(
-    f"SQLAlchemy engine created for URL: {DATABASE_URL.split('@')[-1]}"
+    f"SQLAlchemy engine created for URL: {DATABASE_URL.split('@')[-1]} with {pool_info}"
 )  # Log URL safely
 
 
