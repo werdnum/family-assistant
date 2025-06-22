@@ -52,8 +52,64 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--postgres",
         action="store_true",
         default=False,
-        help="Run tests with PostgreSQL instead of SQLite",
+        help="Run tests with PostgreSQL instead of SQLite (deprecated, use --db)",
     )
+    parser.addoption(
+        "--db",
+        action="store",
+        default="all",
+        choices=("sqlite", "postgres", "all"),
+        help="Database backend to test against: sqlite, postgres, or all (default)",
+    )
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """
+    Dynamically parameterizes fixtures based on the --db option.
+
+    This hook is called by pytest for each test function. It checks if the test
+    is requesting the `db_engine` fixture. If so, it parameterizes it with the
+    database backends selected via the `--db` command-line flag.
+    """
+    # Check if db_engine is needed - either directly or through autouse fixture
+    # Since test_db_engine (autouse) depends on db_engine, we need to parameterize
+    # db_engine for ALL tests now
+    if "db_engine" in metafunc.fixturenames:
+        # Get the --db option value, with backwards compatibility for --postgres
+        db_option = metafunc.config.getoption("--db")
+        use_postgres_flag = metafunc.config.getoption("--postgres")
+
+        # Handle backwards compatibility
+        if use_postgres_flag and db_option == "all":
+            db_option = "postgres"
+
+        db_backends = []
+        if db_option in ("sqlite", "all"):
+            db_backends.append("sqlite")
+        if db_option in ("postgres", "all"):
+            db_backends.append("postgres")
+
+        # Check if the test is requesting pg_vector_db_engine
+        # These tests should only run with postgres
+        if "pg_vector_db_engine" in metafunc.fixturenames:
+            # Only add postgres parameter for these tests
+            if "postgres" in db_backends:
+                metafunc.parametrize("db_engine", ["postgres"], indirect=True)
+            else:
+                # Skip this test if postgres is not in the selected backends
+                metafunc.parametrize("db_engine", [], indirect=True)
+        else:
+            # Check if test has postgres marker
+            if metafunc.definition.get_closest_marker("postgres"):
+                # Postgres-only tests
+                if "postgres" in db_backends:
+                    metafunc.parametrize("db_engine", ["postgres"], indirect=True)
+                else:
+                    # Skip this test if postgres is not in the selected backends
+                    metafunc.parametrize("db_engine", [], indirect=True)
+            else:
+                # Regular tests get all selected backends
+                metafunc.parametrize("db_engine", db_backends, indirect=True)
 
 
 def find_free_port() -> int:
@@ -83,46 +139,68 @@ def reset_task_event() -> Generator[None, None, None]:
 
 @pytest_asyncio.fixture(scope="function", autouse=True)  # Use pytest_asyncio.fixture
 async def test_db_engine(
+    db_engine: AsyncEngine,
+) -> AsyncGenerator[AsyncEngine, None]:
+    """
+    Autouse fixture that ensures all tests have a database.
+
+    This fixture runs automatically for each test function (`autouse=True`)
+    and delegates to the parameterized db_engine fixture. This ensures that
+    all tests run against all selected database backends based on the --db flag.
+
+    The db_engine dependency is automatically parameterized by pytest_generate_tests
+    hook, causing this autouse fixture (and therefore all tests) to run once
+    for each selected database backend.
+    """
+    # Simply yield the parameterized db_engine
+    yield db_engine
+
+
+@pytest_asyncio.fixture(scope="function")
+async def db_engine(
     request: pytest.FixtureRequest,
-    postgres_container: PostgresContainer | None = None,  # Optional dependency
-) -> AsyncGenerator[AsyncEngine, None]:  # Add request fixture
+) -> AsyncGenerator[AsyncEngine, None]:
     """
-    Pytest fixture to set up a test database for testing.
+    A parameterized fixture that provides a database engine.
 
-    This fixture runs automatically for each test function (`autouse=True`).
-    It creates either a SQLite or PostgreSQL engine based on the --postgres flag,
-    initializes the schema, and monkeypatches the global `storage.base.engine`
-    to use this test engine during the test. It ensures cleanup afterwards.
+    The parameter (e.g., 'sqlite' or 'postgres') is injected by the
+    `pytest_generate_tests` hook based on the --db command-line option.
 
-    For PostgreSQL: Creates a unique database for each test to ensure complete isolation.
+    This fixture is designed to replace test_db_engine once all tests
+    are migrated to use explicit fixture dependencies.
     """
-    # Check if --postgres flag was provided
-    use_postgres = request.config.getoption("--postgres", default=False)
+    db_backend = request.param
 
-    if use_postgres:
-        # Use PostgreSQL
-        if postgres_container is None:
-            # Request the postgres_container fixture dynamically
-            postgres_container = request.getfixturevalue("postgres_container")
+    engine = None
+    unique_db_name = None
+    admin_url = None
 
-        assert postgres_container is not None
+    if db_backend == "sqlite":
+        # Use an in-memory SQLite database for each test
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        logger.info(f"\n--- SQLite Test DB Setup ({request.node.name}) ---")
+        logger.info(f"Created SQLite test engine: {engine.url}")
+
+    elif db_backend == "postgres":
+        # Lazily request the session-scoped container fixture
+        postgres_container = request.getfixturevalue("postgres_container")
 
         # Create a unique database name for this test
         test_name_safe = "".join(
             c if c.isalnum() or c == "_" else "_" for c in request.node.name
         )
 
+        # Handle parameterized test names (remove [postgres] suffix)
+        if test_name_safe.endswith("_postgres"):
+            test_name_safe = test_name_safe[:-9]
+
         # PostgreSQL has a 63 character limit for identifiers
-        # We need: "test_" (5) + "_" (1) + uuid (8) = 14 chars overhead
-        # This leaves 49 chars for the test name
         max_test_name_length = 49
 
         if len(test_name_safe) > max_test_name_length:
-            # For long names, truncate and add a short hash for uniqueness
             import hashlib
 
             name_hash = hashlib.md5(test_name_safe.encode()).hexdigest()[:4]
-            # Keep first 45 chars + 4 char hash = 49 chars total
             test_name_safe = f"{test_name_safe[:45]}{name_hash}"
 
         unique_db_name = f"test_{test_name_safe}_{uuid.uuid4().hex[:8]}".lower()
@@ -156,25 +234,21 @@ async def test_db_engine(
 
         # Create engine for the new test database
         test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
-        test_engine = create_async_engine(test_db_url, echo=False)
+        engine = create_async_engine(test_db_url, echo=False)
         logger.info(f"Created PostgreSQL test engine for database: {unique_db_name}")
 
         # Initialize vector extension first for PostgreSQL
-        async with DatabaseContext(engine=test_engine) as db_context:
+        async with DatabaseContext(engine=engine) as db_context:
             await init_vector_db(db_context)
         logger.info("PostgreSQL vector database components initialized.")
-    else:
-        # Use SQLite (default)
-        test_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        logger.info(f"\n--- SQLite Test DB Setup ({request.node.name}) ---")
-        logger.info(f"Created SQLite test engine: {test_engine.url}")
+
+    if not engine:
+        raise ValueError(f"Unsupported database backend: {db_backend}")
 
     # Patch the global engine used by storage modules
-    patcher = patch("family_assistant.storage.base.engine", test_engine)
-    patcher.start()  # Start the patch manually
-    logger.info(
-        f"Patched storage.base.engine with {'PostgreSQL' if use_postgres else 'SQLite'} test engine."
-    )
+    patcher = patch("family_assistant.storage.base.engine", engine)
+    patcher.start()
+    logger.info(f"Patched storage.base.engine with {db_backend} test engine.")
 
     try:
         # Initialize the database schema using the patched engine
@@ -182,18 +256,18 @@ async def test_db_engine(
         logger.info("Database schema initialized.")
 
         # Yield control to the test function
-        yield test_engine  # Test function can optionally use this engine directly
+        yield engine
 
     finally:
         # Cleanup: Stop the patch and dispose the engine
-        patcher.stop()  # Stop the patch
+        patcher.stop()
         logger.info(f"--- Test DB Teardown ({request.node.name}) ---")
-        await test_engine.dispose()
+        await engine.dispose()
         logger.info("Test engine disposed.")
         logger.info("Restored original storage.base.engine.")
 
         # Drop the PostgreSQL database if we created one
-        if use_postgres:
+        if db_backend == "postgres" and unique_db_name and admin_url:
             # Recreate admin engine for cleanup
             admin_engine = create_async_engine(
                 admin_url, echo=False, isolation_level="AUTOCOMMIT"
