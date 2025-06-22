@@ -75,6 +75,13 @@ By default, tests run with an in-memory SQLite database for speed. However, prod
 - Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will get a warning if run without `--postgres` flag
 - The unified `test_db_engine` fixture automatically provides the appropriate database based on the flag
 
+**PostgreSQL Test Isolation**: When using `--postgres`, each test gets its own unique database:
+
+- A new database is created before each test (e.g., `test_my_function_12345678`)
+- The database is completely dropped after the test completes
+- This ensures complete isolation - tests cannot interfere with each other
+- No data persists between tests, eliminating order-dependent failures
+
 **Important**: Running tests with `--postgres` has already revealed PostgreSQL-specific issues like:
 
 - Event loop conflicts in error logging when using PostgreSQL
@@ -93,7 +100,10 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 
 - Automatically provides either SQLite or PostgreSQL database based on `--postgres` flag
 - Default: Creates an in-memory SQLite database for each test
-- With `--postgres` flag: Uses PostgreSQL container with pgvector support
+- With `--postgres` flag: Creates a unique PostgreSQL database for each test
+  - Database name format: `test_{test_name}_{random_id}`
+  - Complete isolation - no data sharing between tests
+  - Database is dropped after test completion
 - Patches the global storage engine to use the test database
 - Initializes the database schema
 - Cleans up after the test completes
@@ -108,9 +118,10 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 
 **`pg_vector_db_engine`** (function scope)
 
-- Legacy fixture that now delegates to `test_db_engine`
-- Will use PostgreSQL if `--postgres` flag is provided, otherwise uses SQLite with a warning
-- Maintained for backward compatibility with tests that specifically need PostgreSQL
+- PostgreSQL database engine with vector support
+- Always creates a unique PostgreSQL database regardless of `--postgres` flag
+- Database name format: `test_pgvec_{test_name}_{random_id}`
+- Complete isolation - database is created before and dropped after each test
 - Usage: `async def test_something(pg_vector_db_engine):`
 
 #### Task Worker Fixtures
@@ -711,11 +722,11 @@ The project provides several pytest fixtures for testing. These are defined in v
 
 ### Core Database Fixtures (tests/conftest.py)
 
-- **`test_db_engine`** (function scope): Provides an in-memory SQLite database engine with schema initialized. Automatically patches `storage.base.engine` for the test duration.
+- **`test_db_engine`** (function scope, autouse): Provides either SQLite or PostgreSQL database based on `--postgres` flag. With PostgreSQL, creates a unique database per test for complete isolation. Automatically patches `storage.base.engine` for the test duration.
   
 - **`postgres_container`** (session scope): Starts a PostgreSQL container with pgvector extension for the entire test session. Reused across all PostgreSQL tests.
 
-- **`pg_vector_db_engine`** (function scope): Provides a PostgreSQL database engine with vector support. Creates a clean schema for each test and handles proper cleanup.
+- **`pg_vector_db_engine`** (function scope): Always provides a PostgreSQL database engine with vector support. Creates a unique database for each test and handles proper cleanup.
 
 ### Task Worker Fixtures (tests/conftest.py)
 
