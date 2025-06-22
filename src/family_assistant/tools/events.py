@@ -23,7 +23,12 @@ EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "query_recent_events",
             "description": (
                 "Query recent events from the event system. Returns raw event data "
-                "in JSON format for examining event structure and content."
+                "in JSON format for examining event structure and content.\n\n"
+                "Returns: A JSON string containing event data as a dict. "
+                "On success, returns {'events': [array of event objects], 'count': [number], 'hours_queried': [hours], 'source_filter': [source_id or null]}. "
+                "Each event object contains: event_id, source_id, timestamp (ISO format), event_data (parsed JSON), triggered_listeners (array of IDs). "
+                "If no events found, returns {'events': [], 'message': 'No events found in the last [hours] hours'}. "
+                "On error, returns 'Error: Failed to query recent events. [error details]' as a string."
             ),
             "parameters": {
                 "type": "object",
@@ -57,7 +62,13 @@ EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "description": (
                 "Test what events would match given listener conditions. "
                 "Use this before creating a listener to ensure the match conditions are correct. "
-                "Returns events that would have triggered the listener."
+                "Returns events that would have triggered the listener.\n\n"
+                "Returns: A JSON string containing test results as a dict. "
+                "On success, returns {'matched_events': [array of matching events], 'total_tested': [number], 'matched_count': [number], 'match_conditions': [conditions used], 'hours_queried': [hours], 'analysis': [optional array of analysis messages]}. "
+                "Each matched event contains: event_id, timestamp (ISO format), event_data. "
+                "If no events to test, returns similar structure with 'message' explaining no events found. "
+                "If match_conditions empty, returns {'error': 'match_conditions cannot be empty', 'message': 'Please provide at least one condition to test'}. "
+                "On other errors, returns {'error': 'Failed to test event listener: [error details]', 'match_conditions': [conditions used]}."
             ),
             "parameters": {
                 "type": "object",

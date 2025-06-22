@@ -35,7 +35,11 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "schedule_reminder",
             "description": (
                 "Schedule a reminder to be sent at a specific time. Use this tool when users ask to be reminded of something. "
-                "Supports automatic follow-up reminders if the user doesn't respond."
+                "Supports automatic follow-up reminders if the user doesn't respond.\n\n"
+                "Returns: A string indicating the result. "
+                "On success, returns 'OK. Reminder scheduled for [time].' or 'OK. Reminder scheduled for [time] (with follow-ups every [interval], up to [N] times).' if follow-up enabled. "
+                "On parameter error, returns 'Error: Invalid reminder parameters. [details]'. "
+                "On other errors, returns 'Error: Failed to schedule the reminder.'."
             ),
             "parameters": {
                 "type": "object",
@@ -85,7 +89,11 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "schedule_future_callback",
             "description": (
                 "Schedule a future trigger for yourself (the assistant) to continue processing or check on a task at a specified time. "
-                "Use this for continuing work or checking task status, NOT for reminders. For reminders, use schedule_reminder instead."
+                "Use this for continuing work or checking task status, NOT for reminders. For reminders, use schedule_reminder instead.\n\n"
+                "Returns: A string indicating the result. "
+                "On success, returns 'OK. Callback scheduled for [time].'. "
+                "On invalid time format or past time, returns 'Error: Invalid callback time provided. Ensure it's a future ISO 8601 datetime with timezone. [details]'. "
+                "On other errors, returns 'Error: Failed to schedule the callback.'."
             ),
             "parameters": {
                 "type": "object",
@@ -115,7 +123,11 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "description": (
                 "Schedule a recurring LLM callback that will trigger repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like daily briefings, weekly check-ins, or periodic reminders. "
                 "IMPORTANT: Each recurring task creates individual callback instances that can be managed using list_pending_callbacks, modify_pending_callback, and cancel_pending_callback tools. "
-                "To stop a recurring task entirely, you must cancel all its pending instances."
+                "To stop a recurring task entirely, you must cancel all its pending instances.\n\n"
+                "Returns: A string indicating the result. "
+                "On success, returns 'OK. Recurring callback [task_id] scheduled starting [time] with rule [rule].'. "
+                "On invalid arguments (RRULE format, past time), returns 'Error: Invalid arguments provided. [details]'. "
+                "On other errors, returns 'Error: Failed to schedule the recurring task.'."
             ),
             "parameters": {
                 "type": "object",
@@ -170,7 +182,11 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "\n- One-time callbacks from schedule_future_callback"
                 "\n- Reminder callbacks from schedule_reminder"
                 "\n- Individual instances of recurring tasks from schedule_recurring_task"
-                "\nReturns task IDs, scheduled times, and context for each pending callback."
+                "\nReturns task IDs, scheduled times, and context for each pending callback.\n\n"
+                "Returns: A formatted string listing pending callbacks. "
+                "If callbacks exist, returns 'Pending LLM callbacks:' followed by entries with '- Task ID: [id]\n  Scheduled At: [time]\n  Context: [context preview]'. "
+                "If no callbacks found, returns 'No pending LLM callbacks found for this conversation.'. "
+                "On error, returns 'Error: Failed to list pending callbacks. [details]'."
             ),
             "parameters": {
                 "type": "object",
@@ -189,7 +205,18 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "modify_pending_callback",
-            "description": "Modifies the scheduled time or context of a specific pending LLM callback task. You must provide the task_id of the callback to modify.",
+            "description": (
+                "Modifies the scheduled time or context of a specific pending LLM callback task. You must provide the task_id of the callback to modify.\n\n"
+                "Returns: A string indicating the result. "
+                "On success, returns 'Callback task [task_id] modified successfully.'. "
+                "If neither new_callback_time nor new_context provided, returns 'Error: You must provide either a new_callback_time or a new_context to modify.'. "
+                "If task not found, returns 'Error: Callback task with ID [task_id] not found.'. "
+                "If task not an LLM callback, returns 'Error: Task [task_id] is not an LLM callback task.'. "
+                "If task not pending, returns 'Error: Callback task [task_id] is not pending (current status: [status]). It cannot be modified.'. "
+                "If task belongs to different conversation, returns 'Error: Callback task [task_id] does not belong to this conversation. Modification denied.'. "
+                "On invalid new time, returns 'Error: Invalid new_callback_time. [details]'. "
+                "On other errors, returns 'Error: Failed to modify callback task. [details]'."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -221,7 +248,14 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "\n- Cancel scheduled reminders"
                 "\n- Cancel individual instances of recurring tasks"
                 "\n- Stop a recurring task by canceling all its pending instances (use list_pending_callbacks first to find them)"
-                "\nNote: This cancels only the specific task instance identified by task_id."
+                "\nNote: This cancels only the specific task instance identified by task_id.\n\n"
+                "Returns: A string indicating the result. "
+                "On success, returns 'Callback task [task_id] cancelled successfully.'. "
+                "If task not found, returns 'Error: Callback task with ID [task_id] not found.'. "
+                "If task not an LLM callback, returns 'Error: Task [task_id] is not an LLM callback task.'. "
+                "If task not pending, returns 'Error: Callback task [task_id] is not pending (current status: [status]). It cannot be cancelled.'. "
+                "If task belongs to different conversation, returns 'Error: Callback task [task_id] does not belong to this conversation. Cancellation denied.'. "
+                "On other errors, returns 'Error: Failed to cancel callback task. [details]'."
             ),
             "parameters": {
                 "type": "object",
@@ -242,7 +276,15 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "description": (
                 "Schedule any action (wake_llm or script) to execute at a specific time. "
                 "This is the general-purpose scheduling tool that complements schedule_future_callback. "
-                "Use this when you need to schedule script execution or want more control over LLM callbacks."
+                "Use this when you need to schedule script execution or want more control over LLM callbacks.\n\n"
+                "Returns: A string indicating the result. "
+                "On success, returns 'OK. [action_type] action scheduled for [schedule_time]'. "
+                "If invalid action_type, returns 'Error: Invalid action_type. Must be one of: [valid types]'. "
+                "If wake_llm missing context, returns 'Error: wake_llm action requires 'context' in action_config'. "
+                "If script missing script_code, returns 'Error: script action requires 'script_code' in action_config'. "
+                "If schedule_time in past, returns 'Error: Schedule time must be in the future'. "
+                "On invalid time format, returns 'Error: Invalid schedule_time format: [details]'. "
+                "On other errors, returns 'Error: Failed to schedule action. [details]'."
             ),
             "parameters": {
                 "type": "object",
@@ -278,7 +320,16 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "description": (
                 "Schedule a recurring action (wake_llm or script) using RRULE format. "
                 "This tool allows scheduling scripts to run on a recurring basis, "
-                "complementing schedule_recurring_task which only supports LLM callbacks."
+                "complementing schedule_recurring_task which only supports LLM callbacks.\n\n"
+                "Returns: A string indicating the result. "
+                "On success, returns 'OK. Recurring [action_type] action scheduled starting [start_time]' or 'OK. Recurring [action_type] action ([task_name]) scheduled starting [start_time]' if task_name provided. "
+                "If invalid action_type, returns 'Error: Invalid action_type. Must be one of: [valid types]'. "
+                "If wake_llm missing context, returns 'Error: wake_llm action requires 'context' in action_config'. "
+                "If script missing script_code, returns 'Error: script action requires 'script_code' in action_config'. "
+                "If start_time in past, returns 'Error: Start time must be in the future'. "
+                "On invalid time format, returns 'Error: Invalid start_time format: [details]'. "
+                "On invalid RRULE, returns 'Error: Invalid recurrence rule: [details]'. "
+                "On other errors, returns 'Error: Failed to schedule recurring action. [details]'."
             ),
             "parameters": {
                 "type": "object",

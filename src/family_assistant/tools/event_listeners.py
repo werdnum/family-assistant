@@ -31,7 +31,10 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "- wake_llm: Wakes the LLM to handle complex situations requiring reasoning and judgment\n"
                 "- script: Runs Starlark code automatically for simple, deterministic tasks\n\n"
                 "Scripts can also use wake_llm() function to conditionally wake the LLM with custom context. "
-                "The listener will only affect conversations in the same context where it was created."
+                "The listener will only affect conversations in the same context where it was created.\n\n"
+                "Returns: A JSON string with the operation result as a dict. "
+                "On success, returns {'success': true, 'listener_id': [id], 'message': 'Created listener [name] with ID [id]'}. "
+                "On validation error, returns {'success': false, 'message': [error details]} for invalid source, action_type, missing script_code, missing match_conditions, or duplicate name."
             ),
             "parameters": {
                 "type": "object",
@@ -98,7 +101,13 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_event_listeners",
-            "description": "List all event listeners in this conversation, with optional filtering.",
+            "description": (
+                "List all event listeners in this conversation, with optional filtering.\n\n"
+                "Returns: A JSON string with the operation result as a dict. "
+                "On success, returns {'success': true, 'listeners': [array of listener objects], 'count': [number]}. "
+                "Each listener object contains: id, name, source, enabled, one_time, daily_executions, last_execution_at (ISO format or null), created_at (ISO format). "
+                "On error, returns {'success': false, 'message': [error details]}."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -120,7 +129,13 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "delete_event_listener",
-            "description": "Delete an event listener by its ID.",
+            "description": (
+                "Delete an event listener by its ID.\n\n"
+                "Returns: A JSON string with the operation result as a dict. "
+                "On success, returns {'success': true, 'message': 'Deleted listener [name] (ID: [id])'}. "
+                "If listener not found, returns {'success': false, 'message': 'Listener with ID [id] not found'}. "
+                "On other errors, returns {'success': false, 'message': 'Failed to delete listener: [error details]'}."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -137,7 +152,13 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "toggle_event_listener",
-            "description": "Enable or disable an event listener.",
+            "description": (
+                "Enable or disable an event listener.\n\n"
+                "Returns: A JSON string with the operation result as a dict. "
+                "On success, returns {'success': true, 'message': 'Listener [name] is now [enabled/disabled]'}. "
+                "If listener not found, returns {'success': false, 'message': 'Listener with ID [id] not found'}. "
+                "On other errors, returns {'success': false, 'message': 'Failed to toggle listener: [error details]'}."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -158,7 +179,13 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "validate_event_listener_script",
-            "description": "Validate Starlark script syntax before creating an event listener.",
+            "description": (
+                "Validate Starlark script syntax before creating an event listener.\n\n"
+                "Returns: A JSON string with the validation result as a dict. "
+                "On valid syntax, returns {'success': true, 'message': 'Script syntax is valid'}. "
+                "On syntax error, returns {'success': false, 'error': 'Syntax error: [details]', 'line': [line number or null]}. "
+                "On other errors, returns {'success': false, 'error': 'Validation error: [details]'}."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -175,7 +202,12 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "test_event_listener_script",
-            "description": "Test a Starlark script with a sample event to see what it would do.",
+            "description": (
+                "Test a Starlark script with a sample event to see what it would do.\n\n"
+                "Returns: A JSON string with the test result as a dict. "
+                "On successful execution, returns {'success': true, 'message': 'Script executed successfully', 'result': [script return value or 'No return value']}. "
+                "On execution error, returns {'success': false, 'error': '[ErrorType]: [error details]', 'message': 'Script execution failed'}."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
