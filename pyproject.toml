@@ -245,3 +245,8 @@ reportMissingImports = true
 reportUnusedImport = true
 
 typeCheckingMode = "basic"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest-xdist>=3.7.0",
+]
