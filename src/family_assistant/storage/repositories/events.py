@@ -163,7 +163,13 @@ class EventsRepository(BaseRepository):
             return listener_id
 
         except IntegrityError as e:
-            if "uq_name_conversation" in str(e):
+            error_msg = str(e).lower()
+            # Check for various forms of the unique constraint error
+            if "uq_name_conversation" in error_msg or (
+                "unique" in error_msg
+                and "name" in error_msg
+                and "conversation" in error_msg
+            ):
                 self._logger.error(
                     f"Event listener with name '{name}' already exists for conversation {conversation_id}"
                 )
