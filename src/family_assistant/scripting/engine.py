@@ -348,20 +348,24 @@ class StarlarkEngine:
     def _create_wake_llm_function(self) -> Any:
         """Create a wake_llm function for scripts."""
 
-        def wake_llm(context: dict[str, Any], include_event: bool = True) -> None:
+        def wake_llm(context: dict[str, Any] | str, include_event: bool = True) -> None:
             """Request to wake the LLM with context."""
-            # Validate context is a dict
-            if not isinstance(context, dict):
-                raise TypeError("wake_llm context must be a dictionary")
+            # Convert string context to dict format
+            if isinstance(context, str):
+                context_dict = {"message": context}
+            elif isinstance(context, dict):
+                context_dict = dict(context)  # Make a copy
+            else:
+                raise TypeError("wake_llm context must be a dictionary or string")
 
             # Store the wake request
             wake_request = {
-                "context": dict(context),  # Make a copy
+                "context": context_dict,
                 "include_event": include_event,
             }
             self._wake_llm_contexts.append(wake_request)
 
-            logger.debug(f"Script requested LLM wake with context: {context}")
+            logger.debug(f"Script requested LLM wake with context: {context_dict}")
 
         return wake_llm
 
