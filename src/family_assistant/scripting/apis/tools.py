@@ -108,14 +108,9 @@ class ToolsAPI:
         """Run an async coroutine from sync context."""
         import threading
 
-        logger.debug(f"_run_async called with coroutine: {coro}")
-        logger.debug(f"Main loop available: {self._main_loop is not None}")
-        logger.debug(f"Current thread: {threading.current_thread().name}")
-
         # First, check if we're already running in an event loop
         try:
             current_loop = asyncio.get_running_loop()
-            logger.debug(f"Found running event loop: {current_loop}")
             # Check if we're in the same thread as the event loop
             # If we are, we can't use run_coroutine_threadsafe - it would deadlock
             if threading.current_thread() is threading.main_thread():
@@ -125,17 +120,18 @@ class ToolsAPI:
 
                 # If we have access to the main loop, use it to avoid creating a new event loop
                 if self._main_loop and self._main_loop.is_running():
-                    # Instead of nested timeouts, just run the coroutine in a new event loop
-                    # in a separate thread to avoid deadlock
+                    # Run in executor but use run_coroutine_threadsafe with the main loop
                     import concurrent.futures
 
-                    def run_in_new_loop() -> Any:
-                        return asyncio.run(coro)
+                    def run_in_main_loop() -> Any:
+                        assert self._main_loop is not None  # Already checked above
+                        future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
+                        return future.result(timeout=30.0)
 
                     with concurrent.futures.ThreadPoolExecutor(
                         max_workers=1
                     ) as executor:
-                        exec_future = executor.submit(run_in_new_loop)
+                        exec_future = executor.submit(run_in_main_loop)
                         return exec_future.result(timeout=30.0)
                 else:
                     # Fallback to creating a new event loop if we don't have access to the main one
@@ -198,17 +194,9 @@ class ToolsAPI:
             # Get tool definitions from provider
             if self._tool_definitions is None:
                 # Create the coroutine directly - _run_async expects a coroutine
-                logger.debug("Fetching tool definitions from provider...")
-                try:
-                    self._tool_definitions = self._run_async(
-                        self.tools_provider.get_tool_definitions()
-                    )
-                    logger.debug(
-                        f"Successfully fetched {len(self._tool_definitions or [])} tool definitions"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to fetch tool definitions: {e}")
-                    raise
+                self._tool_definitions = self._run_async(
+                    self.tools_provider.get_tool_definitions()
+                )
 
             # Convert to ToolInfo objects, filtering by allowed tools
             tools = []
