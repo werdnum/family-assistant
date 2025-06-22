@@ -19,6 +19,7 @@ import pytest_asyncio  # Import the correct decorator
 from caldav.lib import error as caldav_error  # Import the error module
 from docker.errors import DockerException  # Import DockerException directly
 from passlib.hash import bcrypt
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
@@ -92,6 +93,8 @@ async def test_db_engine(
     It creates either a SQLite or PostgreSQL engine based on the --postgres flag,
     initializes the schema, and monkeypatches the global `storage.base.engine`
     to use this test engine during the test. It ensures cleanup afterwards.
+
+    For PostgreSQL: Creates a unique database for each test to ensure complete isolation.
     """
     # Check if --postgres flag was provided
     use_postgres = request.config.getoption("--postgres", default=False)
@@ -103,10 +106,58 @@ async def test_db_engine(
             postgres_container = request.getfixturevalue("postgres_container")
 
         assert postgres_container is not None
-        async_url = postgres_container.get_connection_url()
-        test_engine = create_async_engine(async_url, echo=False)
+
+        # Create a unique database name for this test
+        test_name_safe = "".join(
+            c if c.isalnum() or c == "_" else "_" for c in request.node.name
+        )
+
+        # PostgreSQL has a 63 character limit for identifiers
+        # We need: "test_" (5) + "_" (1) + uuid (8) = 14 chars overhead
+        # This leaves 49 chars for the test name
+        max_test_name_length = 49
+
+        if len(test_name_safe) > max_test_name_length:
+            # For long names, truncate and add a short hash for uniqueness
+            import hashlib
+
+            name_hash = hashlib.md5(test_name_safe.encode()).hexdigest()[:4]
+            # Keep first 45 chars + 4 char hash = 49 chars total
+            test_name_safe = f"{test_name_safe[:45]}{name_hash}"
+
+        unique_db_name = f"test_{test_name_safe}_{uuid.uuid4().hex[:8]}".lower()
+
+        # Get the main connection URL and create an admin engine
+        admin_url = postgres_container.get_connection_url().replace(
+            "postgresql://", "postgresql+asyncpg://", 1
+        )
+        admin_engine = create_async_engine(
+            admin_url, echo=False, isolation_level="AUTOCOMMIT"
+        )
+
         logger.info(f"\n--- PostgreSQL Test DB Setup ({request.node.name}) ---")
-        logger.info(f"Created PostgreSQL test engine: {async_url.split('@')[-1]}")
+        logger.info(f"Creating unique database: {unique_db_name}")
+
+        # Create the unique database
+        async with admin_engine.begin() as conn:
+            # Check if database exists and drop it if so (cleanup from previous failed run)
+            result = await conn.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :dbname"),
+                {"dbname": unique_db_name},
+            )
+            if result.scalar():
+                await conn.execute(text(f'DROP DATABASE "{unique_db_name}"'))
+
+            # Create the new database
+            await conn.execute(text(f'CREATE DATABASE "{unique_db_name}"'))
+
+        # Close admin engine
+        await admin_engine.dispose()
+
+        # Create engine for the new test database
+        test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
+        test_engine = create_async_engine(test_db_url, echo=False)
+        logger.info(f"Created PostgreSQL test engine for database: {unique_db_name}")
 
         # Initialize vector extension first for PostgreSQL
         async with DatabaseContext(engine=test_engine) as db_context:
@@ -140,6 +191,30 @@ async def test_db_engine(
         await test_engine.dispose()
         logger.info("Test engine disposed.")
         logger.info("Restored original storage.base.engine.")
+
+        # Drop the PostgreSQL database if we created one
+        if use_postgres:
+            # Recreate admin engine for cleanup
+            admin_engine = create_async_engine(
+                admin_url, echo=False, isolation_level="AUTOCOMMIT"
+            )
+            try:
+                async with admin_engine.begin() as conn:
+                    # Terminate any remaining connections to the test database
+                    await conn.execute(
+                        text(
+                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                            "WHERE datname = :dbname AND pid <> pg_backend_pid()"
+                        ),
+                        {"dbname": unique_db_name},
+                    )
+                    # Drop the test database
+                    await conn.execute(
+                        text(f'DROP DATABASE IF EXISTS "{unique_db_name}"')
+                    )
+                logger.info(f"Dropped test database: {unique_db_name}")
+            finally:
+                await admin_engine.dispose()
 
 
 # --- PostgreSQL Test Fixtures (using testcontainers) ---
@@ -191,21 +266,66 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
 )  # Use function scope for engine to ensure isolation
 async def pg_vector_db_engine(
     postgres_container: PostgresContainer,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[AsyncEngine, None]:
     """
     PostgreSQL database engine with vector support for tests that require pgvector.
     Always provides PostgreSQL regardless of --postgres flag.
+    Creates a unique database for each test to ensure complete isolation.
     """
-    # Get connection URL from the container
-    sync_url = postgres_container.get_connection_url()
-    # Replace postgresql:// with postgresql+asyncpg://
-    async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    # Create a unique database name for this test
+    test_name_safe = "".join(
+        c if c.isalnum() or c == "_" else "_" for c in request.node.name
+    )
+
+    # PostgreSQL has a 63 character limit for identifiers
+    # We need: "test_pgvec_" (11) + "_" (1) + uuid (8) = 20 chars overhead
+    # This leaves 43 chars for the test name
+    max_test_name_length = 43
+
+    if len(test_name_safe) > max_test_name_length:
+        # For long names, truncate and add a short hash for uniqueness
+        import hashlib
+
+        name_hash = hashlib.md5(test_name_safe.encode()).hexdigest()[:4]
+        # Keep first 39 chars + 4 char hash = 43 chars total
+        test_name_safe = f"{test_name_safe[:39]}{name_hash}"
+
+    unique_db_name = f"test_pgvec_{test_name_safe}_{uuid.uuid4().hex[:8]}".lower()
+
+    # Get the main connection URL and create an admin engine
+    admin_url = postgres_container.get_connection_url().replace(
+        "postgresql://", "postgresql+asyncpg://", 1
+    )
+    admin_engine = create_async_engine(
+        admin_url, echo=False, isolation_level="AUTOCOMMIT"
+    )
 
     logger.info("Creating PostgreSQL engine with pgvector support")
+    logger.info(f"Creating unique database: {unique_db_name}")
+
+    # Create the unique database
+    async with admin_engine.begin() as conn:
+        # Check if database exists and drop it if so (cleanup from previous failed run)
+        result = await conn.execute(
+            text("SELECT 1 FROM pg_database WHERE datname = :dbname"),
+            {"dbname": unique_db_name},
+        )
+        if result.scalar():
+            await conn.execute(text(f'DROP DATABASE "{unique_db_name}"'))
+
+        # Create the new database
+        await conn.execute(text(f'CREATE DATABASE "{unique_db_name}"'))
+
+    # Close admin engine
+    await admin_engine.dispose()
+
+    # Create engine for the new test database
+    test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
 
     from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 
-    engine = create_engine_with_sqlite_optimizations(async_url)
+    engine = create_engine_with_sqlite_optimizations(test_db_url)
 
     # Patch the global engine
     original_engine = storage_base.engine
@@ -225,10 +345,30 @@ async def pg_vector_db_engine(
 
         yield engine
     finally:
-        logger.info("--- PostgreSQL Test DB Teardown ---")
+        logger.info(f"--- PostgreSQL Test DB Teardown ({unique_db_name}) ---")
         await engine.dispose()
         storage_base.engine = original_engine
         logger.info("Restored original storage.base.engine.")
+
+        # Drop the PostgreSQL database
+        admin_engine = create_async_engine(
+            admin_url, echo=False, isolation_level="AUTOCOMMIT"
+        )
+        try:
+            async with admin_engine.begin() as conn:
+                # Terminate any remaining connections to the test database
+                await conn.execute(
+                    text(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = :dbname AND pid <> pg_backend_pid()"
+                    ),
+                    {"dbname": unique_db_name},
+                )
+                # Drop the test database
+                await conn.execute(text(f'DROP DATABASE IF EXISTS "{unique_db_name}"'))
+            logger.info(f"Dropped test database: {unique_db_name}")
+        finally:
+            await admin_engine.dispose()
 
 
 # Note: We don't provide a DatabaseContext fixture directly.
