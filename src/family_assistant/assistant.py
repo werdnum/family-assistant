@@ -221,9 +221,10 @@ class Assistant:
         if error_logging_config.get("enabled", True) and not os.environ.get(
             "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"
         ):
+            from family_assistant.storage.base import engine
             from family_assistant.utils.logging_handler import setup_error_logging
 
-            self.error_logging_handler = setup_error_logging(get_db_context)
+            self.error_logging_handler = setup_error_logging(engine)
             logger.info("Database error logging handler initialized")
 
         resolved_profiles = self.config.get("service_profiles", [])

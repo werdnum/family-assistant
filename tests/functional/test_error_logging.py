@@ -39,12 +39,8 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
         )
         test_logger.handlers.clear()
 
-    # Add our SQLAlchemy handler
-    # Create a session factory that uses our test engine directly
-    def test_db_context_factory() -> DatabaseContext:
-        return DatabaseContext(engine=test_db_engine)
-
-    handler = SQLAlchemyErrorHandler(test_db_context_factory, min_level=logging.ERROR)
+    # Add our SQLAlchemy handler with the test engine
+    handler = SQLAlchemyErrorHandler(test_db_engine, min_level=logging.ERROR)
     test_logger.addHandler(handler)
 
     try:
@@ -63,13 +59,8 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
         # Test 4: Log a warning (should not be stored as min_level is ERROR)
         test_logger.warning("This is just a warning")
 
-        # Flush the handler to ensure all logs are written
-        handler.flush()
-
-        # Give async logging handler time to complete writes
-        import asyncio
-
-        await asyncio.sleep(0.5)
+        # Wait for all pending logs to be written
+        await handler.wait_for_pending_logs()
 
         # Check the database
         async with DatabaseContext(engine=test_db_engine) as db_context:
@@ -133,7 +124,7 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
 
     finally:
         # Clean up the handler and reset logger state
-        handler.close()  # Properly close the handler to stop worker thread
+        handler.close()
         test_logger.removeHandler(handler)
         # Remove any other handlers that might have been added
         test_logger.handlers.clear()
