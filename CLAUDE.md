@@ -336,6 +336,8 @@ symbex -d src/family_assistant --function -s
 
 `ast-grep` is available for making mechanical syntactic changes and is the tool of choice in most cases.
 
+**Note**: Use `ast-grep scan` for applying complex rule-based transformations (not `ast-grep run`). The `scan` command supports YAML rule files and inline rules with `--inline-rules`.
+
 ### Removing a Keyword Argument
 
 **Task:** Reliably remove the `cache=...` keyword argument from all calls to `my_function`, regardless of its position.
@@ -716,66 +718,6 @@ When adding new web UI endpoints that serve HTML pages:
 
   This resolves the "E1102: func.X is not callable" errors while maintaining the same functionality.
 
-## Test Fixtures
+## File Management Guidance
 
-The project provides several pytest fixtures for testing. These are defined in various `conftest.py` files:
-
-### Core Database Fixtures (tests/conftest.py)
-
-- **`test_db_engine`** (function scope, autouse): Provides either SQLite or PostgreSQL database based on `--postgres` flag. With PostgreSQL, creates a unique database per test for complete isolation. Automatically patches `storage.base.engine` for the test duration.
-  
-- **`postgres_container`** (session scope): Starts a PostgreSQL container with pgvector extension for the entire test session. Reused across all PostgreSQL tests.
-
-- **`pg_vector_db_engine`** (function scope): Always provides a PostgreSQL database engine with vector support. Creates a unique database for each test and handles proper cleanup.
-
-### Task Worker Fixtures (tests/conftest.py)
-
-- **`task_worker_manager`** (function scope): Manages TaskWorker lifecycle for testing background tasks. Returns a context manager that starts/stops the worker and provides task completion helpers.
-
-### CalDAV Server Fixtures (tests/conftest.py)
-
-- **`radicale_server_session`** (session scope): Starts a Radicale CalDAV server for the test session. Returns `(base_url, username, password)`.
-
-- **`radicale_server`** (function scope): Creates a unique calendar for each test with automatic cleanup. Returns `(calendar_url, username, password)`.
-
-### Telegram Bot Testing (tests/functional/telegram/conftest.py)
-
-- **`telegram_handler_fixture`** (function scope): Comprehensive fixture for Telegram bot testing. Returns a named tuple with:
-  - `handler`: The TelegramHandler instance
-  - `mock_bot`: Mock telegram Bot
-  - `mock_app`: Mock telegram Application
-  - `mock_llm_client`: RuleBasedMockLLMClient
-  - `mock_tools_provider`: CompositeToolProvider
-  - `mock_processing_service`: ProcessingService
-  - `db_engine`: Test database engine
-
-### Web API Testing (tests/functional/web/conftest.py)
-
-- **`db_context`**: Provides DatabaseContext for API tests
-- **`mock_llm_client`**: RuleBasedMockLLMClient instance
-- **`test_tools_provider`**: CompositeToolProvider with test tools
-- **`test_processing_service`**: ProcessingService configured for testing
-- **`app_fixture`**: FastAPI app with test dependencies
-- **`test_client`**: HTTPX AsyncClient for API testing
-
-### Indexing Pipeline Testing (tests/functional/indexing/conftest.py)
-
-- **`mock_pipeline_embedding_generator`**: MockEmbeddingGenerator with deterministic embeddings for testing
-- **`indexing_task_worker`**: TaskWorker configured for indexing tasks
-
-### Mock Utilities
-
-- **`RuleBasedMockLLMClient`**: A mock LLM client that returns responses based on rules. Useful for testing specific scenarios without API calls. Example:
-
-  ```python
-  mock_llm = RuleBasedMockLLMClient(
-      rules=[
-          ("weather", lambda q: "It will be sunny today"),
-          ("time", lambda q: "The current time is 2:30 PM"),
-      ]
-  )
-  ```
-
-## Markdown
-
-* Docs are rendered with redcarpet, which expects a blank line between paragraphs and other blocks (fenced code blocks, bulleted lists, etc).
+* Put temporary files in the repo somewhere. scratch/ is available for truly temporary files but files of historical interest can go elsewhere

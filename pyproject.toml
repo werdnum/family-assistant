@@ -158,11 +158,15 @@ shell = "scripts/format-and-lint.sh && pytest tests"
 
 [tool.poe.tasks.test-postgres]
 help = "Run tests with PostgreSQL database backend"
-shell = "pytest --postgres -xq"
+shell = "pytest --db postgres -xq"
 
 [tool.poe.tasks.test-postgres-verbose]
 help = "Run tests with PostgreSQL database backend (verbose output)"
-shell = "pytest --postgres -xvs"
+shell = "pytest --db postgres -xvs"
+
+[tool.poe.tasks.test-sqlite]
+help = "Run tests with SQLite database backend only"
+shell = "pytest --db sqlite -xq"
 
 
 [tool.ruff.lint.isort]
@@ -172,6 +176,9 @@ known-first-party = ["family_assistant"]
 asyncio_mode = "auto"
 testpaths = [
     "tests",
+]
+markers = [
+    "postgres: marks tests as requiring PostgreSQL database",
 ]
 
 [tool.pylint.main]
