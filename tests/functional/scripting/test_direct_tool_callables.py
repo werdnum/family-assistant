@@ -143,7 +143,7 @@ results  # Return the results
 """
 
         # Execute the script
-        result = engine.evaluate(script, execution_context=context)
+        result = await engine.evaluate_async(script, execution_context=context)
 
         # Verify results
         assert result == [
@@ -187,7 +187,7 @@ results  # Return the results
 """
 
         # Execute the script
-        result = engine.evaluate(script, execution_context=context)
+        result = await engine.evaluate_async(script, execution_context=context)
 
         # Verify results
         assert result == [
@@ -232,7 +232,7 @@ available  # Return the available tools
 """
 
         # Execute the script
-        result = engine.evaluate(script, execution_context=context)
+        result = await engine.evaluate_async(script, execution_context=context)
 
         # Verify only echo was available
         assert result == [
@@ -298,7 +298,7 @@ results  # Return the results
 """
 
         # Execute the script
-        result = engine.evaluate(script, execution_context=context)
+        result = await engine.evaluate_async(script, execution_context=context)
 
         # Verify successful calls
         assert result == ["Echo: Test message", "Result: 3"]
@@ -347,7 +347,7 @@ results  # Return the results
 """
 
         # Execute the script
-        result = engine.evaluate(script, execution_context=context)
+        result = await engine.evaluate_async(script, execution_context=context)
 
         # Verify both APIs work
         assert result["old"] == "Echo: Old API"
@@ -397,7 +397,7 @@ results  # Return the results
 """
 
         # Execute the script
-        result = engine.evaluate(script, execution_context=context)
+        result = await engine.evaluate_async(script, execution_context=context)
 
         # Verify no tools are available
         assert result["echo_exists"] is False

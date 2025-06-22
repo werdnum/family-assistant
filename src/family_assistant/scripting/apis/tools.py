@@ -120,7 +120,11 @@ class ToolsAPI:
 
                 # If we have access to the main loop, use it to avoid creating a new event loop
                 if self._main_loop and self._main_loop.is_running():
-                    # Run in executor but use run_coroutine_threadsafe with the main loop
+                    # IMPORTANT: We must reuse the main event loop here to ensure database
+                    # connections (especially PostgreSQL with asyncpg) are accessed from the
+                    # same event loop they were created in. Creating a new event loop would
+                    # cause "Future attached to a different loop" errors.
+                    # See docs/postgres-test-failures-analysis.md for details.
                     import concurrent.futures
 
                     def run_in_main_loop() -> Any:
