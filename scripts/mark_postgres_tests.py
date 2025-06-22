@@ -54,7 +54,14 @@ def run_ast_grep(rule_content: str, file_path: Path) -> bool:
 
         try:
             result = subprocess.run(
-                ["ast-grep", "--rule", rule_file.name, "--update-all", str(file_path)],
+                [
+                    "ast-grep",
+                    "scan",
+                    "--inline-rules",
+                    rule_content,
+                    "--update-all",
+                    str(file_path),
+                ],
                 capture_output=True,
                 text=True,
             )

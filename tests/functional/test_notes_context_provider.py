@@ -24,6 +24,7 @@ async def cleanup_notes(engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_notes_context_provider_respects_include_in_prompt(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
@@ -82,6 +83,7 @@ async def test_notes_context_provider_respects_include_in_prompt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_notes_context_provider_empty_when_all_excluded(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
@@ -126,6 +128,7 @@ async def test_notes_context_provider_empty_when_all_excluded(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_notes_context_provider_mixed_visibility(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:

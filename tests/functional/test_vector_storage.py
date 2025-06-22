@@ -103,6 +103,7 @@ class MockDocumentImpl(Document):
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> None:
     """
     Basic test to verify core vector storage functionality using PostgreSQL:
@@ -273,6 +274,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
     """
     Tests the search_documents_tool function via LocalToolsProvider.
@@ -410,6 +412,7 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_get_full_document_content_with_raw_content(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:

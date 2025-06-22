@@ -121,6 +121,7 @@ async def test_append_multiple_times(test_db_engine: Any) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_add_or_update_note_append_postgres(pg_vector_db_engine: Any) -> None:
     """Test that the append functionality works correctly for notes with PostgreSQL."""
     async with DatabaseContext() as db:

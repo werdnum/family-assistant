@@ -283,6 +283,7 @@ async def _helper_handle_embed_and_store_batch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_document_indexing_and_query_e2e(
     pg_vector_db_engine: AsyncEngine,  # Still needed for direct DB checks/queries
     http_client: httpx.AsyncClient,  # Use the test client
@@ -614,6 +615,7 @@ async def test_document_indexing_and_query_e2e(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_document_indexing_with_llm_summary_e2e(
     pg_vector_db_engine: AsyncEngine,
     http_client: httpx.AsyncClient,
@@ -935,6 +937,7 @@ async def test_document_indexing_with_llm_summary_e2e(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_url_indexing_e2e(
     pg_vector_db_engine: AsyncEngine,
     http_client: httpx.AsyncClient,
@@ -1230,6 +1233,7 @@ async def test_url_indexing_e2e(
                 logger.warning(f"Error during test URL task cleanup: {cleanup_err}")
 
     @pytest.mark.asyncio
+    @pytest.mark.postgres
     async def test_url_indexing_auto_title_e2e(
         pg_vector_db_engine: AsyncEngine,
         http_client: httpx.AsyncClient,

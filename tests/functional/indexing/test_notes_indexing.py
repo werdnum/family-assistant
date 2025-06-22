@@ -149,6 +149,7 @@ async def _helper_handle_embed_and_store_batch_notes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_notes_indexing_e2e(
     pg_vector_db_engine: AsyncEngine,
     mock_embedding_generator_notes: MockEmbeddingGenerator,
@@ -432,6 +433,7 @@ async def test_notes_indexing_e2e(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_note_update_reindexing_e2e(
     pg_vector_db_engine: AsyncEngine,
     mock_embedding_generator_notes: MockEmbeddingGenerator,
@@ -692,6 +694,7 @@ async def test_note_update_reindexing_e2e(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_notes_indexing_graceful_degradation(
     pg_vector_db_engine: AsyncEngine,
     mock_embedding_generator_notes: MockEmbeddingGenerator,

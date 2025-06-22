@@ -134,7 +134,7 @@ Migration scripts are available but not urgently needed:
 
 - **Primary Goal**: ✅ ACHIEVED - All tests run on all databases by default
 - **Test Migration**: Optional - tests work without changes
-- **PostgreSQL Marking**: TODO - identify and mark PostgreSQL-specific tests
+- **PostgreSQL Marking**: ✅ COMPLETE - 32 PostgreSQL-specific tests marked
 
 ## Migration Plan (Now Optional)
 
@@ -143,10 +143,10 @@ Migration scripts are available but not urgently needed:
 - [x] Infrastructure implementation
 - [x] Primary goal achieved - all tests run on all databases
 - [x] Documentation updated
+- [x] Mark PostgreSQL-specific tests with `@pytest.mark.postgres` (32 tests marked)
 
 ### Optional Future Steps
 
-- [ ] Mark PostgreSQL-specific tests with `@pytest.mark.postgres`
 - [ ] Gradually migrate tests to use explicit `db_engine` parameter for clarity
 - [ ] Eventually remove autouse fixture once all tests migrated
 
@@ -167,8 +167,8 @@ Migration scripts are available but not urgently needed:
 
 ## Technical Debt
 
-- PostgreSQL-specific tests need to be identified and marked
 - Migration scripts available but optional since goal is achieved
+- Some tests still use the autouse fixture instead of explicit dependency
 
 ## Conclusion
 

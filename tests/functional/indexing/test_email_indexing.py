@@ -320,6 +320,7 @@ async def _ingest_and_index_email(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_email_indexing_and_query_e2e(
     http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
@@ -537,6 +538,7 @@ async def test_email_indexing_and_query_e2e(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_vector_ranking(
     http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
@@ -734,6 +736,7 @@ async def test_vector_ranking(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_metadata_filtering(
     http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
@@ -919,6 +922,7 @@ async def test_metadata_filtering(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_keyword_filtering(
     http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
@@ -1150,6 +1154,7 @@ EMAIL_LLM_SUMMARY_TARGET_TYPE = "email_llm_generated_summary"
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_email_with_pdf_attachment_indexing_e2e(
     http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
@@ -1412,6 +1417,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_email_indexing_with_llm_summary_e2e(
     http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
@@ -1672,6 +1678,7 @@ async def test_email_indexing_with_llm_summary_e2e(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_email_indexing_with_primary_link_extraction_e2e(
     http_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:

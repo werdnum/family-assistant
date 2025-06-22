@@ -296,6 +296,7 @@ async def test_add_event_and_verify_in_system_prompt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_modify_event(
     pg_vector_db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
@@ -659,6 +660,7 @@ async def test_modify_event(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_delete_event(
     pg_vector_db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
@@ -929,6 +931,7 @@ async def test_delete_event(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_search_events(
     pg_vector_db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
@@ -1272,6 +1275,7 @@ async def test_search_events(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_mixed_date_datetime_sorting(
     radicale_server: tuple[str, str, str, str],
     pg_vector_db_engine: AsyncEngine,
