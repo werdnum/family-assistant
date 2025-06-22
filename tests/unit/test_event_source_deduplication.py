@@ -81,26 +81,5 @@ class TestEventSourceDeduplication:
                 )  # home_assistant and indexing
 
             finally:
-                # Clean up to avoid side effects
-                # Stop the event processor if it's running
-                if hasattr(assistant, "event_processor") and assistant.event_processor:
-                    await assistant.event_processor.stop()
-
-                # Close the httpx client
-                if (
-                    hasattr(assistant, "shared_httpx_client")
-                    and assistant.shared_httpx_client
-                ):
-                    await assistant.shared_httpx_client.aclose()
-
-                # Stop telegram service if it exists
-                if (
-                    hasattr(assistant, "telegram_service")
-                    and assistant.telegram_service
-                    and hasattr(assistant.telegram_service, "application")
-                ):
-                    try:
-                        await assistant.telegram_service.application.stop()
-                        await assistant.telegram_service.application.shutdown()
-                    except Exception:
-                        pass  # Ignore errors during cleanup
+                # Clean up using the Assistant's built-in stop_services method
+                await assistant.stop_services()
