@@ -171,3 +171,76 @@ async def test_execute_script_with_globals(test_db_engine: Any) -> None:
             globals={"user_name": "Alice", "count": 42},
         )
         assert "Alice says 42" in result
+
+
+@pytest.mark.asyncio
+async def test_execute_script_with_wake_llm(test_db_engine: Any) -> None:
+    """Test execute_script with wake_llm calls."""
+    async with DatabaseContext() as db:
+        ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            processing_service=None,
+        )
+
+        # Test single wake_llm call
+        result = await execute_script_tool(
+            ctx,
+            """
+wake_llm({"message": "Hello from script!", "priority": "high"})
+"Script completed"
+""",
+        )
+        assert "Script result: Script completed" in result
+        assert "Wake LLM Contexts" in result
+        assert "Hello from script!" in result
+        assert "priority" in result
+        assert "high" in result
+
+        # Test multiple wake_llm calls
+        result = await execute_script_tool(
+            ctx,
+            """
+wake_llm({"action": "first_call", "value": 1})
+wake_llm({"action": "second_call", "value": 2}, include_event=False)
+{"status": "done", "wake_count": 2}
+""",
+        )
+        assert "Wake Context 1:" in result
+        assert "Wake Context 2:" in result
+        assert '"action": "first_call"' in result
+        assert '"action": "second_call"' in result
+        assert "Include Event: True" in result  # First call
+        assert "Include Event: False" in result  # Second call
+        assert '"wake_count": 2' in result
+
+        # Test script without wake_llm
+        result = await execute_script_tool(
+            ctx,
+            """
+# Just a simple calculation
+result = 10 + 20
+result
+""",
+        )
+        assert "Script result: 30" in result
+        assert "Wake LLM Contexts" not in result  # Should not appear if no wake calls
+
+        # Test wake_llm with string context
+        result = await execute_script_tool(
+            ctx,
+            """
+wake_llm("Task completed successfully!")
+wake_llm("Please review the results", include_event=False)
+"Done"
+""",
+        )
+        assert "Script result: Done" in result
+        assert "Wake LLM Contexts" in result
+        assert '"message": "Task completed successfully!"' in result
+        assert '"message": "Please review the results"' in result
+        assert "Include Event: True" in result  # First call
+        assert "Include Event: False" in result  # Second call
