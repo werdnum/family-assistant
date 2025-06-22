@@ -5,6 +5,7 @@ Functional tests for the event listener system.
 import asyncio
 import json
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -52,6 +53,20 @@ class MockState:
         self.state = state
         self.attributes = {"friendly_name": f"Test {state}"}
         self.last_changed = datetime.now(timezone.utc).isoformat()
+
+
+def safe_json_loads(data: str | dict | list) -> Any:
+    """
+    Safely load JSON data that might already be parsed.
+
+    SQLite returns JSON columns as strings, while PostgreSQL returns them as
+    already-parsed dicts/lists. This function handles both cases.
+    """
+    if isinstance(data, (dict, list)):
+        # Already parsed (PostgreSQL)
+        return data
+    # String that needs parsing (SQLite)
+    return json.loads(data)
 
 
 @pytest.mark.asyncio
@@ -619,15 +634,19 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
         # Find our motion event
         motion_event_stored = None
         for event in events_result:
-            event_data = json.loads(event["event_data"])
+            # Handle both string (SQLite) and dict (PostgreSQL) formats
+            event_data = safe_json_loads(event["event_data"])
             if event_data.get("entity_id") == "binary_sensor.hallway_motion":
                 motion_event_stored = event
                 break
 
         assert motion_event_stored is not None
-        triggered_listeners = json.loads(
-            motion_event_stored["triggered_listener_ids"] or "[]"
-        )
+        # Handle both string (SQLite) and dict/list (PostgreSQL) formats
+        triggered_listeners = motion_event_stored["triggered_listener_ids"]
+        if triggered_listeners is None:
+            triggered_listeners = []
+        else:
+            triggered_listeners = safe_json_loads(triggered_listeners)
         assert len(triggered_listeners) == 1
 
     # Step 5: Verify an LLM callback task was created
@@ -644,7 +663,8 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
         callback_task = tasks_result[0]  # Get the first one
 
         # Verify task payload
-        payload = json.loads(callback_task["payload"])
+        # Handle both string (SQLite) and dict (PostgreSQL) formats
+        payload = safe_json_loads(callback_task["payload"])
         assert payload["interface_type"] == "telegram"
         assert payload["conversation_id"] == "test_chat_123"
         assert "callback_context" in payload

@@ -96,7 +96,7 @@ async def test_create_event_listener_duplicate_name_error(
     test_db_engine: AsyncEngine,
 ) -> None:
     """Test that creating a listener with duplicate name fails."""
-    # Arrange
+    # Create first listener in one context
     async with DatabaseContext(engine=test_db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
@@ -114,6 +114,16 @@ async def test_create_event_listener_duplicate_name_error(
             listener_config={"match_conditions": {"entity_id": "light.test"}},
         )
 
+    # Create second listener in a new context to avoid transaction issues
+    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="telegram",
+            conversation_id="123456",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+        )
+
         # Act - try to create with same name
         result = await create_event_listener_tool(
             exec_context=exec_context,
@@ -122,10 +132,14 @@ async def test_create_event_listener_duplicate_name_error(
             listener_config={"match_conditions": {"entity_id": "light.other"}},
         )
 
-    # Assert
-    data = json.loads(result)
-    assert data["success"] is False
-    assert "already exists" in data["message"]
+        # Assert
+        data = json.loads(result)
+        assert data["success"] is False
+        # Check for duplicate name error - message may vary between databases
+        assert (
+            "already exists" in data["message"].lower()
+            or "duplicate" in data["message"].lower()
+        )
 
 
 @pytest.mark.asyncio
