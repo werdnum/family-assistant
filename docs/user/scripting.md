@@ -1,11 +1,39 @@
 # Family Assistant Scripting Guide
 
-This guide covers Family Assistant-specific APIs and patterns for writing Starlark scripts.
-For general Starlark syntax, see the [official Starlark documentation](https://github.com/bazelbuild/starlark/blob/master/spec.md).
+This guide provides a reference for assistants to write Starlark scripts when responding to user requests for automation and complex operations.
+
+**Important**: Scripts are primarily a tool for assistants to fulfill user requests, not for direct user interaction. Before writing scripts, understand Starlark's limitations and available APIs to write effective scripts.
+
+## Starlark Language Overview
+
+Starlark is a dialect of Python designed for configuration and deterministic execution. While it looks like Python, it has important differences:
+
+### Key Differences from Python
+
+1. **No exceptions or try-except**: Errors terminate the script. Check inputs carefully.
+2. **No while loops**: Use for loops and recursion instead.
+3. **No generators or yield**: All functions return complete values.
+4. **Limited standard library**: Only basic functions are available.
+5. **No isinstance()**: Use `type(x) == type("")` for type checking.
+6. **Immutable globals**: After initial evaluation, global variables cannot be changed.
+7. **No implicit string concatenation**: Use `+` explicitly (`"hello" + "world"`).
+8. **No chained comparisons**: Write `1 < x and x < 5` instead of `1 < x < 5`.
+9. **Integer limits**: 32-bit signed integers only (no arbitrary precision).
+10. **Dictionary iteration order**: Guaranteed to be deterministic.
+
+### Restricted Top-Level Statements
+
+- `for` loops and `if` statements must be inside functions at the top level
+- Global variables cannot be reassigned after definition
+- Use list comprehensions for top-level data generation
+
+For full Starlark syntax details, see the [official Starlark documentation](https://github.com/bazelbuild/starlark/blob/master/spec.md).
 
 ## Available APIs
 
 ### Tools API
+
+**Note**: The available tools depend on your profile's permissions. To see all available tools and their parameters, ask the assistant to list them or check the tool reference documentation.
 
 All Family Assistant tools are available in scripts through two interfaces:
 
@@ -47,14 +75,147 @@ result = tools_execute_json("send_email", args_json)
 ### JSON Functions
 
 ```starlark
-
 # Encode Python objects to JSON
 data = {"tasks": ["review PR", "update docs"]}
 json_str = json_encode(data)
 
 # Decode JSON strings
 parsed = json_decode('{"name": "test", "value": 42}')
+```
 
+### Time API Functions
+
+A comprehensive time API is available for working with dates, times, and timezones:
+
+#### Creating Time Objects
+
+```starlark
+# Get current time
+now = time_now()  # Local timezone
+now_utc = time_now_utc()  # UTC timezone
+
+# Create specific time
+meeting_time = time_create(
+    year=2024, month=3, day=15,
+    hour=14, minute=30, second=0,
+    timezone_name="America/New_York"
+)
+
+# Parse from string
+date = time_parse("2024-03-15 14:30", "%Y-%m-%d %H:%M", "UTC")
+
+# From Unix timestamp
+timestamp_time = time_from_timestamp(1710515400, 0)
+```
+
+#### Formatting and Timezones
+
+```starlark
+# Format time as string
+formatted = time_format(now, "%Y-%m-%d %H:%M:%S")
+date_only = time_format(now, "%Y-%m-%d")
+
+# Convert timezone
+la_time = time_in_location(now, "America/Los_Angeles")
+
+# Check timezone validity
+if timezone_is_valid("Europe/London"):
+    london_time = time_in_location(now, "Europe/London")
+```
+
+#### Time Components
+
+```starlark
+# Extract components
+year = time_year(now)
+month = time_month(now)
+day = time_day(now)
+hour = time_hour(now)
+minute = time_minute(now)
+second = time_second(now)
+weekday = time_weekday(now)  # 0=Monday, 6=Sunday
+
+# Check conditions
+if is_weekend(now):
+    print("It's the weekend!")
+
+if is_between(9, 17, now):  # Between 9 AM and 5 PM
+    print("Business hours")
+```
+
+#### Time Arithmetic
+
+```starlark
+# Add seconds
+tomorrow = time_add(now, DAY)  # DAY = 86400 seconds
+next_hour = time_add(now, HOUR)  # HOUR = 3600 seconds
+
+# Add duration with units
+future = time_add_duration(now, 3, "days")
+meeting_end = time_add_duration(meeting_time, 90, "minutes")
+
+# Calculate difference
+diff_seconds = time_diff(future, now)
+```
+
+#### Time Comparisons
+
+```starlark
+# Compare times
+if time_before(now, meeting_time):
+    print("Meeting hasn't started yet")
+
+if time_after(now, deadline):
+    print("Deadline has passed")
+
+if time_equal(t1, t2):
+    print("Times are identical")
+```
+
+#### Duration Handling
+
+```starlark
+# Parse duration strings
+duration = duration_parse("2h30m")  # Returns seconds: 9000
+
+# Convert to human-readable
+human = duration_human(3665)  # Returns: "1h1m5s"
+
+# Duration constants available
+# SECOND = 1, MINUTE = 60, HOUR = 3600, DAY = 86400, WEEK = 604800
+```
+
+#### Practical Examples
+
+```starlark
+# Schedule something for next business day
+def next_business_day():
+    next_day = time_add(time_now(), DAY)
+    while is_weekend(next_day):
+        next_day = time_add(next_day, DAY)
+    return next_day
+
+# Check if event is soon
+def is_event_soon(event_time, threshold_minutes=30):
+    now = time_now()
+    if time_before(now, event_time):
+        diff = time_diff(event_time, now)
+        return diff <= threshold_minutes * MINUTE
+    return False
+
+# Format relative time
+def relative_time_str(target_time):
+    now = time_now()
+    diff = abs(time_diff(target_time, now))
+    
+    if diff < MINUTE:
+        return "just now"
+    elif diff < HOUR:
+        return str(int(diff / MINUTE)) + " minutes ago"
+    elif diff < DAY:
+        return str(int(diff / HOUR)) + " hours ago"
+    else:
+        return time_format(target_time, "%Y-%m-%d")
 ```
 
 ### Global Variables
@@ -419,8 +580,10 @@ if event.get("source_id") == "indexing":
 
 ### Currently Not Available
 
-- **TimeAPI**: No `now()`, `today()`, or time comparison functions yet
 - **StateAPI**: No persistent storage between script runs
+- **File/Network Access**: Scripts are sandboxed with no filesystem or network access
+- **Module Imports**: Cannot import external code
+- **Random Numbers**: No random number generation for determinism
 
 ### Working with Tool Results
 
@@ -431,7 +594,6 @@ if event.get("source_id") == "indexing":
 ### Error Handling
 
 ```starlark
-
 # Starlark has no try/except, so check inputs carefully
 result_str = search_notes(query="test")
 if result_str and result_str != "[]":
@@ -439,6 +601,11 @@ if result_str and result_str != "[]":
 else:
     notes = []
 
+# Check for None values
+if event.get("new_state") and event["new_state"].get("state"):
+    value = float(event["new_state"]["state"])
+else:
+    value = 0.0
 ```
 
 ### Performance Tips
@@ -449,11 +616,60 @@ else:
 - Use specific queries to reduce result sets
 - Be mindful of external API rate limits when making many tool calls
 
-## Examples of Script Requests
+## Assistant Guidelines for Scripts
 
-When asking the assistant to execute scripts, you can say:
+### When to Use Scripts
 
-- "Execute a script that finds all TODO notes and creates a summary"
-- "Run a script to create prep notes for tomorrow's meetings"
-- "Write and execute a script that searches for project updates and emails me a digest"
-- "Create a script that checks for birthday events and creates reminder notes"
+Use scripts when users request:
+
+- Complex automation with multiple steps
+- Data processing and transformation
+- Conditional logic based on search results
+- Scheduled or event-triggered automation
+- Batch operations across multiple items
+
+### Script Development Best Practices
+
+1. **Understand the request**: Clarify what the user wants to achieve
+2. **Check available tools**: Use `tools_list()` if unsure what's available
+3. **Handle edge cases**: Check for empty results, invalid data
+4. **Test first**: For complex scripts, test key operations separately
+5. **Provide feedback**: Use print() to show progress for long operations
+
+### Common User Requests and Script Patterns
+
+#### Summarize my TODO notes
+
+```starlark
+# Search, process, and create summary
+results = search_notes(query="TODO")
+if results and results != "[]":
+    notes = json_decode(results)
+    # Process and summarize...
+```
+
+#### Send me daily reminders
+
+```starlark
+# Check calendar and create contextual reminders
+events = get_calendar_events(days_ahead=1)
+for event in events:
+    # Create reminder logic...
+```
+
+#### Monitor temperature and alert me
+
+```starlark
+# For event-triggered scripts
+if float(event["new_state"]["state"]) > 25:
+    send_telegram_message(message="High temperature alert!")
+```
+
+### Explaining Scripts to Users
+
+When presenting scripts to users:
+
+- Focus on what the script does, not how
+- Mention any limitations or requirements
+- Suggest testing before creating event listeners
+- Offer to modify if it doesn't meet their needs
