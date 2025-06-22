@@ -172,6 +172,7 @@ async def indexing_task_worker(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_indexing_pipeline_e2e(
     pg_vector_db_engine: AsyncEngine,
     mock_pipeline_embedding_generator: HashingWordEmbeddingGenerator,  # Get the generator instance
@@ -393,6 +394,7 @@ async def test_indexing_pipeline_e2e(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_indexing_pipeline_pdf_processing(
     pg_vector_db_engine: AsyncEngine,
     mock_pipeline_embedding_generator: HashingWordEmbeddingGenerator,

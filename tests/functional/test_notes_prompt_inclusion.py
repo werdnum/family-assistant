@@ -10,6 +10,7 @@ from family_assistant.storage.context import DatabaseContext
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_add_note_with_include_in_prompt_true(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
@@ -40,6 +41,7 @@ async def test_add_note_with_include_in_prompt_true(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_add_note_with_include_in_prompt_false(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
@@ -72,6 +74,7 @@ async def test_add_note_with_include_in_prompt_false(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_add_note_default_includes_in_prompt(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
@@ -95,6 +98,7 @@ async def test_add_note_default_includes_in_prompt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_update_note_include_in_prompt_flag(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
@@ -141,6 +145,7 @@ async def test_update_note_include_in_prompt_flag(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_get_prompt_notes_filters_correctly(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
