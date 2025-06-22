@@ -24,7 +24,11 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "get_message_history",
             "description": (
-                "Retrieve past messages from the current conversation history. Use this if you need context from earlier in the conversation that might not be in the default short-term history window."
+                "Retrieve past messages from the current conversation history. Use this if you need context from earlier in the conversation that might not be in the default short-term history window.\n\n"
+                "Returns: A formatted string containing the message history with timestamps, roles, and content. "
+                "Each message is formatted as '[timestamp] Role: content'. Tool calls are shown as '-> Called Tool: name(args) -> Response: response'. "
+                "If no messages are found, returns 'No message history found matching the specified criteria.'. "
+                "On error, returns 'Error: Failed to retrieve message history. [error details]'."
             ),
             "parameters": {
                 "type": "object",
@@ -52,7 +56,13 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "send_message_to_user",
-            "description": "Sends a textual message to another known user on Telegram. You MUST use their Chat ID as the target, which is provided in the 'Known users' section of the system prompt.",
+            "description": (
+                "Sends a textual message to another known user on Telegram. You MUST use their Chat ID as the target, which is provided in the 'Known users' section of the system prompt.\n\n"
+                "Returns: A string indicating the result. "
+                "On success, returns 'Message sent successfully to user with Chat ID [chat_id].'. "
+                "If message is sent but history recording fails, returns 'Message sent to user with Chat ID [chat_id], but failed to record in history.'. "
+                "On error, returns 'Error: Could not send message to Chat ID [chat_id]. Details: [error details]' or 'Error: Chat interface not available.'."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

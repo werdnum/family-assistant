@@ -25,7 +25,13 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "This tool allows you to evaluate templates using Home Assistant's current state, "
                 "including all entities, attributes, and template functions available in HA. "
                 "Common uses include getting entity states, performing calculations, "
-                "or formatting data using Home Assistant's template engine."
+                "or formatting data using Home Assistant's template engine.\n\n"
+                "Returns: A string containing the rendered template result. "
+                "On success, returns the evaluated template output as a string (empty results return 'Template rendered to empty result'). "
+                "If HA not configured, returns 'Error: Home Assistant integration is not configured or available.'. "
+                "If HA API not installed, returns 'Error: Home Assistant API library is not installed.'. "
+                "On API error, returns 'Error: Home Assistant API error - [error details]'. "
+                "On other errors, returns 'Error: Failed to render template - [error details]'."
             ),
             "parameters": {
                 "type": "object",

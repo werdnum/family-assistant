@@ -57,7 +57,10 @@ NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "add_or_update_note",
             "description": (
                 "Add a new note or update an existing note with the given title. Use this to remember information provided by the user. "
-                "You can control whether the note appears in your system prompt with the include_in_prompt parameter."
+                "You can control whether the note appears in your system prompt with the include_in_prompt parameter.\n\n"
+                "Returns: A string indicating the operation result. "
+                "On success, returns 'Note [title] has been [created/updated] successfully.'. "
+                "On error, returns 'Error: Failed to add/update note [title]. [error details]'."
             ),
             "parameters": {
                 "type": "object",
@@ -91,7 +94,10 @@ NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "get_note",
             "description": (
                 "Retrieve a specific note by its title to check its content and prompt inclusion status. "
-                "Returns the note's title, content, and whether it's included in the system prompt."
+                "Returns the note's title, content, and whether it's included in the system prompt.\n\n"
+                "Returns: A JSON string containing a dict with the note information. "
+                "If note exists, returns {'exists': true, 'title': [title], 'content': [full content], 'include_in_prompt': [boolean]}. "
+                "If note not found, returns {'exists': false, 'title': [title], 'content': null, 'include_in_prompt': null}."
             ),
             "parameters": {
                 "type": "object",
@@ -111,7 +117,10 @@ NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "list_notes",
             "description": (
                 "List all notes with their titles and prompt inclusion status. "
-                "Can optionally filter to show only notes that are included or excluded from the system prompt."
+                "Can optionally filter to show only notes that are included or excluded from the system prompt.\n\n"
+                "Returns: A JSON string containing a list of note summaries. "
+                "Returns an array where each item is {'title': [title], 'include_in_prompt': [boolean], 'content_preview': [first 100 chars of content]}. "
+                "If no notes exist or match the filter, returns an empty array '[]'."
             ),
             "parameters": {
                 "type": "object",
@@ -131,7 +140,10 @@ NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "delete_note",
             "description": (
                 "Delete a note by its title. This permanently removes the note from the system. "
-                "Use with caution as this action cannot be undone."
+                "Use with caution as this action cannot be undone.\n\n"
+                "Returns: A JSON string containing a dict with the operation result. "
+                "On success, returns {'success': true, 'message': 'Note [title] deleted successfully.'}. "
+                "If note not found, returns {'success': false, 'message': 'Note [title] not found.'}."
             ),
             "parameters": {
                 "type": "object",

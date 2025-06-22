@@ -29,7 +29,11 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "search_documents",
             "description": (
-                "Search previously stored documents (emails, notes, files) using semantic and keyword matching. Returns titles and snippets of the most relevant documents."
+                "Search previously stored documents (emails, notes, files) using semantic and keyword matching. Returns titles and snippets of the most relevant documents.\n\n"
+                "Returns: A formatted string containing search results. "
+                "On success, returns 'Found relevant documents:' followed by numbered results with Title, Source, Document ID, optional Metadata, and Snippet. "
+                "If no results found, returns 'No relevant documents found matching the query and filters.'. "
+                "On error, returns 'Error: Failed to execute document search. [error details]' or 'Error: Query text cannot be empty.' or 'Error: Failed to generate embedding for the query.'."
             ),
             "parameters": {
                 "type": "object",
@@ -71,7 +75,12 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "get_full_document_content",
             "description": (
-                "Retrieves the full text content of a specific document using its unique document ID (obtained from a previous search). Use this when you need the complete text after identifying a relevant document."
+                "Retrieves the full text content of a specific document using its unique document ID (obtained from a previous search). Use this when you need the complete text after identifying a relevant document.\n\n"
+                "Returns: A string containing the document content. "
+                "On success, returns the full text content of the document (raw content if available, or reconstructed from chunks). "
+                "If document exists but no content available, returns 'Error: Document [id] found, but no text content is available.' or 'Error: Document [id] found, but its text content appears to be empty.'. "
+                "If document not found, returns 'Error: Document with ID [id] not found.'. "
+                "On error, returns 'Error: Failed to retrieve content for document ID [id]. [error details]'."
             ),
             "parameters": {
                 "type": "object",
@@ -92,7 +101,12 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "ingest_document_from_url",
             "description": (
-                "Submits a document from a given URL for ingestion and indexing by the system. Use this tool if the user asks you to 'save' a web page. The document will be fetched from the URL, its content extracted, processed, and stored to be made searchable. Provide a unique source_id for tracking this ingestion request."
+                "Submits a document from a given URL for ingestion and indexing by the system. Use this tool if the user asks you to 'save' a web page. The document will be fetched from the URL, its content extracted, processed, and stored to be made searchable. Provide a unique source_id for tracking this ingestion request.\n\n"
+                "Returns: A string indicating the ingestion status. "
+                "On success, returns 'URL submitted. Service response: [message]. Document ID: [id]. Task Enqueued: [status].'. "
+                "If ingestion fails, returns 'Error submitting URL for ingestion: [message]. Details: [error details]'. "
+                "If configuration missing, returns 'Error: Server configuration missing (document storage path).'. "
+                "On unexpected error, returns 'Error: An unexpected error occurred while submitting the URL. [error details]'."
             ),
             "parameters": {
                 "type": "object",
@@ -138,7 +152,12 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "get_user_documentation_content",
             "description": (
-                "Retrieves the content of a specific user documentation file. Use this to answer questions about how the assistant works or what features it has, based on the official documentation.\nAvailable files: {available_doc_files}"
+                "Retrieves the content of a specific user documentation file. Use this to answer questions about how the assistant works or what features it has, based on the official documentation.\nAvailable files: {available_doc_files}\n\n"
+                "Returns: A string containing the file content or an error message. "
+                "On success, returns the full content of the documentation file. "
+                "If access denied, returns 'Error: Access denied. Invalid filename or extension [filename].' or 'Error: Access denied. Invalid path for filename [filename].'. "
+                "If file not found, returns 'Error: Documentation file [filename] not found.'. "
+                "On read error, returns 'Error: Failed to read documentation file [filename]. [error details]'."
             ),  # Placeholder added
             "parameters": {
                 "type": "object",

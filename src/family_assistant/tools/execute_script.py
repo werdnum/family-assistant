@@ -88,15 +88,35 @@ async def execute_script_tool(
             else None,  # Only pass context if we have tools
         )
 
-        # Format the result as a string
+        # Check for any wake_llm contexts
+        wake_contexts = engine.get_pending_wake_contexts()
+
+        # Format the response
+        response_parts = []
+
+        # Add the script result
         if result is None:
-            return "Script executed successfully with no return value."
+            response_parts.append("Script executed successfully with no return value.")
         elif isinstance(result, (dict, list)):
             # Pretty-print JSON-serializable structures
-            return f"Script result:\n{json.dumps(result, indent=2)}"
+            response_parts.append(f"Script result:\n{json.dumps(result, indent=2)}")
         else:
             # Convert other types to string
-            return f"Script result: {result}"
+            response_parts.append(f"Script result: {result}")
+
+        # Add wake_llm contexts if any
+        if wake_contexts:
+            response_parts.append("\n--- Wake LLM Contexts ---")
+            for i, wake_context in enumerate(wake_contexts):
+                response_parts.append(f"\nWake Context {i + 1}:")
+                response_parts.append(
+                    f"Include Event: {wake_context.get('include_event', True)}"
+                )
+                response_parts.append(
+                    f"Context: {json.dumps(wake_context.get('context', {}), indent=2)}"
+                )
+
+        return "\n".join(response_parts)
 
     except ScriptSyntaxError as e:
         error_msg = "Syntax error in script"
@@ -143,7 +163,8 @@ SCRIPT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "• Logic: all(), any(), max(), min()\n"
                 "• Object inspection: type(), dir(), getattr(), hasattr()\n"
                 "• Control: print(), fail()\n"
-                "• JSON: json_encode(value), json_decode(string)\n\n"
+                "• JSON: json_encode(value), json_decode(string)\n"
+                "• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n\n"
                 "**Family Assistant Tools:**\n"
                 "All enabled tools are available as functions. Call them directly:\n"
                 "• add_or_update_note(title='...', content='...')\n"
@@ -238,7 +259,19 @@ SCRIPT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                             "• Process and transform data\n"
                             "• Print output for debugging\n"
                             "• Return a value (the last expression is returned)\n\n"
-                            "Scripts should be self-contained and handle errors gracefully."
+                            "Scripts should be self-contained and handle errors gracefully.\n\n"
+                            "**Wake LLM Contexts:**\n"
+                            "If the script calls wake_llm(), the contexts will be included in the response.\n"
+                            "This allows the LLM to receive and process wake requests from scripts.\n\n"
+                            "**Return Values:**\n"
+                            "Returns a string containing the script execution result:\n"
+                            "• On success with return value: 'Script result: [value]' or for dict/list: 'Script result:\\n[JSON formatted]'\n"
+                            "• On success without return: 'Script executed successfully with no return value.'\n"
+                            "• If wake_llm() called: Also includes '--- Wake LLM Contexts ---' section with context details\n"
+                            "• On syntax error: 'Error: Syntax error in script [at line N]: [details]'\n"
+                            "• On timeout: 'Error: Script execution timed out after [N] seconds'\n"
+                            "• On execution error: 'Error: Script execution failed: [details]'\n"
+                            "• On unexpected error: 'Error: Unexpected error executing script: [details]'"
                         ),
                     },
                     "globals": {
