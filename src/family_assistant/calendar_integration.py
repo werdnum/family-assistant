@@ -14,11 +14,14 @@ from caldav.lib.error import (  # Reverted to original-like import path
 )
 from dateutil.parser import isoparse  # For parsing ISO strings in tools
 
+from family_assistant.utils.clock import Clock, SystemClock
+
 if TYPE_CHECKING:
     # Import types needed by tools under TYPE_CHECKING to break circular import
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
 
 # --- Configuration (Now passed via function arguments) ---
 # Environment variables are still read here for the standalone test section (__main__)
@@ -27,9 +30,14 @@ logger = logging.getLogger(__name__)
 
 
 def format_datetime_or_date(
-    dt_obj: datetime | date, timezone_str: str, is_end: bool = False
+    dt_obj: datetime | date,
+    timezone_str: str,
+    is_end: bool = False,
+    clock: Clock | None = None,
 ) -> str:
     """Formats datetime or date object into a user-friendly string, relative to the specified timezone."""
+    if clock is None:
+        clock = SystemClock()
     try:
         local_tz = ZoneInfo(timezone_str)
     except Exception:
@@ -38,11 +46,27 @@ def format_datetime_or_date(
         )
         local_tz = ZoneInfo("UTC")
 
-    now_local = datetime.now(local_tz)
+    now_local = clock.now().astimezone(local_tz)
     today_local = now_local.date()
     tomorrow_local = today_local + timedelta(days=1)
 
     if isinstance(dt_obj, datetime):
+        # Check if the datetime is at midnight UTC, which indicates an all-day event
+        if (
+            dt_obj.time() == time(0, 0)
+            and dt_obj.tzinfo
+            and dt_obj.tzinfo.utcoffset(dt_obj) == timedelta(0)
+        ):
+            display_date = dt_obj.date()
+            if is_end:
+                display_date -= timedelta(days=1)
+
+            if display_date == today_local:
+                return "Today"
+            if display_date == tomorrow_local:
+                return "Tomorrow"
+            return display_date.strftime("%b %d")
+
         # Convert event time to local timezone for comparison and display
         dt_local = dt_obj.astimezone(local_tz)
         # Example: "Today 14:30", "Tomorrow 09:00", "Apr 21 10:00"
@@ -64,21 +88,17 @@ def format_datetime_or_date(
         return f"{day_str} {dt_local.strftime('%H:%M')}"
 
     else:  # dt_obj is a date
-        # Format date (all-day event) - Dates don't have timezones inherently
-        # Comparisons are relative to the local timezone's date
-        # Example: "Today", "Tomorrow", "Apr 21"
+        # For all-day events, treat the date as starting at midnight in the local timezone
+        # This ensures correct comparison against today_local and tomorrow_local
 
         # Adjust end date for display: CalDAV often stores end date as the day *after*
-        display_date = dt_obj
-        if is_end:
-            display_date = dt_obj - timedelta(days=1)
+        display_date = dt_obj - timedelta(days=1) if is_end else dt_obj
 
         if display_date == today_local:
             return "Today"
-        elif display_date == tomorrow_local:
+        if display_date == tomorrow_local:
             return "Tomorrow"
-        else:
-            return display_date.strftime("%b %d")  # e.g., Apr 21
+        return display_date.strftime("%b %d")  # e.g., Apr 21
     # Fallback for other types, though dt_obj should only be datetime or date
     # Based on type hints, this path should not be reached if input is correct.
     # However, to satisfy linters about all paths returning, and for robustness:
@@ -567,8 +587,11 @@ def format_events_for_prompt(
     events: list[dict[str, Any]],
     prompts: dict[str, str],  # Prompts can have varied structure
     timezone_str: str,  # Added timezone string
+    clock: Clock | None = None,
 ) -> tuple[str, str]:
     """Formats the fetched events into strings suitable for the prompt."""
+    if clock is None:
+        clock = SystemClock()
     try:
         local_tz = ZoneInfo(timezone_str)
     except Exception:
@@ -577,7 +600,7 @@ def format_events_for_prompt(
         )
         local_tz = ZoneInfo("UTC")
 
-    today_local = datetime.now(local_tz).date()
+    today_local = clock.now().astimezone(local_tz).date()
     tomorrow_local = today_local + timedelta(days=1)
     two_weeks_later = today_local + timedelta(
         days=15
@@ -622,7 +645,7 @@ def format_events_for_prompt(
 
         # Skip events that have already ended (useful if fetch range includes past)
         # Compare end time (now guaranteed to be aware or a date) with current time
-        now_aware = datetime.now(local_tz)
+        now_aware = clock.now().astimezone(local_tz)
 
         # Convert end_dt (potentially localized datetime or original date) to aware datetime for comparison
         if isinstance(end_dt, date) and not isinstance(end_dt, datetime):
@@ -643,8 +666,12 @@ def format_events_for_prompt(
             continue
 
         # Format start/end times (using potentially localized datetimes) using the timezone
-        start_str = format_datetime_or_date(start_dt, timezone_str, is_end=False)
-        end_str = format_datetime_or_date(end_dt, timezone_str, is_end=True)
+        start_str = format_datetime_or_date(
+            start_dt, timezone_str, is_end=False, clock=clock
+        )
+        end_str = format_datetime_or_date(
+            end_dt, timezone_str, is_end=True, clock=clock
+        )
         summary = event["summary"]
 
         fmt = all_day_fmt if event["all_day"] else event_fmt
