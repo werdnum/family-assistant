@@ -32,6 +32,8 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "- script: Runs Starlark code automatically for simple, deterministic tasks\n\n"
                 "Scripts can also use wake_llm() function to conditionally wake the LLM with custom context. "
                 "The listener will only affect conversations in the same context where it was created.\n\n"
+                "IMPORTANT: ALWAYS test your event listener match_conditions with test_event_listener or test_event_listener_script "
+                "before adding a listener. If there are no results, consider whether the event just hasn't happened yet or the listener might be wrong.\n\n"
                 "Returns: A JSON string with the operation result as a dict. "
                 "On success, returns {'success': true, 'listener_id': [id], 'message': 'Created listener [name] with ID [id]'}. "
                 "On validation error, returns {'success': false, 'message': [error details]} for invalid source, action_type, missing script_code, missing match_conditions, or duplicate name."
@@ -52,7 +54,7 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
                         "type": "object",
                         "description": (
                             "Configuration including match_conditions and optional action_config. "
-                            "Example: {'match_conditions': {'entity_id': 'person.andrew', 'new_state.state': 'Home'}}"
+                            "Example: {'match_conditions': {'entity_id': 'person.andrew_garrett', 'new_state.state': 'home'}}"
                         ),
                         "properties": {
                             "match_conditions": {
