@@ -222,7 +222,7 @@ These fixtures are available in various web API test files:
 
 - FastAPI application instance configured for testing
 
-**`test_client`** (function scope)
+**`test_.client`** (function scope)
 
 - HTTPX AsyncClient for the test FastAPI app
 - Usage:
@@ -615,7 +615,7 @@ Family Assistant is an LLM-powered application designed to centralize family inf
 - **Dependency Injection**: Core services accept dependencies as constructor arguments
 - **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface, LLMInterface, EmbeddingGenerator)
 - **Async/Await**: Fully asynchronous architecture using asyncio
-- **Context Managers**: Database operations use context managers for proper resource cleanup
+-- **Context Managers**: Database operations use context managers for proper resource cleanup
 - **Retry Logic**: Built-in retry mechanisms for transient failures
 - **Event-Driven**: Loosely coupled components communicate via events
 
@@ -649,7 +649,7 @@ See the detailed guide in `src/family_assistant/tools/README.md` for complete in
 This dual registration system provides:
 
 - **Security**: Different profiles can have different tool access (e.g., browser profile has only browser tools)
-- **Flexibility**: Each. Each profile can be tailored with specific tools without code changes
+- **Flexibility**: Each profile can be tailored with specific tools without code changes
 - **Safety**: Destructive tools can be excluded from certain profiles
 
 Example:
