@@ -567,10 +567,13 @@ elif temp <= 25 and prev_temp > 25:
    - Added `test_event_listener_script` tool for dry runs
    - All tools fully tested with comprehensive integration tests
 
-2. **Web UI** (TODO)
-   - Update event listeners UI to show script code
-   - Add script editor with syntax highlighting
-   - Show script execution history in task UI
+2. **Web UI** (In Progress)
+   - ✅ Show script code and execution history on listener detail page
+   - ✅ Link to task details from listener page
+   - ✅ Show triggered listeners on event detail page
+   - 🚧 Add script editor with syntax highlighting to listener edit page
+   - 🚧 Create new listeners from the UI
+   - 🚧 Test scripts from the UI
 
 ### 📋 Phase 3: Production Hardening (Future)
 
