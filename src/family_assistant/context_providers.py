@@ -741,6 +741,7 @@ class CalendarContextProvider(ContextProvider):
         calendar_config: dict[str, Any],
         timezone_str: str,
         prompts: PromptsType,
+        clock: calendar_integration.Clock | None = None,
     ) -> None:
         """
         Initializes the CalendarContextProvider.
@@ -749,10 +750,12 @@ class CalendarContextProvider(ContextProvider):
             calendar_config: Configuration dictionary for calendar sources.
             timezone_str: The local timezone string (e.g., "Europe/London").
             prompts: A dictionary containing prompt templates for formatting.
+            clock: A clock object for managing time.
         """
         self._calendar_config = calendar_config
         self._timezone_str = timezone_str
         self._prompts = prompts
+        self._clock = clock or calendar_integration.SystemClock()
 
     @property
     def name(self) -> str:
@@ -780,6 +783,7 @@ class CalendarContextProvider(ContextProvider):
                     events=upcoming_events,
                     prompts=self._prompts,  # Pass the prompts dict here
                     timezone_str=self._timezone_str,
+                    clock=self._clock,
                 )
             )
             calendar_header_template = self._prompts.get(

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
 
 # RADICALE_TEST_CALENDAR_NAME is no longer needed as direct URL is provided by fixture
+from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -48,6 +49,26 @@ logger = logging.getLogger(__name__)
 TEST_CHAT_ID = "cal_test_chat_123"
 TEST_USER_NAME = "CalendarTestUser"
 TEST_TIMEZONE_STR = "Europe/Berlin"  # Example timezone for tests
+
+
+@pytest.mark.asyncio
+async def test_format_datetime_or_date_all_day_tomorrow_with_mock_clock() -> None:
+    """
+    Test that an all-day event for tomorrow is correctly formatted as "Tomorrow"
+    using MockClock.
+    """
+    timezone_str = "America/New_York"
+    local_tz = ZoneInfo(timezone_str)
+    mock_now = datetime(2025, 6, 23, 10, 0, 0, tzinfo=local_tz)
+    mock_clock = MockClock(initial_time=mock_now)
+
+    event_dt = datetime(2025, 6, 24, 0, 0, 0, tzinfo=ZoneInfo("UTC"))
+
+    formatted_str = format_datetime_or_date(
+        dt_obj=event_dt, timezone_str=timezone_str, is_end=False, clock=mock_clock
+    )
+
+    assert "Tomorrow" in formatted_str
 
 
 def get_radicale_client(
