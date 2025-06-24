@@ -417,7 +417,7 @@ class PlaywrightScraper:
                     try:
                         logger.debug(f"Playwright navigating to {url}")
                         response = await page.goto(
-                            url, wait_until="networkidle", timeout=20000
+                            url, wait_until="networkidle", timeout=60000
                         )
                         logger.debug(f"Playwright navigation to {url} completed.")
                     except PlaywrightTimeoutError:
