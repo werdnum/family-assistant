@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 
 from family_assistant.storage.context import DatabaseContext
@@ -218,4 +218,31 @@ async def handle_document_upload(  # noqa: PLR0913
             "AUTH_ENABLED": AUTH_ENABLED,
             "now_utc": now_utc,
         },
+    )
+
+
+@router.post("/reindex/{document_id}", name="ui_reindex_document")
+async def ui_reindex_document(
+    request: Request,
+    document_id: int,
+    current_user: Annotated[User | None, Depends(get_current_user_optional)] = None,
+) -> RedirectResponse:
+    """Handles re-indexing a document from the UI."""
+    if AUTH_ENABLED and not current_user:
+        # Handle auth if necessary
+        pass
+
+    api_url = f"{request.app.state.server_url}/api/documents/{document_id}/reindex"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(api_url)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Error re-indexing document: {e}", exc_info=True)
+        # You might want to add a message to the user here
+        pass
+
+    return RedirectResponse(
+        request.app.url_path_for("ui_list_documents"), status_code=303
     )

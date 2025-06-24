@@ -5,12 +5,13 @@ import pathlib
 import re
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import filetype  # type: ignore[import-untyped]
 
 # storage functions now accessed via DatabaseContext
-from family_assistant.storage.context import DatabaseContext
+if TYPE_CHECKING:
+    from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +48,12 @@ class IngestedDocument:
 
 
 async def process_document_ingestion_request(
-    db_context: DatabaseContext,
-    document_storage_path: pathlib.Path,
+    db_context: "DatabaseContext",
+    document_storage_path: pathlib.Path | None,
     source_type: str,
     source_id: str,
-    source_uri: str,
-    title: str,
+    source_uri: str | None,
+    title: str | None = None,
     content_parts: dict[str, str] | None = None,
     uploaded_file_content: bytes | None = None,
     uploaded_file_filename: str | None = None,
@@ -88,6 +89,10 @@ async def process_document_ingestion_request(
     try:
         # Process uploaded file content if present
         if uploaded_file_content and uploaded_file_filename:
+            if not document_storage_path:
+                raise ValueError(
+                    "File content provided, but document_storage_path is not configured."
+                )
             original_filename_for_task = uploaded_file_filename
             safe_basename = re.sub(
                 r"[^a-zA-Z0-9_.-]",

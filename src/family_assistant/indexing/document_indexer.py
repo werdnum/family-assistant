@@ -290,12 +290,16 @@ class DocumentIndexer:
             logger.info(
                 f"Creating IndexableContent for URL for document ID {document_id}: url='{url_to_scrape}'"
             )
+            url_item_metadata = {"original_url": url_to_scrape}
+            if payload.get("doc_metadata"):
+                url_item_metadata.update(payload["doc_metadata"])
+
             url_item = IndexableContent(
                 content=url_to_scrape,
                 embedding_type="raw_url",  # WebFetcherProcessor will look for this type
                 mime_type="text/plain",  # The content of *this* item is a plain text URL
                 source_processor="DocumentIndexer.process_document",
-                metadata={"original_url": url_to_scrape},  # Example metadata
+                metadata=url_item_metadata,
                 ref=None,
             )
             initial_items.append(url_item)

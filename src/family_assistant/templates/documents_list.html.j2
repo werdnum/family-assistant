@@ -59,6 +59,9 @@
                     {% if doc.source_uri %}
                      | <a href="{{ doc.source_uri }}" target="_blank">Source</a>
                     {% endif %}
+                     | <form action="{{ request.app.url_path_for('ui_reindex_document', document_id=doc.id) }}" method="post" style="display: inline;">
+                        <button type="submit" class="link-button">Re-index</button>
+                    </form>
                 </td>
             </tr>
             {% endfor %}
