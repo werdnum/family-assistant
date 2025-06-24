@@ -138,6 +138,23 @@ class VectorRepository(BaseRepository):
             self._logger.error(f"Failed to delete document {document_id}: {e}")
             raise
 
+    async def delete_document_embeddings(self, document_id: int) -> None:
+        """
+        Delete all embeddings for a specific document.
+        """
+        if not self._enabled or self._vector_module is None:
+            return
+
+        try:
+            await self._vector_module.delete_document_embeddings(
+                db_context=self._db, document_id=document_id
+            )
+        except Exception as e:
+            self._logger.error(
+                f"Failed to delete embeddings for document {document_id}: {e}"
+            )
+            raise
+
     async def add_embedding(
         self,
         document_id: int,

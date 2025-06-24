@@ -1065,6 +1065,43 @@ async def handle_script_execution(
         raise ScriptError(f"Unexpected error: {e}") from e
 
 
+async def handle_reindex_document(
+    exec_context: ToolExecutionContext,
+    payload: dict[str, Any],
+) -> None:
+    """
+    Task handler for re-indexing a document.
+    """
+    document_id = payload.get("document_id")
+    if not document_id:
+        raise ValueError("Missing 'document_id' in reindex_document task payload.")
+
+    db_context = exec_context.db_context
+    if not db_context:
+        raise ValueError("Missing DatabaseContext dependency in context.")
+
+    # 1. Delete existing embeddings
+    await db_context.vector.delete_document_embeddings(document_id)
+
+    # 2. Get the document record
+    doc_record = await db_context.vector.get_document_by_id(document_id)
+    if not doc_record:
+        raise ValueError(f"Document with ID {document_id} not found.")
+
+    # 3. Enqueue a new processing task for the existing document
+    task_payload = {
+        "document_id": doc_record.id,
+        "url_to_scrape": doc_record.source_uri,
+        "doc_metadata": {"force_title_update": True},
+    }
+
+    await db_context.tasks.enqueue(
+        task_id=f"reindex-doc-{doc_record.id}-{uuid.uuid4()}",
+        task_type="process_uploaded_document",
+        payload=task_payload,
+    )
+
+
 __all__ = [
     "TaskWorker",
     "handle_log_message",
@@ -1072,4 +1109,5 @@ __all__ = [
     "handle_system_event_cleanup",
     "handle_system_error_log_cleanup",
     "handle_script_execution",
+    "handle_reindex_document",
 ]  # Export class and relevant handlers

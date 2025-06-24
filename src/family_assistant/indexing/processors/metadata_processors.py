@@ -20,6 +20,7 @@ class DocumentTitleUpdaterProcessorConfig:
     # Example: Prioritize title from metadata key 'fetched_title'
     title_metadata_key: str = "fetched_title"
     min_title_length: int = 3  # Minimum length for a title to be considered valid
+    force_update: bool = False  # Force update even if title exists
 
 
 class TitleExtractor(ContentProcessor):
@@ -116,6 +117,26 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
             original_document.title
         )  # Get current title to potentially avoid overwriting good titles
 
+        if (
+            hasattr(original_document, "doc_metadata")
+            and original_document.doc_metadata  # type: ignore[attr-defined]
+            and original_document.doc_metadata.get("force_title_update")  # type: ignore[attr-defined]
+        ):
+            self.config.force_update = True
+            logger.info(
+                f"[{self.name}] Forcing title update for document ID {document_id} based on document metadata."
+            )
+
+        # Also check for force_update in the metadata of any incoming item
+        if not self.config.force_update:
+            for item in current_items:
+                if item.metadata and item.metadata.get("force_title_update"):
+                    self.config.force_update = True
+                    logger.info(
+                        f"[{self.name}] Forcing title update for document ID {document_id} based on item metadata."
+                    )
+                    break
+
         # Check if current title is already good enough (e.g. not a placeholder)
         # This logic can be expanded based on placeholder_prefixes in config
         # For now, we'll update if a fetched_title is found and is different.
@@ -136,7 +157,9 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
                     )
                     break  # Found a candidate, stop searching
 
-        if potential_title and potential_title != current_doc_title:
+        if potential_title and (
+            self.config.force_update or potential_title != current_doc_title
+        ):
             try:
                 logger.info(
                     f"[{self.name}] Attempting to update title for document ID {document_id} from '{current_doc_title}' to '{potential_title}'."

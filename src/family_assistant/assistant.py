@@ -45,6 +45,7 @@ from family_assistant.storage.context import (
 from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
+    handle_reindex_document,
     handle_script_execution,
     handle_system_error_log_cleanup,
     handle_system_event_cleanup,
@@ -730,6 +731,9 @@ class Assistant:
         self.task_worker_instance.register_task_handler(
             "script_execution", handle_script_execution
         )
+        self.task_worker_instance.register_task_handler(
+            "reindex_document", self.handle_reindex_document
+        )
         logger.info(
             f"Registered task handlers for worker {self.task_worker_instance.worker_id}"
         )
@@ -929,3 +933,8 @@ class Assistant:
 
     def is_shutdown_complete(self) -> bool:
         return self._is_shutdown_complete
+
+    async def handle_reindex_document(
+        self, exec_context: ToolExecutionContext, payload: dict[str, Any]
+    ) -> None:
+        await handle_reindex_document(exec_context, payload)

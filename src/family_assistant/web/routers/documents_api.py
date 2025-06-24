@@ -25,6 +25,27 @@ documents_api_router = APIRouter()
 
 
 @documents_api_router.post(
+    "/{document_id}/reindex",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Re-index a document",
+    description="Enqueues a background task to re-index a document.",
+)
+async def reindex_document(
+    document_id: int,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> dict[str, Any]:
+    """
+    API endpoint to re-index a document.
+    """
+    await db_context.tasks.enqueue(
+        task_id=f"reindex_document_{document_id}",
+        task_type="reindex_document",
+        payload={"document_id": document_id},
+    )
+    return {"message": "Re-indexing task enqueued."}
+
+
+@documents_api_router.post(
     "/upload",  # Path relative to the prefix in api.py
     status_code=status.HTTP_202_ACCEPTED,
     summary="Upload and index a document",
