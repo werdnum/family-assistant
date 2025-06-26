@@ -32,10 +32,8 @@ from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
-from family_assistant.llm import (
-    LiteLLMClient,
-    LLMInterface,
-)
+from family_assistant.llm import LiteLLMClient, LLMInterface
+from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
 from family_assistant.storage.context import (
@@ -339,10 +337,36 @@ class Assistant:
                     f"Profile '{profile_id}' using overridden LLM client: {type(llm_client_for_profile).__name__}"
                 )
             else:
-                llm_client_for_profile = LiteLLMClient(
-                    model=profile_llm_model,
-                    model_parameters=self.config.get("llm_parameters", {}),
-                )
+                # Check for direct provider feature flag
+                use_direct_providers = self.config.get("use_direct_providers", False)
+
+                if use_direct_providers:
+                    # Use new factory to create client
+                    client_config = {
+                        "model": profile_llm_model,
+                        "model_parameters": self.config.get("llm_parameters", {}),
+                    }
+
+                    # Add any additional parameters from config
+                    # that might be needed (temperature, max_tokens, etc.)
+                    for key, value in profile_proc_conf_dict.items():
+                        if key.startswith("llm_") and key != "llm_model":
+                            # Remove 'llm_' prefix for the client config
+                            client_config[key[4:]] = value
+
+                    llm_client_for_profile = LLMClientFactory.create_client(
+                        config=client_config,
+                        use_direct_providers=True,
+                    )
+                    logger.info(
+                        f"Profile '{profile_id}' using direct provider client: {type(llm_client_for_profile).__name__}"
+                    )
+                else:
+                    # Use existing LiteLLM client
+                    llm_client_for_profile = LiteLLMClient(
+                        model=profile_llm_model,
+                        model_parameters=self.config.get("llm_parameters", {}),
+                    )
 
             local_tools_list_from_config = profile_tools_conf_dict.get(
                 "enable_local_tools"
