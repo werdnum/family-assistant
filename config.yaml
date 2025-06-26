@@ -1,5 +1,11 @@
 # Configuration for Family Assistant
 
+# Enable direct LLM provider implementations instead of LiteLLM
+# When true, uses direct OpenAI/Google SDKs for supported models
+# When false, uses LiteLLM for all models (default behavior)
+# Supported direct providers: OpenAI (gpt-*), Google (gemini-*)
+use_direct_providers: true
+
 # Event system configuration
 event_system:
   enabled: true
@@ -363,6 +369,11 @@ service_profiles:
     # This profile implicitly uses all settings from 'default_profile_settings'
     # as no specific 'processing_config' or 'tools_config' is defined here,
     # thus inheriting the tools_config that excludes the browser.
+    processing_config:
+      # Test with OpenAI direct provider (requires OPENAI_API_KEY)
+      llm_model: "gpt-4o"
+      # Alternative: Test with Google Gemini (requires GEMINI_API_KEY)
+      # llm_model: "gemini-2.0-flash-001"
 
   - id: "browser_profile"
     description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web page scraping to extract content, consider using the `ingest_document_from_url` tool or direct MCP browser tools if available."
