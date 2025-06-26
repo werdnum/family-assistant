@@ -21,6 +21,11 @@ dependencies = [
     "python-telegram-bot[ext]>=21.0,<22.0",
     # Use [ext] instead of [job-queue] for v21+
     "litellm>=1.38.1,<1.67.3",
+    # Direct provider SDKs
+    "openai>=1.0.0",
+    # OpenAI SDK for direct API access
+    "google-generativeai>=0.8.0",
+    # Google Gemini SDK for direct API access
     "python-dotenv>=1.0.0",
     "sqlalchemy[asyncio]>=2.0.0",
     "aiosqlite>=0.19.0",
@@ -68,6 +73,8 @@ dependencies = [
     # For async file operations (LLM recording/playback)
     "torch>=2.0.0",
     # Dependency for sentence-transformers
+    "passlib[bcrypt]>=1.7.4",
+    # For password hashing in tests
     "Authlib>=1.3.1",
     # For OIDC authentication
     "itsdangerous>=2.1.0",

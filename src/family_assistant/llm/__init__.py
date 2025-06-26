@@ -22,6 +22,8 @@ from litellm.exceptions import (
     Timeout,
 )
 
+from .factory import LLMClientFactory
+
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
 
 if TYPE_CHECKING:
@@ -981,3 +983,16 @@ class PlaybackLLMClient:
         except Exception:
             failed_input_str = str(current_input_args)
         logger.error(f"Failed Input Args:\n{failed_input_str}")
+
+
+# Export all public classes and interfaces
+__all__ = [
+    "LLMInterface",
+    "LLMOutput",
+    "ToolCallFunction",
+    "ToolCallItem",
+    "LiteLLMClient",
+    "RecordingLLMClient",
+    "PlaybackLLMClient",
+    "LLMClientFactory",
+]

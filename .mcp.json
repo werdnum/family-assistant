@@ -1,17 +1,3 @@
 {
-  "mcpServers": {
-    "language-server": {
-      "type": "stdio",
-      "command": "mcp-language-server",
-      "args": [
-        "--workspace",
-        ".",
-        "--lsp",
-        ".venv/bin/pyright-langserver",
-        "--",
-        "--stdio"
-      ],
-      "env": {}
-    }
-  }
+  "mcpServers": {}
 }
