@@ -4,12 +4,10 @@ Factory for creating appropriate LLM clients based on model configuration.
 
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from family_assistant.llm import LLMInterface
-
-from .providers.google_genai_client import GoogleGenAIClient
-from .providers.openai_client import OpenAIClient
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMInterface
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +30,18 @@ class LLMClientFactory:
         "claude-": "anthropic",
     }
 
-    _provider_classes: dict[str, type[LLMInterface]] = {
-        "openai": OpenAIClient,
-        "google": GoogleGenAIClient,
+    # Provider classes will be imported on demand to avoid circular imports
+    _provider_classes: dict[str, str] = {
+        "openai": "family_assistant.llm.providers.openai_client.OpenAIClient",
+        "google": "family_assistant.llm.providers.google_genai_client.GoogleGenAIClient",
+        "litellm": "family_assistant.llm.LiteLLMClient",
     }
 
     @classmethod
     def create_client(
         cls,
         config: dict[str, Any],
-        use_direct_providers: bool = False,
-    ) -> LLMInterface:
+    ) -> "LLMInterface":
         """
         Create appropriate LLM client based on configuration.
 
@@ -52,12 +51,11 @@ class LLMClientFactory:
         Args:
             config: LLM configuration dict containing:
                 - model: Model identifier (required)
-                - provider: Explicit provider name (optional)
+                - provider: Explicit provider name (optional, defaults to litellm)
                 - api_key: API key (optional, will use env var if not provided)
+                - api_base: API base URL (optional, for custom endpoints)
                 - model_parameters: Pattern-based parameters (optional)
                 - Additional provider-specific parameters
-            use_direct_providers: If True, use direct provider implementations.
-                                If False, use LiteLLM (default for backward compatibility)
 
         Returns:
             Instantiated LLM client
@@ -69,83 +67,55 @@ class LLMClientFactory:
         if not model:
             raise ValueError("Model must be specified in config")
 
-        # If not using direct providers, return LiteLLM client
-        if not use_direct_providers:
-            logger.info(f"Creating LiteLLM client for model: {model}")
-            return cls._create_litellm_client(config)
-
-        # Determine provider - explicit config takes precedence
+        # Determine provider - explicit config takes precedence, defaults to litellm
         provider = config.get("provider")
         if not provider:
             provider = cls._determine_provider(model)
 
         if provider not in cls._provider_classes:
-            # Fall back to LiteLLM for unsupported providers
-            logger.warning(
-                f"Provider '{provider}' not implemented in direct mode, falling back to LiteLLM"
-            )
-            return cls._create_litellm_client(config)
+            raise ValueError(f"Unknown provider: {provider} for model: {model}")
 
         # Get API key
         api_key = config.get("api_key")
-        if not api_key:
+        if not api_key and provider != "litellm":
             api_key = cls._get_api_key_for_provider(provider)
 
         # Extract provider-specific parameters
         # Remove keys that are handled separately
         provider_params = {
-            k: v
-            for k, v in config.items()
-            if k not in ["model", "provider", "api_key", "model_parameters"]
+            k: v for k, v in config.items() if k not in ["model", "provider", "api_key"]
         }
 
-        # Get model-specific parameters
-        model_parameters = config.get("model_parameters")
+        # Get model_parameters from llm_parameters config
+        model_parameters = config.get("model_parameters", {})
 
-        # Instantiate client
-        client_class = cls._provider_classes[provider]
-        logger.info(f"Creating {client_class.__name__} for model: {model}")
+        # Import the provider class dynamically
+        client_class_path = cls._provider_classes[provider]
+        module_path, class_name = client_class_path.rsplit(".", 1)
 
-        # Type checker workaround - it can't infer the specific class from dict lookup
-        if provider == "openai":
-            return OpenAIClient(
-                api_key=api_key,
-                model=model,
-                model_parameters=model_parameters,
-                **provider_params,
-            )
-        elif provider == "google":
-            return GoogleGenAIClient(
-                api_key=api_key,
+        # Import the module and get the class
+        import importlib
+
+        module = importlib.import_module(module_path)
+        client_class = getattr(module, class_name)
+
+        logger.info(f"Creating {class_name} for model: {model}")
+
+        if provider == "litellm":
+            # LiteLLMClient has a different constructor signature
+            return client_class(
                 model=model,
                 model_parameters=model_parameters,
                 **provider_params,
             )
         else:
-            # This should never happen due to earlier checks
-            raise ValueError(f"Unknown provider: {provider}")
-
-    @classmethod
-    def _create_litellm_client(cls, config: dict[str, Any]) -> LLMInterface:
-        """Create a LiteLLM client from config."""
-        # Import LiteLLMClient here to avoid circular imports
-        from family_assistant.llm import LiteLLMClient
-
-        model = config["model"]
-        model_parameters = config.get("model_parameters")
-
-        # Extract other parameters for LiteLLM
-        kwargs = {
-            k: v
-            for k, v in config.items()
-            if k not in ["model", "model_parameters", "provider", "api_key"]
-        }
-
-        return LiteLLMClient(
-            model=model,
-            model_parameters=model_parameters,
-            **kwargs,
-        )
+            # Direct provider clients (OpenAI, Google)
+            return client_class(
+                api_key=api_key,
+                model=model,
+                model_parameters=model_parameters,
+                **provider_params,
+            )
 
     @classmethod
     def _determine_provider(cls, model: str) -> str:
@@ -168,7 +138,8 @@ class LLMClientFactory:
             if parts[1] in cls._provider_classes:
                 return parts[1]
 
-        raise ValueError(f"Cannot determine provider for model: {model}")
+        # Default to litellm if no other provider can be determined
+        return "litellm"
 
     @classmethod
     def _get_api_key_for_provider(cls, provider: str) -> str:

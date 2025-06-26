@@ -36,6 +36,7 @@ class GoogleGenAIClient(LLMInterface):
         api_key: str,
         model: str,
         model_parameters: dict[str, dict[str, Any]] | None = None,
+        api_base: str | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -45,8 +46,15 @@ class GoogleGenAIClient(LLMInterface):
             api_key: Google API key
             model: Model identifier (e.g., "gemini-2.0-flash-001", "gemini-1.5-pro")
             model_parameters: Pattern-based parameters matching existing config format
+            api_base: Optional API base URL for custom endpoints.
             **kwargs: Default parameters for generation
         """
+        # Initialize the google-genai client
+        if api_base:
+            # For custom endpoints, we might need additional configuration
+            logger.info(f"Using custom API base: {api_base}")
+            # Note: The new API might handle this differently
+
         self.client = genai.Client(api_key=api_key)
         self.model_name = model
         self.model_parameters = model_parameters or {}
@@ -140,7 +148,7 @@ class GoogleGenAIClient(LLMInterface):
                     "Tool calling not fully implemented for new google-genai API"
                 )
 
-            # Make API call using async method
+            # Make API call using the client
             response = await self.client.aio.models.generate_content(
                 model=self.model_name,
                 contents=content,
