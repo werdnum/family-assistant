@@ -541,13 +541,26 @@ wake_llm(context, include_event=True)
 
 **Parameters:**
 
-- `context` (dict): A dictionary of key-value pairs to provide to the LLM as context
+- `context` (str or dict): Either a simple string message or a dictionary of key-value pairs to provide to the LLM as context
+  - **String (recommended for simple messages)**: When you just need to send a message, pass a string directly
+  - **Dictionary**: For structured data with multiple fields
 - `include_event` (bool, optional): Whether to include the original event data in the wake context (default: True)
 
 **Usage in Event Scripts:**
 
 ```starlark
-# Example: Wake LLM when temperature is too high
+# Example: Simple string message (recommended for straightforward alerts)
+temp = float(event["new_state"]["state"])
+if temp > 30:
+    wake_llm("High temperature alert: " + str(temp) + "°C detected in " + event["entity_id"])
+
+# Example: Using string for motion detection
+if event["new_state"]["state"] == "on":
+    wake_llm("Motion detected in " + event["entity_id"])
+```
+
+```starlark
+# Example: Dictionary for complex context with multiple fields
 temp = float(event["new_state"]["state"])
 if temp > 30:
     wake_llm({
@@ -559,7 +572,7 @@ if temp > 30:
 ```
 
 ```starlark
-# Example: Process important emails
+# Example: Process important emails with structured data
 if event.get("source_id") == "indexing":
     metadata = event.get("metadata", {})
     if metadata.get("type") == "email" and "urgent" in metadata.get("subject", "").lower():
@@ -576,7 +589,8 @@ if event.get("source_id") == "indexing":
 - The wake_llm function can be called multiple times in a script
 - Each call adds to a queue of wake contexts that will be processed
 - The LLM will receive all contexts when the script completes
-- Use meaningful keys in your context dictionary for clarity
+- When passing a string, it's automatically converted to `{"message": "your string"}`
+- Use meaningful keys in your context dictionary for clarity when using dict format
 
 ### Currently Not Available
 
