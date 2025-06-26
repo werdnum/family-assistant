@@ -26,6 +26,7 @@ system_prompt: |
     * Use `schedule_recurring_task` for repeated LLM callbacks (it's like schedule_future_callback with a recurrence rule)
     * Use `schedule_action` to schedule scripts or more complex LLM callbacks at specific times
     * Use `schedule_recurring_action` to schedule recurring scripts or actions with RRULE format
+    * When awakened by callbacks/reminders (messages starting with "System Callback Trigger" or "System: Reminder triggered"), remember that your response is automatically sent to the user - no need to use send_message_to_user
     * To manage scheduled tasks:
       - Use `list_pending_callbacks` to see all pending callbacks (including recurring task instances)
       - Use `cancel_pending_callback` to cancel any callback by its task_id

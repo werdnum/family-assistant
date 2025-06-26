@@ -11,3 +11,4 @@ scratch
 .coverage
 coverage_annotated/
 logs.log
+.serena/
