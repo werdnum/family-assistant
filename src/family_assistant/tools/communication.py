@@ -191,6 +191,14 @@ async def send_message_to_user_tool(
         )
         return "Error: Chat interface not available."
 
+    # Validate that the user is not trying to send a message to themselves
+    current_conversation_id = exec_context.conversation_id
+    if str(target_chat_id) == current_conversation_id:
+        logger.warning(
+            f"Attempt to send message to self: target_chat_id={target_chat_id}, current_conversation_id={current_conversation_id}"
+        )
+        return "Error: Cannot send a message to yourself. Please specify a different recipient."
+
     try:
         # Use the ChatInterface to send the message.
         # Assuming the target_chat_id is for the same interface type as the current context.

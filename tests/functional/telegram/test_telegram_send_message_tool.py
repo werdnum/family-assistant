@@ -274,3 +274,217 @@ async def test_send_message_to_user_tool(
     finally:
         # Restore original context providers
         fix.processing_service.context_providers = original_providers
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_self_rejected(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    """
+    Tests that the send_message_to_user tool correctly rejects attempts to send
+    a message to oneself.
+    """
+    # Arrange
+    fix = telegram_handler_fixture
+    alice_chat_id = 123  # Sender's chat ID
+    alice_user_id = 12345
+    alice_message_id = 501
+
+    # Alice tries to send a message to herself
+    user_text = "Send a message to myself saying 'test self message'"
+    tool_call_id = f"call_{uuid.uuid4()}"
+
+    # --- Mock LLM Rules ---
+    def self_message_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        last_text = get_last_message_text(messages)
+        return "Send a message to myself" in last_text
+
+    self_message_tool_call = LLMOutput(
+        content="I'll send that message to you.",
+        tool_calls=[
+            ToolCallItem(
+                id=tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name="send_message_to_user",
+                    arguments=json.dumps({
+                        "target_chat_id": alice_chat_id,  # Same as sender
+                        "message_content": "test self message",
+                    }),
+                ),
+            )
+        ],
+    )
+    rule_self_message_request: Rule = (self_message_matcher, self_message_tool_call)
+
+    def tool_error_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        # Look for the tool response with error message
+        return any(
+            msg.get("role") == "tool"
+            and msg.get("tool_call_id") == tool_call_id
+            and "Cannot send a message to yourself" in str(msg.get("content", ""))
+            for msg in messages
+        )
+
+    error_acknowledgment_output = LLMOutput(
+        content="I cannot send a message to yourself. You'll see my responses directly in this conversation.",
+        tool_calls=None,
+    )
+    rule_error_acknowledgment: Rule = (tool_error_matcher, error_acknowledgment_output)
+
+    mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
+    mock_llm_client.rules = [rule_self_message_request, rule_error_acknowledgment]
+
+    # --- Mock Bot Response ---
+    # Only the final message should be sent (the error acknowledgment)
+    mock_final_message = AsyncMock(spec=Message, message_id=502)
+    fix.mock_bot.send_message.side_effect = [mock_final_message]
+
+    # --- Create Mock Update/Context ---
+    update = create_mock_update(
+        user_text,
+        chat_id=alice_chat_id,
+        user_id=alice_user_id,
+        message_id=alice_message_id,
+    )
+    context = create_mock_context(
+        fix.mock_application,
+        bot_data={"processing_service": fix.processing_service},
+    )
+
+    # Act
+    await fix.handler.message_handler(update, context)
+
+    # Assert
+    with soft_assertions():  # type: ignore[attr-defined]
+        # 1. LLM should be called twice (initial request + error handling)
+        mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
+        assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)
+
+        # 2. Only one message should be sent (the final response)
+        assert_that(fix.mock_bot.send_message.await_count).described_as(
+            "Bot send_message call count"
+        ).is_equal_to(1)
+
+        # 3. The sent message should be the error acknowledgment
+        _, kwargs = fix.mock_bot.send_message.call_args_list[0]
+        assert_that(kwargs["chat_id"]).described_as("Chat ID for response").is_equal_to(
+            alice_chat_id
+        )
+        expected_text = telegramify_markdown.markdownify(
+            "I cannot send a message to yourself. You'll see my responses directly in this conversation."
+        )
+        assert_that(kwargs["text"]).described_as("Response text").is_equal_to(
+            expected_text
+        )
+
+
+@pytest.mark.asyncio
+async def test_callback_send_message_to_self_rejected(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    """
+    Tests that when awakened by a callback, the LLM correctly handles
+    the case where it tries to use send_message_to_user to send to the
+    same user (which should be rejected).
+    """
+    # Arrange
+    fix = telegram_handler_fixture
+    alice_chat_id = 123
+    alice_user_id = 12345
+    alice_message_id = 601
+
+    # Simulate a callback trigger message
+    callback_text = "System Callback Trigger:\n\nThe time is now 2024-01-01 10:00:00 UTC.\nYour scheduled context was:\n---\nRemind user about the meeting\n---"
+    tool_call_id = f"call_{uuid.uuid4()}"
+
+    # --- Mock LLM Rules ---
+    def callback_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        last_text = get_last_message_text(messages)
+        return "System Callback Trigger" in last_text and "meeting" in last_text
+
+    # LLM incorrectly tries to use send_message_to_user
+    callback_tool_call = LLMOutput(
+        content="I'll remind you about the meeting.",
+        tool_calls=[
+            ToolCallItem(
+                id=tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name="send_message_to_user",
+                    arguments=json.dumps({
+                        "target_chat_id": alice_chat_id,
+                        "message_content": "Don't forget about your meeting!",
+                    }),
+                ),
+            )
+        ],
+    )
+    rule_callback_request: Rule = (callback_matcher, callback_tool_call)
+
+    def callback_error_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        return any(
+            msg.get("role") == "tool"
+            and msg.get("tool_call_id") == tool_call_id
+            and "Cannot send a message to yourself" in str(msg.get("content", ""))
+            for msg in messages
+        )
+
+    # LLM learns from the error and responds correctly
+    callback_correction_output = LLMOutput(
+        content="Don't forget about your meeting! 📅", tool_calls=None
+    )
+    rule_callback_correction: Rule = (
+        callback_error_matcher,
+        callback_correction_output,
+    )
+
+    mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
+    mock_llm_client.rules = [rule_callback_request, rule_callback_correction]
+
+    # --- Mock Bot Response ---
+    mock_final_message = AsyncMock(spec=Message, message_id=602)
+    fix.mock_bot.send_message.side_effect = [mock_final_message]
+
+    # --- Create Mock Update/Context for callback ---
+    # For callbacks, the update would typically be a system-generated one
+    update = create_mock_update(
+        callback_text,
+        chat_id=alice_chat_id,
+        user_id=alice_user_id,
+        message_id=alice_message_id,
+    )
+    context = create_mock_context(
+        fix.mock_application,
+        bot_data={"processing_service": fix.processing_service},
+    )
+
+    # Act
+    await fix.handler.message_handler(update, context)
+
+    # Assert
+    with soft_assertions():  # type: ignore[attr-defined]
+        # 1. LLM should be called twice
+        mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
+        assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)
+
+        # 2. Only one message should be sent (the corrected response)
+        assert_that(fix.mock_bot.send_message.await_count).described_as(
+            "Bot send_message call count"
+        ).is_equal_to(1)
+
+        # 3. The sent message should be the meeting reminder
+        _, kwargs = fix.mock_bot.send_message.call_args_list[0]
+        assert_that(kwargs["chat_id"]).described_as("Chat ID for response").is_equal_to(
+            alice_chat_id
+        )
+        expected_text = telegramify_markdown.markdownify(
+            "Don't forget about your meeting! 📅"
+        )
+        assert_that(kwargs["text"]).described_as("Response text").is_equal_to(
+            expected_text
+        )
