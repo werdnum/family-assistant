@@ -1,0 +1,8 @@
+# Configuration for mdformat
+# https://mdformat.readthedocs.io/
+
+# Line length limit for paragraphs
+wrap = 100
+
+# Keep consecutive numbering in ordered lists (default formatter does this)
+number = true
