@@ -1,10 +1,11 @@
 # Configuration for Family Assistant
 
-# Enable direct LLM provider implementations instead of LiteLLM
-# When true, uses direct OpenAI/Google SDKs for supported models
-# When false, uses LiteLLM for all models (default behavior)
-# Supported direct providers: OpenAI (gpt-*), Google (gemini-*)
-use_direct_providers: true
+# LLM Provider Configuration
+# Each service profile can specify a 'provider' in its processing_config.
+# Available providers: 'litellm' (default), 'openai', 'google'
+# - 'litellm': Uses LiteLLM for all models (supports many providers)
+# - 'openai': Uses direct OpenAI SDK (requires OPENAI_API_KEY)
+# - 'google': Uses direct Google GenAI SDK (requires GEMINI_API_KEY)
 
 # Event system configuration
 event_system:
@@ -370,10 +371,15 @@ service_profiles:
     # as no specific 'processing_config' or 'tools_config' is defined here,
     # thus inheriting the tools_config that excludes the browser.
     processing_config:
-      # Using Google Gemini direct provider (requires GEMINI_API_KEY)
+      # Example: Using Google GenAI SDK directly (requires GEMINI_API_KEY)
+      provider: "google"
       llm_model: "gemini-2.5-pro"
-      # Alternative: Test with OpenAI (requires OPENAI_API_KEY)
+      # Alternative: Use OpenAI SDK directly (requires OPENAI_API_KEY)
+      # provider: "openai"
       # llm_model: "gpt-4o"
+      # Alternative: Use LiteLLM (default, supports many providers)
+      # provider: "litellm"  # or omit provider to use litellm by default
+      # llm_model: "openrouter/anthropic/claude-3-haiku"
 
   - id: "browser_profile"
     description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web page scraping to extract content, consider using the `ingest_document_from_url` tool or direct MCP browser tools if available."
