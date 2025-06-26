@@ -1,5 +1,16 @@
 # LLM Provider Migration Plan: From LiteLLM to Direct Libraries
 
+## Status
+
+- **Phase 1: Parallel Implementation** ✅ COMPLETED (2025-06-26)
+  - OpenAI provider implemented
+  - Google Gemini provider implemented (using new google-genai SDK)
+  - Feature flag `use_direct_providers` added
+  - Ready for testing
+- **Phase 2: Testing** 🚧 IN PROGRESS
+- **Phase 3: Gradual Rollout** ⏳ NOT STARTED
+- **Phase 4: Full Migration** ⏳ NOT STARTED
+
 ## Overview
 
 This document outlines the plan to migrate from LiteLLM to direct provider libraries (OpenAI, Google
@@ -675,11 +686,13 @@ class ToolCallIDTranslator:
 
 ## Migration Strategy
 
-### Phase 1: Parallel Implementation
+### Phase 1: Parallel Implementation ✅ COMPLETED
 
-1. Create new directory structure alongside existing code
-2. Implement one provider at a time (start with OpenAI)
-3. Add feature flag to `Assistant.setup_dependencies()`:
+Status: Completed on 2025-06-26
+
+1. ✅ Created new directory structure alongside existing code
+2. ✅ Implemented OpenAI and Google Gemini providers
+3. ✅ Added feature flag to `Assistant.setup_dependencies()`:
 
 ```python
 # In assistant.py
@@ -710,7 +723,23 @@ else:
     llm_client = LiteLLMClient(...)
 ```
 
-### Phase 2: Testing
+### Phase 2: Testing 🚧 IN PROGRESS
+
+Current Status: Ready for testing with the following setup:
+
+1. **Configuration**: Set `use_direct_providers: true` in `config.yaml`
+
+2. **API Keys**: Set environment variables:
+
+   - `OPENAI_API_KEY` for OpenAI models (gpt-4o, gpt-4, etc.)
+   - `GEMINI_API_KEY` for Google models (gemini-2.0-flash-001, etc.)
+
+3. **Model Selection**: Configure in service profiles, e.g.:
+
+   ```yaml
+   processing_config:
+     llm_model: "gpt-4o"  # or "gemini-2.0-flash-001"
+   ```
 
 The testing strategy aligns with the existing testing infrastructure in the project.
 
