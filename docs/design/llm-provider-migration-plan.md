@@ -2,7 +2,9 @@
 
 ## Overview
 
-This document outlines the plan to migrate from LiteLLM to direct provider libraries (OpenAI, Google GenAI, Anthropic). The migration aims to reduce dependencies while maintaining clean architecture and full functionality.
+This document outlines the plan to migrate from LiteLLM to direct provider libraries (OpenAI, Google
+GenAI, Anthropic). The migration aims to reduce dependencies while maintaining clean architecture
+and full functionality.
 
 ## Current State Analysis
 
@@ -18,11 +20,13 @@ The codebase uses a minimal subset of LiteLLM's features:
 ### Key Findings
 
 1. **OpenAI**: The native library is almost a drop-in replacement
+
    - Same message format
    - Same tool/function calling format
    - Nearly identical response structure
 
 2. **Google GenAI**: Requires format conversion but straightforward
+
    - Message role mapping (user/assistant → user/model)
    - Tool definition format differences
    - Different response structure
@@ -45,7 +49,7 @@ src/family_assistant/llm/
 ├── __init__.py              # Re-exports for backward compatibility
 ├── base.py                  # Protocol, data classes, exceptions
 ├── factory.py               # Provider selection and instantiation
-├── resilient_client.py      # Retry, fallback, and ID translation
+├── retrying_client.py       # Retry, fallback, and ID translation
 ├── providers/
 │   ├── __init__.py
 │   ├── openai_client.py
@@ -113,6 +117,26 @@ class LLMProviderError(Exception):
         self.provider = provider
         self.model = model
         super().__init__(message)
+
+class RateLimitError(LLMProviderError):
+    """Raised when hitting provider rate limits."""
+    pass
+
+class AuthenticationError(LLMProviderError):
+    """Raised when authentication fails."""
+    pass
+
+class ModelNotFoundError(LLMProviderError):
+    """Raised when the requested model doesn't exist."""
+    pass
+
+class ContextLengthError(LLMProviderError):
+    """Raised when exceeding model context limits."""
+    pass
+
+class InvalidRequestError(LLMProviderError):
+    """Raised when the request format is invalid."""
+    pass
 ```
 
 ### 2. Provider Implementations
@@ -301,7 +325,7 @@ class GoogleGenAIClient(LLMInterface):
 
 ```python
 import os
-from typing import Type
+from typing import Type, Any
 import logging
 
 from .base import LLMInterface
@@ -312,7 +336,13 @@ from .providers.anthropic_client import AnthropicClient
 logger = logging.getLogger(__name__)
 
 class LLMClientFactory:
-    """Factory for creating appropriate LLM clients based on model identifiers."""
+    """
+    Factory for creating appropriate LLM clients based on model configuration.
+    
+    This leverages the existing LLM configuration mechanism in the project,
+    where provider can be determined from the model config or inferred from
+    the model name.
+    """
     
     # Provider mappings - can be extended
     _provider_prefixes = {
@@ -332,17 +362,20 @@ class LLMClientFactory:
     @classmethod
     def create_client(
         cls,
-        model: str,
-        api_key: str | None = None,
-        **kwargs
+        config: dict[str, Any]
     ) -> LLMInterface:
         """
-        Create appropriate LLM client based on model identifier.
+        Create appropriate LLM client based on configuration.
+        
+        This method accepts the same configuration format used in the existing
+        LLM configuration system, making it a drop-in replacement.
         
         Args:
-            model: Model identifier (e.g., "gpt-4", "gemini-pro", "claude-3-sonnet")
-            api_key: API key (if not provided, will look in environment)
-            **kwargs: Additional parameters passed to the client
+            config: LLM configuration dict containing:
+                - model: Model identifier (required)
+                - provider: Explicit provider name (optional)
+                - api_key: API key (optional, will use env var if not provided)
+                - Additional provider-specific parameters
             
         Returns:
             Instantiated LLM client
@@ -350,21 +383,32 @@ class LLMClientFactory:
         Raises:
             ValueError: If model/provider is not recognized
         """
-        # Determine provider from model string
-        provider = cls._determine_provider(model)
+        model = config.get("model")
+        if not model:
+            raise ValueError("Model must be specified in config")
+        # Determine provider - explicit config takes precedence
+        provider = config.get("provider")
+        if not provider:
+            provider = cls._determine_provider(model)
         
         if provider not in cls._provider_classes:
             raise ValueError(f"Unknown provider: {provider} for model: {model}")
         
         # Get API key
+        api_key = config.get("api_key")
         if not api_key:
             api_key = cls._get_api_key_for_provider(provider)
+        
+        # Extract provider-specific parameters
+        # Remove keys that are handled separately
+        provider_params = {k: v for k, v in config.items() 
+                          if k not in ["model", "provider", "api_key"]}
         
         # Instantiate client
         client_class = cls._provider_classes[provider]
         logger.info(f"Creating {client_class.__name__} for model: {model}")
         
-        return client_class(api_key=api_key, model=model, **kwargs)
+        return client_class(api_key=api_key, model=model, **provider_params)
     
     @classmethod
     def _determine_provider(cls, model: str) -> str:
@@ -402,7 +446,7 @@ class LLMClientFactory:
         return api_key
 ```
 
-### 4. Resilient Client (resilient_client.py)
+### 4. Retrying Client (retrying_client.py)
 
 ```python
 import asyncio
@@ -414,9 +458,9 @@ from .utils.id_translator import ToolCallIDTranslator
 
 logger = logging.getLogger(__name__)
 
-class ResilientLLMClient(LLMInterface):
+class RetryingLLMClient(LLMInterface):
     """
-    LLM client that provides resilience through:
+    LLM client that provides retry and fallback capabilities:
     - Automatic retry with exponential backoff
     - Fallback to alternative providers
     - Cross-provider ID translation for tool continuity
@@ -445,6 +489,11 @@ class ResilientLLMClient(LLMInterface):
     ) -> LLMOutput:
         """Generate response with retry and fallback logic."""
         last_error = None
+        request_debug_info = {
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
         
         # Try primary client with retries
         for attempt in range(self.max_retries + 1):
@@ -472,6 +521,7 @@ class ResilientLLMClient(LLMInterface):
                     await asyncio.sleep(delay)
                 else:
                     logger.error(f"Primary client failed after all retries: {e}")
+                    self._dump_request_on_failure(request_debug_info, e, "primary")
         
         # Try fallback if available
         if self.fallback_client and last_error:
@@ -491,6 +541,7 @@ class ResilientLLMClient(LLMInterface):
                 
             except Exception as e:
                 logger.error(f"Fallback client also failed: {e}", exc_info=True)
+                self._dump_request_on_failure(request_debug_info, e, "fallback")
                 # Re-raise the original error as it's likely more informative
                 raise last_error
         
@@ -514,6 +565,22 @@ class ResilientLLMClient(LLMInterface):
         """Format user message with file - delegates to primary client."""
         return await self.primary_client.format_user_message_with_file(
             prompt_text, file_path, mime_type, max_text_length
+        )
+    
+    def _dump_request_on_failure(
+        self,
+        request_info: dict[str, Any],
+        error: Exception,
+        client_type: str
+    ) -> None:
+        """Dump full request details on failure for debugging."""
+        import json
+        logger.error(
+            f"Failed {client_type} LLM request:
+"
+            f"Error: {error}
+"
+            f"Request: {json.dumps(request_info, indent=2)}"
         )
 ```
 
@@ -617,18 +684,21 @@ class ToolCallIDTranslator:
 ```python
 # In assistant.py
 if self.config.get("use_direct_providers", False):
-    # New implementation
-    primary_client = LLMClientFactory.create_client(
-        model=profile_llm_model,
-        **model_parameters
-    )
+    # New implementation using existing LLM config format
+    primary_config = {
+        "model": profile_llm_model,
+        **model_parameters  # Contains provider-specific params
+    }
+    primary_client = LLMClientFactory.create_client(primary_config)
     
     if fallback_model_id:
-        fallback_client = LLMClientFactory.create_client(
-            model=fallback_model_id,
+        fallback_config = {
+            "model": fallback_model_id,
             **fallback_parameters
-        )
-        llm_client = ResilientLLMClient(
+        }
+        fallback_client = LLMClientFactory.create_client(fallback_config)
+        
+        llm_client = RetryingLLMClient(
             primary_client=primary_client,
             fallback_client=fallback_client,
             max_retries=retry_config.get("max_retries", 1)
@@ -642,11 +712,68 @@ else:
 
 ### Phase 2: Testing
 
-1. Create comprehensive test suite comparing outputs
-2. Test each provider individually
-3. Test resilience features (retry, fallback)
-4. Test cross-provider fallback scenarios
-5. Ensure tool calling works identically
+The testing strategy aligns with the existing testing infrastructure in the project.
+
+#### Unit Tests
+
+1. **Provider Client Tests** (`tests/unit/llm/providers/`)
+
+   - Mock provider SDK responses
+   - Test error handling and retries
+   - Verify request/response transformations
+   - Use existing `RuleBasedMockLLMClient` patterns
+
+2. **Factory Tests** (`tests/unit/llm/test_factory.py`)
+
+   - Test provider detection logic
+   - Verify configuration parsing
+   - Test error cases for unknown providers
+
+3. **RetryingClient Tests** (`tests/unit/llm/test_retrying_client.py`)
+
+   - Test retry logic with controlled failures
+   - Verify fallback behavior
+   - Test ID translation between providers
+   - Ensure debug dumping works correctly
+
+#### Integration Tests
+
+1. **Provider Comparison Tests** (`tests/functional/llm/`)
+
+   - Use pytest fixtures similar to existing patterns
+   - Compare outputs between LiteLLM and direct implementations
+   - Test with real API calls (using test API keys)
+   - Verify tool calling compatibility
+
+2. **End-to-End Tests**
+
+   - Integrate with existing `test_processing_service` fixtures
+   - Test complete conversation flows
+   - Verify tool execution with different providers
+
+#### Test Fixtures
+
+```python
+# tests/functional/llm/conftest.py
+@pytest.fixture
+def direct_llm_client(request):
+    """Fixture providing direct LLM client based on test parameters."""
+    provider = request.param
+    config = {
+        "model": TEST_MODELS[provider],
+        "provider": provider,
+        # Use test API keys from environment
+    }
+    return LLMClientFactory.create_client(config)
+
+@pytest.fixture
+def mock_llm_factory():
+    """Factory fixture for creating mock LLM clients."""
+    def _create_mock(provider: str, rules: list):
+        # Create provider-specific mock using RuleBasedMockLLMClient pattern
+        return ProviderMockAdapter(provider, rules)
+    return _create_mock
+```
 
 ### Phase 3: Gradual Rollout
 
@@ -655,22 +782,52 @@ else:
 3. Monitor for any behavioral differences
 4. Gradually migrate production after validation
 
-## Implementation Timeline
+## Documentation Plan
 
-### Week 1
+### Code Documentation
 
-- **Day 1**: Set up directory structure, implement base components
-- **Day 2**: Implement OpenAI client (simplest)
-- **Day 3**: Implement Google GenAI client with converters
-- **Day 4**: Implement resilient client with ID translation
-- **Day 5**: Initial testing and bug fixes
+1. **Module Docstrings**: Each new module includes comprehensive docstrings
+2. **Type Hints**: Full type annotations for all public interfaces
+3. **Example Usage**: Document common usage patterns in module docstrings
 
-### Week 2 (if needed)
+### User Documentation Updates
 
-- **Day 1-2**: Implement Anthropic client
-- **Day 3**: Comprehensive integration testing
-- **Day 4**: Performance optimization
-- **Day 5**: Documentation and cleanup
+1. **Update `docs/user/USER_GUIDE.md`**:
+
+   - Add section on provider configuration
+   - Document environment variables for each provider
+   - Include troubleshooting guide for common provider errors
+
+2. **Update System Prompts** (if needed):
+
+   - Review `prompts.yaml` for any LLM-specific references
+   - Ensure prompts work well across all providers
+
+3. **Migration Guide**:
+
+   - Create `docs/migration/litellm-to-direct.md`
+   - Include configuration examples
+   - Document breaking changes (if any)
+   - Provide rollback instructions
+
+### Configuration Examples
+
+```yaml
+# config.yaml - Example configuration
+use_direct_providers: true  # Feature flag
+
+# Provider-specific configurations
+llm_providers:
+  default:
+    model: "gpt-4"
+    temperature: 0.7
+    max_tokens: 4096
+    
+  fallback:
+    model: "gemini-pro"
+    provider: "google"  # Explicit provider
+    temperature: 0.7
+```
 
 ## Benefits
 
@@ -702,10 +859,9 @@ else:
 4. Clean, maintainable code structure
 5. Successful handling of cross-provider fallbacks
 
-## Future Enhancements
+## Future Work
 
-1. Add more providers (Cohere, AI21, etc.)
-2. Provider-specific optimizations
-3. Advanced retry strategies
-4. Request/response caching
-5. Cost tracking per provider
+1. **Streaming Support**: Add streaming response capability when needed
+2. **Additional Providers**: Add support for Cohere, AI21, etc. as required
+3. **Provider-Specific Features**: Expose unique features like Anthropic's constitutional AI
+4. **Performance Optimizations**: Connection pooling, request batching where supported
