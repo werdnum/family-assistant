@@ -6,7 +6,8 @@ import logging
 import os
 from typing import Any
 
-from .base import LLMInterface
+from family_assistant.llm import LLMInterface
+
 from .providers.google_genai_client import GoogleGenAIClient
 from .providers.openai_client import OpenAIClient
 
@@ -105,12 +106,24 @@ class LLMClientFactory:
         client_class = cls._provider_classes[provider]
         logger.info(f"Creating {client_class.__name__} for model: {model}")
 
-        return client_class(
-            api_key=api_key,
-            model=model,
-            model_parameters=model_parameters,
-            **provider_params,
-        )
+        # Type checker workaround - it can't infer the specific class from dict lookup
+        if provider == "openai":
+            return OpenAIClient(
+                api_key=api_key,
+                model=model,
+                model_parameters=model_parameters,
+                **provider_params,
+            )
+        elif provider == "google":
+            return GoogleGenAIClient(
+                api_key=api_key,
+                model=model,
+                model_parameters=model_parameters,
+                **provider_params,
+            )
+        else:
+            # This should never happen due to earlier checks
+            raise ValueError(f"Unknown provider: {provider}")
 
     @classmethod
     def _create_litellm_client(cls, config: dict[str, Any]) -> LLMInterface:
