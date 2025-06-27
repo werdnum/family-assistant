@@ -28,7 +28,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, selectinload
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+    selectinload,
+)
 from sqlalchemy.sql import functions  # Import functions explicitly
 
 # Use absolute package path
@@ -112,7 +118,7 @@ class DocumentRecord(Base):
         JSON().with_variant(JSONB, "postgresql")
     )  # Use variant
 
-    embeddings: Mapped[list["DocumentEmbeddingRecord"]] = sa.orm.relationship(
+    embeddings: Mapped[list["DocumentEmbeddingRecord"]] = relationship(
         "DocumentEmbeddingRecord",
         back_populates="document_record",
         cascade="all, delete-orphan",
@@ -149,7 +155,7 @@ class DocumentEmbeddingRecord(Base):
         JSON().with_variant(JSONB, "postgresql")
     )  # Renamed from metadata  # New metadata column
 
-    document_record: Mapped["DocumentRecord"] = sa.orm.relationship(
+    document_record: Mapped["DocumentRecord"] = relationship(
         "DocumentRecord", back_populates="embeddings"
     )
 

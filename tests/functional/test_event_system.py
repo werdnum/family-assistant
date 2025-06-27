@@ -70,7 +70,7 @@ def safe_json_loads(data: str | dict | list) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_event_storage_sampling(test_db_engine: AsyncEngine) -> None:
+async def test_event_storage_sampling(db_engine: AsyncEngine) -> None:
     """Test that event storage properly samples events (1 per entity per hour)."""
     storage = EventStorage(sample_interval_hours=1.0)
 
@@ -106,7 +106,7 @@ async def test_event_storage_sampling(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> None:
+async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
     """Test processing Home Assistant state change events."""
     # Create mock HA client
     mock_client = MagicMock()
@@ -189,7 +189,7 @@ async def test_home_assistant_event_processing(test_db_engine: AsyncEngine) -> N
 
 
 @pytest.mark.asyncio
-async def test_event_listener_matching(test_db_engine: AsyncEngine) -> None:
+async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
     """Test event matching against listener conditions."""
     # Add a test listener
     async with get_db_context() as db_ctx:
@@ -231,7 +231,7 @@ async def test_event_listener_matching(test_db_engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_test_event_listener_tool_matches_person_coming_home(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that test_event_listener tool correctly matches person coming home."""
     # Arrange
@@ -316,7 +316,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
 
 @pytest.mark.asyncio
 async def test_test_event_listener_tool_no_match_wrong_state(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that test_event_listener tool provides analysis when no events match."""
     # Arrange
@@ -375,7 +375,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
 
 @pytest.mark.asyncio
 async def test_test_event_listener_tool_empty_conditions_error(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that test_event_listener tool returns error for empty match conditions."""
     # Arrange - no events needed for this test
@@ -404,7 +404,7 @@ async def test_test_event_listener_tool_empty_conditions_error(
 
 
 @pytest.mark.asyncio
-async def test_event_type_matching(test_db_engine: AsyncEngine) -> None:
+async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     """Test that event type matching works correctly."""
     # Arrange - store different event types
     async with get_db_context() as db_ctx:
@@ -506,7 +506,7 @@ async def test_event_type_matching(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cleanup_old_events(test_db_engine: AsyncEngine) -> None:
+async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
     """Test that old events are cleaned up correctly."""
     from datetime import timedelta
 
@@ -569,7 +569,7 @@ async def test_cleanup_old_events(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) -> None:
+async def test_end_to_end_event_listener_wakes_llm(db_engine: AsyncEngine) -> None:
     """Test end-to-end flow: event triggers listener which enqueues LLM callback task."""
     from sqlalchemy import text
 
@@ -805,7 +805,7 @@ async def test_end_to_end_event_listener_wakes_llm(test_db_engine: AsyncEngine) 
 
 @pytest.mark.asyncio
 async def test_one_time_listener_disables_after_trigger(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that one-time listeners are disabled after they trigger."""
     from sqlalchemy import text

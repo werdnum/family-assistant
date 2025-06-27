@@ -55,7 +55,7 @@ TEST_DOC_CHUNKS = ["This is test content", "that will be chunked", "and embedded
 
 
 @pytest.mark.asyncio
-async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None:
+async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
     """Test that DOCUMENT_READY event is emitted when all tasks complete."""
     # Create indexing source
     indexing_source = IndexingSource()
@@ -240,7 +240,7 @@ async def test_document_ready_event_emitted(test_db_engine: AsyncEngine) -> None
 
 @pytest.mark.asyncio
 async def test_document_ready_not_emitted_with_pending_tasks(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that DOCUMENT_READY is not emitted when tasks are still pending."""
     # Create indexing source
@@ -337,7 +337,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
 
 
 @pytest.mark.asyncio
-async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) -> None:
+async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> None:
     """Test full integration with event listeners triggering on document ready."""
     # Clean up any leftover tasks from previous tests to ensure isolation
     async with get_db_context() as db_ctx:
@@ -493,7 +493,7 @@ async def test_indexing_event_listener_integration(test_db_engine: AsyncEngine) 
 
 
 @pytest.mark.asyncio
-async def test_json_extraction_compatibility(test_db_engine: AsyncEngine) -> None:
+async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
     """Test that JSON extraction works correctly with both SQLite and PostgreSQL."""
     async with get_db_context() as db_ctx:
         # Clean up any existing test tasks
@@ -530,7 +530,7 @@ async def test_json_extraction_compatibility(test_db_engine: AsyncEngine) -> Non
 
 
 @pytest.mark.asyncio
-async def test_json_extraction_cross_database(test_db_engine: AsyncEngine) -> None:
+async def test_json_extraction_cross_database(db_engine: AsyncEngine) -> None:
     """Test JSON extraction works with both SQLite and PostgreSQL."""
     async with get_db_context() as db_ctx:
         # Clean up any existing test tasks

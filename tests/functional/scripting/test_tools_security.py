@@ -15,7 +15,7 @@ from .test_tools_api import MockToolsProvider
 
 
 @pytest.mark.asyncio
-async def test_deny_all_tools(test_db_engine: Any) -> None:
+async def test_deny_all_tools(db_engine: Any) -> None:
     """Test that deny_all_tools prevents all tool access."""
     # Create config with deny_all_tools
     config = StarlarkConfig(deny_all_tools=True)
@@ -60,7 +60,7 @@ tools_execute("echo", message="test")
 
 
 @pytest.mark.asyncio
-async def test_allowed_tools_filter(test_db_engine: Any) -> None:
+async def test_allowed_tools_filter(db_engine: Any) -> None:
     """Test that allowed_tools filters available tools."""
     # Create config with only "echo" allowed
     config = StarlarkConfig(allowed_tools={"echo"})
@@ -122,7 +122,7 @@ tools_execute("add_numbers", a=1, b=2)
 
 
 @pytest.mark.asyncio
-async def test_no_restrictions_by_default(test_db_engine: Any) -> None:
+async def test_no_restrictions_by_default(db_engine: Any) -> None:
     """Test that without restrictions, all tools are available."""
     # Create default config (no restrictions)
     config = StarlarkConfig()
@@ -162,7 +162,7 @@ add_result = tools_execute("add_numbers", a=10, b=5)
 
 
 @pytest.mark.asyncio
-async def test_empty_allowed_tools_denies_all(test_db_engine: Any) -> None:
+async def test_empty_allowed_tools_denies_all(db_engine: Any) -> None:
     """Test that an empty allowed_tools set denies all tools."""
     # Create config with empty allowed_tools set
     config = StarlarkConfig(allowed_tools=set())
@@ -200,7 +200,7 @@ tools_execute("echo", message="test")
 
 
 @pytest.mark.asyncio
-async def test_security_logging(test_db_engine: Any, caplog: Any) -> None:
+async def test_security_logging(db_engine: Any, caplog: Any) -> None:
     """Test that security events are logged properly."""
     # Create config with restrictions
     config = StarlarkConfig(allowed_tools={"echo"})
@@ -246,7 +246,7 @@ result
 
 
 @pytest.mark.asyncio
-async def test_multiple_allowed_tools(test_db_engine: Any) -> None:
+async def test_multiple_allowed_tools(db_engine: Any) -> None:
     """Test configuration with multiple allowed tools."""
     # Create config with both tools allowed explicitly
     config = StarlarkConfig(allowed_tools={"echo", "add_numbers"})
@@ -287,7 +287,7 @@ results
 
 
 @pytest.mark.asyncio
-async def test_deny_all_overrides_allowed_tools(test_db_engine: Any) -> None:
+async def test_deny_all_overrides_allowed_tools(db_engine: Any) -> None:
     """Test that deny_all_tools takes precedence over allowed_tools."""
     # Create config with both deny_all and allowed_tools (deny should win)
     config = StarlarkConfig(deny_all_tools=True, allowed_tools={"echo", "add_numbers"})

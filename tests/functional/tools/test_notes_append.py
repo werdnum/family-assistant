@@ -10,7 +10,7 @@ from family_assistant.tools.types import ToolExecutionContext
 
 
 @pytest.mark.asyncio
-async def test_add_or_update_note_append(test_db_engine: Any) -> None:
+async def test_add_or_update_note_append(db_engine: Any) -> None:
     """Test that the append functionality works correctly for notes."""
     async with DatabaseContext() as db:
         exec_context = ToolExecutionContext(
@@ -83,7 +83,7 @@ async def test_add_or_update_note_append(test_db_engine: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_append_multiple_times(test_db_engine: Any) -> None:
+async def test_append_multiple_times(db_engine: Any) -> None:
     """Test appending multiple times to the same note."""
     async with DatabaseContext() as db:
         exec_context = ToolExecutionContext(

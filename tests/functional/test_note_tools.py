@@ -47,7 +47,7 @@ TEST_USER_NAME = "NotesTestUser"
 
 
 async def create_processing_service(
-    test_db_engine: AsyncEngine, rules: list[Rule]
+    db_engine: AsyncEngine, rules: list[Rule]
 ) -> ProcessingService:
     """Helper to create a processing service with given LLM rules."""
     # Create mock LLM
@@ -65,7 +65,7 @@ async def create_processing_service(
 
     # Create context providers
     async def get_test_db_context_func() -> DatabaseContext:
-        manager = get_db_context(engine=test_db_engine)
+        manager = get_db_context(engine=db_engine)
         return await manager.__aenter__()
 
     notes_provider = NotesContextProvider(
@@ -95,7 +95,7 @@ async def create_processing_service(
 
 
 @pytest.mark.asyncio
-async def test_add_note_with_include_in_prompt(test_db_engine: AsyncEngine) -> None:
+async def test_add_note_with_include_in_prompt(db_engine: AsyncEngine) -> None:
     """Test adding a note with include_in_prompt parameter."""
     # Arrange
     note_title = f"Test Note {uuid.uuid4()}"
@@ -132,11 +132,11 @@ async def test_add_note_with_include_in_prompt(test_db_engine: AsyncEngine) -> N
     )
 
     processing_service = await create_processing_service(
-        test_db_engine, [(add_note_matcher, add_note_response)]
+        db_engine, [(add_note_matcher, add_note_response)]
     )
 
     # Act
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_text_reply,
             _,
@@ -162,7 +162,7 @@ async def test_add_note_with_include_in_prompt(test_db_engine: AsyncEngine) -> N
     assert final_text_reply is not None
 
     # Verify note in database
-    async with test_db_engine.connect() as connection:
+    async with db_engine.connect() as connection:
         result = await connection.execute(
             text(
                 "SELECT title, content, include_in_prompt FROM notes WHERE title = :title"
@@ -177,7 +177,7 @@ async def test_add_note_with_include_in_prompt(test_db_engine: AsyncEngine) -> N
 
 
 @pytest.mark.asyncio
-async def test_get_note_that_exists(test_db_engine: AsyncEngine) -> None:
+async def test_get_note_that_exists(db_engine: AsyncEngine) -> None:
     """Test retrieving a note that exists."""
     # Arrange
     note_title = f"Existing Note {uuid.uuid4()}"
@@ -185,7 +185,7 @@ async def test_get_note_that_exists(test_db_engine: AsyncEngine) -> None:
     tool_call_id = f"call_{uuid.uuid4()}"
 
     # First add the note to the database
-    async with test_db_engine.connect() as connection:
+    async with db_engine.connect() as connection:
         await connection.execute(
             text(
                 "INSERT INTO notes (title, content, include_in_prompt) VALUES (:title, :content, :include)"
@@ -219,11 +219,11 @@ async def test_get_note_that_exists(test_db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        test_db_engine, [(get_note_matcher, get_note_response)]
+        db_engine, [(get_note_matcher, get_note_response)]
     )
 
     # Act
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_text_reply,
             _,
@@ -247,7 +247,7 @@ async def test_get_note_that_exists(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_note_that_does_not_exist(test_db_engine: AsyncEngine) -> None:
+async def test_get_note_that_does_not_exist(db_engine: AsyncEngine) -> None:
     """Test retrieving a note that doesn't exist."""
     # Arrange
     note_title = f"Nonexistent Note {uuid.uuid4()}"
@@ -278,11 +278,11 @@ async def test_get_note_that_does_not_exist(test_db_engine: AsyncEngine) -> None
     )
 
     processing_service = await create_processing_service(
-        test_db_engine, [(get_note_matcher, get_note_response)]
+        db_engine, [(get_note_matcher, get_note_response)]
     )
 
     # Act
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_text_reply,
             _,
@@ -306,7 +306,7 @@ async def test_get_note_that_does_not_exist(test_db_engine: AsyncEngine) -> None
 
 
 @pytest.mark.asyncio
-async def test_list_all_notes(test_db_engine: AsyncEngine) -> None:
+async def test_list_all_notes(db_engine: AsyncEngine) -> None:
     """Test listing all notes."""
     # Arrange
     base_title = f"List Test {uuid.uuid4()}"
@@ -317,7 +317,7 @@ async def test_list_all_notes(test_db_engine: AsyncEngine) -> None:
     ]
 
     # Add test notes
-    async with test_db_engine.connect() as connection:
+    async with db_engine.connect() as connection:
         for title, content, include in notes_data:
             await connection.execute(
                 text(
@@ -350,11 +350,11 @@ async def test_list_all_notes(test_db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        test_db_engine, [(list_notes_matcher, list_notes_response)]
+        db_engine, [(list_notes_matcher, list_notes_response)]
     )
 
     # Act
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_text_reply,
             _,
@@ -376,7 +376,7 @@ async def test_list_all_notes(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_notes_with_filter(test_db_engine: AsyncEngine) -> None:
+async def test_list_notes_with_filter(db_engine: AsyncEngine) -> None:
     """Test listing notes with include_in_prompt filter."""
     # Arrange
     base_title = f"Filter Test {uuid.uuid4()}"
@@ -386,7 +386,7 @@ async def test_list_notes_with_filter(test_db_engine: AsyncEngine) -> None:
     ]
 
     # Add test notes
-    async with test_db_engine.connect() as connection:
+    async with db_engine.connect() as connection:
         for title, content, include in notes_data:
             await connection.execute(
                 text(
@@ -423,11 +423,11 @@ async def test_list_notes_with_filter(test_db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        test_db_engine, [(list_included_matcher, list_included_response)]
+        db_engine, [(list_included_matcher, list_included_response)]
     )
 
     # Act
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_text_reply,
             _,
@@ -451,14 +451,14 @@ async def test_list_notes_with_filter(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_note(test_db_engine: AsyncEngine) -> None:
+async def test_delete_note(db_engine: AsyncEngine) -> None:
     """Test deleting a note."""
     # Arrange
     note_title = f"Delete Me {uuid.uuid4()}"
     note_content = "This note will be deleted."
 
     # First add the note
-    async with test_db_engine.connect() as connection:
+    async with db_engine.connect() as connection:
         await connection.execute(
             text(
                 "INSERT INTO notes (title, content, include_in_prompt) VALUES (:title, :content, :include)"
@@ -494,11 +494,11 @@ async def test_delete_note(test_db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        test_db_engine, [(delete_note_matcher, delete_note_response)]
+        db_engine, [(delete_note_matcher, delete_note_response)]
     )
 
     # Act
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_text_reply,
             _,
@@ -521,7 +521,7 @@ async def test_delete_note(test_db_engine: AsyncEngine) -> None:
     assert final_text_reply is not None
 
     # Verify note was deleted
-    async with test_db_engine.connect() as connection:
+    async with db_engine.connect() as connection:
         result = await connection.execute(
             text("SELECT COUNT(*) as count FROM notes WHERE title = :title"),
             {"title": note_title},
@@ -532,7 +532,7 @@ async def test_delete_note(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_existing_note(test_db_engine: AsyncEngine) -> None:
+async def test_update_existing_note(db_engine: AsyncEngine) -> None:
     """Test updating an existing note's content."""
     # Arrange
     note_title = f"Update Me {uuid.uuid4()}"
@@ -540,7 +540,7 @@ async def test_update_existing_note(test_db_engine: AsyncEngine) -> None:
     updated_content = "Updated content with new information."
 
     # First add the note
-    async with test_db_engine.connect() as connection:
+    async with db_engine.connect() as connection:
         await connection.execute(
             text(
                 "INSERT INTO notes (title, content, include_in_prompt) VALUES (:title, :content, :include)"
@@ -581,11 +581,11 @@ async def test_update_existing_note(test_db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        test_db_engine, [(update_note_matcher, update_note_response)]
+        db_engine, [(update_note_matcher, update_note_response)]
     )
 
     # Act
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_text_reply,
             _,
@@ -611,7 +611,7 @@ async def test_update_existing_note(test_db_engine: AsyncEngine) -> None:
     assert final_text_reply is not None
 
     # Verify note was updated
-    async with test_db_engine.connect() as connection:
+    async with db_engine.connect() as connection:
         result = await connection.execute(
             text("SELECT content FROM notes WHERE title = :title"),
             {"title": note_title},

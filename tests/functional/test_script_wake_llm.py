@@ -35,13 +35,13 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_script_wake_llm_single_call(test_db_engine: AsyncEngine) -> None:
+async def test_script_wake_llm_single_call(db_engine: AsyncEngine) -> None:
     """Test that a script can wake the LLM with a single context."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Wake LLM Single Call Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with script that calls wake_llm
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         await db_ctx.events.create_event_listener(
             name=f"Temperature Alert {test_run_id}",
             source_id=EventSourceType.home_assistant,
@@ -140,7 +140,7 @@ if temp > 25.0:
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
@@ -162,12 +162,12 @@ if temp > 25.0:
 
     # Signal worker and wait for script execution
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Wait for LLM callback task
     await asyncio.sleep(0.5)
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"llm_callback"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"llm_callback"})
 
     # Step 4: Verify LLM was woken with correct context
     mock_chat_interface.send_message.assert_called_once()
@@ -192,7 +192,7 @@ if temp > 25.0:
 
 
 @pytest.mark.asyncio
-async def test_script_wake_llm_multiple_contexts(test_db_engine: AsyncEngine) -> None:
+async def test_script_wake_llm_multiple_contexts(db_engine: AsyncEngine) -> None:
     """Test that multiple wake_llm calls accumulate into a single LLM wake."""
     test_run_id = uuid.uuid4()
     logger.info(
@@ -200,7 +200,7 @@ async def test_script_wake_llm_multiple_contexts(test_db_engine: AsyncEngine) ->
     )
 
     # Step 1: Create event listener with script that calls wake_llm multiple times
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         await db_ctx.events.create_event_listener(
             name=f"Multi-Sensor Monitor {test_run_id}",
             source_id=EventSourceType.home_assistant,
@@ -317,7 +317,7 @@ if air_quality < 50:
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
@@ -345,12 +345,12 @@ if air_quality < 50:
 
     # Signal worker and wait for processing
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Wait for LLM callback
     await asyncio.sleep(0.5)
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"llm_callback"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"llm_callback"})
 
     # Step 4: Verify LLM was woken only once with all contexts
     mock_chat_interface.send_message.assert_called_once()
@@ -380,13 +380,13 @@ if air_quality < 50:
 
 
 @pytest.mark.asyncio
-async def test_script_conditional_wake_llm(test_db_engine: AsyncEngine) -> None:
+async def test_script_conditional_wake_llm(db_engine: AsyncEngine) -> None:
     """Test that wake_llm is only called when conditions are met."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Conditional Wake LLM Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with conditional wake_llm
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         await db_ctx.events.create_event_listener(
             name=f"Smart Temperature Monitor {test_run_id}",
             source_id=EventSourceType.home_assistant,
@@ -468,7 +468,7 @@ if temp > 30 or temp < 10:
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
@@ -490,14 +490,14 @@ if temp > 30 or temp < 10:
 
     # Signal worker and wait for script execution
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Give some time for any potential LLM callback
     await asyncio.sleep(0.5)
     new_task_event.set()
 
     # Step 4: Verify note was created but LLM was NOT woken
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         note = await db_ctx.notes.get_by_title("Temperature Log")
         assert note is not None
         assert "22.5°C" in note["content"]

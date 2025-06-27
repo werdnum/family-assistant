@@ -19,10 +19,10 @@ from family_assistant.tools.types import ToolExecutionContext
 
 
 @pytest.mark.asyncio
-async def test_create_event_listener_basic(test_db_engine: AsyncEngine) -> None:
+async def test_create_event_listener_basic(db_engine: AsyncEngine) -> None:
     """Test creating a basic event listener."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="123456",
@@ -54,11 +54,11 @@ async def test_create_event_listener_basic(test_db_engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_create_event_listener_with_action_config(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test creating an event listener with action configuration."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="123456",
@@ -93,11 +93,11 @@ async def test_create_event_listener_with_action_config(
 
 @pytest.mark.asyncio
 async def test_create_event_listener_duplicate_name_error(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that creating a listener with duplicate name fails."""
     # Create first listener in one context
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="123456",
@@ -115,7 +115,7 @@ async def test_create_event_listener_duplicate_name_error(
         )
 
     # Create second listener in a new context to avoid transaction issues
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="123456",
@@ -144,11 +144,11 @@ async def test_create_event_listener_duplicate_name_error(
 
 @pytest.mark.asyncio
 async def test_create_event_listener_invalid_source(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that creating a listener with invalid source fails."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="123456",
@@ -172,10 +172,10 @@ async def test_create_event_listener_invalid_source(
 
 
 @pytest.mark.asyncio
-async def test_list_event_listeners_empty(test_db_engine: AsyncEngine) -> None:
+async def test_list_event_listeners_empty(db_engine: AsyncEngine) -> None:
     """Test listing listeners when none exist."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="999999",  # New conversation with no listeners
@@ -195,10 +195,10 @@ async def test_list_event_listeners_empty(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_event_listeners_with_filters(test_db_engine: AsyncEngine) -> None:
+async def test_list_event_listeners_with_filters(db_engine: AsyncEngine) -> None:
     """Test listing listeners with source and enabled filters."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="filter_test",
@@ -272,10 +272,10 @@ async def test_list_event_listeners_with_filters(test_db_engine: AsyncEngine) ->
 
 
 @pytest.mark.asyncio
-async def test_toggle_event_listener(test_db_engine: AsyncEngine) -> None:
+async def test_toggle_event_listener(db_engine: AsyncEngine) -> None:
     """Test toggling a listener's enabled status."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="toggle_test",
@@ -304,7 +304,7 @@ async def test_toggle_event_listener(test_db_engine: AsyncEngine) -> None:
     assert "disabled" in data["message"]
 
     # Verify it's disabled
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context.db_context = db_ctx
         list_result = await list_event_listeners_tool(exec_context=exec_context)
         list_data = json.loads(list_result)
@@ -320,10 +320,10 @@ async def test_toggle_event_listener(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_toggle_event_listener_not_found(test_db_engine: AsyncEngine) -> None:
+async def test_toggle_event_listener_not_found(db_engine: AsyncEngine) -> None:
     """Test toggling a non-existent listener."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="123456",
@@ -344,10 +344,10 @@ async def test_toggle_event_listener_not_found(test_db_engine: AsyncEngine) -> N
 
 
 @pytest.mark.asyncio
-async def test_delete_event_listener(test_db_engine: AsyncEngine) -> None:
+async def test_delete_event_listener(db_engine: AsyncEngine) -> None:
     """Test deleting an event listener."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="delete_test",
@@ -376,7 +376,7 @@ async def test_delete_event_listener(test_db_engine: AsyncEngine) -> None:
     assert "Deleted listener 'Delete Test'" in data["message"]
 
     # Verify it's gone
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context.db_context = db_ctx
         list_result = await list_event_listeners_tool(exec_context=exec_context)
         list_data = json.loads(list_result)
@@ -384,10 +384,10 @@ async def test_delete_event_listener(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_event_listener_not_found(test_db_engine: AsyncEngine) -> None:
+async def test_delete_event_listener_not_found(db_engine: AsyncEngine) -> None:
     """Test deleting a non-existent listener."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="123456",
@@ -408,10 +408,10 @@ async def test_delete_event_listener_not_found(test_db_engine: AsyncEngine) -> N
 
 
 @pytest.mark.asyncio
-async def test_conversation_isolation(test_db_engine: AsyncEngine) -> None:
+async def test_conversation_isolation(db_engine: AsyncEngine) -> None:
     """Test that listeners are isolated by conversation."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         # Create listeners in conversation 1
         exec_context1 = ToolExecutionContext(
             interface_type="telegram",
@@ -446,7 +446,7 @@ async def test_conversation_isolation(test_db_engine: AsyncEngine) -> None:
         )
 
     # Act - list from conversation 1
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context1.db_context = db_ctx
         list_result1 = await list_event_listeners_tool(exec_context=exec_context1)
         list_data1 = json.loads(list_result1)
@@ -456,7 +456,7 @@ async def test_conversation_isolation(test_db_engine: AsyncEngine) -> None:
         assert list_data1["listeners"][0]["name"] == "Conv1 Listener"
 
     # Act - try to delete conversation 1's listener from conversation 2
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context2.db_context = db_ctx
         delete_result = await delete_event_listener_tool(
             exec_context=exec_context2, listener_id=listener1_id
@@ -468,7 +468,7 @@ async def test_conversation_isolation(test_db_engine: AsyncEngine) -> None:
         assert "not found" in delete_data["message"]
 
     # Verify conversation 1's listener still exists
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context1.db_context = db_ctx
         list_result1_again = await list_event_listeners_tool(exec_context=exec_context1)
         list_data1_again = json.loads(list_result1_again)
@@ -476,10 +476,10 @@ async def test_conversation_isolation(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_listener_execution_tracking(test_db_engine: AsyncEngine) -> None:
+async def test_listener_execution_tracking(db_engine: AsyncEngine) -> None:
     """Test that listener execution info is returned in list."""
     # Arrange
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         from sqlalchemy import text
 
         exec_context = ToolExecutionContext(
@@ -510,7 +510,7 @@ async def test_listener_execution_tracking(test_db_engine: AsyncEngine) -> None:
         )
 
     # Act
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context.db_context = db_ctx
         list_result = await list_event_listeners_tool(exec_context=exec_context)
 

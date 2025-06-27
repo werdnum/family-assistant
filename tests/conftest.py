@@ -77,7 +77,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         return
 
     # Check if db_engine is needed - either directly or through autouse fixture
-    # Since test_db_engine (autouse) depends on db_engine, we need to parameterize
+    # Since db_engine (autouse) depends on db_engine, we need to parameterize
     # db_engine for ALL tests now
     if "db_engine" in metafunc.fixturenames:
         # Get the --db option value, with backwards compatibility for --postgres
@@ -142,24 +142,7 @@ def reset_task_event() -> Generator[None, None, None]:
     tasks_module._task_event = None
 
 
-@pytest_asyncio.fixture(scope="function", autouse=True)  # Use pytest_asyncio.fixture
-async def test_db_engine(
-    request: pytest.FixtureRequest,
-) -> AsyncGenerator[AsyncEngine | None, None]:
-    """
-    Autouse fixture that ensures most tests have a database.
-
-    This fixture runs automatically for each test function that needs it.
-    Tests marked with 'no_db' are skipped.
-    """
-    # Skip for tests that don't need a database
-    if request.node.get_closest_marker("no_db"):
-        yield None
-        return
-
-    # Get the db_engine fixture
-    db_engine = request.getfixturevalue("db_engine")
-    yield db_engine
+# This fixture has been removed - tests should use db_engine directly
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -172,7 +155,7 @@ async def db_engine(
     The parameter (e.g., 'sqlite' or 'postgres') is injected by the
     `pytest_generate_tests` hook based on the --db command-line option.
 
-    This fixture is designed to replace test_db_engine once all tests
+    This fixture is designed to replace db_engine once all tests
     are migrated to use explicit fixture dependencies.
     """
     db_backend = request.param
@@ -655,7 +638,7 @@ backtrace_on_debug = True
 @pytest_asyncio.fixture(scope="function")
 async def radicale_server(
     radicale_server_session: tuple[str, str, str],  # Now yields 3 items
-    test_db_engine: AsyncEngine,  # Use the unified test engine
+    db_engine: AsyncEngine,  # Use the unified test engine
     request: pytest.FixtureRequest,  # To get test name for unique calendar
 ) -> AsyncGenerator[tuple[str, str, str, str], None]:
     """

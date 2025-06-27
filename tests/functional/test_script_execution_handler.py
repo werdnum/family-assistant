@@ -31,13 +31,13 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_script_execution_creates_note(test_db_engine: AsyncEngine) -> None:
+async def test_script_execution_creates_note(db_engine: AsyncEngine) -> None:
     """Test end-to-end flow: event triggers script that creates a note."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Execution Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with script action
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         await db_ctx.events.create_event_listener(
             name=f"Temperature Logger {test_run_id}",
             source_id=EventSourceType.home_assistant,
@@ -106,7 +106,7 @@ add_or_update_note(
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -127,10 +127,10 @@ add_or_update_note(
 
     # Signal worker and wait for processing
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 4: Verify user-visible outcome - note was created
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         note = await db_ctx.notes.get_by_title("Temperature Log")
         assert note is not None
         assert "Temperature: 22.5°C" in note["content"]
@@ -151,14 +151,14 @@ add_or_update_note(
 
 @pytest.mark.asyncio
 async def test_script_with_syntax_error_creates_no_note(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that script with syntax error doesn't create any notes."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Syntax Error Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with invalid script
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         await db_ctx.events.create_event_listener(
             name=f"Bad Script {test_run_id}",
             source_id=EventSourceType.home_assistant,
@@ -215,7 +215,7 @@ async def test_script_with_syntax_error_creates_no_note(
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -238,12 +238,10 @@ async def test_script_with_syntax_error_creates_no_note(
 
     # Expect the task to fail due to syntax error
     with pytest.raises(RuntimeError, match="Task.*failed"):
-        await wait_for_tasks_to_complete(
-            test_db_engine, task_types={"script_execution"}
-        )
+        await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 4: Verify no notes were created
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         notes = await db_ctx.notes.get_all()
         assert len(notes) == 0, "No notes should be created when script has errors"
 
@@ -262,13 +260,13 @@ async def test_script_with_syntax_error_creates_no_note(
 
 
 @pytest.mark.asyncio
-async def test_script_creates_multiple_notes(test_db_engine: AsyncEngine) -> None:
+async def test_script_creates_multiple_notes(db_engine: AsyncEngine) -> None:
     """Test that script can create multiple notes using different tools."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Multi-Note Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with script that creates multiple notes
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         await db_ctx.events.create_event_listener(
             name=f"Multi Note Logger {test_run_id}",
             source_id=EventSourceType.home_assistant,
@@ -340,7 +338,7 @@ add_or_update_note(
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -360,10 +358,10 @@ add_or_update_note(
     )
 
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 4: Verify both notes were created
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         all_notes = await db_ctx.notes.get_all()
         note_titles = {n["title"] for n in all_notes}
 

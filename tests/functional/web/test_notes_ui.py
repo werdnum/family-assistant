@@ -9,11 +9,11 @@ from family_assistant.web.app_creator import app as actual_app
 
 
 @pytest.mark.asyncio
-async def test_notes_ui_endpoints_accessible(test_db_engine: AsyncEngine) -> None:
+async def test_notes_ui_endpoints_accessible(db_engine: AsyncEngine) -> None:
     """Test that notes UI endpoints are accessible and don't crash."""
     # storage functions now accessed via DatabaseContext
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Add test notes with different include_in_prompt values
         await db_context.notes.add_or_update(
             title="Test Note", content="Test content", include_in_prompt=True
@@ -45,7 +45,7 @@ async def test_notes_ui_endpoints_accessible(test_db_engine: AsyncEngine) -> Non
 
 
 @pytest.mark.asyncio
-async def test_notes_save_endpoint_accessible(test_db_engine: AsyncEngine) -> None:
+async def test_notes_save_endpoint_accessible(db_engine: AsyncEngine) -> None:
     """Test that the save endpoint is accessible."""
     # Create test client
     transport = httpx.ASGITransport(app=actual_app)

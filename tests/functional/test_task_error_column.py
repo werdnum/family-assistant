@@ -10,10 +10,10 @@ from family_assistant.storage.context import DatabaseContext
 
 @pytest.mark.asyncio
 async def test_reschedule_for_retry_uses_correct_error_column(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that reschedule_for_retry uses 'error' column, not 'last_error'."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         # Create a task
         task_id = "test_error_column"
         await db.tasks.enqueue(
@@ -47,9 +47,9 @@ async def test_reschedule_for_retry_uses_correct_error_column(
 
 
 @pytest.mark.asyncio
-async def test_manually_retry_clears_error_column(test_db_engine: AsyncEngine) -> None:
+async def test_manually_retry_clears_error_column(db_engine: AsyncEngine) -> None:
     """Test that manually_retry clears the 'error' column correctly."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         # Create a failed task with an error
         task_id = "test_manual_retry_error"
         await db.tasks.enqueue(

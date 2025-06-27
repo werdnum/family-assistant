@@ -108,7 +108,7 @@ class MockToolsProvider:
 
 
 @pytest.mark.asyncio
-async def test_direct_tool_callable(test_db_engine: Any) -> None:
+async def test_direct_tool_callable(db_engine: Any) -> None:
     """Test calling tools directly as functions."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -154,7 +154,7 @@ results  # Return the results
 
 
 @pytest.mark.asyncio
-async def test_tool_prefix_fallback(test_db_engine: Any) -> None:
+async def test_tool_prefix_fallback(db_engine: Any) -> None:
     """Test that tools can also be called with tool_ prefix."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -199,7 +199,7 @@ results  # Return the results
 
 
 @pytest.mark.asyncio
-async def test_direct_callable_with_security(test_db_engine: Any) -> None:
+async def test_direct_callable_with_security(db_engine: Any) -> None:
     """Test that security controls still apply to direct callables."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -254,7 +254,7 @@ available  # Return the available tools
 
 
 @pytest.mark.asyncio
-async def test_direct_callable_validates_parameters(test_db_engine: Any) -> None:
+async def test_direct_callable_validates_parameters(db_engine: Any) -> None:
     """Test that direct tool calls validate parameters properly."""
 
     # Create mock tools provider that validates parameters
@@ -305,7 +305,7 @@ results  # Return the results
 
 
 @pytest.mark.asyncio
-async def test_tools_api_still_works(test_db_engine: Any) -> None:
+async def test_tools_api_still_works(db_engine: Any) -> None:
     """Test that the old tools API still works alongside direct callables."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -357,7 +357,7 @@ results  # Return the results
 
 
 @pytest.mark.asyncio
-async def test_no_tools_when_denied(test_db_engine: Any) -> None:
+async def test_no_tools_when_denied(db_engine: Any) -> None:
     """Test that no direct callables are created when all tools are denied."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()

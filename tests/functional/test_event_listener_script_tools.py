@@ -21,7 +21,7 @@ from family_assistant.tools.types import ToolExecutionContext
 
 @pytest_asyncio.fixture
 async def mock_exec_context(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> AsyncGenerator[ToolExecutionContext, None]:
     """Create a mock execution context for tool testing."""
     # Import here to avoid issues during collection

@@ -45,7 +45,7 @@ TEST_TIMEZONE_STR = "UTC"
 
 @pytest.mark.asyncio
 async def test_render_home_assistant_template_success(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """
     Test successful rendering of a Home Assistant template.
@@ -163,7 +163,7 @@ async def test_render_home_assistant_template_success(
 
     # --- Simulate User Interaction ---
     user_message = "What's the current temperature in the living room?"
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,
@@ -194,7 +194,7 @@ async def test_render_home_assistant_template_success(
 
 @pytest.mark.asyncio
 async def test_render_home_assistant_template_no_client(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """
     Test error handling when Home Assistant client is not available.
@@ -294,7 +294,7 @@ async def test_render_home_assistant_template_no_client(
 
     # --- Simulate User Interaction ---
     user_message = "Check the sensor status"
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,
@@ -320,7 +320,7 @@ async def test_render_home_assistant_template_no_client(
 
 @pytest.mark.asyncio
 async def test_render_home_assistant_template_complex(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """
     Test rendering a complex Home Assistant template with multiple entities and calculations.
@@ -452,7 +452,7 @@ Status: Comfortable"""
     user_message = (
         "What's the weather like outside? Include the feels like temperature."
     )
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,
@@ -484,7 +484,7 @@ Status: Comfortable"""
 
 @pytest.mark.asyncio
 async def test_render_home_assistant_template_api_error(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """
     Test handling of Home Assistant API errors.
@@ -597,7 +597,7 @@ async def test_render_home_assistant_template_api_error(
 
     # --- Simulate User Interaction ---
     user_message = "What's the alarm status?"
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,

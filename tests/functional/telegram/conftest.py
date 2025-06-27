@@ -43,7 +43,7 @@ class TelegramHandlerTestFixture(NamedTuple):
 
 @pytest_asyncio.fixture(scope="function")
 async def telegram_handler_fixture(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> AsyncGenerator[TelegramHandlerTestFixture, None]:
     """
     Sets up the environment for testing TelegramUpdateHandler using the Assistant class.
@@ -66,7 +66,7 @@ async def telegram_handler_fixture(
         "model": "mock-model-for-testing",  # Will be overridden
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
-        "database_url": str(test_db_engine.url),  # Use the test DB engine
+        "database_url": str(db_engine.url),  # Use the test DB engine
         "server_url": "http://localhost:8123",  # Test server URL
         "document_storage_path": "/tmp/test_docs",
         "attachment_storage_path": "/tmp/test_attachments",
@@ -185,7 +185,7 @@ async def telegram_handler_fixture(
     def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
         DatabaseContext
     ]:
-        return get_db_context(engine=test_db_engine)  # Explicitly pass test engine
+        return get_db_context(engine=db_engine)  # Explicitly pass test engine
 
     # 5. Yield Fixture Components
     # Ensure default_processing_service and its tools_provider are set
