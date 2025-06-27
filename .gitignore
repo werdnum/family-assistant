@@ -12,3 +12,4 @@ scratch
 coverage_annotated/
 logs.log
 .serena/
+local-logs.txt
