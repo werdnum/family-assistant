@@ -482,6 +482,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 )
             # Replace for scalar values like llm_model, timezone, max_history, history_max_age
             for scalar_key in [
+                "provider",  # LLM provider (google, openai, litellm)
                 "llm_model",
                 "timezone",
                 "max_history_messages",

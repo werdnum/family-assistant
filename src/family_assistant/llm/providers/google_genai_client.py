@@ -2,7 +2,9 @@
 Direct Google Generative AI (Gemini) implementation for LLM interactions.
 """
 
+import json
 import logging
+import uuid
 from typing import Any
 
 import aiofiles
@@ -12,6 +14,8 @@ from google.genai import types
 from family_assistant.llm import (
     LLMInterface,
     LLMOutput,
+    ToolCallFunction,
+    ToolCallItem,
 )
 
 from ..base import (
@@ -56,7 +60,10 @@ class GoogleGenAIClient(LLMInterface):
             # Note: The new API might handle this differently
 
         self.client = genai.Client(api_key=api_key)
-        self.model_name = model
+        # Google API requires 'models/' prefix
+        self.model_name = (
+            f"models/{model}" if not model.startswith("models/") else model
+        )
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
 
@@ -76,42 +83,117 @@ class GoogleGenAIClient(LLMInterface):
                 )
         return params
 
-    def _convert_messages_to_genai_format(self, messages: list[dict[str, Any]]) -> str:
+    def _convert_messages_to_genai_format(
+        self, messages: list[dict[str, Any]]
+    ) -> list[Any]:
         """Convert OpenAI-style messages to Gemini format."""
-        # For simple cases, join all messages into a single string
-        # For more complex cases with tool responses, we'd need to build Content objects
-
-        combined_content = []
+        # Build proper Content objects for the new API
+        contents = []
 
         for msg in messages:
             role = msg["role"]
             content = msg.get("content", "")
 
             if role == "system":
-                # Prepend system messages
-                combined_content.insert(0, f"System: {content}")
+                # System messages can be included as user messages with a prefix
+                contents.append({
+                    "role": "user",
+                    "parts": [{"text": f"System: {content}"}],
+                })
             elif role == "user":
-                combined_content.append(f"User: {content}")
+                contents.append({"role": "user", "parts": [{"text": content}]})
             elif role == "assistant":
-                combined_content.append(f"Assistant: {content}")
+                parts = []
+
+                # Add text content if present
+                if content:
+                    parts.append({"text": content})
+
+                # Add tool calls if present
+                if "tool_calls" in msg and msg["tool_calls"]:
+                    for tc in msg["tool_calls"]:
+                        if tc.get("type") == "function":
+                            func = tc.get("function", {})
+                            # Parse arguments if they're a string
+                            args = func.get("arguments", {})
+                            if isinstance(args, str):
+                                args = json.loads(args)
+
+                            parts.append({
+                                "functionCall": {"name": func.get("name"), "args": args}
+                            })
+
+                if parts:
+                    contents.append({"role": "model", "parts": parts})
             elif role == "tool":
                 # Handle tool responses
-                tool_name = msg.get("name", "")
-                combined_content.append(f"Tool Response ({tool_name}): {content}")
+                tool_content = msg.get("content", "")
 
-        return "\n\n".join(combined_content)
+                # Try to parse the content as JSON
+                try:
+                    response_data = (
+                        json.loads(tool_content)
+                        if isinstance(tool_content, str)
+                        else tool_content
+                    )
+                except json.JSONDecodeError:
+                    response_data = {"result": tool_content}
+
+                contents.append({
+                    "role": "function",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": msg.get("name", "unknown"),
+                                "response": response_data,
+                            }
+                        }
+                    ],
+                })
+
+        return contents
 
     def _convert_tools_to_genai_format(self, tools: list[dict[str, Any]]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
-        # The new API supports passing Python functions directly
-        # For now, we'll convert the JSON schema to function signatures
-        # This is a simplified implementation - in production, you'd want
-        # to dynamically create proper Python functions
+        from google.genai import types
 
-        logger.warning(
-            "Tool conversion for new google-genai API is simplified - full tool calling may not work as expected"
-        )
-        return []  # Simplified for now
+        function_declarations = []
+
+        for tool in tools:
+            if tool.get("type") != "function":
+                continue
+
+            func_def = tool.get("function", {})
+
+            # Convert OpenAI-style parameters to Google schema
+            params = func_def.get("parameters", {})
+            properties = params.get("properties", {})
+
+            # Convert properties to Google format
+            google_properties = {}
+            for prop_name, prop_def in properties.items():
+                schema_type = prop_def.get("type", "string").upper()
+                google_properties[prop_name] = types.Schema(
+                    type=schema_type,
+                    description=prop_def.get("description", ""),
+                )
+
+            # Create function declaration
+            func_decl = types.FunctionDeclaration(
+                name=func_def.get("name"),
+                description=func_def.get("description", ""),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties=google_properties,
+                    required=params.get("required", []),
+                ),
+            )
+            function_declarations.append(func_decl)
+
+        # Return a Tool with all function declarations
+        if function_declarations:
+            return [types.Tool(function_declarations=function_declarations)]
+        return []
 
     async def generate_response(
         self,
@@ -122,7 +204,7 @@ class GoogleGenAIClient(LLMInterface):
         """Generate response using Google GenAI."""
         try:
             # Convert messages to format expected by new API
-            content = self._convert_messages_to_genai_format(messages)
+            contents = self._convert_messages_to_genai_format(messages)
 
             # Build generation config
             config_params = {
@@ -142,38 +224,78 @@ class GoogleGenAIClient(LLMInterface):
                 generation_config.top_k = config_params["top_k"]
 
             # Handle tools if provided
+            google_tools = None
             if tools:
-                # Tool handling would need to be implemented based on new API
-                logger.warning(
-                    "Tool calling not fully implemented for new google-genai API"
-                )
+                google_tools = self._convert_tools_to_genai_format(tools)
 
             # Make API call using the client
+            # Add tools to config if provided
+            if google_tools:
+                generation_config.tools = google_tools
+
             response = await self.client.aio.models.generate_content(
                 model=self.model_name,
-                contents=content,
+                contents=contents,
                 config=generation_config,
             )
 
             # Extract content from response
-            content = response.text if hasattr(response, "text") else None
+            content = None
+            if hasattr(response, "text"):
+                content = response.text
+            elif hasattr(response, "candidates") and response.candidates:
+                # New API structure - get text from first candidate
+                candidate = response.candidates[0]
+                if (
+                    hasattr(candidate, "content")
+                    and candidate.content
+                    and hasattr(candidate.content, "parts")
+                ):
+                    parts = candidate.content.parts
+                    if parts and hasattr(parts[0], "text"):
+                        content = parts[0].text
 
-            # Tool calls would need to be extracted differently with new API
+            # Extract tool calls from response
             tool_calls = None
+            if hasattr(response, "candidates") and response.candidates:
+                candidate = response.candidates[0]
+                if (
+                    hasattr(candidate, "content")
+                    and candidate.content
+                    and hasattr(candidate.content, "parts")
+                    and candidate.content.parts
+                ):
+                    found_tool_calls = []
+                    for part in candidate.content.parts:
+                        if hasattr(part, "function_call") and part.function_call:
+                            # Convert Google function call to our format
+                            func_call = part.function_call
+                            if not func_call.name:
+                                logger.warning(
+                                    "Received a tool call without a name: %s", func_call
+                                )
+                                continue
+                            tool_call = ToolCallItem(
+                                id=f"call_{uuid.uuid4().hex[:24]}",  # Generate ID
+                                type="function",
+                                function=ToolCallFunction(
+                                    name=func_call.name,
+                                    arguments=json.dumps(func_call.args),
+                                ),
+                            )
+                            found_tool_calls.append(tool_call)
+                    # Only set tool_calls if we found any
+                    if found_tool_calls:
+                        tool_calls = found_tool_calls
 
             # Extract usage information if available
             reasoning_info = None
-            if hasattr(response, "usage_metadata"):
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                usage = response.usage_metadata
                 reasoning_info = {
-                    "prompt_tokens": getattr(
-                        response.usage_metadata, "prompt_token_count", 0
-                    ),
-                    "completion_tokens": getattr(
-                        response.usage_metadata, "candidates_token_count", 0
-                    ),
-                    "total_tokens": getattr(
-                        response.usage_metadata, "total_token_count", 0
-                    ),
+                    "prompt_tokens": getattr(usage, "prompt_token_count", 0),
+                    "completion_tokens": getattr(usage, "candidates_token_count", 0),
+                    "total_tokens": getattr(usage, "total_token_count", 0),
                 }
 
             return LLMOutput(
