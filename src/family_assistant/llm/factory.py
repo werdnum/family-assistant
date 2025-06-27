@@ -71,9 +71,21 @@ class LLMClientFactory:
         provider = config.get("provider")
         if not provider:
             provider = cls._determine_provider(model)
+            logger.info(
+                f"No explicit provider specified for model '{model}', "
+                f"auto-determined provider: '{provider}'"
+            )
+        else:
+            logger.info(
+                f"Using explicitly configured provider '{provider}' for model '{model}'"
+            )
 
         if provider not in cls._provider_classes:
-            raise ValueError(f"Unknown provider: {provider} for model: {model}")
+            available_providers = list(cls._provider_classes.keys())
+            raise ValueError(
+                f"Unknown provider: '{provider}' for model: '{model}'. "
+                f"Available providers: {available_providers}"
+            )
 
         # Get API key
         api_key = config.get("api_key")

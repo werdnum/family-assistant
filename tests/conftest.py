@@ -11,6 +11,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import AsyncGenerator, Generator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import caldav
@@ -71,6 +72,10 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     is requesting the `db_engine` fixture. If so, it parameterizes it with the
     database backends selected via the `--db` command-line flag.
     """
+    # Skip database parameterization for tests marked with no_db
+    if metafunc.definition.get_closest_marker("no_db"):
+        return
+
     # Check if db_engine is needed - either directly or through autouse fixture
     # Since test_db_engine (autouse) depends on db_engine, we need to parameterize
     # db_engine for ALL tests now
@@ -139,20 +144,21 @@ def reset_task_event() -> Generator[None, None, None]:
 
 @pytest_asyncio.fixture(scope="function", autouse=True)  # Use pytest_asyncio.fixture
 async def test_db_engine(
-    db_engine: AsyncEngine,
-) -> AsyncGenerator[AsyncEngine, None]:
+    request: pytest.FixtureRequest,
+) -> AsyncGenerator[AsyncEngine | None, None]:
     """
-    Autouse fixture that ensures all tests have a database.
+    Autouse fixture that ensures most tests have a database.
 
-    This fixture runs automatically for each test function (`autouse=True`)
-    and delegates to the parameterized db_engine fixture. This ensures that
-    all tests run against all selected database backends based on the --db flag.
-
-    The db_engine dependency is automatically parameterized by pytest_generate_tests
-    hook, causing this autouse fixture (and therefore all tests) to run once
-    for each selected database backend.
+    This fixture runs automatically for each test function that needs it.
+    Tests marked with 'no_db' are skipped.
     """
-    # Simply yield the parameterized db_engine
+    # Skip for tests that don't need a database
+    if request.node.get_closest_marker("no_db"):
+        yield None
+        return
+
+    # Get the db_engine fixture
+    db_engine = request.getfixturevalue("db_engine")
     yield db_engine
 
 
@@ -742,3 +748,40 @@ async def radicale_server(
             logger.warning(
                 f"Calendar object for '{unique_calendar_name}' was not available for direct deletion. Cleanup might be incomplete if creation failed early."
             )
+
+
+# --- VCR.py Configuration for LLM Integration Tests ---
+
+
+@pytest.fixture(scope="module")
+def vcr_config() -> dict[str, Any]:
+    """Configure VCR for recording and replaying HTTP interactions."""
+    return {
+        # Filter sensitive headers
+        "filter_headers": [
+            "authorization",
+            "x-api-key",
+            "api-key",
+            "x-goog-api-key",
+            "openai-api-key",
+        ],
+        # Filter sensitive query parameters
+        "filter_query_parameters": ["api_key", "key"],
+        # Default to "once" mode - record if cassette doesn't exist
+        "record_mode": os.getenv("VCR_RECORD_MODE", "once"),
+        # Match requests on these attributes
+        "match_on": ["method", "scheme", "host", "port", "path", "query", "body"],
+        # Store cassettes in organized directory structure
+        "cassette_library_dir": "tests/cassettes/llm",
+        # Allow cassettes to be replayed multiple times
+        "allow_playback_repeats": True,
+        # Don't record on exceptions (avoid recording failed requests)
+        "record_on_exception": False,
+    }
+
+
+@pytest.fixture(scope="module")
+def vcr_cassette_dir(request: pytest.FixtureRequest) -> str:
+    """Return the cassette directory for the current test module."""
+    test_dir = pathlib.Path(request.node.fspath).parent
+    return str(test_dir / "cassettes")

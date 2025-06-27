@@ -339,9 +339,10 @@ class Assistant:
             else:
                 # The 'provider' key in the profile's processing_config determines the client.
                 # Defaults to 'litellm' if not specified.
+                provider = profile_proc_conf_dict.get("provider", "litellm")
                 client_config = {
                     "model": profile_llm_model,
-                    "provider": profile_proc_conf_dict.get("provider", "litellm"),
+                    "provider": provider,
                     **self.config.get("llm_parameters", {}),
                 }
 
@@ -350,6 +351,10 @@ class Assistant:
                     if key.startswith("llm_") and key != "llm_model":
                         # Remove 'llm_' prefix for the client config
                         client_config[key[4:]] = value
+
+                logger.info(
+                    f"Creating LLM client for profile '{profile_id}' with provider='{provider}', model='{profile_llm_model}'"
+                )
 
                 llm_client_for_profile = LLMClientFactory.create_client(
                     config=client_config

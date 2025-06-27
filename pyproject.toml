@@ -102,6 +102,8 @@ dev = [
     "pytest-asyncio",
     "pytest-cov>=6.1.1",
     "pytest-flakefinder>=1.1.0",
+    "pytest-recording>=0.13.0",  # VCR.py integration for pytest
+    "vcrpy>=6.0.0",  # HTTP record/replay for testing
     "aiosqlite",
     "assertpy>=1.1", # Add assertpy
     "pytest-mock",
