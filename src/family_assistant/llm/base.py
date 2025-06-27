@@ -55,3 +55,9 @@ class ProviderTimeoutError(LLMProviderError):
     """Raised when a provider request times out."""
 
     pass
+
+
+class ServiceUnavailableError(LLMProviderError):
+    """Raised when the service is temporarily unavailable (503 errors)."""
+
+    pass
