@@ -2,7 +2,14 @@
 
 ## Summary
 
-After implementing per-test database isolation and fixing some event loop issues, we've made significant progress on PostgreSQL compatibility. However, 45 tests still fail when run with `--postgres`. These failures are test-specific issues - the production application works correctly with PostgreSQL.
+**UPDATE (2025-06-27)**: The test infrastructure migration is now complete! All tests run against
+both SQLite and PostgreSQL by default. The `--postgres` flag has been replaced with a more flexible
+`--db` option that accepts `sqlite`, `postgres`, or `all` (default).
+
+After implementing per-test database isolation and fixing some event loop issues, we've made
+significant progress on PostgreSQL compatibility. However, 45 tests still fail when run with
+PostgreSQL. These failures are test-specific issues - the production application works correctly
+with PostgreSQL.
 
 ## Test Results
 
@@ -15,7 +22,8 @@ After implementing per-test database isolation and fixing some event loop issues
 
 ### 1. Script Execution Event Loop Conflicts (FIXED)
 
-- **Root Cause**: Script execution runs in a thread pool, but tools need to access PostgreSQL connections created in the main event loop
+- **Root Cause**: Script execution runs in a thread pool, but tools need to access PostgreSQL
+  connections created in the main event loop
 - **Solution**: Modified ToolsAPI to accept and use the main event loop for database operations
 - **Affected Tests**: All script execution tests now pass with PostgreSQL
 
@@ -23,14 +31,16 @@ After implementing per-test database isolation and fixing some event loop issues
 
 - **Root Cause**: PostgreSQL container was session-scoped and data persisted between tests
 - **Solution**: Modified `test_db_engine` fixture to create a unique database for each test
-- **Implementation**: Each test now gets its own PostgreSQL database that is created before the test and dropped after
+- **Implementation**: Each test now gets its own PostgreSQL database that is created before the test
+  and dropped after
 - **Status**: Complete test isolation achieved - tests can run in any order without interference
 
 ## Remaining Test Failures by Category
 
 ### 1. Event Loop Connection Errors (42 tests)
 
-These tests fail with `sqlalchemy.exc.ProgrammingError`, indicating they're trying to use PostgreSQL connections from the wrong event loop:
+These tests fail with `sqlalchemy.exc.ProgrammingError`, indicating they're trying to use PostgreSQL
+connections from the wrong event loop:
 
 **Indexing tests:**
 
@@ -104,30 +114,43 @@ These tests fail with `sqlalchemy.exc.ProgrammingError`, indicating they're tryi
 
 ## Root Cause Analysis
 
-1. **Event Loop Architecture**: The primary issue is that PostgreSQL's asyncpg driver is strict about event loop usage. Database connections must be accessed from the same event loop where they were created. Many tests inadvertently create new event loops or run in different contexts.
+1. **Event Loop Architecture**: The primary issue is that PostgreSQL's asyncpg driver is strict
+   about event loop usage. Database connections must be accessed from the same event loop where they
+   were created. Many tests inadvertently create new event loops or run in different contexts.
 
-2. **Production Impact**: These event loop issues were the original reason for adding PostgreSQL test support - features were breaking in production that worked fine with SQLite during development.
+2. **Production Impact**: These event loop issues were the original reason for adding PostgreSQL
+   test support - features were breaking in production that worked fine with SQLite during
+   development.
 
-3. **Test-Specific Problems**: Most failures are in the test setup/teardown or test utilities, not in the actual application code.
+3. **Test-Specific Problems**: Most failures are in the test setup/teardown or test utilities, not
+   in the actual application code.
 
 ## Recommendations
 
-1. **For Development**: SQLite works fine and is the recommended database for development
-2. **For Production**: PostgreSQL works correctly with the application; the remaining issues are test-specific
-3. **CI/CD**: Run tests with SQLite for now; PostgreSQL test compatibility is a work in progress
-4. **Future Work**:
+1. **For Development**: Use `--db sqlite` for quick feedback during development
+2. **For Production**: PostgreSQL works correctly with the application; the remaining issues are
+   test-specific
+3. **CI/CD**: Tests now run against both databases by default, ensuring comprehensive coverage
+4. **Testing Strategy**:
+   - Default (`pytest`): Runs all tests against both SQLite and PostgreSQL
+   - Quick mode (`pytest --db sqlite`): Fast feedback with SQLite only
+   - Production validation (`pytest --db postgres`): Verify PostgreSQL compatibility
+5. **Future Work**:
    - Refactor tests to properly handle event loops when using PostgreSQL
    - Update error logging handler to better handle cross-event-loop database access
    - Add database-agnostic assertions for tests that check error messages or JSON handling
 
 ## Next Steps
 
-1. **High Priority**: Fix the 3 logic failures as these could indicate actual behavioral differences:
+1. **High Priority**: Fix the 3 logic failures as these could indicate actual behavioral
+   differences:
+
    - Make JSON handling database-agnostic in event listener tests
    - Update error message assertions to work with both SQLite and PostgreSQL
    - Investigate why error logs aren't being written in PostgreSQL
 
 2. **Medium Priority**: Address event loop issues in test fixtures and utilities
+
    - Ensure all test fixtures use the same event loop as the database connection
    - Review and fix test setup/teardown procedures
 

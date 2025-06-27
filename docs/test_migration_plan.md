@@ -1,8 +1,13 @@
 # Test Infrastructure Migration Plan
 
+## Status: ✅ COMPLETED (2025-06-27)
+
 ## Overview
 
-We've successfully implemented a parameterized test infrastructure that allows tests to run against multiple database backends (SQLite and PostgreSQL) automatically. This ensures comprehensive testing across development and production environments.
+We've successfully implemented a parameterized test infrastructure that allows tests to run against
+multiple database backends (SQLite and PostgreSQL) automatically. This ensures comprehensive testing
+across development and production environments. The migration is now complete - all tests run
+against all applicable databases by default.
 
 ## What's Been Implemented
 
@@ -27,11 +32,15 @@ We've successfully implemented a parameterized test infrastructure that allows t
 - `scripts/migrate_tests_simple.py` - Regex-based fallback approach
 - `scripts/mark_postgres_tests.py` - Marks PostgreSQL-specific tests
 
-## Migration Strategy
+## Migration Complete!
 
-### Phase 1: Manual Migration of New Tests
+The autouse `test_db_engine` fixture now depends on the parameterized `db_engine` fixture, which
+means all tests automatically run against all selected databases without any code changes required.
 
-Start using `db_engine` fixture in all new tests immediately:
+### For New Tests
+
+While not required, it's recommended to use the explicit `db_engine` fixture in new tests for
+clarity:
 
 ```python
 async def test_something(db_engine: AsyncEngine):
@@ -41,35 +50,38 @@ async def test_something(db_engine: AsyncEngine):
         assert result.scalar() == 1
 ```
 
-### Phase 2: Gradual Migration of Existing Tests
+### PostgreSQL-Specific Tests
 
-1. **Simple replacement approach** (most reliable):
-
-   ```bash
-   # Replace test_db_engine with db_engine in a specific file
-   sed -i 's/test_db_engine/db_engine/g' tests/functional/test_example.py
-   
-   # Add db_engine parameter to tests without it (manual review needed)
-   # Look for: async def test_name():
-   # Replace with: async def test_name(db_engine: AsyncEngine):
-   ```
-
-2. **Mark PostgreSQL-specific tests**:
-
-   ```python
-   @pytest.mark.postgres
-   async def test_postgres_feature(db_engine: AsyncEngine):
-       """This test only runs with PostgreSQL."""
-       ...
-   ```
-
-### Phase 3: Disable autouse (Future)
-
-Once all tests are migrated, change `test_db_engine` fixture:
+Mark tests that should only run with PostgreSQL:
 
 ```python
-@pytest_asyncio.fixture(scope="function", autouse=False)  # Change to False
+@pytest.mark.postgres
+async def test_postgres_feature(db_engine: AsyncEngine):
+    """This test only runs with PostgreSQL."""
+    ...
 ```
+
+### Migration Tools (Still Available)
+
+While migration is no longer required, these tools remain available for code cleanup:
+
+1. **Replace autouse fixture references**:
+
+   ```bash
+   sed -i 's/test_db_engine/db_engine/g' tests/functional/test_example.py
+   ```
+
+2. **Add explicit db_engine parameter** (for clarity):
+
+   ```bash
+   # Manual review needed to add db_engine parameter to test functions
+   ```
+
+3. **Mark PostgreSQL tests**:
+
+   ```bash
+   python scripts/mark_postgres_tests.py
+   ```
 
 ## Testing the New Infrastructure
 
@@ -100,12 +112,15 @@ pytest tests/functional/test_example.py --db sqlite
 4. **Clear separation**: PostgreSQL-specific tests are explicitly marked
 5. **Resource efficiency**: PostgreSQL container only starts when needed
 
-## Next Steps
+## Summary
 
-1. Start writing new tests with explicit `db_engine` parameter
-2. Gradually migrate existing tests file by file
-3. Mark PostgreSQL-specific tests with `@pytest.mark.postgres`
-4. Monitor test execution to ensure no double-runs
-5. Once fully migrated, disable autouse on `test_db_engine`
+The test infrastructure migration is complete! The primary goal has been achieved:
 
-Overall, the test infrastructure refactoring is now complete with a clear migration path for existing tests. The system supports comprehensive testing against multiple databases while maintaining backward compatibility.
+- ✅ All tests run against all applicable databases by default
+- ✅ Comprehensive testing coverage without code changes
+- ✅ Flexible execution options with `--db` flag
+- ✅ PostgreSQL-specific tests properly marked
+- ✅ Full backwards compatibility maintained
+
+The system now provides automatic multi-database testing while maintaining flexibility for
+development workflows.
