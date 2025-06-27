@@ -103,7 +103,7 @@ dev = [
     "pytest-cov>=6.1.1",
     "pytest-flakefinder>=1.1.0",
     "pytest-recording>=0.13.0",  # VCR.py integration for pytest
-    "vcrpy>=6.0.0",  # HTTP record/replay for testing
+    "vcrpy>=7.0.0",  # HTTP record/replay for testing - v7 fixes urllib3 conflicts
     "aiosqlite",
     "assertpy>=1.1", # Add assertpy
     "pytest-mock",
@@ -111,7 +111,7 @@ dev = [
     "asyncpg>=0.29.0",
     "types-aiofiles",
     "types-assertpy", # Added
-    "types-docker", # Added
+    # "types-docker", # Temporarily commented out due to urllib3 conflict with vcrpy
     "types-passlib",
     "types-python-dateutil",
     "types-PyYAML",
