@@ -337,24 +337,84 @@ class Assistant:
                     f"Profile '{profile_id}' using overridden LLM client: {type(llm_client_for_profile).__name__}"
                 )
             else:
-                # The 'provider' key in the profile's processing_config determines the client.
-                # Defaults to 'litellm' if not specified.
-                provider = profile_proc_conf_dict.get("provider", "litellm")
-                client_config = {
-                    "model": profile_llm_model,
-                    "provider": provider,
-                    **self.config.get("llm_parameters", {}),
-                }
+                # Check if using retry_config format
+                if "retry_config" in profile_proc_conf_dict:
+                    # Direct retry_config format
+                    retry_config = profile_proc_conf_dict["retry_config"]
+                    # Add shared llm_parameters to both primary and fallback if not already specified
+                    llm_params = self.config.get("llm_parameters", {})
+                    if "primary" in retry_config:
+                        for k, v in llm_params.items():
+                            if k not in retry_config["primary"]:
+                                retry_config["primary"][k] = v
+                    if "fallback" in retry_config:
+                        for k, v in llm_params.items():
+                            if k not in retry_config["fallback"]:
+                                retry_config["fallback"][k] = v
 
-                # Add any additional parameters from config
-                for key, value in profile_proc_conf_dict.items():
-                    if key.startswith("llm_") and key != "llm_model":
-                        # Remove 'llm_' prefix for the client config
-                        client_config[key[4:]] = value
+                    # Wrap in a config dict with retry_config key
+                    client_config = {"retry_config": retry_config}
 
-                logger.info(
-                    f"Creating LLM client for profile '{profile_id}' with provider='{provider}', model='{profile_llm_model}'"
-                )
+                    logger.info(
+                        f"Creating RetryingLLMClient for profile '{profile_id}' with primary='{retry_config.get('primary', {}).get('model')}', "
+                        f"fallback='{retry_config.get('fallback', {}).get('model')}'"
+                    )
+                elif "fallback_model_id" in profile_proc_conf_dict:
+                    # Transform flat fallback config to retry_config format (backward compatibility)
+                    provider = profile_proc_conf_dict.get("provider", "litellm")
+                    fallback_provider = profile_proc_conf_dict.get(
+                        "fallback_provider"
+                    ) or LLMClientFactory._determine_provider(
+                        profile_proc_conf_dict["fallback_model_id"]
+                    )
+
+                    client_config = {
+                        "retry_config": {
+                            "primary": {
+                                "model": profile_llm_model,
+                                "provider": provider,
+                                **self.config.get("llm_parameters", {}),
+                            },
+                            "fallback": {
+                                "model": profile_proc_conf_dict["fallback_model_id"],
+                                "provider": fallback_provider,
+                                **self.config.get("llm_parameters", {}),
+                            },
+                        }
+                    }
+
+                    # Add any additional parameters from config to primary
+                    for key, value in profile_proc_conf_dict.items():
+                        if (
+                            key.startswith("llm_")
+                            and key != "llm_model"
+                            and not key.startswith("fallback_")
+                        ):
+                            # Remove 'llm_' prefix for the client config
+                            client_config["retry_config"]["primary"][key[4:]] = value
+
+                    logger.info(
+                        f"Creating RetryingLLMClient for profile '{profile_id}' (from flat config) with primary='{profile_llm_model}', "
+                        f"fallback='{profile_proc_conf_dict['fallback_model_id']}'"
+                    )
+                else:
+                    # Simple configuration without retry
+                    provider = profile_proc_conf_dict.get("provider", "litellm")
+                    client_config = {
+                        "model": profile_llm_model,
+                        "provider": provider,
+                        **self.config.get("llm_parameters", {}),
+                    }
+
+                    # Add any additional parameters from config
+                    for key, value in profile_proc_conf_dict.items():
+                        if key.startswith("llm_") and key != "llm_model":
+                            # Remove 'llm_' prefix for the client config
+                            client_config[key[4:]] = value
+
+                    logger.info(
+                        f"Creating LLM client for profile '{profile_id}' with provider='{provider}', model='{profile_llm_model}'"
+                    )
 
                 llm_client_for_profile = LLMClientFactory.create_client(
                     config=client_config

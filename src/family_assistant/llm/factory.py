@@ -49,7 +49,8 @@ class LLMClientFactory:
         LLM configuration system, making it a drop-in replacement.
 
         Args:
-            config: LLM configuration dict containing:
+            config: LLM configuration dict containing either:
+                Simple format:
                 - model: Model identifier (required)
                 - provider: Explicit provider name (optional, defaults to litellm)
                 - api_key: API key (optional, will use env var if not provided)
@@ -57,12 +58,46 @@ class LLMClientFactory:
                 - model_parameters: Pattern-based parameters (optional)
                 - Additional provider-specific parameters
 
+                Retry format:
+                - retry_config: Dict with 'primary' and optional 'fallback' configs
+
         Returns:
             Instantiated LLM client
 
         Raises:
             ValueError: If model/provider is not recognized
         """
+        # Check for retry configuration
+        if "retry_config" in config:
+            retry_config = config["retry_config"]
+
+            # Create primary client
+            primary_client = cls._create_single_client(retry_config["primary"])
+            primary_model = retry_config["primary"]["model"]
+
+            # Create fallback if specified
+            fallback_client = None
+            fallback_model = None
+            if "fallback" in retry_config:
+                fallback_client = cls._create_single_client(retry_config["fallback"])
+                fallback_model = retry_config["fallback"]["model"]
+
+            # Return retrying wrapper
+            from .retrying_client import RetryingLLMClient
+
+            return RetryingLLMClient(
+                primary_client=primary_client,
+                primary_model=primary_model,
+                fallback_client=fallback_client,
+                fallback_model=fallback_model,
+            )
+
+        # Simple configuration - create single client
+        return cls._create_single_client(config)
+
+    @classmethod
+    def _create_single_client(cls, config: dict[str, Any]) -> "LLMInterface":
+        """Create a single LLM client (existing logic)."""
         model = config.get("model")
         if not model:
             raise ValueError("Model must be specified in config")
