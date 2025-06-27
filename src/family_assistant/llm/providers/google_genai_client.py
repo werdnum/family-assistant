@@ -172,11 +172,28 @@ class GoogleGenAIClient(LLMInterface):
             # Convert properties to Google format
             google_properties = {}
             for prop_name, prop_def in properties.items():
-                schema_type = prop_def.get("type", "string").upper()
-                google_properties[prop_name] = types.Schema(
-                    type=schema_type,
-                    description=prop_def.get("description", ""),
-                )
+                prop_type = prop_def.get("type", "string")
+
+                if prop_type == "array":
+                    # Handle array types - need to specify items
+                    items_def = prop_def.get("items", {})
+                    items_type = items_def.get("type", "string").upper()
+
+                    google_properties[prop_name] = types.Schema(
+                        type=types.Type.ARRAY,
+                        description=prop_def.get("description", ""),
+                        items=types.Schema(
+                            type=items_type,
+                            description=items_def.get("description", ""),
+                        ),
+                    )
+                else:
+                    # Handle non-array types
+                    schema_type = prop_type.upper()
+                    google_properties[prop_name] = types.Schema(
+                        type=schema_type,
+                        description=prop_def.get("description", ""),
+                    )
 
             # Create function declaration
             func_decl = types.FunctionDeclaration(
