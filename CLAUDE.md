@@ -93,13 +93,16 @@ Markdown files before each commit to ensure consistency.
 # Run all tests with verbose output
 poe test # Note: You will need a long timeout for this - something like 15 minutes
 
-# Run tests with PostgreSQL (production database)
-poe test-postgres  # Quick mode with -xq
-poe test-postgres-verbose  # Verbose mode with -xvs
+# Run tests with specific database backend
+poe test-postgres  # PostgreSQL only with -xq
+poe test-postgres-verbose  # PostgreSQL only with -xvs
+poe test-sqlite  # SQLite only with -xq
 
-# Run tests with PostgreSQL using pytest directly
-pytest --postgres -xq  # All tests with PostgreSQL
-pytest --postgres tests/functional/test_specific.py -xq  # Specific tests with PostgreSQL
+# Run tests using pytest directly with database selection
+pytest  # Default: runs all tests against both SQLite and PostgreSQL
+pytest --db postgres  # PostgreSQL only
+pytest --db sqlite  # SQLite only
+pytest --db postgres tests/functional/test_specific.py -xq  # Specific tests with PostgreSQL
 
 # Run specific test files
 pytest tests/functional/test_specific.py -xq
@@ -108,17 +111,20 @@ pytest tests/functional/test_specific.py -xq
 
 #### Database Backend Selection
 
-By default, tests run with an in-memory SQLite database for speed. However, production uses
-PostgreSQL, so it's important to test with PostgreSQL to catch database-specific issues:
+By default, tests run against **all applicable database backends** (SQLite and PostgreSQL)
+automatically. This ensures comprehensive testing coverage without requiring any special flags:
 
-- Use `--postgres` flag to run tests with PostgreSQL instead of SQLite
-- PostgreSQL container starts automatically when the flag is used (requires Docker/Podman)
-- Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will
-  get a warning if run without `--postgres` flag
-- The unified `test_db_engine` fixture automatically provides the appropriate database based on the
-  flag
+- Use `--db sqlite` to run tests with SQLite only (for quick development feedback)
+- Use `--db postgres` to run tests with PostgreSQL only
+- Use `--db all` or no flag (default) to run tests with both databases
+- PostgreSQL container starts automatically when needed (requires Docker/Podman)
+- Tests marked with `@pytest.mark.postgres` only run with PostgreSQL to avoid redundancy
+- The `test_db_engine` fixture automatically provides the appropriate database for each test run
 
-**PostgreSQL Test Isolation**: When using `--postgres`, each test gets its own unique database:
+**Note**: The old `--postgres` flag is still supported for backwards compatibility and is equivalent
+to `--db postgres`.
+
+**PostgreSQL Test Isolation**: When running with PostgreSQL, each test gets its own unique database:
 
 - A new database is created before each test (e.g., `test_my_function_12345678`)
 - The database is completely dropped after the test completes
@@ -131,8 +137,9 @@ PostgreSQL, so it's important to test with PostgreSQL to catch database-specific
 - Different transaction handling between SQLite and PostgreSQL
 - Schema differences that only manifest with PostgreSQL
 
-It's recommended to run tests with `--postgres` before pushing changes that touch database
-operations.
+It's recommended to verify tests pass with PostgreSQL before pushing changes that touch database
+operations. Since tests run against all databases by default, this happens automatically unless you
+explicitly use `--db sqlite`.
 
 ### Test Fixtures
 
@@ -143,9 +150,11 @@ fixtures are defined in `tests/conftest.py` and `tests/functional/telegram/conft
 
 **`test_db_engine`** (function scope, autouse)
 
-- Automatically provides either SQLite or PostgreSQL database based on `--postgres` flag
-- Default: Creates an in-memory SQLite database for each test
-- With `--postgres` flag: Creates a unique PostgreSQL database for each test
+- Automatically provides test databases based on `--db` flag (defaults to both SQLite and
+  PostgreSQL)
+- Default behavior: Runs each test twice - once with SQLite, once with PostgreSQL
+- With `--db sqlite`: Creates an in-memory SQLite database for each test
+- With `--db postgres`: Creates a unique PostgreSQL database for each test
   - Database name format: `test_{test_name}_{random_id}`
   - Complete isolation - no data sharing between tests
   - Database is dropped after test completion
@@ -164,9 +173,10 @@ fixtures are defined in `tests/conftest.py` and `tests/functional/telegram/conft
 **`pg_vector_db_engine`** (function scope)
 
 - PostgreSQL database engine with vector support
-- Always creates a unique PostgreSQL database regardless of `--postgres` flag
+- Always creates a unique PostgreSQL database regardless of `--db` flag
 - Database name format: `test_pgvec_{test_name}_{random_id}`
 - Complete isolation - database is created before and dropped after each test
+- Tests using this fixture are automatically marked to run with PostgreSQL only
 - Usage: `async def test_something(pg_vector_db_engine):`
 
 #### Task Worker Fixtures
