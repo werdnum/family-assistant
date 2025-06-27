@@ -1734,6 +1734,14 @@ class TelegramService:
                         "description",  # Check for a general profile description
                         f"Activate {profile_name} mode",  # Fallback description
                     )
+                    # Telegram has a 255 character limit for command descriptions
+                    if len(description) > 255:
+                        truncated_description = description[:252] + "..."
+                        logger.warning(
+                            f"Command '/{command_name}' description truncated from {len(description)} to 255 characters. "
+                            f"Original: {description}"
+                        )
+                        description = truncated_description
                     # More specific description if available per command in future
                     # For now, use profile's name/description.
                     bot_commands_to_set.append(BotCommand(command_name, description))

@@ -386,7 +386,7 @@ service_profiles:
       # llm_model: "openrouter/anthropic/claude-3-haiku"
 
   - id: "browser_profile"
-    description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web page scraping to extract content, consider using the `ingest_document_from_url` tool or direct MCP browser tools if available."
+    description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web scraping, consider using the ingest_document_from_url tool or direct MCP browser tools."
     processing_config:
       # Using direct Google provider for browsing tasks
       provider: "google"
