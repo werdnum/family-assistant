@@ -121,7 +121,7 @@ async def get_event_by_summary_from_radicale(
 
 @pytest.mark.asyncio
 async def test_add_event_and_verify_in_system_prompt(
-    test_db_engine: AsyncEngine,  # Changed to use SQLite
+    db_engine: AsyncEngine,  # Changed to use SQLite
     radicale_server: tuple[str, str, str, str],
 ) -> None:
     """
@@ -261,7 +261,7 @@ async def test_add_event_and_verify_in_system_prompt(
 
     # --- Simulate User Interaction to Create Event ---
     user_message_create = f"Please schedule {event_summary} for tomorrow at 10 AM."
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,

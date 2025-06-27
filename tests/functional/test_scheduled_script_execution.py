@@ -45,7 +45,7 @@ SCRIPT_DELAY_SECONDS = 2
 
 
 @pytest.mark.asyncio
-async def test_schedule_script_execution(test_db_engine: AsyncEngine) -> None:
+async def test_schedule_script_execution(db_engine: AsyncEngine) -> None:
     """Test that schedule_action tool can schedule a script for future execution."""
     # Arrange
     mock_clock = MockClock()
@@ -154,7 +154,7 @@ print("Script executed - note created: " + str(result))
         embedding_generator=AsyncMock(),
         clock=mock_clock,
         shutdown_event_instance=test_shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
 
     # Register the script execution handler
@@ -167,7 +167,7 @@ print("Script executed - note created: " + str(result))
         logger.info("Started ScriptWorker")
         await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the script
-        async with DatabaseContext(engine=test_db_engine) as db_context:
+        async with DatabaseContext(engine=db_engine) as db_context:
             resp, _, _, error = await processing_service.handle_chat_interaction(
                 db_context=db_context,
                 chat_interface=mock_chat_interface,
@@ -192,14 +192,14 @@ print("Script executed - note created: " + str(result))
 
         # Wait for script execution to complete (increased timeout)
         await wait_for_tasks_to_complete(
-            engine=test_db_engine, timeout_seconds=15.0, task_types={"script_execution"}
+            engine=db_engine, timeout_seconds=15.0, task_types={"script_execution"}
         )
 
         # Add a small delay to ensure any async operations complete
         await asyncio.sleep(0.1)
 
         # Verify the script created the note
-        async with DatabaseContext(engine=test_db_engine) as db_context:
+        async with DatabaseContext(engine=db_engine) as db_context:
             # First, let's check all notes to debug
             all_notes = await db_context.notes.get_all()
             logger.info(f"All notes after script execution: {len(all_notes)}")
@@ -233,7 +233,7 @@ print("Script executed - note created: " + str(result))
 
 
 @pytest.mark.asyncio
-async def test_schedule_recurring_script(test_db_engine: AsyncEngine) -> None:
+async def test_schedule_recurring_script(db_engine: AsyncEngine) -> None:
     """Test that schedule_recurring_action tool can schedule a recurring script."""
     # Arrange
     mock_clock = MockClock()
@@ -341,7 +341,7 @@ print("Recurring script executed - note created")
         embedding_generator=AsyncMock(),
         clock=mock_clock,
         shutdown_event_instance=test_shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
 
     # Register the script execution handler
@@ -354,7 +354,7 @@ print("Recurring script executed - note created")
         logger.info("Started RecurringWorker")
         await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the recurring script
-        async with DatabaseContext(engine=test_db_engine) as db_context:
+        async with DatabaseContext(engine=db_engine) as db_context:
             resp, _, _, error = await processing_service.handle_chat_interaction(
                 db_context=db_context,
                 chat_interface=mock_chat_interface,
@@ -378,14 +378,14 @@ print("Recurring script executed - note created")
 
         # Wait for first execution (increased timeout)
         await wait_for_tasks_to_complete(
-            engine=test_db_engine, timeout_seconds=15.0, task_types={"script_execution"}
+            engine=db_engine, timeout_seconds=15.0, task_types={"script_execution"}
         )
 
         # Give a moment for any pending transactions to complete
         await asyncio.sleep(0.5)
 
         # Verify that the script created a note (outside the task worker context)
-        async with DatabaseContext(engine=test_db_engine) as db_context:
+        async with DatabaseContext(engine=db_engine) as db_context:
             # First get all notes to find the exact title
             all_notes = await db_context.notes.get_all()
             logger.info(f"Total notes in database: {len(all_notes)}")
@@ -426,7 +426,7 @@ print("Recurring script executed - note created")
 
 
 @pytest.mark.asyncio
-async def test_schedule_script_with_invalid_syntax(test_db_engine: AsyncEngine) -> None:
+async def test_schedule_script_with_invalid_syntax(db_engine: AsyncEngine) -> None:
     """Test that scheduling a script with invalid syntax fails appropriately."""
     # Arrange
     mock_clock = MockClock()
@@ -526,7 +526,7 @@ if True  # Missing colon
         embedding_generator=AsyncMock(),
         clock=mock_clock,
         shutdown_event_instance=test_shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
 
     # Register the script execution handler
@@ -539,7 +539,7 @@ if True  # Missing colon
         logger.info("Started InvalidScriptWorker")
         await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the invalid script
-        async with DatabaseContext(engine=test_db_engine) as db_context:
+        async with DatabaseContext(engine=db_engine) as db_context:
             resp, _, _, error = await processing_service.handle_chat_interaction(
                 db_context=db_context,
                 chat_interface=mock_chat_interface,

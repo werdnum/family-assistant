@@ -17,10 +17,10 @@ from family_assistant.utils.logging_handler import SQLAlchemyErrorHandler
 
 
 @pytest.mark.asyncio
-async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
+async def test_error_logging_integration(db_engine: AsyncEngine) -> None:
     """Test that errors are logged to the database correctly."""
     # Clear all existing error logs first to ensure test isolation
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         from sqlalchemy import delete
 
         # Clear all error logs
@@ -40,7 +40,7 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
         test_logger.handlers.clear()
 
     # Add our SQLAlchemy handler with the test engine
-    handler = SQLAlchemyErrorHandler(test_db_engine, min_level=logging.ERROR)
+    handler = SQLAlchemyErrorHandler(db_engine, min_level=logging.ERROR)
     test_logger.addHandler(handler)
 
     try:
@@ -63,7 +63,7 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
         await handler.wait_for_pending_logs()
 
         # Check the database
-        async with DatabaseContext(engine=test_db_engine) as db_context:
+        async with DatabaseContext(engine=db_engine) as db_context:
             # Get error logs from our test logger only
             query = (
                 select(error_logs_table)
@@ -133,9 +133,9 @@ async def test_error_logging_integration(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_error_log_cleanup(test_db_engine: AsyncEngine) -> None:
+async def test_error_log_cleanup(db_engine: AsyncEngine) -> None:
     """Test that old error logs are cleaned up correctly."""
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         from sqlalchemy import insert
 
         # Insert error logs with different ages

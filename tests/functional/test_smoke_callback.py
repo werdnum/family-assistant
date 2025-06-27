@@ -62,7 +62,7 @@ CALLBACK_CONTEXT = "Remind me to check the test results"
 
 
 @pytest.mark.asyncio
-async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> None:
+async def test_schedule_and_execute_callback(db_engine: AsyncEngine) -> None:
     """
     Tests the full flow:
     1. User asks to schedule a callback.
@@ -228,7 +228,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
         embedding_generator=mock_embedding_generator,
         clock=mock_clock,  # Inject mock_clock
         shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
-        engine=test_db_engine,  # Pass the test database engine
+        engine=db_engine,  # Pass the test database engine
     )
     # Register the necessary handler for this test
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
@@ -247,7 +247,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
     )
     schedule_request_trigger = [{"type": "text", "text": schedule_request_text}]
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Correct unpacking to 4 values now
         (
             schedule_final_text_reply,
@@ -317,7 +317,7 @@ async def test_schedule_and_execute_callback(test_db_engine: AsyncEngine) -> Non
 
 
 @pytest.mark.asyncio
-async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
+async def test_modify_pending_callback(db_engine: AsyncEngine) -> None:
     """
     Tests modifying a scheduled callback:
     1. User asks to schedule a callback.
@@ -498,7 +498,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
         shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
-        engine=test_db_engine,  # Pass the test database engine
+        engine=db_engine,  # Pass the test database engine
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
@@ -509,7 +509,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for modification test ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # mock_clock.now() is used by schedule_future_callback_tool via exec_context
         _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
             db_context=db_context,
@@ -528,7 +528,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # Find the scheduled task_id
     scheduled_task_id = None
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Query for the task based on type and context (or part of it)
         # This is a bit fragile; ideally, the schedule tool would return the task_id
         stmt = select(tasks_table.c.task_id, tasks_table.c.payload).where(
@@ -571,7 +571,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
         )
         # Optionally, raise an error or handle as appropriate for the test.
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         _resp, _, _, modify_error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
@@ -586,7 +586,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
     assert modify_error is None, f"Error modifying callback: {modify_error}"
 
     # Verify task is updated in DB
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table.c.scheduled_at, tasks_table.c.payload).where(
             tasks_table.c.task_id == scheduled_task_id
         )
@@ -667,7 +667,7 @@ async def test_modify_pending_callback(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
+async def test_cancel_pending_callback(db_engine: AsyncEngine) -> None:
     """
     Tests cancelling a scheduled callback:
     1. User asks to schedule a callback.
@@ -832,7 +832,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         embedding_generator=AsyncMock(),
         clock=mock_clock,  # Inject mock_clock
         shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
-        engine=test_db_engine,  # Pass the test database engine
+        engine=db_engine,  # Pass the test database engine
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
     worker_task = asyncio.create_task(
@@ -843,7 +843,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for cancellation test ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # mock_clock.now() is used by schedule_future_callback_tool via exec_context
         _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
             db_context=db_context,
@@ -862,7 +862,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
     # Find the scheduled task_id
     scheduled_task_id_for_cancel = None
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table.c.task_id, tasks_table.c.payload).where(
             tasks_table.c.task_type == "llm_callback", tasks_table.c.status == "pending"
         )
@@ -904,7 +904,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
         )
         # Optionally, raise an error or handle as appropriate for the test.
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         _resp, _, _, cancel_error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
@@ -919,7 +919,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
     assert cancel_error is None, f"Error cancelling callback: {cancel_error}"
 
     # Verify task is marked as 'failed' in DB
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table.c.status, tasks_table.c.error).where(
             tasks_table.c.task_id == scheduled_task_id_for_cancel
         )
@@ -992,7 +992,7 @@ async def test_cancel_pending_callback(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> None:
+async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
     """
     Tests the schedule_reminder tool with follow-up functionality:
     1. User asks to schedule a reminder with follow-up enabled.
@@ -1152,7 +1152,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
         embedding_generator=AsyncMock(),
         clock=mock_clock,
         shutdown_event_instance=test_shutdown_event,
-        engine=test_db_engine,  # Pass the test database engine
+        engine=db_engine,  # Pass the test database engine
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
 
@@ -1164,7 +1164,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
 
     # --- Part 1: Schedule the reminder ---
     logger.info("--- Part 1: Scheduling reminder with follow-up ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         resp, _, _, error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
@@ -1180,7 +1180,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
     logger.info(f"Reminder scheduled. Response: {resp}")
 
     # Verify task in DB has reminder config
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
@@ -1211,7 +1211,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
     logger.info("Initial reminder sent successfully")
 
     # Verify follow-up was scheduled
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
@@ -1239,7 +1239,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
     logger.info("Follow-up reminder sent successfully")
 
     # Verify another follow-up was scheduled (attempt 3 of 3)
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
@@ -1254,7 +1254,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
     # --- Part 4: User responds, preventing further follow-ups ---
     logger.info("--- Part 4: User responds to reminder ---")
     response_timestamp = mock_clock.now() + timedelta(seconds=5)
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         await db_context.message_history.add(
             interface_type="test",
             conversation_id=str(TEST_CHAT_ID),
@@ -1277,7 +1277,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
     logger.info("Final follow-up sent")
 
     # Verify no more follow-ups scheduled (reached max_follow_ups)
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
@@ -1302,7 +1302,7 @@ async def test_schedule_reminder_with_follow_up(test_db_engine: AsyncEngine) -> 
 
 
 @pytest.mark.asyncio
-async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
+async def test_schedule_recurring_callback(db_engine: AsyncEngine) -> None:
     """
     Tests the schedule_recurring_task tool:
     1. User asks to schedule a recurring callback (daily briefing).
@@ -1470,7 +1470,7 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
         embedding_generator=AsyncMock(),
         clock=mock_clock,
         shutdown_event_instance=test_shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
 
@@ -1482,7 +1482,7 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
 
     # --- Part 1: Schedule the recurring callback ---
     logger.info("--- Part 1: Scheduling recurring callback ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         resp, _, _, error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
@@ -1501,7 +1501,7 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
     logger.info(f"Recurring callback scheduled. Response: {resp}")
 
     # Verify initial task in DB has recurrence rule
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
@@ -1529,7 +1529,7 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
     logger.info("First callback executed successfully")
 
     # Verify next occurrence was scheduled
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
@@ -1591,7 +1591,7 @@ async def test_schedule_recurring_callback(test_db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_pending_callbacks(test_db_engine: AsyncEngine) -> None:
+async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
     """
     Tests the list_pending_callbacks tool:
     1. Schedule multiple callbacks
@@ -1701,7 +1701,7 @@ async def test_list_pending_callbacks(test_db_engine: AsyncEngine) -> None:
 
     # --- Part 1: Schedule callbacks in different conversations ---
     logger.info("--- Part 1: Setting up test callbacks ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Schedule two callbacks for test conversation
         await db_context.tasks.enqueue(
             task_id=f"test_callback_1_{test_run_id}",
@@ -1744,7 +1744,7 @@ async def test_list_pending_callbacks(test_db_engine: AsyncEngine) -> None:
 
     # --- Part 2: Test list_pending_callbacks ---
     logger.info("--- Part 2: Testing list_pending_callbacks ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         resp, _, _, error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
@@ -1772,7 +1772,7 @@ async def test_list_pending_callbacks(test_db_engine: AsyncEngine) -> None:
 
     # --- Part 3: Verify database state ---
     logger.info("--- Part 3: Verifying database state ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Verify all three callbacks still exist in DB
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
@@ -1796,7 +1796,7 @@ async def test_list_pending_callbacks(test_db_engine: AsyncEngine) -> None:
     # --- Cleanup ---
     logger.info("--- Cleanup ---")
     # Clean up test callbacks
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         for task_id in [
             f"test_callback_1_{test_run_id}",
             f"test_callback_2_{test_run_id}",

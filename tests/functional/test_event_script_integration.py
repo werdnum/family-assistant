@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 async def test_create_script_listener_via_tool_and_execute(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test end-to-end: create script listener via tool, trigger event, verify execution."""
     test_run_id = uuid.uuid4()
@@ -71,7 +71,7 @@ async def test_create_script_listener_via_tool_and_execute(
     await tools_provider.get_tool_definitions()
 
     # Create execution context for tool calls
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="web",
             conversation_id=f"test_conv_{test_run_id}",
@@ -188,7 +188,7 @@ log_motion()
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -209,10 +209,10 @@ log_motion()
 
     # Signal worker and wait for processing
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 7: Verify the script executed and created the note
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         notes = await db_ctx.notes.get_all()
         assert len(notes) == 1
         note = notes[0]
@@ -235,7 +235,7 @@ log_motion()
 
 @pytest.mark.asyncio
 async def test_script_listener_with_complex_conditions(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test script listener with more complex match conditions and script logic."""
     test_run_id = uuid.uuid4()
@@ -254,7 +254,7 @@ async def test_script_listener_with_complex_conditions(
     tools_provider = CompositeToolsProvider(providers=[local_provider])
     await tools_provider.get_tool_definitions()
 
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="web",
             conversation_id=f"test_conv_{test_run_id}",
@@ -347,7 +347,7 @@ process_temperature()
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -366,9 +366,9 @@ process_temperature()
         },
     )
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         notes = await db_ctx.notes.get_all()
         assert len(notes) == 0  # No notes for small change
 
@@ -382,9 +382,9 @@ process_temperature()
         },
     )
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         notes = await db_ctx.notes.get_all()
         assert len(notes) == 1
         assert notes[0]["title"] == "Significant Temperature Changes"
@@ -400,9 +400,9 @@ process_temperature()
         },
     )
     new_task_event.set()
-    await wait_for_tasks_to_complete(test_db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
-    async with DatabaseContext(engine=test_db_engine) as db_ctx:
+    async with DatabaseContext(engine=db_engine) as db_ctx:
         notes = await db_ctx.notes.get_all()
         note_titles = {n["title"] for n in notes}
         assert "Temperature Alerts" in note_titles

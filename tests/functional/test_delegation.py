@@ -458,7 +458,7 @@ async def assert_message_history_contains(
     "confirm_tool_arg", [False, None]
 )  # Test with confirm_delegation=False and when arg is omitted
 async def test_delegation_unrestricted_target_no_forced_confirm(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
     primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
@@ -491,7 +491,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,
@@ -515,7 +515,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     awaited_mock_confirmation_callback.assert_not_called()
 
     # DB Assertions
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         await assert_message_history_contains(
             db_context, str(TEST_CHAT_ID), "user", user_query
         )
@@ -534,7 +534,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
 
 @pytest.mark.asyncio
 async def test_delegation_confirm_target_granted(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
     primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
@@ -566,7 +566,7 @@ async def test_delegation_confirm_target_granted(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,
@@ -604,7 +604,7 @@ async def test_delegation_confirm_target_granted(
 
 @pytest.mark.asyncio
 async def test_delegation_confirm_target_denied(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
     primary_processing_service: ProcessingService,
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
@@ -634,7 +634,7 @@ async def test_delegation_confirm_target_denied(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,
@@ -663,7 +663,7 @@ async def test_delegation_confirm_target_denied(
 
 @pytest.mark.asyncio
 async def test_delegation_blocked_target(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
     primary_processing_service: ProcessingService,
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
@@ -690,7 +690,7 @@ async def test_delegation_blocked_target(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,
@@ -717,7 +717,7 @@ async def test_delegation_blocked_target(
 
 @pytest.mark.asyncio
 async def test_delegation_unrestricted_confirm_arg_granted(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
     primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
@@ -751,7 +751,7 @@ async def test_delegation_unrestricted_confirm_arg_granted(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         (
             final_reply,
             _,

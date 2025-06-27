@@ -60,7 +60,7 @@ TEST_USER_NAME = "NotesTestUser"
 
 @pytest.mark.asyncio
 async def test_add_and_retrieve_note_rule_mock(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:  # Renamed test
     """
     Rule-based mock test:
@@ -167,7 +167,7 @@ async def test_add_and_retrieve_note_rule_mock(
     # if not handled carefully (e.g. if NotesContextProvider calls this many times).
     # For this test, we assume this is acceptable to satisfy the type hints.
     async def get_test_db_context_func() -> DatabaseContext:
-        manager = get_db_context(engine=test_db_engine)
+        manager = get_db_context(engine=db_engine)
         return await manager.__aenter__()
 
     notes_provider = NotesContextProvider(
@@ -205,8 +205,8 @@ async def test_add_and_retrieve_note_rule_mock(
     add_note_trigger = [{"type": "text", "text": add_note_text}]
 
     # Create a DatabaseContext using the test engine provided by the fixture
-    # Note: test_db_engine fixture comes from the root conftest.py
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    # Note: db_engine fixture comes from the root conftest.py
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Call the method on the ProcessingService instance
         # Unpack the 4 return values correctly
         (
@@ -241,7 +241,7 @@ async def test_add_and_retrieve_note_rule_mock(
     note_in_db = None
 
     logger.info("Checking database for the new note...")
-    async with test_db_engine.connect() as connection:  # Correct indentation
+    async with db_engine.connect() as connection:  # Correct indentation
         result = await connection.execute(
             text("SELECT title, content FROM notes WHERE title = :title"),
             {"title": test_note_title},
@@ -263,7 +263,7 @@ async def test_add_and_retrieve_note_rule_mock(
     retrieve_note_trigger = [{"type": "text", "text": retrieve_note_text}]
 
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Call the method on the ProcessingService instance again
         (
             retrieve_final_text_reply,

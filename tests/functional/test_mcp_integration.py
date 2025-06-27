@@ -127,7 +127,7 @@ async def mcp_proxy_server() -> AsyncGenerator[str, None]:
 
 
 @pytest.mark.asyncio
-async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
+async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
     """
     Tests the end-to-end flow involving an MCP tool call:
     1. User asks to convert time between timezones.
@@ -280,7 +280,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
     user_request_trigger = [{"type": "text", "text": user_request_text}]
     user_message_id = 101
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Call generate_llm_response_for_chat directly
         # Unpack the correct return values: generated_turn_messages, final_reasoning_info, processing_error_traceback
         (
@@ -331,7 +331,7 @@ async def test_mcp_time_conversion_stdio(test_db_engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_mcp_time_conversion_sse(
-    test_db_engine: AsyncEngine, mcp_proxy_server: str
+    db_engine: AsyncEngine, mcp_proxy_server: str
 ) -> None:
     """
     Tests the end-to-end flow involving an MCP tool call via SSE transport,
@@ -482,7 +482,7 @@ async def test_mcp_time_conversion_sse(
         {"type": "text", "text": user_request_text}  # Correct input format
     ]
 
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Correct unpacking based on function signature
         (
             final_assistant_message_content_sse,

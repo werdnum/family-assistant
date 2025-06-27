@@ -76,7 +76,7 @@ class MockToolsProvider:
 
 
 @pytest.mark.asyncio
-async def test_tools_api_list(test_db_engine: Any) -> None:
+async def test_tools_api_list(db_engine: Any) -> None:
     """Test listing tools from Starlark."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -109,7 +109,7 @@ tool_names
 
 
 @pytest.mark.asyncio
-async def test_tools_api_get(test_db_engine: Any) -> None:
+async def test_tools_api_get(db_engine: Any) -> None:
     """Test getting a specific tool from Starlark."""
     tools_provider = MockToolsProvider()
 
@@ -144,7 +144,7 @@ fake_tool
 
 
 @pytest.mark.asyncio
-async def test_tools_api_execute(test_db_engine: Any) -> None:
+async def test_tools_api_execute(db_engine: Any) -> None:
     """Test executing tools from Starlark."""
     tools_provider = MockToolsProvider()
 
@@ -179,7 +179,7 @@ result
 
 
 @pytest.mark.asyncio
-async def test_tools_api_execute_json(test_db_engine: Any) -> None:
+async def test_tools_api_execute_json(db_engine: Any) -> None:
     """Test executing tools with JSON arguments from Starlark."""
     tools_provider = MockToolsProvider()
 
@@ -206,7 +206,7 @@ result
 
 
 @pytest.mark.asyncio
-async def test_tools_api_not_available_without_context(test_db_engine: Any) -> None:
+async def test_tools_api_not_available_without_context(db_engine: Any) -> None:
     """Test that tools API is not available without execution context."""
     tools_provider = MockToolsProvider()
     engine = StarlarkEngine(tools_provider=tools_provider)
@@ -235,7 +235,7 @@ tools_list()
 
 
 @pytest.mark.asyncio
-async def test_tools_api_invalid_tool(test_db_engine: Any) -> None:
+async def test_tools_api_invalid_tool(db_engine: Any) -> None:
     """Test that executing an invalid tool raises an error."""
     tools_provider = MockToolsProvider()
 

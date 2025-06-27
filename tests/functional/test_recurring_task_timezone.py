@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 async def test_recurring_task_respects_user_timezone(
-    test_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """
     Test that recurring tasks scheduled with BYHOUR respect the user's timezone.
@@ -199,7 +199,7 @@ async def test_recurring_task_respects_user_timezone(
         calendar_config={},
         clock=mock_clock,
         shutdown_event_instance=test_shutdown_event,
-        engine=test_db_engine,
+        engine=db_engine,
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
 
@@ -211,7 +211,7 @@ async def test_recurring_task_respects_user_timezone(
 
     # Part 1: Schedule the recurring task
     logger.info("--- Part 1: Scheduling recurring task ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         _, _, _, error = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
@@ -232,7 +232,7 @@ async def test_recurring_task_respects_user_timezone(
     await asyncio.sleep(0.1)
 
     # Verify the task is scheduled correctly
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         stmt = select(
             tasks_table.c.task_id,
             tasks_table.c.scheduled_at,
@@ -272,7 +272,7 @@ async def test_recurring_task_respects_user_timezone(
 
     # Part 3: Verify the next occurrence is scheduled correctly
     logger.info("--- Part 3: Verifying next occurrence ---")
-    async with DatabaseContext(engine=test_db_engine) as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         # Look for the new task (should have the recurring pattern in its ID)
         stmt = select(
             tasks_table.c.task_id,
