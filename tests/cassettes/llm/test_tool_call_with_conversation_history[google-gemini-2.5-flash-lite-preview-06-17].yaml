@@ -1,0 +1,61 @@
+interactions:
+- request:
+    body: '{"contents": [{"parts": [{"text": "I''m planning a trip to Paris, France"}],
+      "role": "user"}, {"parts": [{"text": "Paris is a wonderful destination! Would
+      you like to know about the weather there?"}], "role": "model"}, {"parts": [{"text":
+      "Yes, what''s the weather like in Paris, France?"}], "role": "user"}], "tools":
+      [{"functionDeclarations": [{"description": "Get the current weather in a given
+      location", "name": "get_weather", "parameters": {"properties": {"location":
+      {"description": "The city and state, e.g. San Francisco, CA", "type": "STRING"},
+      "unit": {"description": "The temperature unit", "type": "STRING"}}, "required":
+      ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+    headers:
+      Content-Type:
+      - application/json
+      user-agent:
+      - google-genai-sdk/1.22.0 gl-python/3.13.0
+      x-goog-api-client:
+      - google-genai-sdk/1.22.0 gl-python/3.13.0
+    method: post
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent
+  response:
+    body:
+      string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\":
+        [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n
+        \             \"args\": {\n                \"location\": \"Paris, France\"\n
+        \             }\n            }\n          }\n        ],\n        \"role\":
+        \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n
+        \   }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 111,\n    \"candidatesTokenCount\":
+        17,\n    \"totalTokenCount\": 128,\n    \"promptTokensDetails\": [\n      {\n
+        \       \"modality\": \"TEXT\",\n        \"tokenCount\": 111\n      }\n    ]\n
+        \ },\n  \"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\n  \"responseId\":
+        \"sOFdaLW9LJWJ6dkPusHzyQg\"\n}\n"
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Fri, 27 Jun 2025 00:11:28 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=362
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

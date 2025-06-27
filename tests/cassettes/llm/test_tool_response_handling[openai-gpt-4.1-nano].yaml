@@ -1,0 +1,219 @@
+interactions:
+- request:
+    body: '{"messages":[{"role":"user","content":"What''s the weather in London, UK?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get
+      the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]}}}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '496'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      user-agent:
+      - AsyncOpenAI/Python 1.76.0
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 1.76.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.0
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAAAwAAAP//1FRRT9swEH7Pr7DuOUVpk9A0bwyJgYq0gcZQWVFk7Etq5tiR7YxC1f8+
+        JYUkLUzidXmInPv83X13+eyNRwgIDikBtqKOlZUcfSlNcLyer9cy+hr8PDdXV/zm4na6yvkdN+A3
+        DP3wiMy9sY6YLiuJTmi1g5lB6rDJOp7GwSwJx9OkBUrNUTa0onKj6Gg8UlTp0SSYxKMgGo2jV/pK
+        C4YWUvLLI4SQTftuhCqOa0hJ4L9FSrSWFghpt4kQMFo2EaDWCuuocuD3INPKoWq0q1rKAeC0lhmj
+        UvaFd89msO6nRaXMri+nJ9X6dPoS377czb6fP8bzs/hazQf1dqmfq1ZQXivWTWmAd/H0oBghoGjZ
+        cgt02RNSt0JzQCcEqCnqEpVrpMNmCVIz2iRcQkqWcKkV18onN/MlbGGPux18bf1PNR2eLtzi7Fir
+        H+HTt4uFiGcUT6xx/2nT3fp+4AWDeW2pfG8SqpR2bZXWJffewehA6qIy+sEeUCEXSthVZpDatuWh
+        3bw3Ia0EqPccDZXRZeUyp39jWzQJd0mhP3U9GCWvoNOOyj4+Dsf+B+kyjo6K1vHdIWOUrZD31P6w
+        0ZoLPQC8Qevv1XyUe9e+UMVn0vcAY1g55FllkAu233G/zWBzKf1rWzfkVjBYNH8Ew8wJNM3v4JjT
+        Wu5MDPbZOiyzXKgCTWVEe11AXmVhEkYhneRJDt7W+wsAAP//AwC9MkuoPQUAAA==
+    headers:
+      CF-RAY:
+      - 9560bc62af2cf426-SYD
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Fri, 27 Jun 2025 00:12:59 GMT
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - __cf_bm=wqjBBUUGJ4mRhbNATmcfLWJ_8F0HwlYt.Mx9U9RA1gQ-1750983179-1.0.1.1-5LavdaqJrMrHwNGjesA_qExgwZZGdm67OBaXCE_mL5ZJLXyd3ZaIi9vMdTnQkpmJ.FNfOYG2ySe_.cVJt5eOQthnghA70uhOTJ3m21n3nLk;
+        path=/; expires=Fri, 27-Jun-25 00:42:59 GMT; domain=.api.openai.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=BpZRzlFNViy4V8i2q.YyoN.w_iQ4PlVNdLThbZgfnYg-1750983179346-0.0.1.1-604800000;
+        path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      openai-organization:
+      - REDACTED
+      openai-processing-ms:
+      - '465'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      x-envoy-upstream-service-time:
+      - '473'
+      x-ratelimit-limit-requests:
+      - '500'
+      x-ratelimit-limit-tokens:
+      - '200000'
+      x-ratelimit-remaining-requests:
+      - '499'
+      x-ratelimit-remaining-tokens:
+      - '199988'
+      x-ratelimit-reset-requests:
+      - 120ms
+      x-ratelimit-reset-tokens:
+      - 3ms
+      x-request-id:
+      - req_5579631e15b5286aae9a2a8c6ec85abe
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages":[{"role":"user","content":"What''s the weather in London, UK?"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_RL7ApxC7z5WzZ9PHj5KF5RnK","type":"function","function":{"name":"get_weather","arguments":"{\"location\":
+      \"London, UK\"}"}}]},{"role":"tool","tool_call_id":"call_RL7ApxC7z5WzZ9PHj5KF5RnK","content":"{\"location\":
+      \"London, UK\", \"temperature\": 15, \"unit\": \"celsius\", \"condition\": \"Partly
+      cloudy\"}"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get
+      the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]}}}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '867'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=wqjBBUUGJ4mRhbNATmcfLWJ_8F0HwlYt.Mx9U9RA1gQ-1750983179-1.0.1.1-5LavdaqJrMrHwNGjesA_qExgwZZGdm67OBaXCE_mL5ZJLXyd3ZaIi9vMdTnQkpmJ.FNfOYG2ySe_.cVJt5eOQthnghA70uhOTJ3m21n3nLk;
+        _cfuvid=BpZRzlFNViy4V8i2q.YyoN.w_iQ4PlVNdLThbZgfnYg-1750983179346-0.0.1.1-604800000
+      host:
+      - api.openai.com
+      user-agent:
+      - AsyncOpenAI/Python 1.76.0
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 1.76.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.0
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAAAwAAAP//jJLNbtswDMfveQpC5ziI87F83LYCwYDt2G3YhsJgJdrWJouCRK8Nir7T
+        nmFPNthJY3frgF104I9/in+SDxMAZY3ag9I1im6Cy940cb6Jn+qDCR/p86b+csDXb6+r7S6srg5q
+        2in49htpeVLNNDfBkVj2J6wjoVBXNd+s57vtMt/setCwIdfJqiDZapZnHj1ni/linc1XWb46y2u2
+        mpLaw9cJAMBD/3aNekP3ag/z6VOkoZSwIrW/JAGoyK6LKEzJJkEvajpAzV7I971f1wR3hFJTBOvh
+        PXvDfgof3oFNEDCKO4J23Joj3FmpAUGoCRRR2kjAJWAIke9tg0LuCPn618+r2fivSGWbsDPsW+dG
+        AL1nwW5gvcubM3m8+HJchci36Q+pKq23qS4iYWLfeUjCQfX0cQJw08+vfTYSFSI3QQrh79R/ly9f
+        neqpYW8jujtDYUE3iq/X0xfqFYYErUujDSiNuiYzSId1YWssj8Bk5Prvbl6qfXJuffU/5QegNQUh
+        U4RIxurnjoe0SN1Z/yvtMuW+YZUo/rCaCrEUu00YKrF1p1tT6ZiEmqK0vqIYoj0dXBmK5Xa5WuKi
+        3JZq8jj5DQAA//8DAJ6tPXx/AwAA
+    headers:
+      CF-RAY:
+      - 9560bc670fdcf426-SYD
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Fri, 27 Jun 2025 00:12:59 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      openai-organization:
+      - REDACTED
+      openai-processing-ms:
+      - '295'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      x-envoy-upstream-service-time:
+      - '299'
+      x-ratelimit-limit-requests:
+      - '500'
+      x-ratelimit-limit-tokens:
+      - '200000'
+      x-ratelimit-remaining-requests:
+      - '499'
+      x-ratelimit-remaining-tokens:
+      - '199963'
+      x-ratelimit-reset-requests:
+      - 120ms
+      x-ratelimit-reset-tokens:
+      - 10ms
+      x-request-id:
+      - req_203374bfbd0cf5257ed2133f8ee0cd54
+    status:
+      code: 200
+      message: OK
+version: 1

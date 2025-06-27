@@ -1,0 +1,61 @@
+interactions:
+- request:
+    body: '{"contents": [{"parts": [{"text": ""}], "role": "user"}], "generationConfig":
+      {}}'
+    headers:
+      Content-Type:
+      - application/json
+      user-agent:
+      - google-genai-sdk/1.22.0 gl-python/3.13.0
+      x-goog-api-client:
+      - google-genai-sdk/1.22.0 gl-python/3.13.0
+    method: post
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent
+  response:
+    body:
+      string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\":
+        [\n          {\n            \"text\": \"I'm sorry, but I need more information
+        to understand what you're asking. Could you please clarify what you mean by
+        \\\"I'm sorry, but I need more information to understand what you're asking.\\\"?\\n\\nFor
+        example, are you:\\n\\n*   **Asking me to elaborate on a previous response?**
+        If so, please tell me what you'd like me to explain further.\\n*   **Indicating
+        that *you* need more information from *me*?** If so, please tell me what information
+        you are missing.\\n*   **Stating that you are unable to answer a question
+        because *you* lack information?** If so, please tell me what question you
+        are trying to answer.\\n*   **Something else entirely?**\\n\\nThe more context
+        you can provide, the better I can assist you!\"\n          }\n        ],\n
+        \       \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n
+        \     \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\":
+        1,\n    \"candidatesTokenCount\": 174,\n    \"totalTokenCount\": 175,\n    \"promptTokensDetails\":
+        [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 1\n      }\n
+        \   ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\n
+        \ \"responseId\": \"EeFdaJieMu7yqtsP5Mq3sAM\"\n}\n"
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Fri, 27 Jun 2025 00:08:49 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=1701
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

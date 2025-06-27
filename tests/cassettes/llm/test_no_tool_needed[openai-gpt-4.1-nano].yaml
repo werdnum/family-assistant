@@ -1,0 +1,112 @@
+interactions:
+- request:
+    body: '{"messages":[{"role":"user","content":"Tell me a joke about programming"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get
+      the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]}}},{"type":"function","function":{"name":"calculate","description":"Perform
+      basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The
+      mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '762'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      user-agent:
+      - AsyncOpenAI/Python 1.76.0
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 1.76.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.0
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAAAwAAAP//jFJNj9MwEL3nVww+N6t8dJe2F0SBC0icQD2gVeTak8Ssv7AnLKtV/zty
+        0m2ysEhcfJg37/m9mXnMAJiSbAdM9JyE8Trfmx/3N6YIh/cfXfXFRbM/bN/ef/hav/skPrNVYrjj
+        dxT0xLoSzniNpJydYBGQEybV8vV1sd1U27oYAeMk6kTrPOXrqzK33Lq8KqrrvFjn5fpM750SGNkO
+        vmUAAI/jm4xaib/YDkaxsWIwRt4h212aAFhwOlUYj1FF4pbYagaFs4R29H7oH0A68MF1gRuDIYIP
+        2GIAycMdJLNvYI+CDxFBq64n4ESBC4pwHLr4aqkbsB0iT+HsoPUC4NY64mk4Y6LbM3K6ZNCu88Ed
+        4x9U1iqrYt8E5NHZ5DeS82xETxnA7Tir4Vl85oMznhpydzh+VxY3kx6bd7RA6zNIjrhe1Mvt6gW9
+        RiJxpeNi2kxw0aOcqfNq+CCVWwDZIvXfbl7SnpIr2/2P/AwIgZ5QNj6gVOJ54rktYDrhf7Vdpjwa
+        ZhHDTyWwIYUhbUJiywc93RWLD5HQNK2yHQYf1HRcrW/qTb2uedVuWpadst8AAAD//wMABVzad2sD
+        AAA=
+    headers:
+      CF-RAY:
+      - 9560b64fd80ce7d4-SYD
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Fri, 27 Jun 2025 00:08:50 GMT
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - __cf_bm=2iLhxx6E63ylZRyStUObHIVXbsC696Ce69eUDzRMouo-1750982930-1.0.1.1-XXXbfeVkzxePVpTBPJL0ixcorXRM_sHgzO8MRCbfObxbNGD5T0.ix1pXOVQi4ulsg2zgrif..4zS9tdulDYW76lcPZc50Jwxzo9av1nMOMs;
+        path=/; expires=Fri, 27-Jun-25 00:38:50 GMT; domain=.api.openai.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=PUAzIUEtH9jX0ZqYSZyaJRIXRfwN28trx7wQNcTeKME-1750982930469-0.0.1.1-604800000;
+        path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      openai-organization:
+      - REDACTED
+      openai-processing-ms:
+      - '316'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      x-envoy-upstream-service-time:
+      - '338'
+      x-ratelimit-limit-requests:
+      - '500'
+      x-ratelimit-limit-tokens:
+      - '200000'
+      x-ratelimit-remaining-requests:
+      - '499'
+      x-ratelimit-remaining-tokens:
+      - '199990'
+      x-ratelimit-reset-requests:
+      - 120ms
+      x-ratelimit-reset-tokens:
+      - 3ms
+      x-request-id:
+      - req_8891caa882fcac5219115322989244a5
+    status:
+      code: 200
+      message: OK
+version: 1
