@@ -252,10 +252,11 @@ interface has been reorganized for better navigation with grouped sections.
     directly from the web interface.
 
   - \*\*Event Listeners Management:\*\*The Event Listeners page provides: \*A comprehensive list of
-    all active event listeners \*Detailed view of each listener's configuration and execution
-    history \*Edit functionality to modify listener conditions, scripts, and settings \*Live script
-    validation for script-based listeners \*Enable/disable and delete controls for managing
-    listeners
+    all active event listeners \*Create new event listeners directly from the UI with the "Create
+    New Listener" button \*Detailed view of each listener's configuration and execution history
+    \*Edit functionality to modify listener conditions, scripts, and settings (including changing
+    between LLM callback and script action types) \*Live script validation for script-based
+    listeners \*Enable/disable and delete controls for managing listeners
 
 ## 7. Tips for Best Results
 
@@ -268,14 +269,16 @@ interface has been reorganized for better navigation with grouped sections.
   password note" instead of searching \*"List all my notes" to see everything at once \*"Delete the
   old shopping list" to remove outdated notes
 
-- \*\*Setting Up Event Listeners:\*\*When creating event listeners: \*Start by exploring what events
-  are available: "Show me recent home assistant events" \*Test your conditions before creating the
+- \*\*Setting Up Event Listeners:\*\*You can create event listeners either by asking the assistant
+  or through the Web UI. When creating event listeners: \*Start by exploring what events are
+  available: "Show me recent home assistant events" \*Test your conditions before creating the
   listener: "Test if entity_id equals 'person.alex' would match recent events" \*Be specific with
   field names - use the exact names you see in the event data \*You can filter by event type: "Test
   if event_type equals 'state_changed' and entity_id equals 'person.alex'" \*Choose between two
   action types: - **wake_llm**: Wakes the assistant to handle complex situations requiring reasoning
   \- **script**: Runs automated Starlark code for simple, deterministic tasks \*Scripts can also use
-  wake_llm() to conditionally wake the assistant with specific context
+  wake_llm() to conditionally wake the assistant with specific context \*Via the Web UI: Navigate to
+  Event Listeners and click "Create New Listener" to use the visual form with live script validation
 
 - \*\*Reply Directly:\*\*If you're responding to something the assistant just said, use Telegram's
   "Reply" feature so it knows exactly what message you're referring to. This is especially helpful
