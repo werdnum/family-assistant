@@ -297,7 +297,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
 
         result = await event_listener_test_tool(
             exec_context,
-            source_id=EventSourceType.home_assistant.value,
+            source=EventSourceType.home_assistant.value,
             match_conditions={
                 "entity_id": "person.andrew",
                 "new_state.state": "Home",
@@ -354,7 +354,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
 
         result = await event_listener_test_tool(
             exec_context,
-            source_id=EventSourceType.home_assistant.value,
+            source=EventSourceType.home_assistant.value,
             match_conditions={
                 "entity_id": "person.andrew",
                 "new_state.state": "Vacation",  # This state doesn't exist
@@ -392,7 +392,7 @@ async def test_test_event_listener_tool_empty_conditions_error(
 
         result = await event_listener_test_tool(
             exec_context,
-            source_id=EventSourceType.home_assistant.value,
+            source=EventSourceType.home_assistant.value,
             match_conditions={},
             hours=1,
         )
@@ -462,7 +462,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
 
         result = await event_listener_test_tool(
             exec_context,
-            source_id=EventSourceType.home_assistant.value,
+            source=EventSourceType.home_assistant.value,
             match_conditions={
                 "event_type": "state_changed",
                 "entity_id": "light.living_room",
@@ -489,7 +489,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
 
         result = await event_listener_test_tool(
             exec_context,
-            source_id=EventSourceType.home_assistant.value,
+            source=EventSourceType.home_assistant.value,
             match_conditions={
                 "event_type": "call_service",
                 "domain": "light",
