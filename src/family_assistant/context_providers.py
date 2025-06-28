@@ -90,6 +90,10 @@ class NotesContextProvider(ContextProvider):
             ):  # Get context per call
                 # Only get notes that should be included in prompts
                 prompt_notes = await db_context.notes.get_prompt_notes()
+                excluded_notes_titles = (
+                    await db_context.notes.get_excluded_notes_titles()
+                )
+
                 if prompt_notes:
                     notes_list_str = ""
                     note_item_format = self._prompts.get(
@@ -118,8 +122,24 @@ class NotesContextProvider(ContextProvider):
                     no_notes_message = self._prompts.get("no_notes")
                     if no_notes_message:  # Check if the message exists and is not empty
                         fragments.append(no_notes_message)
+
+                # Add excluded notes list if there are any
+                if excluded_notes_titles:
+                    excluded_notes_format = self._prompts.get(
+                        "excluded_notes_format",
+                        "Other available notes (not included above): {excluded_titles}",
+                    )
+                    excluded_titles_str = ", ".join(
+                        f'"{title}"' for title in excluded_notes_titles
+                    )
+                    formatted_excluded_notes = excluded_notes_format.format(
+                        excluded_titles=excluded_titles_str
+                    ).strip()
+                    if formatted_excluded_notes:
+                        fragments.append(formatted_excluded_notes)
+
                 logger.debug(
-                    f"[{self.name}] Formatted {len(prompt_notes)} notes into {len(fragments)} fragment(s)."
+                    f"[{self.name}] Formatted {len(prompt_notes)} notes and {len(excluded_notes_titles)} excluded notes into {len(fragments)} fragment(s)."
                 )
         except Exception as e:
             logger.error(

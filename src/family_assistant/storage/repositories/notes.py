@@ -51,6 +51,22 @@ class NotesRepository(BaseRepository):
             )
             raise
 
+    async def get_excluded_notes_titles(self) -> list[str]:
+        """Retrieves titles of notes that are excluded from prompts."""
+        try:
+            stmt = (
+                select(notes_table.c.title)
+                .where(notes_table.c.include_in_prompt.is_(False))
+                .order_by(notes_table.c.title)
+            )
+            rows = await self._db.fetch_all(stmt)
+            return [row["title"] for row in rows]
+        except SQLAlchemyError as e:
+            self._logger.error(
+                f"Database error in get_excluded_notes_titles: {e}", exc_info=True
+            )
+            raise
+
     async def get_by_id(self, note_id: int) -> dict[str, Any] | None:
         """
         Retrieves a note by its ID.
