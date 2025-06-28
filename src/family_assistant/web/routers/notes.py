@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 from family_assistant.web.dependencies import get_db
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ async def read_root(
         {
             "request": request,
             "notes": notes,
-            "user": request.session.get("user"),
+            "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
             "now_utc": datetime.now(timezone.utc),  # Pass to base template
             "server_url": server_url,
@@ -45,7 +45,7 @@ async def add_note_form(request: Request) -> HTMLResponse:
             "request": request,
             "note": None,
             "is_new": True,
-            "user": request.session.get("user"),
+            "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
             "now_utc": datetime.now(timezone.utc),  # Pass to base template
         },
@@ -71,7 +71,7 @@ async def edit_note_form(
             "request": request,
             "note": note,
             "is_new": False,
-            "user": request.session.get("user"),
+            "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
             "now_utc": datetime.now(timezone.utc),  # Pass to base template
         },

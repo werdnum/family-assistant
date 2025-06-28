@@ -8,7 +8,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from family_assistant.tools import (
     _scan_user_docs,  # Assuming this is the correct location
 )
-from family_assistant.web.auth import AUTH_ENABLED  # Use absolute import
+from family_assistant.web.auth import (  # Use absolute import
+    AUTH_ENABLED,
+    get_user_from_request,
+)
 from family_assistant.web.utils import md_renderer  # Use absolute import
 
 logger = logging.getLogger(__name__)
@@ -71,7 +74,7 @@ async def serve_documentation(request: Request, filename: str) -> HTMLResponse:
                 "title": filename,
                 "available_docs": available_docs,
                 "server_url": server_url,  # Keep for {{ SERVER_URL }} replacement in md
-                "user": request.session.get("user"),
+                "user": get_user_from_request(request),
                 "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
                 "now_utc": datetime.now(timezone.utc),  # Pass to base template
             },

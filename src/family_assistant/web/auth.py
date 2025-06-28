@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import re
 from datetime import datetime, timezone
@@ -74,7 +75,23 @@ User = dict[str, Any]  # User information stored in session is a dictionary
 
 async def get_current_user_optional(request: Request) -> User | None:
     """FastAPI dependency to get the current user from session, if any."""
-    return request.session.get("user")
+    try:
+        return request.session.get("user")
+    except AssertionError:
+        # Session middleware not installed
+        return None
+
+
+def get_user_from_request(request: Request) -> User | None:
+    """
+    Safely get user from request, handling cases where SessionMiddleware is not installed.
+    This is a synchronous helper for use in template contexts.
+    """
+    try:
+        return request.session.get("user")
+    except AssertionError:
+        # Session middleware not installed
+        return None
 
 
 async def get_user_from_api_token(
@@ -172,7 +189,13 @@ class AuthMiddleware:
                 await self.app(scope, receive, send)
                 return
 
-        user = request.session.get("user")
+        # Try to get user from session
+        try:
+            user = request.session.get("user")
+        except AssertionError:
+            # Session middleware not available, so no authentication is possible
+            await self.app(scope, receive, send)
+            return
 
         # Attempt API token authentication if no session user
         if not user:
@@ -180,7 +203,9 @@ class AuthMiddleware:
             if auth_header:
                 api_user = await get_user_from_api_token(auth_header, request)
                 if api_user:
-                    request.session["user"] = api_user
+                    # Session middleware might not be available, can't store user in session
+                    with contextlib.suppress(AssertionError):
+                        request.session["user"] = api_user
                     user = api_user  # Update user for the current request flow
                     logger.debug(
                         f"User authenticated via API token for path {request.url.path}"
@@ -188,7 +213,9 @@ class AuthMiddleware:
 
         if not user:
             # Store intended URL before redirecting to login (for OIDC flow)
-            request.session["redirect_after_login"] = str(request.url)
+            # Session middleware might not be available
+            with contextlib.suppress(AssertionError):
+                request.session["redirect_after_login"] = str(request.url)
             logger.debug(
                 f"No user session or valid API token for protected path {request.url.path}, redirecting to OIDC login."
             )

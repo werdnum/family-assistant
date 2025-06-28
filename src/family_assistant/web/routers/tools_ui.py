@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from family_assistant.tools.schema import render_schema_as_html
-from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 
 logger = logging.getLogger(__name__)
 tools_ui_router = APIRouter()
@@ -50,7 +50,7 @@ async def view_tools(request: Request) -> HTMLResponse:
             {
                 "request": request,
                 "tools": rendered_tools,
-                "user": request.session.get("user"),
+                "user": get_user_from_request(request),
                 "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
                 "now_utc": datetime.now(timezone.utc),  # Pass to base template
             },

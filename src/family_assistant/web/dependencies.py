@@ -144,7 +144,17 @@ async def get_current_active_user(request: Request) -> dict:
             "source": "mock_auth_disabled",
         }
 
-    user = request.session.get("user")
+    # Try to get user from session
+    try:
+        user = request.session.get("user")
+    except AssertionError:
+        # Session middleware not available
+        logger.warning("Session middleware not available. Cannot authenticate user.")
+        raise HTTPException(
+            status_code=401,  # Unauthorized
+            detail="Session not available - authentication not configured",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
     if not user:
         logger.debug("No user in session. Raising 401 Unauthorized.")
         raise HTTPException(
