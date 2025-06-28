@@ -73,7 +73,7 @@ EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "source_id": {
+                    "source": {
                         "type": "string",
                         "description": "Event source to test against (e.g., 'home_assistant', 'indexing')",
                     },
@@ -95,7 +95,7 @@ EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                         "default": 10,
                     },
                 },
-                "required": ["source_id", "match_conditions"],
+                "required": ["source", "match_conditions"],
             },
         },
     },
@@ -214,7 +214,7 @@ async def query_recent_events_tool(
 
 async def test_event_listener_tool(
     exec_context: ToolExecutionContext,
-    source_id: str,
+    source: str,
     match_conditions: dict[str, Any],
     hours: int = 24,
     limit: int = 10,
@@ -224,7 +224,7 @@ async def test_event_listener_tool(
 
     Args:
         exec_context: Tool execution context
-        source_id: Event source to test against
+        source: Event source to test against
         match_conditions: Match conditions to test
         hours: Number of hours to look back (default 24, max 48)
         limit: Maximum number of matching events to return (default 10, max 20)
@@ -254,7 +254,7 @@ async def test_event_listener_tool(
                 ORDER BY timestamp DESC
             """)
             params = {
-                "source_id": source_id,
+                "source_id": source,
                 "cutoff_time": cutoff_time,
             }
 
@@ -264,7 +264,7 @@ async def test_event_listener_tool(
             return json.dumps({
                 "matched_events": [],
                 "total_tested": 0,
-                "message": f"No events found for source '{source_id}' in the last {hours} hours",
+                "message": f"No events found for source '{source}' in the last {hours} hours",
                 "match_conditions": match_conditions,
             })
 
