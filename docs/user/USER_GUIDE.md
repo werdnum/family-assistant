@@ -160,7 +160,9 @@ You can ask the assistant a wide variety of things:
   when any new documents are indexed" \*You can manage these event listeners: \*"List all my event
   listeners" \*"Disable the garage door alert" \*"Delete the washing machine listener" \*Test
   conditions before creating listeners: \*"Show me recent events from home assistant" \*"Test if
-  person.andrew state changes to 'Home' would have triggered in the last day"
+  person.andrew state changes to 'Home' would have triggered in the last day" \*You can also edit
+  event listeners through the Web UI: navigate to the Event Listeners section to view all listeners,
+  see their execution history, and modify their conditions or scripts
 
 - **Automated Script Actions for Events:** \*For simple, deterministic actions, you can now create
   script-based event listeners that run instantly without waking the assistant: \*"Run a script to
@@ -248,6 +250,12 @@ interface has been reorganized for better navigation with grouped sections.
 
   - \*\*Tool Testing:\*\*A new "Tools" page allows developers to test and debug tool interactions
     directly from the web interface.
+
+  - \*\*Event Listeners Management:\*\*The Event Listeners page provides: \*A comprehensive list of
+    all active event listeners \*Detailed view of each listener's configuration and execution
+    history \*Edit functionality to modify listener conditions, scripts, and settings \*Live script
+    validation for script-based listeners \*Enable/disable and delete controls for managing
+    listeners
 
 ## 7. Tips for Best Results
 

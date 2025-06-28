@@ -225,6 +225,11 @@
             </button>
         </form>
         
+        <!-- Edit -->
+        <a href="/event-listeners/{{ listener.id }}/edit" class="button">
+            Edit Listener
+        </a>
+        
         <!-- Delete -->
         <form method="post" action="/event-listeners/{{ listener.id }}/delete" style="display: inline;" 
               onsubmit="return confirm('Are you sure you want to delete this listener? This action cannot be undone.');">

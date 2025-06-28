@@ -1,5 +1,6 @@
 """Web UI routes for managing event listeners."""
 
+import json
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -235,5 +236,207 @@ async def delete_listener(
     # Redirect to list page
     return RedirectResponse(
         url="/event-listeners",
+        status_code=303,  # See Other
+    )
+
+
+@router.post("/api/validate-script")
+async def validate_script(
+    request: Request,
+) -> Any:
+    """Validate a Starlark script and return diagnostics."""
+    from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+
+    try:
+        body = await request.json()
+        script_code = body.get("script_code", "")
+        sample_event = body.get("sample_event")
+
+        # Create a validation engine with minimal timeout
+        engine = StarlarkEngine(
+            tools_provider=None,  # No tools for validation
+            config=StarlarkConfig(
+                max_execution_time=1,  # 1 second max for validation
+                deny_all_tools=True,
+            ),
+        )
+
+        if sample_event:
+            # Test execution with sample event
+            context = {
+                "event": sample_event,
+                "conversation_id": "test_validation",
+                "listener_id": "test_listener",
+            }
+            await engine.evaluate_async(
+                script=script_code,
+                globals_dict=context,
+                execution_context=None,
+            )
+        else:
+            # Just parse the script for syntax errors
+            # The engine will parse during evaluate_async, so we'll do a minimal test
+            await engine.evaluate_async(
+                script=script_code,
+                globals_dict={"event": {}},
+                execution_context=None,
+            )
+
+        return {"valid": True, "diagnostics": []}
+
+    except Exception as e:
+        # Extract error details
+        error_msg = str(e)
+        line = 1
+        column = 1
+
+        # Try to extract line number from common error formats
+        if "line " in error_msg:
+            import re
+
+            match = re.search(r"line (\d+)", error_msg)
+            if match:
+                line = int(match.group(1))
+
+        return {
+            "valid": False,
+            "diagnostics": [
+                {
+                    "line": line,
+                    "column": column,
+                    "message": error_msg,
+                    "severity": "error",
+                }
+            ],
+        }
+
+
+@router.get("/{listener_id}/edit", response_class=HTMLResponse)
+async def edit_listener(
+    request: Request,
+    listener_id: int,
+) -> Any:
+    """Display edit form for event listener."""
+    user = request.session.get("user")
+    async with DatabaseContext() as db:
+        # Check permissions unless admin
+        if user and user.get("admin_mode"):
+            listener = await db.events.get_event_listener_by_id(listener_id)
+        else:
+            conversation_id = user.get("conversation_id", "") if user else ""
+            listener = await db.events.get_event_listener_by_id(
+                listener_id, conversation_id
+            )
+
+        if not listener:
+            raise HTTPException(status_code=404, detail="Event listener not found")
+
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        "listeners/listener_edit.html.j2",
+        {
+            "request": request,
+            "user": user,
+            "AUTH_ENABLED": AUTH_ENABLED,
+            "listener": listener,
+            "now_utc": datetime.now(timezone.utc),
+        },
+    )
+
+
+@router.post("/{listener_id}/update", response_class=HTMLResponse)
+async def update_listener(
+    request: Request,
+    listener_id: int,
+    name: Annotated[str, Form()],
+    match_conditions: Annotated[str, Form()],  # JSON string
+    description: Annotated[str | None, Form()] = "",
+    enabled: Annotated[str | None, Form()] = None,
+    one_time: Annotated[str | None, Form()] = None,
+    # Script-specific fields
+    script_code: Annotated[str | None, Form()] = None,
+    timeout: Annotated[int | None, Form()] = None,
+    # LLM-specific fields
+    llm_callback_prompt: Annotated[str | None, Form()] = None,
+) -> Any:
+    """Handle listener update."""
+    user = request.session.get("user")
+
+    try:
+        # Parse match conditions JSON
+        try:
+            match_conditions_dict = json.loads(match_conditions)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid match conditions JSON"
+            ) from e
+
+        # Convert checkbox values to booleans
+        enabled_bool = enabled is not None
+        one_time_bool = one_time is not None
+
+        async with DatabaseContext() as db:
+            # Get the existing listener to check action type and permissions
+            if user and user.get("admin_mode"):
+                existing = await db.events.get_event_listener_by_id(listener_id)
+                if not existing:
+                    raise HTTPException(
+                        status_code=404, detail="Event listener not found"
+                    )
+                conversation_id = existing["conversation_id"]
+            else:
+                conversation_id = user.get("conversation_id", "") if user else ""
+                existing = await db.events.get_event_listener_by_id(
+                    listener_id, conversation_id
+                )
+                if not existing:
+                    raise HTTPException(
+                        status_code=404, detail="Event listener not found"
+                    )
+
+            # Build action_config based on action type
+            action_config = None
+            if existing["action_type"] == "script":
+                if script_code is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Script code is required for script listeners",
+                    )
+                action_config = {
+                    "script_code": script_code,
+                    "timeout": timeout or 600,
+                }
+            elif existing["action_type"] == "wake_llm":
+                action_config = {}
+                if llm_callback_prompt:
+                    action_config["llm_callback_prompt"] = llm_callback_prompt
+
+            # Update the listener
+            success = await db.events.update_event_listener(
+                listener_id=listener_id,
+                conversation_id=conversation_id,
+                name=name,
+                description=description or None,
+                match_conditions=match_conditions_dict,
+                action_config=action_config,
+                one_time=one_time_bool,
+                enabled=enabled_bool,
+            )
+
+            if not success:
+                raise HTTPException(
+                    status_code=500, detail="Failed to update event listener"
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error updating listener: {str(e)}"
+        ) from e
+
+    # Redirect back to detail page
+    return RedirectResponse(
+        url=f"/event-listeners/{listener_id}",
         status_code=303,  # See Other
     )

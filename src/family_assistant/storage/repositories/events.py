@@ -340,6 +340,82 @@ class EventsRepository(BaseRepository):
             )
             return False
 
+    async def update_event_listener(
+        self,
+        listener_id: int,
+        conversation_id: str,
+        name: str,
+        description: str | None,
+        match_conditions: dict,
+        action_config: dict | None,
+        one_time: bool,
+        enabled: bool,
+    ) -> bool:
+        """
+        Update an event listener.
+
+        Args:
+            listener_id: ID of the listener to update
+            conversation_id: Conversation ID for verification
+            name: New name for the listener
+            description: New description (optional)
+            match_conditions: New match conditions
+            action_config: New action configuration (optional)
+            one_time: Whether listener should auto-disable after first trigger
+            enabled: Whether the listener is enabled
+
+        Returns:
+            True if updated successfully, False if not found or unauthorized
+        """
+        from sqlalchemy import update
+
+        # First verify the listener exists and belongs to the conversation
+        existing = await self.get_event_listener_by_id(listener_id, conversation_id)
+        if not existing:
+            self._logger.warning(
+                f"Event listener {listener_id} not found for conversation {conversation_id}"
+            )
+            return False
+
+        # Prepare update values
+        update_values = {
+            "name": name,
+            "description": description,
+            "match_conditions": match_conditions,
+            "one_time": one_time,
+            "enabled": enabled,
+        }
+
+        # Only update action_config if provided
+        if action_config is not None:
+            update_values["action_config"] = action_config
+
+        # Update the listener
+        stmt = (
+            update(event_listeners_table)
+            .where(
+                (event_listeners_table.c.id == listener_id)
+                & (event_listeners_table.c.conversation_id == conversation_id)
+            )
+            .values(**update_values)
+        )
+
+        result = await self._db.execute_with_retry(stmt)
+        updated_count = result.rowcount  # type: ignore[attr-defined]
+
+        if updated_count > 0:
+            self._logger.info(
+                f"Updated event listener '{name}' (ID: {listener_id}) "
+                f"for conversation {conversation_id}"
+            )
+            return True
+        else:
+            # This shouldn't happen since we checked existence above
+            self._logger.error(
+                f"Failed to update event listener {listener_id} - update returned 0 rows"
+            )
+            return False
+
     async def record_event(
         self,
         source_type: EventSourceType,
