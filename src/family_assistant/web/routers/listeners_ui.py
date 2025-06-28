@@ -112,6 +112,40 @@ async def listeners_list(
     )
 
 
+@router.get("/new", response_class=HTMLResponse)
+async def new_listener(
+    request: Request,
+) -> Any:
+    """Display form for creating a new event listener."""
+    user = get_user_from_request(request)
+
+    # Create a default listener object for the template
+    default_listener = {
+        "id": None,
+        "name": "",
+        "source_id": "home_assistant",
+        "action_type": "wake_llm",
+        "match_conditions": {},
+        "action_config": {"script_code": "", "timeout": 600, "llm_callback_prompt": ""},
+        "description": "",
+        "enabled": True,
+        "one_time": False,
+    }
+
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        "listeners/listener_edit.html.j2",
+        {
+            "request": request,
+            "user": user,
+            "AUTH_ENABLED": AUTH_ENABLED,
+            "listener": default_listener,
+            "is_new": True,
+            "now_utc": datetime.now(timezone.utc),
+        },
+    )
+
+
 @router.get("/{listener_id}", response_class=HTMLResponse)
 async def listener_detail(
     request: Request,
@@ -309,40 +343,6 @@ async def validate_script(
                 }
             ],
         }
-
-
-@router.get("/new", response_class=HTMLResponse)
-async def new_listener(
-    request: Request,
-) -> Any:
-    """Display form for creating a new event listener."""
-    user = get_user_from_request(request)
-
-    # Create a default listener object for the template
-    default_listener = {
-        "id": None,
-        "name": "",
-        "source_id": "home_assistant",
-        "action_type": "wake_llm",
-        "match_conditions": {},
-        "action_config": {"script_code": "", "timeout": 600, "llm_callback_prompt": ""},
-        "description": "",
-        "enabled": True,
-        "one_time": False,
-    }
-
-    templates = request.app.state.templates
-    return templates.TemplateResponse(
-        "listeners/listener_edit.html.j2",
-        {
-            "request": request,
-            "user": user,
-            "AUTH_ENABLED": AUTH_ENABLED,
-            "listener": default_listener,
-            "is_new": True,
-            "now_utc": datetime.now(timezone.utc),
-        },
-    )
 
 
 @router.get("/{listener_id}/edit", response_class=HTMLResponse)
