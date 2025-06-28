@@ -311,6 +311,40 @@ async def validate_script(
         }
 
 
+@router.get("/new", response_class=HTMLResponse)
+async def new_listener(
+    request: Request,
+) -> Any:
+    """Display form for creating a new event listener."""
+    user = get_user_from_request(request)
+
+    # Create a default listener object for the template
+    default_listener = {
+        "id": None,
+        "name": "",
+        "source_id": "home_assistant",
+        "action_type": "wake_llm",
+        "match_conditions": {},
+        "action_config": {"script_code": "", "timeout": 600, "llm_callback_prompt": ""},
+        "description": "",
+        "enabled": True,
+        "one_time": False,
+    }
+
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        "listeners/listener_edit.html.j2",
+        {
+            "request": request,
+            "user": user,
+            "AUTH_ENABLED": AUTH_ENABLED,
+            "listener": default_listener,
+            "is_new": True,
+            "now_utc": datetime.now(timezone.utc),
+        },
+    )
+
+
 @router.get("/{listener_id}/edit", response_class=HTMLResponse)
 async def edit_listener(
     request: Request,
@@ -339,6 +373,7 @@ async def edit_listener(
             "user": user,
             "AUTH_ENABLED": AUTH_ENABLED,
             "listener": listener,
+            "is_new": False,
             "now_utc": datetime.now(timezone.utc),
         },
     )
@@ -436,6 +471,92 @@ async def update_listener(
         ) from e
 
     # Redirect back to detail page
+    return RedirectResponse(
+        url=f"/event-listeners/{listener_id}",
+        status_code=303,  # See Other
+    )
+
+
+@router.post("/create", response_class=HTMLResponse)
+async def create_listener(
+    request: Request,
+    name: Annotated[str, Form()],
+    source_id: Annotated[str, Form()],
+    action_type: Annotated[str, Form()],
+    match_conditions: Annotated[str, Form()],  # JSON string
+    description: Annotated[str | None, Form()] = "",
+    enabled: Annotated[str | None, Form()] = None,
+    one_time: Annotated[str | None, Form()] = None,
+    # Script-specific fields
+    script_code: Annotated[str | None, Form()] = None,
+    timeout: Annotated[int | None, Form()] = None,
+    # LLM-specific fields
+    llm_callback_prompt: Annotated[str | None, Form()] = None,
+) -> Any:
+    """Handle new listener creation."""
+    user = get_user_from_request(request)
+    conversation_id = user.get("conversation_id", "") if user else ""
+
+    try:
+        # Parse match conditions JSON
+        try:
+            match_conditions_dict = json.loads(match_conditions)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid match conditions JSON"
+            ) from e
+
+        # Convert checkbox values to booleans
+        enabled_bool = enabled is not None
+        one_time_bool = one_time is not None
+
+        # Build action_config based on action type
+        action_config = None
+        if action_type == "script":
+            if script_code is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Script code is required for script listeners",
+                )
+            action_config = {
+                "script_code": script_code,
+                "timeout": timeout or 600,
+            }
+        elif action_type == "wake_llm":
+            action_config = {}
+            if llm_callback_prompt:
+                action_config["llm_callback_prompt"] = llm_callback_prompt
+
+        async with DatabaseContext() as db:
+            # Create the listener
+            listener_id = await db.events.create_event_listener(
+                name=name,
+                source_id=source_id,
+                match_conditions=match_conditions_dict,
+                conversation_id=conversation_id,
+                interface_type="web",
+                action_type=action_type,
+                action_config=action_config,
+                description=description or None,
+                one_time=one_time_bool,
+                enabled=enabled_bool,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Check for unique constraint violation
+        error_str = str(e)
+        if "UNIQUE constraint failed" in error_str and "name" in error_str:
+            raise HTTPException(
+                status_code=400,
+                detail=f"An event listener named '{name}' already exists in this conversation",
+            ) from e
+        raise HTTPException(
+            status_code=500, detail=f"Error creating listener: {str(e)}"
+        ) from e
+
+    # Redirect to the new listener's detail page
     return RedirectResponse(
         url=f"/event-listeners/{listener_id}",
         status_code=303,  # See Other

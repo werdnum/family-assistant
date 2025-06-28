@@ -31,6 +31,7 @@ BASE_UI_ENDPOINTS = [
     ("/events", "Events List Page"),
     ("/events/non_existent_event", "Event Detail Page"),
     ("/event-listeners", "Event Listeners List Page"),
+    ("/event-listeners/new", "Create Event Listener Page"),
     ("/event-listeners/99999", "Event Listener Detail Page"),
     ("/errors/", "Error Logs List Page"),
 ]

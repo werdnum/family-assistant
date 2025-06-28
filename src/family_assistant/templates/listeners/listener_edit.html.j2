@@ -1,6 +1,6 @@
 {% extends "base.html.j2" %}
 
-{% block title %}Edit Event Listener: {{ listener.name }}{% endblock %}
+{% block title %}{% if is_new %}Create New Event Listener{% else %}Edit Event Listener: {{ listener.name }}{% endif %}{% endblock %}
 
 {% block head_extra %}
 <link rel="stylesheet" href="https://unpkg.com/@codemirror/basic-setup/dist/codemirror.css">
@@ -77,13 +77,17 @@
 {% endblock %}
 
 {% block content %}
-<h1>Edit Event Listener: {{ listener.name }}</h1>
+<h1>{% if is_new %}Create New Event Listener{% else %}Edit Event Listener: {{ listener.name }}{% endif %}</h1>
 
 <nav style="margin-bottom: 2rem;">
+    {% if is_new %}
+    <a href="/event-listeners">← Back to Event Listeners</a>
+    {% else %}
     <a href="/event-listeners/{{ listener.id }}">← Back to Listener Details</a>
+    {% endif %}
 </nav>
 
-<form method="post" action="/event-listeners/{{ listener.id }}/update" id="edit-form">
+<form method="post" action="{% if is_new %}/event-listeners/create{% else %}/event-listeners/{{ listener.id }}/update{% endif %}" id="edit-form">
     <div class="form-group">
         <label for="name">Name</label>
         <input type="text" id="name" name="name" value="{{ listener.name }}" required>
@@ -97,11 +101,29 @@
     </div>
     
     <div class="form-group">
-        <label>Event Source</label>
+        <label for="source_id">Event Source</label>
+        {% if is_new %}
+        <select id="source_id" name="source_id">
+            <option value="home_assistant" {% if listener.source_id == 'home_assistant' %}selected{% endif %}>Home Assistant</option>
+            <option value="indexing" {% if listener.source_id == 'indexing' %}selected{% endif %}>Document Indexing</option>
+            <option value="webhook" {% if listener.source_id == 'webhook' %}selected{% endif %}>Webhook</option>
+        </select>
+        <div class="help-text">Choose the event source to listen to</div>
+        {% else %}
         <div style="padding: 0.5rem; background-color: var(--bg-secondary); border-radius: 4px;">
             <strong>{{ listener.source_id.replace('_', ' ').title() }}</strong>
         </div>
-        <div class="help-text">Event source cannot be changed</div>
+        <div class="help-text">Event source cannot be changed after creation</div>
+        {% endif %}
+    </div>
+    
+    <div class="form-group">
+        <label for="action_type">Action Type</label>
+        <select id="action_type" name="action_type">
+            <option value="wake_llm" {% if listener.action_type == 'wake_llm' %}selected{% endif %}>LLM Callback</option>
+            <option value="script" {% if listener.action_type == 'script' %}selected{% endif %}>Script</option>
+        </select>
+        <div class="help-text">Choose how the listener responds to events</div>
     </div>
     
     <div class="form-group">
@@ -111,29 +133,33 @@
         <div class="help-text">JSON conditions that events must match to trigger this listener</div>
     </div>
     
-    {% if listener.action_type == "script" %}
-    <div class="form-group">
-        <label>Script Code</label>
-        <div id="script-editor-container">
-            <div id="script-editor"></div>
+    <!-- Script fields (show/hide based on action type) -->
+    <div id="script-fields" style="display: none;">
+        <div class="form-group">
+            <label>Script Code</label>
+            <div id="script-editor-container">
+                <div id="script-editor"></div>
+            </div>
+            <input type="hidden" name="script_code" id="script-code-value" value="{{ listener.action_config.script_code or '' }}">
+            <div id="validation-status" class="validation-pending">Ready to validate...</div>
+            <div class="help-text">Starlark script that will execute when the listener is triggered</div>
         </div>
-        <input type="hidden" name="script_code" id="script-code-value" value="{{ listener.action_config.script_code }}">
-        <div id="validation-status" class="validation-pending">Ready to validate...</div>
-        <div class="help-text">Starlark script that will execute when the listener is triggered</div>
+        
+        <div class="form-group">
+            <label for="timeout">Timeout (seconds)</label>
+            <input type="number" id="timeout" name="timeout" value="{{ listener.action_config.timeout or 600 }}" min="1" max="900">
+            <div class="help-text">Maximum execution time for the script</div>
+        </div>
     </div>
     
-    <div class="form-group">
-        <label for="timeout">Timeout (seconds)</label>
-        <input type="number" id="timeout" name="timeout" value="{{ listener.action_config.timeout or 600 }}" min="1" max="900">
-        <div class="help-text">Maximum execution time for the script</div>
+    <!-- LLM fields (show/hide based on action type) -->
+    <div id="llm-fields" style="display: none;">
+        <div class="form-group">
+            <label for="llm_callback_prompt">LLM Callback Prompt</label>
+            <textarea id="llm_callback_prompt" name="llm_callback_prompt">{{ listener.action_config.llm_callback_prompt or '' }}</textarea>
+            <div class="help-text">Custom prompt to send to the LLM when this listener is triggered (optional)</div>
+        </div>
     </div>
-    {% else %}
-    <div class="form-group">
-        <label for="llm_callback_prompt">LLM Callback Prompt</label>
-        <textarea id="llm_callback_prompt" name="llm_callback_prompt">{{ listener.action_config.llm_callback_prompt or '' }}</textarea>
-        <div class="help-text">Custom prompt to send to the LLM when this listener is triggered (optional)</div>
-    </div>
-    {% endif %}
     
     <div class="checkbox-group">
         <input type="checkbox" id="one_time" name="one_time" {% if listener.one_time %}checked{% endif %}>
@@ -194,31 +220,48 @@ const matchConditionsEditor = new JSONEditor(
     }
 );
 
-{% if listener.action_type == "script" %}
-// Initialize CodeMirror for script editing
+// Script editor variables
+let scriptEditor = null;
 let validationTimeout;
-const scriptEditor = new EditorView({
-    state: EditorState.create({
-        doc: {{ (listener.action_config.script_code or '') | tojson }},
-        extensions: [
-            basicSetup,
-            python(), // Starlark is close enough to Python for syntax highlighting
-            EditorView.updateListener.of((update) => {
-                if (update.docChanged) {
-                    // Debounce validation
-                    clearTimeout(validationTimeout);
-                    document.getElementById('validation-status').textContent = 'Validating...';
-                    document.getElementById('validation-status').className = 'validation-pending';
-                    validationTimeout = setTimeout(() => validateScript(), 500);
-                }
-            })
-        ]
-    }),
-    parent: document.getElementById('script-editor')
-});
+window.scriptEditorInitialized = false;
+
+// Function to initialize script editor
+function initializeScriptEditor() {
+    if (window.scriptEditorInitialized) return;
+    
+    const scriptCodeValue = document.getElementById('script-code-value').value || '';
+    scriptEditor = new EditorView({
+        state: EditorState.create({
+            doc: scriptCodeValue,
+            extensions: [
+                basicSetup,
+                python(), // Starlark is close enough to Python for syntax highlighting
+                EditorView.updateListener.of((update) => {
+                    if (update.docChanged) {
+                        // Debounce validation
+                        clearTimeout(validationTimeout);
+                        document.getElementById('validation-status').textContent = 'Validating...';
+                        document.getElementById('validation-status').className = 'validation-pending';
+                        validationTimeout = setTimeout(() => validateScript(), 500);
+                    }
+                })
+            ]
+        }),
+        parent: document.getElementById('script-editor')
+    });
+    
+    window.scriptEditorInitialized = true;
+    window.scriptEditor = scriptEditor;
+    
+    // Initial validation
+    validateScript();
+}
 
 async function validateScript() {
+    if (!scriptEditor) return;
+    
     const statusDiv = document.getElementById('validation-status');
+    const sourceId = {% if is_new %}document.getElementById('source_id').value{% else %}{{ listener.source_id | tojson }}{% endif %};
     
     try {
         const response = await fetch('/event-listeners/api/validate-script', {
@@ -227,7 +270,7 @@ async function validateScript() {
             body: JSON.stringify({
                 script_code: scriptEditor.state.doc.toString(),
                 sample_event: {
-                    source_id: {{ listener.source_id | tojson }},
+                    source_id: sourceId,
                     event_data: {}
                 }
             })
@@ -248,9 +291,25 @@ async function validateScript() {
     }
 }
 
-// Initial validation
-validateScript();
-{% endif %}
+// Function to show/hide action fields
+function showActionFields() {
+    const actionType = document.getElementById('action_type').value;
+    const isScript = actionType === 'script';
+    
+    document.getElementById('script-fields').style.display = isScript ? 'block' : 'none';
+    document.getElementById('llm-fields').style.display = isScript ? 'none' : 'block';
+    
+    // Initialize script editor on first show if needed
+    if (isScript && !window.scriptEditorInitialized) {
+        initializeScriptEditor();
+    }
+}
+
+// Set up action type change handler
+document.getElementById('action_type').addEventListener('change', showActionFields);
+
+// Show correct fields on load
+showActionFields();
 
 // Form submission
 document.getElementById('edit-form').addEventListener('submit', (e) => {
@@ -266,10 +325,11 @@ document.getElementById('edit-form').addEventListener('submit', (e) => {
     document.getElementById('match-conditions-value').value = 
         JSON.stringify(matchConditionsEditor.getValue());
     
-    {% if listener.action_type == "script" %}
-    document.getElementById('script-code-value').value = 
-        scriptEditor.state.doc.toString();
-    {% endif %}
+    // Only update script code if script editor exists
+    if (window.scriptEditor) {
+        document.getElementById('script-code-value').value = 
+            window.scriptEditor.state.doc.toString();
+    }
 });
 </script>
 {% endblock %}
