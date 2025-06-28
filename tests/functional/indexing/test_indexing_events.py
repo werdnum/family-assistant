@@ -44,8 +44,7 @@ class MockDocument:
     def __post_init__(self) -> None:
         if self.created_at is None:
             self.created_at = datetime.now(timezone.utc)
-        if self.metadata is None:
-            self.metadata = {}
+        # Don't default metadata to {} - keep it as None if that's what was passed
 
 
 # Test data
@@ -93,7 +92,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 source_id=f"test-{uuid.uuid4()}",
                 title=TEST_DOC_TITLE,
                 content=TEST_DOC_CONTENT,
-                metadata={"test": True},
+                metadata={"test": "metadata"},
             )
             doc_id = await add_document(
                 db_context=db_ctx,
@@ -225,6 +224,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 event_data = result[0]["event_data"]
             assert event_data["document_id"] == doc_id
             assert event_data["document_title"] == TEST_DOC_TITLE
+            assert event_data["document_metadata"] == {"test": "metadata"}
             assert event_data["metadata"]["total_embeddings"] == 4  # 1 title + 3 chunks
             assert (
                 event_data["metadata"]["embedding_types"] == 2
@@ -482,6 +482,9 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
                 assert (
                     event_data["document_title"] == "School Newsletter - December 2024"
                 )
+                assert event_data["document_metadata"] == {
+                    "sender": "newsletter@school.edu"
+                }
 
         finally:
             # Stop processor
@@ -490,6 +493,282 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
                 processor_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await processor_task
+
+
+@pytest.mark.asyncio
+async def test_document_ready_event_includes_rich_metadata(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that DOCUMENT_READY event includes full document metadata."""
+    # Create indexing source and event processor
+    indexing_source = IndexingSource()
+    event_processor = EventProcessor(
+        sources={"indexing": indexing_source},
+        sample_interval_hours=0.1,
+    )
+
+    # Create a document with rich metadata
+    async with get_db_context() as db_ctx:
+        test_doc = MockDocument(
+            source_type="pdf",
+            source_id=f"test-pdf-{uuid.uuid4()}",
+            title="Research Paper - AI in Healthcare",
+            content="This paper explores the applications of AI in healthcare...",
+            metadata={
+                "original_filename": "ai_healthcare_research_2024.pdf",
+                "original_url": "https://example.com/papers/ai-healthcare.pdf",
+                "author": "Dr. Jane Smith",
+                "publication_date": "2024-03-15",
+                "keywords": ["AI", "healthcare", "machine learning"],
+                "page_count": 25,
+                "department": "Computer Science",
+                "document_type": "research_paper",
+            },
+        )
+        doc_id = await add_document(
+            db_context=db_ctx,
+            doc=test_doc,
+        )
+
+        # Create embedding task
+        await db_ctx.tasks.enqueue(
+            task_id=f"embed_rich_metadata_{doc_id}",
+            task_type="embed_and_store_batch",
+            payload={
+                "document_id": doc_id,
+                "texts_to_embed": [
+                    "This paper explores the applications of AI in healthcare..."
+                ],
+                "embedding_metadata_list": [
+                    {
+                        "embedding_type": "content",
+                        "chunk_index": 0,
+                        "original_content_metadata": {"page": 1},
+                    }
+                ],
+            },
+        )
+
+    # Process the task
+    embedding_generator = MockEmbeddingGenerator(
+        model_name="test-model", dimensions=128
+    )
+
+    processor_task = None
+    try:
+        # Start event processor
+        processor_task = asyncio.create_task(event_processor.start())
+        await asyncio.sleep(0.1)
+
+        async with get_db_context() as db_ctx:
+            task = await db_ctx.tasks.dequeue(
+                task_types=["embed_and_store_batch"],
+                worker_id="test-worker",
+                current_time=datetime.now(timezone.utc),
+            )
+
+            assert task is not None
+
+            exec_context = ToolExecutionContext(
+                interface_type="web",
+                conversation_id="test-conv",
+                user_name="test-user",
+                turn_id=str(uuid.uuid4()),
+                db_context=db_ctx,
+                embedding_generator=embedding_generator,
+                indexing_source=indexing_source,
+            )
+
+            # Process task - should emit event with rich metadata
+            await handle_embed_and_store_batch(exec_context, task["payload"])
+            await db_ctx.tasks.update_status(task["task_id"], "done")
+
+        # Give event processor time to process
+        await asyncio.sleep(1.0)
+
+        # Verify the event contains all metadata
+        async with get_db_context() as db_ctx:
+            from sqlalchemy import and_, select
+
+            from family_assistant.storage.events import recent_events_table
+
+            stmt = select(recent_events_table.c.event_data).where(
+                and_(
+                    recent_events_table.c.source_id == "indexing",
+                    recent_events_table.c.event_data["event_type"].as_string()
+                    == IndexingEventType.DOCUMENT_READY.value,
+                    recent_events_table.c.event_data["document_id"].as_integer()
+                    == doc_id,
+                )
+            )
+
+            result = await db_ctx.fetch_all(stmt)
+            assert len(result) > 0, "DOCUMENT_READY event not found"
+
+            # Extract event data
+            if isinstance(result[0]["event_data"], str):
+                event_data = json.loads(result[0]["event_data"])
+            else:
+                event_data = result[0]["event_data"]
+
+            # Verify all fields are present
+            assert event_data["document_id"] == doc_id
+            assert event_data["document_type"] == "pdf"
+            assert event_data["document_title"] == "Research Paper - AI in Healthcare"
+
+            # Verify rich metadata is included
+            doc_metadata = event_data["document_metadata"]
+            assert (
+                doc_metadata["original_filename"] == "ai_healthcare_research_2024.pdf"
+            )
+            assert (
+                doc_metadata["original_url"]
+                == "https://example.com/papers/ai-healthcare.pdf"
+            )
+            assert doc_metadata["author"] == "Dr. Jane Smith"
+            assert doc_metadata["publication_date"] == "2024-03-15"
+            assert doc_metadata["keywords"] == ["AI", "healthcare", "machine learning"]
+            assert doc_metadata["page_count"] == 25
+            assert doc_metadata["department"] == "Computer Science"
+            assert doc_metadata["document_type"] == "research_paper"
+
+            # Verify indexing metadata
+            assert event_data["metadata"]["total_embeddings"] == 1
+            assert event_data["metadata"]["source_id"] == test_doc.source_id
+
+    finally:
+        # Clean up
+        await event_processor.stop()
+        if processor_task:
+            processor_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await processor_task
+
+
+@pytest.mark.asyncio
+async def test_document_ready_event_handles_none_metadata(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that DOCUMENT_READY event handles documents with None metadata gracefully."""
+    # Create indexing source
+    indexing_source = IndexingSource()
+
+    # Create event processor with our indexing source
+    event_processor = EventProcessor(
+        sources={"indexing": indexing_source},
+        sample_interval_hours=0.1,  # Short interval for testing
+    )
+
+    # Create a document with None metadata
+    async with get_db_context() as db_ctx:
+        test_doc = MockDocument(
+            source_type="note",
+            source_id=f"test-note-{uuid.uuid4()}",
+            title="Simple Note",
+            content="This is a simple note without metadata",
+            metadata=None,  # Explicitly None
+        )
+        doc_id = await add_document(
+            db_context=db_ctx,
+            doc=test_doc,
+        )
+
+        # Create embedding task
+        await db_ctx.tasks.enqueue(
+            task_id=f"embed_no_metadata_{doc_id}",
+            task_type="embed_and_store_batch",
+            payload={
+                "document_id": doc_id,
+                "texts_to_embed": ["This is a simple note without metadata"],
+                "embedding_metadata_list": [
+                    {
+                        "embedding_type": "content",
+                        "chunk_index": 0,
+                        "original_content_metadata": {},
+                    }
+                ],
+            },
+        )
+
+    # Process the task
+    embedding_generator = MockEmbeddingGenerator(
+        model_name="test-model", dimensions=128
+    )
+
+    # Start event processor
+    processor_task = asyncio.create_task(event_processor.start())
+
+    try:
+        # Give processor time to start
+        await asyncio.sleep(0.1)
+
+        async with get_db_context() as db_ctx:
+            task = await db_ctx.tasks.dequeue(
+                task_types=["embed_and_store_batch"],
+                worker_id="test-worker",
+                current_time=datetime.now(timezone.utc),
+            )
+
+            assert task is not None
+
+            exec_context = ToolExecutionContext(
+                interface_type="web",
+                conversation_id="test-conv",
+                user_name="test-user",
+                turn_id=str(uuid.uuid4()),
+                db_context=db_ctx,
+                embedding_generator=embedding_generator,
+                indexing_source=indexing_source,
+            )
+
+            # Process task - should emit event even with None metadata
+            await handle_embed_and_store_batch(exec_context, task["payload"])
+            await db_ctx.tasks.update_status(task["task_id"], "done")
+
+        # Give event processor time to process events
+        await asyncio.sleep(0.5)
+
+        # Check that DOCUMENT_READY event was stored
+        async with get_db_context() as db_ctx:
+            from sqlalchemy import and_, select
+
+            from family_assistant.storage.events import recent_events_table
+
+            # Use SQLAlchemy's JSON operators for cross-database compatibility
+            stmt = select(recent_events_table.c.event_data).where(
+                and_(
+                    recent_events_table.c.source_id == "indexing",
+                    recent_events_table.c.event_data["event_type"].as_string()
+                    == IndexingEventType.DOCUMENT_READY.value,
+                    recent_events_table.c.event_data["document_id"].as_integer()
+                    == doc_id,
+                )
+            )
+
+            result = await db_ctx.fetch_all(stmt)
+
+            assert len(result) > 0, "No DOCUMENT_READY event found in recent_events"
+
+            # The event_data might already be a dict or might be a JSON string
+            if isinstance(result[0]["event_data"], str):
+                event_data = json.loads(result[0]["event_data"])
+            else:
+                event_data = result[0]["event_data"]
+
+            assert event_data["document_id"] == doc_id
+            assert event_data["document_type"] == "note"
+            assert event_data["document_title"] == "Simple Note"
+            assert (
+                event_data["document_metadata"] == {}
+            )  # None metadata is stored as empty dict
+            assert event_data["metadata"]["total_embeddings"] == 1
+
+    finally:
+        # Stop event processor
+        await event_processor.stop()
+        processor_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await processor_task
 
 
 @pytest.mark.asyncio

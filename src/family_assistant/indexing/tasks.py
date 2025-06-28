@@ -238,6 +238,7 @@ async def handle_embed_and_store_batch(
                         "document_id": document_id,
                         "document_type": doc_info.source_type,
                         "document_title": doc_info.title,
+                        "document_metadata": doc_info.doc_metadata,
                         "metadata": {
                             "total_embeddings": embeddings_data["total_embeddings"]
                             if embeddings_data
