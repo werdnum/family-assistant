@@ -15,7 +15,7 @@ from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
 )
-from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 from family_assistant.web.dependencies import (
     get_db,
     get_embedding_generator_dependency,
@@ -94,7 +94,7 @@ async def vector_search_form(
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys to template
-            "user": request.session.get("user"),
+            "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
             "now_utc": datetime.now(timezone.utc),  # Pass to base template
             "float_inf": float("inf"),
@@ -181,7 +181,7 @@ async def document_detail_view(
             "full_text": full_text,
             "full_text_type": full_text_type,
             "full_text_warning": full_text_warning,
-            "user": request.session.get("user"),
+            "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,
             "now_utc": datetime.now(timezone.utc),
         },
@@ -482,7 +482,7 @@ async def handle_vector_search(
             "distinct_types": distinct_types,
             "distinct_source_types": distinct_source_types,
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys
-            "user": request.session.get("user"),
+            "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
             "now_utc": datetime.now(timezone.utc),  # Pass to base template
             "float_inf": float("inf"),

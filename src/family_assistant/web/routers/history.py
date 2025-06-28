@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 from family_assistant.web.dependencies import get_db
 
 logger = logging.getLogger(__name__)
@@ -260,7 +260,7 @@ async def view_message_history(
                 "conversation_ids": conversation_ids,
                 "total_conversations": len(paged_items),
                 "active_filters": active_filters,
-                "user": request.session.get("user"),
+                "user": get_user_from_request(request),
                 "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
                 "now_utc": datetime.now(timezone.utc),  # Pass to base template
             },

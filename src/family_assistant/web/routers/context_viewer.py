@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from family_assistant.processing import ProcessingService
-from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 from family_assistant.web.dependencies import get_processing_service
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ async def view_context_page(
                 "providers_with_errors": [
                     cf for cf in context_fragments if cf["error"]
                 ],
-                "user": request.session.get("user"),
+                "user": get_user_from_request(request),
                 "AUTH_ENABLED": AUTH_ENABLED,
                 "now_utc": datetime.now(timezone.utc),
             },

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 
 router = APIRouter(prefix="/events", tags=["events_ui"])
 
@@ -72,7 +72,7 @@ async def events_list(
     total_pages = max(1, (total_count + limit - 1) // limit)
 
     templates = request.app.state.templates
-    user = request.session.get("user")
+    user = get_user_from_request(request)
     return templates.TemplateResponse(
         "events/events_list.html.j2",
         {
@@ -125,7 +125,7 @@ async def event_detail(
                     triggered_listeners.append(listener)
 
         # Get all active listeners for this source to show why they didn't trigger
-        user = request.session.get("user")
+        user = get_user_from_request(request)
         potential_listeners = []
         # Always show all listeners (this is an admin interface)
         all_listeners, _ = await db.events.get_all_event_listeners(

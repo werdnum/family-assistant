@@ -8,7 +8,7 @@ from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 
 router = APIRouter(prefix="/event-listeners", tags=["listeners_ui"])
 
@@ -43,7 +43,7 @@ async def listeners_list(
     offset: Annotated[int, Query(description="Page offset")] = 0,
 ) -> Any:
     """Display list of event listeners (administrative view)."""
-    user = request.session.get("user")
+    user = get_user_from_request(request)
     async with DatabaseContext() as db:
         # Always show all listeners (this is an admin interface)
         # But allow filtering by conversation_id if specified
@@ -118,7 +118,7 @@ async def listener_detail(
     listener_id: int,
 ) -> Any:
     """Display listener details (administrative view)."""
-    user = request.session.get("user")
+    user = get_user_from_request(request)
     async with DatabaseContext() as db:
         # Always show the listener (this is an admin interface)
         listener = await db.events.get_event_listener_by_id(listener_id)
@@ -186,7 +186,7 @@ async def toggle_listener(
     enabled: Annotated[bool, Form()],
 ) -> Any:
     """Toggle listener enabled status."""
-    user = request.session.get("user")
+    user = get_user_from_request(request)
     async with DatabaseContext() as db:
         # Check permissions unless admin
         if user and user.get("admin_mode"):
@@ -217,7 +217,7 @@ async def delete_listener(
     listener_id: int,
 ) -> Any:
     """Delete a listener."""
-    user = request.session.get("user")
+    user = get_user_from_request(request)
     async with DatabaseContext() as db:
         # Check permissions unless admin
         if user and user.get("admin_mode"):
@@ -317,7 +317,7 @@ async def edit_listener(
     listener_id: int,
 ) -> Any:
     """Display edit form for event listener."""
-    user = request.session.get("user")
+    user = get_user_from_request(request)
     async with DatabaseContext() as db:
         # Check permissions unless admin
         if user and user.get("admin_mode"):
@@ -360,7 +360,7 @@ async def update_listener(
     llm_callback_prompt: Annotated[str | None, Form()] = None,
 ) -> Any:
     """Handle listener update."""
-    user = request.session.get("user")
+    user = get_user_from_request(request)
 
     try:
         # Parse match conditions JSON
