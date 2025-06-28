@@ -1,0 +1,275 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Edit Event Listener: {{ listener.name }}{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="https://unpkg.com/@codemirror/basic-setup/dist/codemirror.css">
+<style>
+    .cm-editor { 
+        border: 1px solid var(--border); 
+        max-height: 400px;
+        font-family: monospace;
+    }
+    .validation-error {
+        color: var(--bg-error);
+        margin-top: 0.5rem;
+        font-weight: bold;
+    }
+    .validation-success {
+        color: var(--accent);
+        margin-top: 0.5rem;
+    }
+    .validation-pending {
+        color: var(--text-light);
+        margin-top: 0.5rem;
+        font-style: italic;
+    }
+    .form-group {
+        margin-bottom: 1.5rem;
+    }
+    .form-group label {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+    }
+    .form-group input[type="text"],
+    .form-group textarea,
+    .form-group input[type="number"] {
+        width: 100%;
+        padding: 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background-color: var(--bg);
+        color: var(--text);
+    }
+    .form-group textarea {
+        min-height: 100px;
+        resize: vertical;
+    }
+    .checkbox-group {
+        margin: 1rem 0;
+    }
+    .checkbox-group label {
+        display: inline;
+        font-weight: normal;
+        margin-left: 0.5rem;
+    }
+    .form-actions {
+        margin-top: 2rem;
+        display: flex;
+        gap: 1rem;
+    }
+    .json-editor-container {
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1rem;
+        background-color: var(--bg-secondary);
+    }
+    #script-editor-container {
+        margin-bottom: 0.5rem;
+    }
+    .help-text {
+        font-size: 0.9em;
+        color: var(--text-light);
+        margin-top: 0.25rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Edit Event Listener: {{ listener.name }}</h1>
+
+<nav style="margin-bottom: 2rem;">
+    <a href="/event-listeners/{{ listener.id }}">← Back to Listener Details</a>
+</nav>
+
+<form method="post" action="/event-listeners/{{ listener.id }}/update" id="edit-form">
+    <div class="form-group">
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" value="{{ listener.name }}" required>
+        <div class="help-text">A unique name to identify this listener</div>
+    </div>
+    
+    <div class="form-group">
+        <label for="description">Description</label>
+        <textarea id="description" name="description">{{ listener.description or '' }}</textarea>
+        <div class="help-text">Optional description of what this listener does</div>
+    </div>
+    
+    <div class="form-group">
+        <label>Event Source</label>
+        <div style="padding: 0.5rem; background-color: var(--bg-secondary); border-radius: 4px;">
+            <strong>{{ listener.source_id.replace('_', ' ').title() }}</strong>
+        </div>
+        <div class="help-text">Event source cannot be changed</div>
+    </div>
+    
+    <div class="form-group">
+        <label>Match Conditions</label>
+        <div id="match-conditions-editor" class="json-editor-container"></div>
+        <input type="hidden" name="match_conditions" id="match-conditions-value" value="{{ listener.match_conditions | tojson }}">
+        <div class="help-text">JSON conditions that events must match to trigger this listener</div>
+    </div>
+    
+    {% if listener.action_type == "script" %}
+    <div class="form-group">
+        <label>Script Code</label>
+        <div id="script-editor-container">
+            <div id="script-editor"></div>
+        </div>
+        <input type="hidden" name="script_code" id="script-code-value" value="{{ listener.action_config.script_code }}">
+        <div id="validation-status" class="validation-pending">Ready to validate...</div>
+        <div class="help-text">Starlark script that will execute when the listener is triggered</div>
+    </div>
+    
+    <div class="form-group">
+        <label for="timeout">Timeout (seconds)</label>
+        <input type="number" id="timeout" name="timeout" value="{{ listener.action_config.timeout or 600 }}" min="1" max="900">
+        <div class="help-text">Maximum execution time for the script</div>
+    </div>
+    {% else %}
+    <div class="form-group">
+        <label for="llm_callback_prompt">LLM Callback Prompt</label>
+        <textarea id="llm_callback_prompt" name="llm_callback_prompt">{{ listener.action_config.llm_callback_prompt or '' }}</textarea>
+        <div class="help-text">Custom prompt to send to the LLM when this listener is triggered (optional)</div>
+    </div>
+    {% endif %}
+    
+    <div class="checkbox-group">
+        <input type="checkbox" id="one_time" name="one_time" {% if listener.one_time %}checked{% endif %}>
+        <label for="one_time">One-time listener (auto-disable after first trigger)</label>
+    </div>
+    
+    <div class="checkbox-group">
+        <input type="checkbox" id="enabled" name="enabled" {% if listener.enabled %}checked{% endif %}>
+        <label for="enabled">Enabled</label>
+    </div>
+    
+    <div class="form-actions">
+        <button type="submit" class="button">Save Changes</button>
+        <a href="/event-listeners/{{ listener.id }}" class="button" style="background-color: var(--bg-secondary);">Cancel</a>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts_extra %}
+<script src="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/jsoneditor.min.js"></script>
+<script type="module">
+import {EditorView, basicSetup} from "https://unpkg.com/@codemirror/basic-setup"
+import {python} from "https://unpkg.com/@codemirror/lang-python"
+import {EditorState} from "https://unpkg.com/@codemirror/state"
+
+// Initialize match conditions JSON editor
+const matchConditionsSchema = {
+    type: "object",
+    title: "Match Conditions",
+    properties: {
+        entity_id: {
+            type: "string", 
+            description: "Entity ID to match (for Home Assistant events)"
+        },
+        "new_state.state": {
+            type: "string", 
+            description: "State value to match (for Home Assistant state changes)"
+        },
+        document_type: {
+            type: "string",
+            description: "Document type to match (for indexing events)"
+        }
+    },
+    additionalProperties: true
+};
+
+const matchConditionsEditor = new JSONEditor(
+    document.getElementById('match-conditions-editor'), 
+    {
+        schema: matchConditionsSchema,
+        startval: {{ listener.match_conditions | tojson }},
+        theme: 'bootstrap4',
+        disable_edit_json: false,
+        disable_properties: false,
+        disable_collapse: true,
+        remove_button_labels: true,
+        no_additional_properties: false
+    }
+);
+
+{% if listener.action_type == "script" %}
+// Initialize CodeMirror for script editing
+let validationTimeout;
+const scriptEditor = new EditorView({
+    state: EditorState.create({
+        doc: {{ (listener.action_config.script_code or '') | tojson }},
+        extensions: [
+            basicSetup,
+            python(), // Starlark is close enough to Python for syntax highlighting
+            EditorView.updateListener.of((update) => {
+                if (update.docChanged) {
+                    // Debounce validation
+                    clearTimeout(validationTimeout);
+                    document.getElementById('validation-status').textContent = 'Validating...';
+                    document.getElementById('validation-status').className = 'validation-pending';
+                    validationTimeout = setTimeout(() => validateScript(), 500);
+                }
+            })
+        ]
+    }),
+    parent: document.getElementById('script-editor')
+});
+
+async function validateScript() {
+    const statusDiv = document.getElementById('validation-status');
+    
+    try {
+        const response = await fetch('/event-listeners/api/validate-script', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                script_code: scriptEditor.state.doc.toString(),
+                sample_event: {
+                    source_id: {{ listener.source_id | tojson }},
+                    event_data: {}
+                }
+            })
+        });
+        
+        const result = await response.json();
+        if (result.valid) {
+            statusDiv.textContent = '✓ Script is valid';
+            statusDiv.className = 'validation-success';
+        } else {
+            const error = result.diagnostics[0];
+            statusDiv.textContent = `✗ Line ${error.line}: ${error.message}`;
+            statusDiv.className = 'validation-error';
+        }
+    } catch (e) {
+        statusDiv.textContent = '⚠ Could not validate script';
+        statusDiv.className = 'validation-error';
+    }
+}
+
+// Initial validation
+validateScript();
+{% endif %}
+
+// Form submission
+document.getElementById('edit-form').addEventListener('submit', (e) => {
+    // Update hidden fields with editor values
+    const matchConditionsErrors = matchConditionsEditor.validate();
+    if (matchConditionsErrors.length > 0) {
+        e.preventDefault();
+        alert('Please fix errors in Match Conditions:\n' + 
+              matchConditionsErrors.map(err => err.path + ': ' + err.message).join('\n'));
+        return;
+    }
+    
+    document.getElementById('match-conditions-value').value = 
+        JSON.stringify(matchConditionsEditor.getValue());
+    
+    {% if listener.action_type == "script" %}
+    document.getElementById('script-code-value').value = 
+        scriptEditor.state.doc.toString();
+    {% endif %}
+});
+</script>
+{% endblock %}
