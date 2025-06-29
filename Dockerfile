@@ -108,8 +108,18 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     cd frontend && npm run build
 
 # --- Copy Application Code ---
-# Copy the source code and configuration files into the image
-COPY src docs alembic contrib config.yaml prompts.yaml mcp_config.json alembic.ini logging.conf ./
+# Copy the source code into the image
+COPY src/ /app/src/
+COPY docs/ /app/docs/
+
+# Copy configuration files, templates, and static assets to the WORKDIR
+# These need to be accessible relative to the WORKDIR at runtime when running the app
+COPY config.yaml ./
+COPY prompts.yaml mcp_config.json ./
+COPY alembic.ini ./
+COPY logging.conf ./
+COPY alembic /app/alembic/
+COPY contrib /app/contrib
 
 # --- Install the Package ---
 # Install the package using uv from pyproject.toml. This ensures that the package
