@@ -1,7 +1,7 @@
 # Use the official UV image as the base
 FROM ghcr.io/astral-sh/uv:debian-slim AS base
 
-# Install system dependencies: npm for Node.js MCP servers
+# Install system dependencies: npm for Node.js MCP servers and frontend build
 # Using --mount for caching apt downloads
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -9,8 +9,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ca-certificates \
     curl \
     unzip \
+    gnupg \
     && \
-    # Ensure certificates are updated after installing the package
+    # Add NodeSource repository for newer Node.js
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -     && \
+    apt-get install -y --no-install-recommends nodejs && \
     update-ca-certificates && \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
@@ -53,8 +56,8 @@ RUN uv tool install mcp-server-time
 RUN uv tool install mcp-server-fetch
 
 # Install Node.js MCP tools globally using Deno, providing explicit names
-RUN deno install --global -A --name playwright-mcp npm:@playwright/mcp@latest
-RUN deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
+RUN deno install --global -A --name playwright-mcp npm:@playwright/mcp@latest && \
+    deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
 
 # Install Playwright Chromium browser and its dependencies using Deno
 # Using --with-deps is crucial for installing necessary OS libraries
@@ -82,42 +85,37 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Update PATH separately
 ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 
-# Copy only pyproject.toml first to leverage Docker layer caching for dependencies
-COPY pyproject.toml ./
-
-# Install dependencies using uv from pyproject.toml
-# Using --mount with the explicit UV_CACHE_DIR for caching pip downloads/builds
-RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install .
-
 # --- Install Python dependencies for contrib/scrape_mcp.py ---
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
     uv pip install "playwright>=1.0" "markitdown[html]>=0.1.0" && \
     playwright install --with-deps chromium
 
-# --- Copy Application Code ---
-# Copy the source code into the image
-COPY src/ /app/src/
-COPY docs/ /app/docs/
+# Copy only pyproject.toml first to leverage Docker layer caching for dependencies
+COPY pyproject.toml ./
 
-# Copy configuration files, templates, and static assets to the WORKDIR
-# These need to be accessible relative to the WORKDIR at runtime when running the app
-COPY config.yaml ./
-COPY prompts.yaml mcp_config.json ./
-COPY alembic.ini ./
-COPY logging.conf ./
-COPY alembic /app/alembic/
+# --- Frontend Build Stage ---
+# Copy frontend package files first for layer caching
+COPY frontend/package*.json ./frontend/
+
+# Install frontend dependencies
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    cd frontend && npm ci
+
+# Copy frontend source files
+COPY frontend/ ./frontend/
+
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    cd frontend && npm run build
+
+# --- Copy Application Code ---
+# Copy the source code and configuration files into the image
+COPY src docs alembic contrib config.yaml prompts.yaml mcp_config.json alembic.ini logging.conf ./
 
 # --- Install the Package ---
-# This step might be redundant if `uv pip install .` in the previous step
-# already installed the package from the copied pyproject.toml.
-# However, explicitly installing it after copying the 'src' ensures the code is included.
-# Use --no-deps as dependencies should already be installed.
+# Install the package using uv from pyproject.toml. This ensures that the package
+# is installed with all its source code.
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install . --no-deps
-
-
-COPY contrib /app/contrib
+    uv pip install .
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
