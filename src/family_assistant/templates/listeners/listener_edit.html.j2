@@ -2,6 +2,16 @@
 
 {% block title %}{% if is_new %}Create New Event Listener{% else %}Edit Event Listener: {{ listener.name }}{% endif %}{% endblock %}
 
+{% set llm_action_config = {} %}
+{% if listener.action_type == 'wake_llm' and listener.action_config %}
+    {% if listener.action_config.get('action_parameters') %}
+        {% set _ = llm_action_config.update(listener.action_config.get('action_parameters', {})) %}
+    {% endif %}
+    {% if listener.action_config.get('llm_callback_prompt') %}
+        {% set _ = llm_action_config.update({'llm_callback_prompt': listener.action_config.get('llm_callback_prompt')}) %}
+    {% endif %}
+{% endif %}
+
 {% block head_extra %}
 <link rel="stylesheet" href="https://unpkg.com/@codemirror/basic-setup/dist/codemirror.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/css/jsoneditor.min.css">
@@ -98,6 +108,35 @@
         color: var(--text-light);
         margin-top: 0.25rem;
     }
+    .json-editor-textarea {
+        width: 100%;
+        min-height: 200px;
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+        font-size: 13px;
+        padding: 1rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background-color: var(--bg);
+        color: var(--text);
+        resize: vertical;
+        tab-size: 2;
+        -moz-tab-size: 2;
+    }
+    .json-editor-textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .json-error {
+        color: var(--bg-error);
+        font-size: 0.9em;
+        margin-top: 0.25rem;
+        font-weight: bold;
+    }
+    .json-valid {
+        color: var(--accent);
+        font-size: 0.9em;
+        margin-top: 0.25rem;
+    }
 </style>
 {% endblock %}
 
@@ -163,7 +202,7 @@
         <label>Match Conditions</label>
         <div id="match-conditions-editor" class="json-editor-container"></div>
         <input type="hidden" name="match_conditions" id="match-conditions-value" value="{{ listener.match_conditions | tojson }}">
-        <div class="help-text">JSON conditions that events must match to trigger this listener</div>
+        <div class="help-text">Define when this listener should trigger. Common fields: entity_id, new_state.state, document_type</div>
     </div>
     
     <!-- Script fields (show/hide based on action type) -->
@@ -188,9 +227,11 @@
     <!-- LLM fields (show/hide based on action type) -->
     <div id="llm-fields" style="display: none;">
         <div class="form-group">
-            <label for="llm_callback_prompt">LLM Callback Prompt</label>
-            <textarea id="llm_callback_prompt" name="llm_callback_prompt">{{ (listener.action_config or {}).get('llm_callback_prompt', '') }}</textarea>
-            <div class="help-text">Custom prompt to send to the LLM when this listener is triggered (optional)</div>
+            <label>LLM Action Configuration</label>
+            <div id="llm-action-editor" class="json-editor-container"></div>
+            <input type="hidden" name="action_parameters" id="action-parameters-value" value="{{ (listener.action_config or {}).get('action_parameters', {}) | tojson }}">
+            <input type="hidden" name="llm_callback_prompt" id="llm_callback_prompt" value="{{ (listener.action_config or {}).get('llm_callback_prompt', '') }}">
+            <div class="help-text">Configure how the LLM responds. Common fields: tools (array of tool names), llm_callback_prompt (optional message)</div>
         </div>
     </div>
     
@@ -213,22 +254,23 @@
 
 {% block scripts_extra %}
 <script src="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/jsoneditor.min.js"></script>
-<script type="module">
-import {EditorView, basicSetup} from "https://unpkg.com/@codemirror/basic-setup"
-import {python} from "https://unpkg.com/@codemirror/lang-python"
-import {EditorState} from "https://unpkg.com/@codemirror/state"
+<script>
+// Use regular script instead of module to ensure it runs
 
-// Initialize on DOMContentLoaded instead of load for faster startup
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('DOM loaded, initializing editors...');
+// Initialize when DOM is ready
+function initializeEditors() {
+    console.log('Initializing editors...');
     
-    // Initialize match conditions JSON editor
+    // Initialize JSON editors
     let matchConditionsEditor = null;
+    let llmActionEditor = null;
 
-    // Debug: Check if container exists
-    const editorContainer = document.getElementById('match-conditions-editor');
-    if (!editorContainer) {
-        console.error('match-conditions-editor container not found!');
+    // Debug: Check if containers exist
+    const matchConditionsContainer = document.getElementById('match-conditions-editor');
+    const llmActionContainer = document.getElementById('llm-action-editor');
+    
+    if (!matchConditionsContainer) {
+        console.error('Match conditions editor container not found!');
         return;
     }
     
@@ -252,6 +294,27 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         additionalProperties: true
     };
+    
+    const llmActionSchema = {
+        type: "object",
+        title: "LLM Action Configuration",
+        properties: {
+            tools: {
+                type: "array",
+                description: "List of tool names to enable for the LLM",
+                items: {
+                    type: "string"
+                },
+                default: []
+            },
+            llm_callback_prompt: {
+                type: "string",
+                description: "Optional custom prompt to send to the LLM when triggered",
+                default: ""
+            }
+        },
+        additionalProperties: true
+    };
 
     // Initialize JSONEditor with retry logic
     let retryCount = 0;
@@ -266,17 +329,9 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log(`JSONEditor not loaded yet, retry ${retryCount}/${maxRetries}...`);
             setTimeout(tryInitializeJSONEditor, 100);
         } else {
-            console.error('JSONEditor failed to load after 2 seconds');
-            // Show fallback textarea
-            const fallback = document.createElement('textarea');
-            fallback.name = 'match_conditions';
-            fallback.id = 'match-conditions-value';
-            fallback.value = JSON.stringify({{ listener.match_conditions | tojson }}, null, 2);
-            fallback.style.width = '100%';
-            fallback.style.minHeight = '200px';
-            fallback.style.fontFamily = 'monospace';
-            editorContainer.appendChild(fallback);
-            editorContainer.insertAdjacentHTML('afterend', '<div class="help-text" style="color: var(--bg-error);">JSON editor failed to load. Using plain text editor.</div>');
+            console.error('JSONEditor failed to load after 2 seconds, keeping fallback editors');
+            // Just add a warning message
+            matchConditionsContainer.insertAdjacentHTML('afterend', '<div class="help-text" style="color: var(--bg-error);">JSON editor failed to load. Using plain text editor.</div>');
         }
     }
     
@@ -284,12 +339,14 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function initializeJSONEditor() {
         try {
-            console.log('Creating JSONEditor instance...');
+            console.log('Creating JSONEditor instances...');
+            
+            // Initialize match conditions editor
             matchConditionsEditor = new window.JSONEditor(
                 document.getElementById('match-conditions-editor'), 
                 {
                     schema: matchConditionsSchema,
-                    startval: {{ listener.match_conditions | tojson }},
+                    startval: {{ listener.match_conditions | tojson | safe }},
                     theme: 'html',
                     disable_edit_json: false,
                     disable_properties: false,
@@ -299,18 +356,42 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             );
             window.matchConditionsEditor = matchConditionsEditor;
-            console.log('JSONEditor initialized successfully');
+            
+            // Initialize LLM action editor if container exists
+            if (llmActionContainer) {
+                llmActionEditor = new window.JSONEditor(
+                    document.getElementById('llm-action-editor'), 
+                    {
+                        schema: llmActionSchema,
+                        startval: {{ llm_action_config | tojson | safe }},
+                        theme: 'html',
+                        disable_edit_json: false,
+                        disable_properties: false,
+                        disable_collapse: true,
+                        remove_button_labels: true,
+                        no_additional_properties: false
+                    }
+                );
+                window.llmActionEditor = llmActionEditor;
+            }
+            
+            console.log('JSONEditor instances initialized successfully');
         } catch (innerError) {
-            console.error('Error creating JSONEditor instance:', innerError);
+            console.error('Error creating JSONEditor instances:', innerError);
             throw innerError;
         }
     }
 } catch (e) {
     console.error('Error in JSON editor initialization:', e);
     // Show error message to user
-    const editorContainer = document.getElementById('match-conditions-editor');
-    if (editorContainer) {
-        editorContainer.innerHTML = '<div style="color: var(--bg-error); padding: 1rem;">Error loading JSON editor. Please refresh the page.</div>';
+    const matchConditionsContainer = document.getElementById('match-conditions-editor');
+    const llmActionContainer = document.getElementById('llm-action-editor');
+    
+    if (matchConditionsContainer) {
+        matchConditionsContainer.innerHTML = '<div style="color: var(--bg-error); padding: 1rem;">Error loading JSON editor. Please refresh the page.</div>';
+    }
+    if (llmActionContainer) {
+        llmActionContainer.innerHTML = '<div style="color: var(--bg-error); padding: 1rem;">Error loading JSON editor. Please refresh the page.</div>';
     }
 }
 
@@ -321,68 +402,13 @@ window.scriptEditorInitialized = false;
 
 // Function to initialize script editor
 function initializeScriptEditor() {
-    if (window.scriptEditorInitialized) return;
-    
-    const scriptCodeValue = document.getElementById('script-code-value').value || '';
-    scriptEditor = new EditorView({
-        state: EditorState.create({
-            doc: scriptCodeValue,
-            extensions: [
-                basicSetup,
-                python(), // Starlark is close enough to Python for syntax highlighting
-                EditorView.updateListener.of((update) => {
-                    if (update.docChanged) {
-                        // Debounce validation
-                        clearTimeout(validationTimeout);
-                        document.getElementById('validation-status').textContent = 'Validating...';
-                        document.getElementById('validation-status').className = 'validation-pending';
-                        validationTimeout = setTimeout(() => validateScript(), 500);
-                    }
-                })
-            ]
-        }),
-        parent: document.getElementById('script-editor')
-    });
-    
-    window.scriptEditorInitialized = true;
-    window.scriptEditor = scriptEditor;
-    
-    // Initial validation
-    validateScript();
+    // Script editor disabled for now since we're not using ES modules
+    console.log('Script editor initialization skipped (requires ES modules)');
 }
 
 async function validateScript() {
-    if (!scriptEditor) return;
-    
-    const statusDiv = document.getElementById('validation-status');
-    const sourceId = {% if is_new %}document.getElementById('source_id').value{% else %}{{ listener.source_id | tojson }}{% endif %};
-    
-    try {
-        const response = await fetch('/event-listeners/api/validate-script', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                script_code: scriptEditor.state.doc.toString(),
-                sample_event: {
-                    source_id: sourceId,
-                    event_data: {}
-                }
-            })
-        });
-        
-        const result = await response.json();
-        if (result.valid) {
-            statusDiv.textContent = '✓ Script is valid';
-            statusDiv.className = 'validation-success';
-        } else {
-            const error = result.diagnostics[0];
-            statusDiv.textContent = `✗ Line ${error.line}: ${error.message}`;
-            statusDiv.className = 'validation-error';
-        }
-    } catch (e) {
-        statusDiv.textContent = '⚠ Could not validate script';
-        statusDiv.className = 'validation-error';
-    }
+    // Script validation disabled for now
+    console.log('Script validation skipped');
 }
 
 // Function to show/hide action fields
@@ -426,10 +452,49 @@ document.getElementById('edit-form').addEventListener('submit', (e) => {
         document.getElementById('match-conditions-value').value = 
             JSON.stringify(window.matchConditionsEditor.getValue());
     } else {
-        console.error('Match conditions editor not initialized');
-        e.preventDefault();
-        alert('Error: JSON editor not properly initialized. Please refresh the page.');
-        return;
+        // Use fallback textarea
+        const fallbackTextarea = document.getElementById('match-conditions-fallback');
+        if (fallbackTextarea) {
+            try {
+                // Validate JSON
+                JSON.parse(fallbackTextarea.value);
+                document.getElementById('match-conditions-value').value = fallbackTextarea.value;
+            } catch (err) {
+                e.preventDefault();
+                alert('Invalid JSON in Match Conditions: ' + err.message);
+                return;
+            }
+        } else {
+            console.error('No match conditions editor available');
+            e.preventDefault();
+            alert('Error: No editor available. Please refresh the page.');
+            return;
+        }
+    }
+    
+    // Update LLM action configuration
+    if (window.llmActionEditor) {
+        const llmActionErrors = window.llmActionEditor.validate();
+        if (llmActionErrors.length > 0) {
+            e.preventDefault();
+            alert('Please fix errors in LLM Action Configuration:\n' + 
+                  llmActionErrors.map(err => err.path + ': ' + err.message).join('\n'));
+            return;
+        }
+        
+        // Get the unified config
+        const llmConfig = window.llmActionEditor.getValue();
+        
+        // Split into action_parameters and llm_callback_prompt
+        const actionParams = {};
+        if (llmConfig.tools && llmConfig.tools.length > 0) {
+            actionParams.tools = llmConfig.tools;
+        }
+        
+        document.getElementById('action-parameters-value').value = 
+            JSON.stringify(actionParams);
+        document.getElementById('llm_callback_prompt').value = 
+            llmConfig.llm_callback_prompt || '';
     }
     
     // Only update script code if script editor exists
@@ -439,6 +504,14 @@ document.getElementById('edit-form').addEventListener('submit', (e) => {
     }
 });
 
-}); // End of DOMContentLoaded
+} // End of initializeEditors
+
+// Check if DOM is already loaded, otherwise wait for it
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeEditors);
+} else {
+    // DOM is already loaded, initialize immediately
+    initializeEditors();
+}
 </script>
 {% endblock %}
