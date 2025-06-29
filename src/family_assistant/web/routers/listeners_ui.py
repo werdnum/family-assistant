@@ -365,6 +365,10 @@ async def edit_listener(
         if not listener:
             raise HTTPException(status_code=404, detail="Event listener not found")
 
+        # Ensure action_config is properly structured
+        if listener.get("action_config") is None:
+            listener["action_config"] = {}
+
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "listeners/listener_edit.html.j2",
