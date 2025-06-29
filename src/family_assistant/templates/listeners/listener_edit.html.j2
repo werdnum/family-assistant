@@ -173,14 +173,14 @@
             <div id="script-editor-container">
                 <div id="script-editor"></div>
             </div>
-            <input type="hidden" name="script_code" id="script-code-value" value="{{ listener.action_config.script_code or '' }}">
+            <input type="hidden" name="script_code" id="script-code-value" value="{{ (listener.action_config or {}).get('script_code', '') }}">
             <div id="validation-status" class="validation-pending">Ready to validate...</div>
             <div class="help-text">Starlark script that will execute when the listener is triggered</div>
         </div>
         
         <div class="form-group">
             <label for="timeout">Timeout (seconds)</label>
-            <input type="number" id="timeout" name="timeout" value="{{ listener.action_config.timeout or 600 }}" min="1" max="900">
+            <input type="number" id="timeout" name="timeout" value="{{ (listener.action_config or {}).get('timeout', 600) }}" min="1" max="900">
             <div class="help-text">Maximum execution time for the script</div>
         </div>
     </div>
@@ -189,7 +189,7 @@
     <div id="llm-fields" style="display: none;">
         <div class="form-group">
             <label for="llm_callback_prompt">LLM Callback Prompt</label>
-            <textarea id="llm_callback_prompt" name="llm_callback_prompt">{{ listener.action_config.llm_callback_prompt or '' }}</textarea>
+            <textarea id="llm_callback_prompt" name="llm_callback_prompt">{{ (listener.action_config or {}).get('llm_callback_prompt', '') }}</textarea>
             <div class="help-text">Custom prompt to send to the LLM when this listener is triggered (optional)</div>
         </div>
     </div>
@@ -218,11 +218,20 @@ import {EditorView, basicSetup} from "https://unpkg.com/@codemirror/basic-setup"
 import {python} from "https://unpkg.com/@codemirror/lang-python"
 import {EditorState} from "https://unpkg.com/@codemirror/state"
 
-// Wait for all resources to load
-window.addEventListener('load', () => {
+// Initialize on DOMContentLoaded instead of load for faster startup
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOM loaded, initializing editors...');
+    
     // Initialize match conditions JSON editor
     let matchConditionsEditor = null;
 
+    // Debug: Check if container exists
+    const editorContainer = document.getElementById('match-conditions-editor');
+    if (!editorContainer) {
+        console.error('match-conditions-editor container not found!');
+        return;
+    }
+    
     try {
     const matchConditionsSchema = {
         type: "object",
@@ -244,37 +253,65 @@ window.addEventListener('load', () => {
         additionalProperties: true
     };
 
-    // Wait a bit for JSONEditor to be available
-    if (typeof window.JSONEditor === 'undefined') {
-        console.error('JSONEditor not loaded yet');
-        // Try again after a delay
-        setTimeout(() => {
-            if (typeof window.JSONEditor !== 'undefined') {
-                initializeJSONEditor();
-            }
-        }, 100);
-    } else {
-        initializeJSONEditor();
+    // Initialize JSONEditor with retry logic
+    let retryCount = 0;
+    const maxRetries = 20; // 2 seconds total
+    
+    function tryInitializeJSONEditor() {
+        if (typeof window.JSONEditor !== 'undefined') {
+            console.log('JSONEditor loaded, initializing...');
+            initializeJSONEditor();
+        } else if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`JSONEditor not loaded yet, retry ${retryCount}/${maxRetries}...`);
+            setTimeout(tryInitializeJSONEditor, 100);
+        } else {
+            console.error('JSONEditor failed to load after 2 seconds');
+            // Show fallback textarea
+            const fallback = document.createElement('textarea');
+            fallback.name = 'match_conditions';
+            fallback.id = 'match-conditions-value';
+            fallback.value = JSON.stringify({{ listener.match_conditions | tojson }}, null, 2);
+            fallback.style.width = '100%';
+            fallback.style.minHeight = '200px';
+            fallback.style.fontFamily = 'monospace';
+            editorContainer.appendChild(fallback);
+            editorContainer.insertAdjacentHTML('afterend', '<div class="help-text" style="color: var(--bg-error);">JSON editor failed to load. Using plain text editor.</div>');
+        }
     }
     
+    tryInitializeJSONEditor();
+    
     function initializeJSONEditor() {
-        matchConditionsEditor = new window.JSONEditor(
-            document.getElementById('match-conditions-editor'), 
-            {
-                schema: matchConditionsSchema,
-                startval: {{ listener.match_conditions | tojson }},
-                theme: 'html',
-                disable_edit_json: false,
-                disable_properties: false,
-                disable_collapse: true,
-                remove_button_labels: true,
-                no_additional_properties: false
-            }
-        );
-        window.matchConditionsEditor = matchConditionsEditor;
+        try {
+            console.log('Creating JSONEditor instance...');
+            matchConditionsEditor = new window.JSONEditor(
+                document.getElementById('match-conditions-editor'), 
+                {
+                    schema: matchConditionsSchema,
+                    startval: {{ listener.match_conditions | tojson }},
+                    theme: 'html',
+                    disable_edit_json: false,
+                    disable_properties: false,
+                    disable_collapse: true,
+                    remove_button_labels: true,
+                    no_additional_properties: false
+                }
+            );
+            window.matchConditionsEditor = matchConditionsEditor;
+            console.log('JSONEditor initialized successfully');
+        } catch (innerError) {
+            console.error('Error creating JSONEditor instance:', innerError);
+            throw innerError;
+        }
     }
 } catch (e) {
-    console.error('Error initializing JSON editor:', e);
+    console.error('Error in JSON editor initialization:', e);
+    // Show error message to user
+    const editorContainer = document.getElementById('match-conditions-editor');
+    if (editorContainer) {
+        editorContainer.innerHTML = '<div style="color: var(--bg-error); padding: 1rem;">Error loading JSON editor. Please refresh the page.</div>';
+    }
 }
 
 // Script editor variables
@@ -402,6 +439,6 @@ document.getElementById('edit-form').addEventListener('submit', (e) => {
     }
 });
 
-}); // End of window.load
+}); // End of DOMContentLoaded
 </script>
 {% endblock %}
