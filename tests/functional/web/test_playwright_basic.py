@@ -57,9 +57,9 @@ async def test_notes_page_accessible(web_test_fixture: WebTestFixture) -> None:
     await page.wait_for_load_state("networkidle")
 
     # The homepage is the notes page, so check for notes-specific elements
-    # Look for "Add Note" button or link
+    # Look for "Add New Note" button or link
     add_note_element = await page.wait_for_selector(
-        "a[href='/notes/add'], button:has-text('Add Note')",
+        "a[href='/notes/add'], button:has-text('Add New Note'), a.add-button",
         state="visible",
         timeout=5000,
     )
@@ -189,12 +189,14 @@ async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> Non
 
     # Fill in title field
     title_input = await page.wait_for_selector("input[name='title']", state="visible")
+    assert title_input is not None, "Title input field not found"
     await title_input.fill("Test Note from Playwright")
 
     # Fill in content field (might be textarea or other input)
     content_input = await page.wait_for_selector(
         "textarea[name='content'], input[name='content'], #content", state="visible"
     )
+    assert content_input is not None, "Content input field not found"
     await content_input.fill(
         "This is a test note created by Playwright with full JS support"
     )
@@ -204,6 +206,7 @@ async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> Non
         "button[type='submit'], input[type='submit'], button:has-text('Save')",
         state="visible",
     )
+    assert submit_button is not None, "Submit button not found"
     await submit_button.click()
 
     # Should redirect back to notes list after successful creation
@@ -235,6 +238,7 @@ async def test_css_and_styling_loads(web_test_fixture: WebTestFixture) -> None:
 
     # Check that the element has some computed styles (not just browser defaults)
     # This verifies CSS is loaded and applied
+    assert main_element is not None, "Main element not found"
     computed_style = await main_element.evaluate("""
         (element) => {
             const styles = window.getComputedStyle(element);

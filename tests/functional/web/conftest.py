@@ -192,6 +192,11 @@ async def web_only_assistant(
         "document_storage_path": "/tmp/test_docs",
         "attachment_storage_path": "/tmp/test_attachments",
         "litellm_debug": False,
+        "oidc": {
+            "client_id": "",
+            "client_secret": "",
+            "discovery_url": "",
+        },
         "default_service_profile_id": "web_test_profile",
         "service_profiles": [
             {

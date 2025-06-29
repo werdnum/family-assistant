@@ -59,7 +59,7 @@ def get_static_asset(filename: str, entry_name: str = "main") -> str:
                     _manifest_cache = json.load(f)
                     _manifest_last_read = mtime
                     logger.info(
-                        f"Loaded manifest.json with {len(_manifest_cache)} entries"
+                        f"Loaded manifest.json with {len(_manifest_cache) if _manifest_cache else 0} entries"
                     )
             except Exception as e:
                 logger.error(f"Failed to read manifest.json: {e}")
