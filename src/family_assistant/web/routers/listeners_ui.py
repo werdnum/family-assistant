@@ -389,6 +389,7 @@ async def update_listener(
     listener_id: int,
     name: Annotated[str, Form()],
     match_conditions: Annotated[str, Form()],  # JSON string
+    action_parameters: Annotated[str | None, Form()] = "{}",  # JSON string
     description: Annotated[str | None, Form()] = "",
     enabled: Annotated[str | None, Form()] = None,
     one_time: Annotated[str | None, Form()] = None,
@@ -433,6 +434,16 @@ async def update_listener(
                         status_code=404, detail="Event listener not found"
                     )
 
+            # Parse action parameters JSON
+            action_parameters_dict = {}
+            if action_parameters:
+                try:
+                    action_parameters_dict = json.loads(action_parameters)
+                except json.JSONDecodeError as e:
+                    raise HTTPException(
+                        status_code=400, detail="Invalid action parameters JSON"
+                    ) from e
+
             # Build action_config based on action type
             action_config = None
             if existing["action_type"] == "script":
@@ -449,6 +460,9 @@ async def update_listener(
                 action_config = {}
                 if llm_callback_prompt:
                     action_config["llm_callback_prompt"] = llm_callback_prompt
+                # Add action_parameters to action_config
+                if action_parameters_dict:
+                    action_config["action_parameters"] = action_parameters_dict
 
             # Update the listener
             success = await db.events.update_event_listener(
@@ -488,6 +502,7 @@ async def create_listener(
     source_id: Annotated[str, Form()],
     action_type: Annotated[str, Form()],
     match_conditions: Annotated[str, Form()],  # JSON string
+    action_parameters: Annotated[str | None, Form()] = "{}",  # JSON string
     description: Annotated[str | None, Form()] = "",
     enabled: Annotated[str | None, Form()] = None,
     one_time: Annotated[str | None, Form()] = None,
@@ -514,6 +529,16 @@ async def create_listener(
         enabled_bool = enabled is not None
         one_time_bool = one_time is not None
 
+        # Parse action parameters JSON
+        action_parameters_dict = {}
+        if action_parameters:
+            try:
+                action_parameters_dict = json.loads(action_parameters)
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=400, detail="Invalid action parameters JSON"
+                ) from e
+
         # Build action_config based on action type
         action_config = None
         if action_type == "script":
@@ -530,6 +555,9 @@ async def create_listener(
             action_config = {}
             if llm_callback_prompt:
                 action_config["llm_callback_prompt"] = llm_callback_prompt
+            # Add action_parameters to action_config
+            if action_parameters_dict:
+                action_config["action_parameters"] = action_parameters_dict
 
         async with DatabaseContext() as db:
             # Create the listener
