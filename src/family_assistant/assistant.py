@@ -86,6 +86,25 @@ def deep_merge_dicts(base_dict: dict, merge_dict: dict) -> dict:
     return result
 
 
+class NullChatInterface:
+    """A null chat interface for when Telegram service is not configured."""
+
+    async def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+    ) -> str | None:
+        """Does nothing, returns None."""
+        logger.debug(
+            "NullChatInterface: send_message called for conversation %s: %s",
+            conversation_id,
+            text,
+        )
+        return None
+
+
 # --- Wrapper Functions for Type Compatibility ---
 # These wrappers might be needed by task handlers if they are registered from here
 # or if the Assistant class sets up the task worker directly.
@@ -153,8 +172,13 @@ class Assistant:
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
 
-        if not self.config.get("telegram_token"):
-            raise ValueError("Telegram Bot Token is missing.")
+        # Check if Telegram is enabled
+        self.telegram_enabled = self.config.get("telegram_enabled", True)
+
+        if self.telegram_enabled and not self.config.get("telegram_token"):
+            raise ValueError(
+                "Telegram Bot Token is missing when telegram_enabled=True."
+            )
 
         selected_model = self.config.get("model", "")
         if selected_model.startswith("gemini/"):
@@ -679,20 +703,26 @@ class Assistant:
                 "Default processing service not available for TelegramService setup."
             )
 
-        self.telegram_service = TelegramService(
-            telegram_token=self.config["telegram_token"],
-            allowed_user_ids=self.config["allowed_user_ids"],
-            developer_chat_id=self.config["developer_chat_id"],
-            processing_service=self.default_processing_service,
-            processing_services_registry=self.processing_services_registry,
-            app_config=self.config,
-            get_db_context_func=get_db_context,
-            # use_batching argument removed
-        )
-        fastapi_app.state.telegram_service = self.telegram_service
-        logger.info(
-            "TelegramService instantiated and stored in FastAPI app state during setup_dependencies."
-        )
+        # Only initialize Telegram service if enabled
+        if self.telegram_enabled:
+            self.telegram_service = TelegramService(
+                telegram_token=self.config["telegram_token"],
+                allowed_user_ids=self.config["allowed_user_ids"],
+                developer_chat_id=self.config["developer_chat_id"],
+                processing_service=self.default_processing_service,
+                processing_services_registry=self.processing_services_registry,
+                app_config=self.config,
+                get_db_context_func=get_db_context,
+                # use_batching argument removed
+            )
+            fastapi_app.state.telegram_service = self.telegram_service
+            logger.info(
+                "TelegramService instantiated and stored in FastAPI app state during setup_dependencies."
+            )
+        else:
+            self.telegram_service = None
+            fastapi_app.state.telegram_service = None
+            logger.info("Telegram service disabled (telegram_enabled=False)")
 
         # Initialize event system if enabled
         event_config = self.config.get("event_system", {})
@@ -746,13 +776,17 @@ class Assistant:
         """Starts all long-running services and waits for shutdown."""
         if not self.default_processing_service or not self.embedding_generator:
             raise RuntimeError("Dependencies not set up before starting services.")
-        if not self.telegram_service:
-            raise RuntimeError(
-                "TelegramService not initialized before starting services."
-            )
 
-        await self.telegram_service.start_polling()
-        logger.info("TelegramService polling started.")
+        # Only start Telegram polling if enabled
+        if self.telegram_enabled:
+            if not self.telegram_service:
+                raise RuntimeError(
+                    "TelegramService not initialized before starting services."
+                )
+            await self.telegram_service.start_polling()
+            logger.info("TelegramService polling started.")
+        else:
+            logger.info("Telegram service disabled, skipping polling.")
 
         uvicorn_config = uvicorn.Config(
             fastapi_app, host="0.0.0.0", port=8000, log_level="info"
@@ -772,7 +806,9 @@ class Assistant:
 
         self.task_worker_instance = TaskWorker(
             processing_service=self.default_processing_service,
-            chat_interface=self.telegram_service.chat_interface,
+            chat_interface=self.telegram_service.chat_interface
+            if self.telegram_service
+            else NullChatInterface(),
             calendar_config=self.config.get(
                 "calendar_config", {}
             ),  # Use top-level calendar config with empty dict fallback
