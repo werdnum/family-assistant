@@ -760,6 +760,9 @@ class Assistant:
         server = uvicorn.Server(uvicorn_config)
         self.uvicorn_server_task = asyncio.create_task(server.serve())
         logger.info("Web server running on http://0.0.0.0:8000")
+        logger.info(
+            "In development, run 'poe dev' and access the app at http://localhost:5173"
+        )
 
         default_profile_conf = next(
             p

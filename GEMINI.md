@@ -1,10 +1,13 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this
+repository.
 
 ## Style
 
-* Comments are used to explain implementation when it's unclear. Do NOT add comments that are self-evident from the code, or that explain the code's history (that's what commit history is for). No comments like `# Removed db_context`.
+- Comments are used to explain implementation when it's unclear. Do NOT add comments that are
+  self-evident from the code, or that explain the code's history (that's what commit history is
+  for). No comments like `# Removed db_context`.
 
 ## Development Setup
 
@@ -36,18 +39,26 @@ This script runs:
 
 - `ruff check --fix` (linting with auto-fixes)
 - `ruff format` (code formatting)
-- `basedpyright` (type checking)  
+- `basedpyright` (type checking)
 - `pylint` (additional linting in errors-only mode)
 
-**IMPORTANT**: `scripts/format-and-lint.sh` MUST pass before committing. NEVER use `git commit --no-verify` -- all lint failures must be fixed or properly disabled.
+**IMPORTANT**: `scripts/format-and-lint.sh` MUST pass before committing. NEVER use
+`git commit --no-verify` -- all lint failures must be fixed or properly disabled.
 
 ### Testing
 
-* IMPORTANT: Write your tests as "end-to-end" as you can.
-  * Use mock objects as little as possible. Use real databases (fixtures available in tests/conftest.py and tests/functional/telegram/conftest.py) and only mock external dependencies with no good fake implementations.
-* Each test tests one independent behaviour of the system under test. Arrange, Act, Assert. NEVER Arrange, Act, Assert, Act, Assert, Act, Assert.
+- IMPORTANT: Write your tests as "end-to-end" as you can.
 
-* ALWAYS run tests with `-xq` so there is less output to process. NEVER use `-s` or `-v` unless you have already tried with `-q` and you are sure there is information in the output of `-s` or `-v` that you need for debugging.
+  - Use mock objects as little as possible. Use real databases (fixtures available in
+    tests/conftest.py and tests/functional/telegram/conftest.py) and only mock external dependencies
+    with no good fake implementations.
+
+- Each test tests one independent behaviour of the system under test. Arrange, Act, Assert. NEVER
+  Arrange, Act, Assert, Act, Assert, Act, Assert.
+
+- ALWAYS run tests with `-xq` so there is less output to process. NEVER use `-s` or `-v` unless you
+  have already tried with `-q` and you are sure there is information in the output of `-s` or `-v`
+  that you need for debugging.
 
 ```bash
 # Run all tests with verbose output
@@ -68,12 +79,15 @@ pytest tests/functional/test_specific.py -xq
 
 #### Database Backend Selection
 
-By default, tests run with an in-memory SQLite database for speed. However, production uses PostgreSQL, so it's important to test with PostgreSQL to catch database-specific issues:
+By default, tests run with an in-memory SQLite database for speed. However, production uses
+PostgreSQL, so it's important to test with PostgreSQL to catch database-specific issues:
 
 - Use `--postgres` flag to run tests with PostgreSQL instead of SQLite
 - PostgreSQL container starts automatically when the flag is used (requires Docker/Podman)
-- Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will get a warning if run without `--postgres` flag
-- The unified `test_db_engine` fixture automatically provides the appropriate database based on the flag
+- Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will
+  get a warning if run without `--postgres` flag
+- The unified `test_db_engine` fixture automatically provides the appropriate database based on the
+  flag
 
 **PostgreSQL Test Isolation**: When using `--postgres`, each test gets its own unique database:
 
@@ -88,11 +102,13 @@ By default, tests run with an in-memory SQLite database for speed. However, prod
 - Different transaction handling between SQLite and PostgreSQL
 - Schema differences that only manifest with PostgreSQL
 
-It's recommended to run tests with `--postgres` before pushing changes that touch database operations.
+It's recommended to run tests with `--postgres` before pushing changes that touch database
+operations.
 
 ### Test Fixtures
 
-The project provides a comprehensive set of pytest fixtures for testing different components. These fixtures are defined in `tests/conftest.py` and `tests/functional/telegram/conftest.py`.
+The project provides a comprehensive set of pytest fixtures for testing different components. These
+fixtures are defined in `tests/conftest.py` and `tests/functional/telegram/conftest.py`.
 
 #### Core Database Fixtures
 
@@ -129,9 +145,13 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 **`task_worker_manager`** (function scope)
 
 - Manages lifecycle of a TaskWorker instance for background task testing
+
 - Returns tuple: `(TaskWorker, new_task_event, shutdown_event)`
+
 - Worker has mock ChatInterface and embedding generator
+
 - Tests must register their own task handlers
+
 - Usage:
 
   ```python
@@ -153,9 +173,13 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 **`radicale_server`** (function scope)
 
 - Creates a unique calendar for each test function
+
 - Depends on `radicale_server_session` and `pg_vector_db_engine`
+
 - Returns tuple: `(base_url, username, password, unique_calendar_url)`
+
 - Automatically cleans up the calendar after test
+
 - Usage:
 
   ```python
@@ -169,8 +193,11 @@ The project provides a comprehensive set of pytest fixtures for testing differen
 **`telegram_handler_fixture`** (function scope)
 
 - Comprehensive fixture for testing Telegram bot functionality
+
 - Located in `tests/functional/telegram/conftest.py`
+
 - Returns `TelegramHandlerTestFixture` named tuple with:
+
   - `assistant`: Configured Assistant instance
   - `handler`: TelegramUpdateHandler
   - `mock_bot`: Mocked Telegram bot (AsyncMock)
@@ -180,6 +207,7 @@ The project provides a comprehensive set of pytest fixtures for testing differen
   - `processing_service`: Configured ProcessingService
   - `tools_provider`: Configured ToolsProvider
   - `get_db_context_func`: Function to get database context
+
 - Usage:
 
   ```python
@@ -225,6 +253,7 @@ These fixtures are available in various web API test files:
 **`test_.client`** (function scope)
 
 - HTTPX AsyncClient for the test FastAPI app
+
 - Usage:
 
   ```python
@@ -251,8 +280,11 @@ The project includes `tests/mocks/mock_llm.py` with:
 **`RuleBasedMockLLMClient`**
 
 - Mock LLM that responds based on predefined rules
+
 - Rules are (matcher_function, LLMOutput) tuples
+
 - Matcher functions receive keyword arguments and return bool
+
 - Usage:
 
   ```python
@@ -268,14 +300,19 @@ The project includes `tests/mocks/mock_llm.py` with:
 ### Running the Application
 
 ```bash
-# Main application entry point
+# Development mode with hot-reloading (recommended)
+poe dev
+# Access the app at http://localhost:5173
+
+# Main application entry point (production mode)
 python -m family_assistant
 
 # Via setuptools script
 family-assistant
 
-# Web server only
-uvicorn family_assistant.web_server:app --reload --host 0.0.0.0 --port 8000
+# Backend API server only (for testing)
+poe serve
+# Or directly: uvicorn family_assistant.web_server:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Database Migrations
@@ -334,14 +371,17 @@ symbex -d src/family_assistant --function -s
 
 ### Making large-scale changes: Prefer `ast-grep`
 
-`ast-grep` is available for making mechanical syntactic changes and is the tool of choice in most cases.
+`ast-grep` is available for making mechanical syntactic changes and is the tool of choice in most
+cases.
 
-**Note**: Use `ast-grep scan` for applying complex rule-based transformations (not `ast-grep run`). The `scan` command supports YAML rule files and inline rules with `--inline-rules`.
+**Note**: Use `ast-grep scan` for applying complex rule-based transformations (not `ast-grep run`).
+The `scan` command supports YAML rule files and inline rules with `--inline-rules`.
 
 ### Removing a Keyword Argument
 
-**Task:** Reliably remove the `cache=...` keyword argument from all calls to `my_function`, regardless of its position.
-*(This requires `--inline-rules` because a single pattern cannot handle all comma variations.)*
+**Task:** Reliably remove the `cache=...` keyword argument from all calls to `my_function`,
+regardless of its position. *(This requires `--inline-rules` because a single pattern cannot handle
+all comma variations.)*
 
 **Before:**
 
@@ -378,8 +418,8 @@ my_function()
 
 ### Changing Module Method to Instance Method
 
-**Task:** Change calls from `mymodule.mymethod(object, ...)` to `object.mymethod(...)`.
-*(This is a direct transformation suitable for the simpler `-p`/`-r` flags.)*
+**Task:** Change calls from `mymodule.mymethod(object, ...)` to `object.mymethod(...)`. *(This is a
+direct transformation suitable for the simpler `-p`/`-r` flags.)*
 
 **Before:**
 
@@ -437,8 +477,9 @@ requests.get("https://api.example.com/data", timeout=5)
 
 ### Unifying Renamed Functions (Order-Independent)
 
-**Task:** Unify `send_json_payload(...)` and `post_data_as_json(...)` to `api_client.post(...)`, regardless of keyword argument order.
-*(This requires `--inline-rules` to handle multiple conditions (`any`, `all`) and order-insensitivity (`has`).)*
+**Task:** Unify `send_json_payload(...)` and `post_data_as_json(...)` to `api_client.post(...)`,
+regardless of keyword argument order. *(This requires `--inline-rules` to handle multiple conditions
+(`any`, `all`) and order-insensitivity (`has`).)*
 
 **Before:**
 
@@ -476,8 +517,8 @@ api_client.post(url="/products", json={"name": "Bob"})
 
 ### Modernizing `unittest` Assertions to `pytest`
 
-**Task:** Convert `unittest` style assertions to modern `pytest` `assert` statements.
-*(Using `--inline-rules` is best here to bundle multiple, related transformations into a single command.)*
+**Task:** Convert `unittest` style assertions to modern `pytest` `assert` statements. *(Using
+`--inline-rules` is best here to bundle multiple, related transformations into a single command.)*
 
 **Before:**
 
@@ -513,76 +554,91 @@ assert value is None
 
 ## Architecture Overview
 
-Family Assistant is an LLM-powered application designed to centralize family information management and automate tasks. It provides multiple interfaces (Telegram, Web UI, Email webhooks) and uses a modular architecture built with Python, FastAPI, and SQLAlchemy.
+Family Assistant is an LLM-powered application designed to centralize family information management
+and automate tasks. It provides multiple interfaces (Telegram, Web UI, Email webhooks) and uses a
+modular architecture built with Python, FastAPI, and SQLAlchemy.
 
 ### Core Components
 
-1. **Entry Point (`__main__.py`)**:
-   - Handles configuration loading from multiple sources (defaults → config.yaml → environment variables → CLI args)
-   - Manages application lifecycle through the `Assistant` class
-   - Sets up signal handlers for graceful shutdown
+01. **Entry Point (`__main__.py`)**:
 
-2. **Assistant (`assistant.py`)**:
-   - Orchestrates application lifecycle and dependency injection
-   - Wires up all core components (LLM clients, tools, processing services, storage, etc.)
-   - Manages service startup/shutdown coordination
+    - Handles configuration loading from multiple sources (defaults → config.yaml → environment
+      variables → CLI args)
+    - Manages application lifecycle through the `Assistant` class
+    - Sets up signal handlers for graceful shutdown
 
-3. **Processing Layer (`processing.py`)**:
-   - Core business logic for handling chat interactions
-   - Manages conversation history and context aggregation
-   - Supports multiple service profiles with different LLM models, tools, and prompts
-   - Executes tool calls and manages delegation between profiles
+02. **Assistant (`assistant.py`)**:
 
-4. **User Interfaces**:
-   - **Telegram Bot (`telegram_bot.py`)**: Primary interface with slash command support
-   - **Web UI (`web/`)**: FastAPI-based web interface with routers for various features
-   - **Email Webhook**: Receives and processes emails via `/webhook/mail`
+    - Orchestrates application lifecycle and dependency injection
+    - Wires up all core components (LLM clients, tools, processing services, storage, etc.)
+    - Manages service startup/shutdown coordination
 
-5. **Storage Layer (`storage/`)**:
-   - Repository pattern architecture with SQLAlchemy (supports SQLite and PostgreSQL)
-   - **DatabaseContext**: Central hub providing access to all repositories
-   - **Repository Classes** (`storage/repositories/`):
-     - `NotesRepository`: Note management and search
-     - `TasksRepository`: Background task queue operations
-     - `MessageHistoryRepository`: Conversation history storage
-     - `EmailRepository`: Email storage and retrieval
-     - `VectorRepository`: Vector embeddings for semantic search
-     - `EventsRepository`: Event storage and matching
-     - `ErrorLogsRepository`: Error tracking and logging
-   - Each repository extends `BaseRepository` for consistent error handling and logging
-   - Includes retry logic, connection pooling, and transaction management
-   - Database schema managed by Alembic migrations
+03. **Processing Layer (`processing.py`)**:
 
-6. **Tools System (`tools/`)**:
-   - Modular tool architecture with local Python functions and MCP (Model Context Protocol) integration
-   - Tools organized by category: notes, calendar, documents, communication, tasks, etc.
-   - Supports tool confirmation requirements and delegation security levels
-   - Composite tool provider system for flexible tool management
+    - Core business logic for handling chat interactions
+    - Manages conversation history and context aggregation
+    - Supports multiple service profiles with different LLM models, tools, and prompts
+    - Executes tool calls and manages delegation between profiles
 
-7. **Task Queue (`task_worker.py`)**:
-   - Database-backed async task queue for background processing
-   - Supports scheduled tasks, retries with exponential backoff, and recurring tasks
-   - Handles LLM callbacks, email indexing, embedding generation, and system maintenance
+04. **User Interfaces**:
 
-8. **Document Indexing (`indexing/`)**:
-   - Pipeline-based document processing system
-   - Supports multiple document types (PDFs, emails, web pages, notes)
-   - Includes text extraction, chunking, embedding generation, and vector storage
-   - Configurable processing pipeline with various processors
+    - **Telegram Bot (`telegram_bot.py`)**: Primary interface with slash command support
+    - **Web UI (`web/`)**: FastAPI-based web interface with routers for various features
+    - **Email Webhook**: Receives and processes emails via `/webhook/mail`
 
-9. **Event System (`events/`)**:
-   - Event-driven architecture for system notifications
-   - Supports multiple event sources (Home Assistant, indexing pipeline)
-   - Event listeners with flexible matching conditions and rate limiting
-   - Event storage and processing with action execution
+05. **Storage Layer (`storage/`)**:
+
+    - Repository pattern architecture with SQLAlchemy (supports SQLite and PostgreSQL)
+    - **DatabaseContext**: Central hub providing access to all repositories
+    - **Repository Classes** (`storage/repositories/`):
+      - `NotesRepository`: Note management and search
+      - `TasksRepository`: Background task queue operations
+      - `MessageHistoryRepository`: Conversation history storage
+      - `EmailRepository`: Email storage and retrieval
+      - `VectorRepository`: Vector embeddings for semantic search
+      - `EventsRepository`: Event storage and matching
+      - `ErrorLogsRepository`: Error tracking and logging
+    - Each repository extends `BaseRepository` for consistent error handling and logging
+    - Includes retry logic, connection pooling, and transaction management
+    - Database schema managed by Alembic migrations
+
+06. **Tools System (`tools/`)**:
+
+    - Modular tool architecture with local Python functions and MCP (Model Context Protocol)
+      integration
+    - Tools organized by category: notes, calendar, documents, communication, tasks, etc.
+    - Supports tool confirmation requirements and delegation security levels
+    - Composite tool provider system for flexible tool management
+
+07. **Task Queue (`task_worker.py`)**:
+
+    - Database-backed async task queue for background processing
+    - Supports scheduled tasks, retries with exponential backoff, and recurring tasks
+    - Handles LLM callbacks, email indexing, embedding generation, and system maintenance
+
+08. **Document Indexing (`indexing/`)**:
+
+    - Pipeline-based document processing system
+    - Supports multiple document types (PDFs, emails, web pages, notes)
+    - Includes text extraction, chunking, embedding generation, and vector storage
+    - Configurable processing pipeline with various processors
+
+09. **Event System (`events/`)**:
+
+    - Event-driven architecture for system notifications
+    - Supports multiple event sources (Home Assistant, indexing pipeline)
+    - Event listeners with flexible matching conditions and rate limiting
+    - Event storage and processing with action execution
 
 10. **Context Providers (`context_providers.py`)**:
+
     - Pluggable system for injecting dynamic context into LLM prompts
     - Includes providers for calendar events, notes, weather, known users, and Home Assistant
 
 ### Data Flow
 
 1. **User Request Flow**:
+
    - User sends message via interface (Telegram/Web/Email)
    - Interface layer forwards to Processing Service
    - Processing Service aggregates context from providers
@@ -591,12 +647,14 @@ Family Assistant is an LLM-powered application designed to centralize family inf
    - Response sent back through interface
 
 2. **Background Task Flow**:
+
    - Tasks enqueued to database queue
    - Task worker polls/receives notifications for new tasks
    - Worker executes task handlers (callbacks, indexing, maintenance)
    - Results stored and failures retried with backoff
 
 3. **Document Indexing Flow**:
+
    - Document uploaded/ingested via API or tools
    - Indexing pipeline processes document through configured processors
    - Text extracted, chunked, and embedded
@@ -604,51 +662,70 @@ Family Assistant is an LLM-powered application designed to centralize family inf
 
 ### Configuration
 
-- **Hierarchical configuration**: Code defaults → config.yaml → environment variables → CLI arguments
+- **Hierarchical configuration**: Code defaults → config.yaml → environment variables → CLI
+  arguments
 - **Service Profiles**: Multiple profiles with different LLMs, tools, and prompts
 - **Tool Configuration**: Fine-grained control over available tools per profile
 - **MCP Servers**: External tool integration via Model Context Protocol
 
 ### Key Design Patterns
 
-- **Repository Pattern**: Data access logic encapsulated in repository classes, accessed via DatabaseContext
+- **Repository Pattern**: Data access logic encapsulated in repository classes, accessed via
+  DatabaseContext
 - **Dependency Injection**: Core services accept dependencies as constructor arguments
-- **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface, LLMInterface, EmbeddingGenerator)
-- **Async/Await**: Fully asynchronous architecture using asyncio
--- **Context Managers**: Database operations use context managers for proper resource cleanup
+- **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface,
+  LLMInterface, EmbeddingGenerator)
+- **Async/Await**: Fully asynchronous architecture using asyncio -- **Context Managers**: Database
+  operations use context managers for proper resource cleanup
 - **Retry Logic**: Built-in retry mechanisms for transient failures
 - **Event-Driven**: Loosely coupled components communicate via events
 
 ## Development Guidelines
 
 - ALWAYS make a plan before you make any nontrivial changes.
-- ALWAYS ask the user to approve the plan before you start work. In particular, you MUST stop and ask for approval before doing major rearchitecture or reimplementations, or making technical decisions that may require judgement calls.
-- Significant changes should have the plan written to docs/design for approval and future documentation.
-- When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the assistant how it works in the system prompt in prompts.yaml or in tool descriptions. This is NOT optional or low priority.
-- When solving a problem, always consider whether there's a better long term fix and ask the user whether they prefer the tactical pragmatic fix or the "proper" long term fix. Look out for design or code smells. Refactoring is relatively cheap in this project - cheaper than leaving something broken.
+- ALWAYS ask the user to approve the plan before you start work. In particular, you MUST stop and
+  ask for approval before doing major rearchitecture or reimplementations, or making technical
+  decisions that may require judgement calls.
+- Significant changes should have the plan written to docs/design for approval and future
+  documentation.
+- When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the
+  assistant how it works in the system prompt in prompts.yaml or in tool descriptions. This is NOT
+  optional or low priority.
+- When solving a problem, always consider whether there's a better long term fix and ask the user
+  whether they prefer the tactical pragmatic fix or the "proper" long term fix. Look out for design
+  or code smells. Refactoring is relatively cheap in this project - cheaper than leaving something
+  broken.
 
 ### Planning guidelines
 
-* Always break plans down into meaningful milestones that deliver incremental value, or at least which can be tested independently. This is key to maintaining momentum.
-* Do NOT give timelines in weeks or other units of time. Development on this project does not proceed in this manner as a hobby project predominantly developed using LLM assistance tools like Claude Code.
+- Always break plans down into meaningful milestones that deliver incremental value, or at least
+  which can be tested independently. This is key to maintaining momentum.
+- Do NOT give timelines in weeks or other units of time. Development on this project does not
+  proceed in this manner as a hobby project predominantly developed using LLM assistance tools like
+  Claude Code.
 
 ### Adding New Tools
 
-See the detailed guide in `src/family_assistant/tools/README.md` for complete instructions on implementing new tools.
+See the detailed guide in `src/family_assistant/tools/README.md` for complete instructions on
+implementing new tools.
 
 **IMPORTANT**: Tools must be registered in TWO places:
 
 1. **In the code** (`src/family_assistant/tools/__init__.py`):
+
    - Add the tool function to `AVAILABLE_FUNCTIONS` dictionary
-   - Add the tool definition to the appropriate `TOOLS_DEFINITION` list (e.g., `NOTE_TOOLS_DEFINITION`)
+   - Add the tool definition to the appropriate `TOOLS_DEFINITION` list (e.g.,
+     `NOTE_TOOLS_DEFINITION`)
 
 2. **In the configuration** (`config.yaml`):
+
    - Add the tool name to `enable_local_tools` list for each profile that should have access
    - If `enable_local_tools` is not specified for a profile, ALL tools are enabled by default
 
 This dual registration system provides:
 
-- **Security**: Different profiles can have different tool access (e.g., browser profile has only browser tools)
+- **Security**: Different profiles can have different tool access (e.g., browser profile has only
+  browser tools)
 - **Flexibility**: Each profile can be tailored with specific tools without code changes
 - **Safety**: Destructive tools can be excluded from certain profiles
 
@@ -670,22 +747,34 @@ service_profiles:
 When adding new web UI endpoints that serve HTML pages:
 
 1. Create your router in `src/family_assistant/web/routers/`
-2. Always include `now_utc: datetime.now(timezone.utc)` in the template context when using `TemplateResponse`
-3. **Important**: Add your new endpoint to the `BASE_UI_ENDPOINTS` list in `tests/functional/web/test_ui_endpoints.py` to ensure it's tested for basic accessibility
+2. Always include `now_utc: datetime.now(timezone.utc)` in the template context when using
+   `TemplateResponse`
+3. **Important**: Add your new endpoint to the `BASE_UI_ENDPOINTS` list in
+   `tests/functional/web/test_ui_endpoints.py` to ensure it's tested for basic accessibility
 
 ## Important Notes
 
 - Always make sure you start with a clean working directory. Commit any uncommitted changes.
+
 - NEVER revert existing changes without the user's explicit permission.
+
 - Always check that linters and tests are happy when you're finished.
-- Always commit changes after each major step. Prefer many small self contained commits as long as each commit passes lint checks.
-- **Important**: When adding new imports, add the code that uses the import first, then add the import. Otherwise, a linter running in another tab might remove the import as unused before you add the code that uses it.
-- Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL text may break across engines.
+
+- Always commit changes after each major step. Prefer many small self contained commits as long as
+  each commit passes lint checks.
+
+- **Important**: When adding new imports, add the code that uses the import first, then add the
+  import. Otherwise, a linter running in another tab might remove the import as unused before you
+  add the code that uses it.
+
+- Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL
+  text may break across engines.
+
 - **Database Access Pattern**: Use the repository pattern via DatabaseContext:
 
   ```python
   from family_assistant.storage.context import DatabaseContext
-  
+
   async with DatabaseContext() as db:
       # Access repositories as properties
       await db.notes.add_or_update(title, content)
@@ -694,7 +783,9 @@ When adding new web UI endpoints that serve HTML pages:
   ```
 
   Avoid using the old module-level functions directly.
-- **SQLAlchemy Count Queries**: When using `func.count()` in SQLAlchemy queries, always use `.label("count")` to give the column an alias:
+
+- **SQLAlchemy Count Queries**: When using `func.count()` in SQLAlchemy queries, always use
+  `.label("count")` to give the column an alias:
 
   ```python
   query = select(func.count(table.c.id).label("count"))
@@ -704,7 +795,8 @@ When adding new web UI endpoints that serve HTML pages:
 
   This avoids KeyError when accessing the result.
 
-- **SQLAlchemy func imports**: To avoid pylint errors about `func.count()` and `func.now()` not being callable, import func as:
+- **SQLAlchemy func imports**: To avoid pylint errors about `func.count()` and `func.now()` not
+  being callable, import func as:
 
   ```python
   from sqlalchemy.sql import functions as func
@@ -720,4 +812,5 @@ When adding new web UI endpoints that serve HTML pages:
 
 ## File Management Guidance
 
-* Put temporary files in the repo somewhere. scratch/ is available for truly temporary files but files of historical interest can go elsewhere
+- Put temporary files in the repo somewhere. scratch/ is available for truly temporary files but
+  files of historical interest can go elsewhere

@@ -181,6 +181,36 @@ shell = "pytest --db postgres -xvs"
 help = "Run tests with SQLite database backend only"
 shell = "pytest --db sqlite -xq"
 
+[tool.poe.tasks.ui-dev]
+help = "Run Vite development server for frontend"
+shell = "npm run --prefix frontend dev"
+
+[tool.poe.tasks.ui-build]
+help = "Build production frontend assets with Vite"
+shell = "npm run --prefix frontend build"
+
+[tool.poe.tasks.serve]
+help = "Run the FastAPI backend with auto-reload"
+shell = "uvicorn family_assistant.web_server:app --reload --host 0.0.0.0 --port 8000"
+
+[tool.poe.tasks.dev]
+help = "Run backend and frontend servers concurrently (access app at http://localhost:5173 or http://<your-ip>:5173)"
+sequence = [
+    { shell = "echo '🚀 Starting development servers...'" },
+    { shell = "echo ''" },
+    { shell = "echo '📱 Access the app at:'" },
+    { shell = "echo '   - Local: http://localhost:5173'" },
+    { shell = "echo '   - Remote: http://<your-ip>:5173'" },
+    { shell = "echo ''" },
+    { shell = "echo '🔄 Development features:'" },
+    { shell = "echo '   - Backend API on port 8000 (auto-redirects to 5173)'" },
+    { shell = "echo '   - Vite dev server on port 5173 (main entry point)'" },
+    { shell = "echo '   - Both servers listening on 0.0.0.0 for remote access'" },
+    { shell = "echo ''" },
+    { shell = "echo 'Press Ctrl+C to stop'" },
+    { shell = "trap 'echo \"\\n🛑 Stopping servers...\"; exit' INT; (poe serve & poe ui-dev & wait)" }
+]
+
 
 [tool.ruff.lint.isort]
 known-first-party = ["family_assistant"]
