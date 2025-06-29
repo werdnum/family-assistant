@@ -29,10 +29,12 @@ export default defineConfig({
     // Dev server port
     port: 5173,
     // Listen on all interfaces for remote access
-    host: '0.0.0.0',
+    host: true,
+    // Allow specific hosts for development access
+    allowedHosts: ['localhost', 'grotten.home.alexandtaylor.com'],
     // Proxy all non-asset requests to our FastAPI backend
     proxy: {
-      // Proxy everything except Vite's own paths
+      // Proxy everything except Vite's own paths and static assets
       '^(?!/@vite|/src|/node_modules|/__vite_ping).*': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,

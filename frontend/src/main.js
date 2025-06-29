@@ -5,7 +5,7 @@
 import 'simpledotcss/simple.css';
 
 // Import our custom CSS
-import '../../src/family_assistant/static/css/custom.css';
+import './custom.css';
 
 // Log that the frontend is loaded (for development)
 console.log('Family Assistant frontend loaded');

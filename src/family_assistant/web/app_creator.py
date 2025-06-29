@@ -146,20 +146,9 @@ else:
         f"Static directory '{static_dir if 'static_dir' in locals() else 'Not Defined'}' not found or not a directory. Static files will not be served."
     )
 
-# --- Development redirect ---
+# --- Development mode logging ---
 if should_use_vite_dev():
-    from fastapi import Request
-    from fastapi.responses import RedirectResponse
-
-    @app.get("/", response_class=RedirectResponse)
-    async def redirect_to_vite(request: Request) -> RedirectResponse:
-        """Redirect from backend port to Vite dev server in development."""
-        # Get the host from the request, replace port 8000 with 5173
-        host = request.headers.get("host", "localhost:8000")
-        new_host = host.replace(":8000", ":5173")
-        return RedirectResponse(url=f"http://{new_host}/", status_code=302)
-
-    logger.info("Development redirect from :8000 to :5173 enabled")
+    logger.info("Development mode enabled - Vite dev server detected on port 5173")
 
 # --- Include Routers ---
 if AUTH_ENABLED:
