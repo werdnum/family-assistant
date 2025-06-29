@@ -10,7 +10,9 @@ os.environ["SESSION_SECRET_KEY"] = ""
 
 import asyncio
 import contextlib
+import fcntl
 import subprocess
+import tempfile
 import time
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
@@ -61,11 +63,65 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
+class PortLock:
+    """File-based lock for exclusive port access."""
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+        self.lock_file = tempfile.gettempdir() + f"/.pytest_port_{port}.lock"
+        self.lock_fd = None
+
+    def acquire(self, timeout: float = 60) -> bool:
+        """Try to acquire the lock."""
+        import time
+
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                self.lock_fd = open(self.lock_file, "w", encoding="utf-8")  # noqa: SIM115
+                fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.lock_fd.write(str(os.getpid()))
+                self.lock_fd.flush()
+                return True
+            except OSError:
+                if self.lock_fd:
+                    self.lock_fd.close()
+                    self.lock_fd = None
+                time.sleep(0.5)
+        return False
+
+    def release(self) -> None:
+        """Release the lock."""
+        if self.lock_fd:
+            try:
+                fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_UN)
+                self.lock_fd.close()
+            except Exception:
+                pass
+            finally:
+                self.lock_fd = None
+                with contextlib.suppress(Exception):
+                    os.unlink(self.lock_file)
+
+
 @pytest.fixture(scope="module")
-def vite_and_api_ports() -> tuple[int, int]:
-    """Get free ports for Vite and API servers."""
-    # API port must be 8000 because Vite proxy is hardcoded
-    return find_free_port(), 8000
+def vite_and_api_ports() -> Generator[tuple[int, int], None, None]:
+    """Get ports for Vite and API servers with exclusive access to port 8000."""
+    # API port must be 8000 because Vite proxy is configured for it
+    api_port = 8000
+    port_lock = PortLock(api_port)
+
+    # Try to acquire exclusive lock on port 8000
+    if not port_lock.acquire(timeout=120):  # Wait up to 2 minutes
+        pytest.skip(f"Could not acquire lock for port {api_port} after 2 minutes")
+
+    try:
+        vite_port = find_free_port()
+        yield vite_port, api_port
+    finally:
+        # Always release the lock
+        port_lock.release()
 
 
 @pytest.fixture(scope="module")
@@ -102,7 +158,7 @@ def vite_server(vite_and_api_ports: tuple[int, int]) -> Generator[str, None, Non
     print(f"Starting Vite on port {vite_port}, proxying to API on port {api_port}")
 
     # Start Vite dev server with custom port
-    # Note: The proxy is hardcoded to 8000 in vite.config.js
+    # API port is locked to 8000 for this test module
     process = subprocess.Popen(
         f"npm run dev -- --port {vite_port} --host 127.0.0.1",
         shell=True,
@@ -248,13 +304,8 @@ async def web_only_assistant(
     # First stop the task worker properly
     if hasattr(assistant, "task_worker_instance") and assistant.task_worker_instance:
         assistant.task_worker_instance.shutdown_event.set()
-        if hasattr(assistant, "task_worker_task") and assistant.task_worker_task:
-            try:
-                await asyncio.wait_for(assistant.task_worker_task, timeout=2.0)
-            except asyncio.TimeoutError:
-                assistant.task_worker_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await assistant.task_worker_task
+        # The task_worker_task is created but not stored as an attribute
+        # so we can't wait for it directly
 
     # Then wait for services to stop
     try:
