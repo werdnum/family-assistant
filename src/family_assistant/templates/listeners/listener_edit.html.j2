@@ -4,6 +4,7 @@
 
 {% block head_extra %}
 <link rel="stylesheet" href="https://unpkg.com/@codemirror/basic-setup/dist/codemirror.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/css/jsoneditor.min.css">
 <style>
     .cm-editor { 
         border: 1px solid var(--border); 
@@ -73,6 +74,30 @@
         color: var(--text-light);
         margin-top: 0.25rem;
     }
+    /* JSON Editor specific styles */
+    .je-object__container {
+        padding: 0;
+    }
+    .je-header {
+        margin-bottom: 0.5rem;
+    }
+    .je-form-input-label {
+        font-weight: bold;
+        margin-bottom: 0.25rem;
+    }
+    .je-form-input {
+        width: 100%;
+        padding: 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background-color: var(--bg);
+        color: var(--text);
+    }
+    .je-form-input-description {
+        font-size: 0.9em;
+        color: var(--text-light);
+        margin-top: 0.25rem;
+    }
 </style>
 {% endblock %}
 
@@ -119,11 +144,19 @@
     
     <div class="form-group">
         <label for="action_type">Action Type</label>
+        {% if is_new %}
         <select id="action_type" name="action_type">
             <option value="wake_llm" {% if listener.action_type == 'wake_llm' %}selected{% endif %}>LLM Callback</option>
             <option value="script" {% if listener.action_type == 'script' %}selected{% endif %}>Script</option>
         </select>
         <div class="help-text">Choose how the listener responds to events</div>
+        {% else %}
+        <div style="padding: 0.5rem; background-color: var(--bg-secondary); border-radius: 4px;">
+            <strong>{{ 'LLM Callback' if listener.action_type == 'wake_llm' else 'Script' }}</strong>
+        </div>
+        <div class="help-text">Action type cannot be changed after creation</div>
+        <input type="hidden" id="action_type" value="{{ listener.action_type }}">
+        {% endif %}
     </div>
     
     <div class="form-group">
@@ -172,8 +205,8 @@
     </div>
     
     <div class="form-actions">
-        <button type="submit" class="button">Save Changes</button>
-        <a href="/event-listeners/{{ listener.id }}" class="button" style="background-color: var(--bg-secondary);">Cancel</a>
+        <button type="submit" class="button">{% if is_new %}Create Listener{% else %}Save Changes{% endif %}</button>
+        <a href="{% if is_new %}/event-listeners{% else %}/event-listeners/{{ listener.id }}{% endif %}" class="button" style="background-color: var(--bg-secondary);">Cancel</a>
     </div>
 </form>
 {% endblock %}
@@ -185,40 +218,64 @@ import {EditorView, basicSetup} from "https://unpkg.com/@codemirror/basic-setup"
 import {python} from "https://unpkg.com/@codemirror/lang-python"
 import {EditorState} from "https://unpkg.com/@codemirror/state"
 
-// Initialize match conditions JSON editor
-const matchConditionsSchema = {
-    type: "object",
-    title: "Match Conditions",
-    properties: {
-        entity_id: {
-            type: "string", 
-            description: "Entity ID to match (for Home Assistant events)"
-        },
-        "new_state.state": {
-            type: "string", 
-            description: "State value to match (for Home Assistant state changes)"
-        },
-        document_type: {
-            type: "string",
-            description: "Document type to match (for indexing events)"
-        }
-    },
-    additionalProperties: true
-};
+// Wait for all resources to load
+window.addEventListener('load', () => {
+    // Initialize match conditions JSON editor
+    let matchConditionsEditor = null;
 
-const matchConditionsEditor = new JSONEditor(
-    document.getElementById('match-conditions-editor'), 
-    {
-        schema: matchConditionsSchema,
-        startval: {{ listener.match_conditions | tojson }},
-        theme: 'bootstrap4',
-        disable_edit_json: false,
-        disable_properties: false,
-        disable_collapse: true,
-        remove_button_labels: true,
-        no_additional_properties: false
+    try {
+    const matchConditionsSchema = {
+        type: "object",
+        title: "Match Conditions",
+        properties: {
+            entity_id: {
+                type: "string", 
+                description: "Entity ID to match (for Home Assistant events)"
+            },
+            "new_state.state": {
+                type: "string", 
+                description: "State value to match (for Home Assistant state changes)"
+            },
+            document_type: {
+                type: "string",
+                description: "Document type to match (for indexing events)"
+            }
+        },
+        additionalProperties: true
+    };
+
+    // Wait a bit for JSONEditor to be available
+    if (typeof window.JSONEditor === 'undefined') {
+        console.error('JSONEditor not loaded yet');
+        // Try again after a delay
+        setTimeout(() => {
+            if (typeof window.JSONEditor !== 'undefined') {
+                initializeJSONEditor();
+            }
+        }, 100);
+    } else {
+        initializeJSONEditor();
     }
-);
+    
+    function initializeJSONEditor() {
+        matchConditionsEditor = new window.JSONEditor(
+            document.getElementById('match-conditions-editor'), 
+            {
+                schema: matchConditionsSchema,
+                startval: {{ listener.match_conditions | tojson }},
+                theme: 'html',
+                disable_edit_json: false,
+                disable_properties: false,
+                disable_collapse: true,
+                remove_button_labels: true,
+                no_additional_properties: false
+            }
+        );
+        window.matchConditionsEditor = matchConditionsEditor;
+    }
+} catch (e) {
+    console.error('Error initializing JSON editor:', e);
+}
 
 // Script editor variables
 let scriptEditor = null;
@@ -306,7 +363,13 @@ function showActionFields() {
 }
 
 // Set up action type change handler
-document.getElementById('action_type').addEventListener('change', showActionFields);
+const actionTypeElement = document.getElementById('action_type');
+if (actionTypeElement) {
+    // For new listeners, it's a select element
+    if (actionTypeElement.tagName === 'SELECT') {
+        actionTypeElement.addEventListener('change', showActionFields);
+    }
+}
 
 // Show correct fields on load
 showActionFields();
@@ -314,16 +377,23 @@ showActionFields();
 // Form submission
 document.getElementById('edit-form').addEventListener('submit', (e) => {
     // Update hidden fields with editor values
-    const matchConditionsErrors = matchConditionsEditor.validate();
-    if (matchConditionsErrors.length > 0) {
+    if (window.matchConditionsEditor) {
+        const matchConditionsErrors = window.matchConditionsEditor.validate();
+        if (matchConditionsErrors.length > 0) {
+            e.preventDefault();
+            alert('Please fix errors in Match Conditions:\n' + 
+                  matchConditionsErrors.map(err => err.path + ': ' + err.message).join('\n'));
+            return;
+        }
+        
+        document.getElementById('match-conditions-value').value = 
+            JSON.stringify(window.matchConditionsEditor.getValue());
+    } else {
+        console.error('Match conditions editor not initialized');
         e.preventDefault();
-        alert('Please fix errors in Match Conditions:\n' + 
-              matchConditionsErrors.map(err => err.path + ': ' + err.message).join('\n'));
+        alert('Error: JSON editor not properly initialized. Please refresh the page.');
         return;
     }
-    
-    document.getElementById('match-conditions-value').value = 
-        JSON.stringify(matchConditionsEditor.getValue());
     
     // Only update script code if script editor exists
     if (window.scriptEditor) {
@@ -331,5 +401,7 @@ document.getElementById('edit-form').addEventListener('submit', (e) => {
             window.scriptEditor.state.doc.toString();
     }
 });
+
+}); // End of window.load
 </script>
 {% endblock %}
