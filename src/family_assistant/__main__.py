@@ -72,6 +72,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     config_data: dict[str, Any] = {
         # --- Top-level application-wide settings & secrets placeholders ---
         "telegram_token": None,
+        "telegram_enabled": True,  # Can be disabled for web-only mode
         "openrouter_api_key": None,
         "gemini_api_key": None,
         "allowed_user_ids": [],
@@ -247,6 +248,15 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     config_data["telegram_token"] = os.getenv(
         "TELEGRAM_BOT_TOKEN", config_data["telegram_token"]
     )
+    # Handle TELEGRAM_ENABLED environment variable
+    telegram_enabled_env = os.getenv("TELEGRAM_ENABLED")
+    if telegram_enabled_env is not None:
+        config_data["telegram_enabled"] = telegram_enabled_env.lower() in (
+            "true",
+            "1",
+            "yes",
+            "on",
+        )
     # Allow API keys to be None if not set in env, they are validated later
     config_data["openrouter_api_key"] = os.getenv(
         "OPENROUTER_API_KEY", config_data.get("openrouter_api_key")
