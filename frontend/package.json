@@ -1,0 +1,20 @@
+{
+  "name": "family-assistant-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "description": "Frontend assets for Family Assistant",
+  "dependencies": {
+    "@vitejs/plugin-legacy": "^7.0.0",
+    "simpledotcss": "^2.3.7",
+    "vite": "^7.0.0"
+  }
+}

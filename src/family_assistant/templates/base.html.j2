@@ -4,8 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Family Assistant{% endblock %}</title>
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
-    <link rel="stylesheet" href="{{ request.app.url_path_for('static', path='css/custom.css') }}">
+    {% if DEV_MODE() %}
+    <!-- Vite development mode -->
+    <script type="module" src="/@vite/client"></script>
+    <script type="module" src="/src/main.js"></script>
+    {% else %}
+    <!-- Production build assets -->
+    <link rel="stylesheet" href="{{ get_static_asset('main.css') }}">
+    <script type="module" src="{{ get_static_asset('main.js') }}"></script>
+    {% endif %}
     {% block head_extra %}{% endblock %}
 </head>
 <body>

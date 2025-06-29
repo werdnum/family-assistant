@@ -39,12 +39,17 @@ from family_assistant.web.routers.ui_token_management import (  # New import
 )
 from family_assistant.web.routers.vector_search import vector_search_router
 from family_assistant.web.routers.webhooks import webhooks_router
+from family_assistant.web.template_utils import get_static_asset, should_use_vite_dev
 
 logger = logging.getLogger(__name__)
 
 
 # Load server URL from environment variable (used in templates)
-SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
+# In development with Vite, use localhost:5173
+default_server_url = (
+    "http://localhost:5173" if should_use_vite_dev() else "http://localhost:8000"
+)
+SERVER_URL = os.getenv("SERVER_URL", default_server_url)
 
 
 # --- Determine base path for templates and static files ---
@@ -83,6 +88,9 @@ try:
 
     templates = Jinja2Templates(directory=templates_dir)
     templates.env.filters["tojson"] = json.dumps
+    templates.env.globals["get_static_asset"] = get_static_asset
+    templates.env.globals["DEV_MODE"] = should_use_vite_dev
+    templates.env.globals["AUTH_ENABLED"] = AUTH_ENABLED
 
 except NameError:
     logger.error(
@@ -137,6 +145,21 @@ else:
     logger.error(
         f"Static directory '{static_dir if 'static_dir' in locals() else 'Not Defined'}' not found or not a directory. Static files will not be served."
     )
+
+# --- Development redirect ---
+if should_use_vite_dev():
+    from fastapi import Request
+    from fastapi.responses import RedirectResponse
+
+    @app.get("/", response_class=RedirectResponse)
+    async def redirect_to_vite(request: Request) -> RedirectResponse:
+        """Redirect from backend port to Vite dev server in development."""
+        # Get the host from the request, replace port 8000 with 5173
+        host = request.headers.get("host", "localhost:8000")
+        new_host = host.replace(":8000", ":5173")
+        return RedirectResponse(url=f"http://{new_host}/", status_code=302)
+
+    logger.info("Development redirect from :8000 to :5173 enabled")
 
 # --- Include Routers ---
 if AUTH_ENABLED:

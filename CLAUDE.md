@@ -339,14 +339,19 @@ The project includes `tests/mocks/mock_llm.py` with:
 ### Running the Application
 
 ```bash
-# Main application entry point
+# Development mode with hot-reloading (recommended)
+poe dev
+# Access the app at http://localhost:5173
+
+# Main application entry point (production mode)
 python -m family_assistant
 
 # Via setuptools script
 family-assistant
 
-# Web server only
-uvicorn family_assistant.web_server:app --reload --host 0.0.0.0 --port 8000
+# Backend API server only (for testing)
+poe serve
+# Or directly: uvicorn family_assistant.web_server:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Database Migrations
