@@ -10,9 +10,7 @@ os.environ["SESSION_SECRET_KEY"] = ""
 
 import asyncio
 import contextlib
-import fcntl
 import subprocess
-import tempfile
 import time
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
@@ -63,65 +61,13 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-class PortLock:
-    """File-based lock for exclusive port access."""
-
-    def __init__(self, port: int) -> None:
-        self.port = port
-        self.lock_file = tempfile.gettempdir() + f"/.pytest_port_{port}.lock"
-        self.lock_fd = None
-
-    def acquire(self, timeout: float = 60) -> bool:
-        """Try to acquire the lock."""
-        import time
-
-        start_time = time.time()
-
-        while time.time() - start_time < timeout:
-            try:
-                self.lock_fd = open(self.lock_file, "w", encoding="utf-8")  # noqa: SIM115
-                fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                self.lock_fd.write(str(os.getpid()))
-                self.lock_fd.flush()
-                return True
-            except OSError:
-                if self.lock_fd:
-                    self.lock_fd.close()
-                    self.lock_fd = None
-                time.sleep(0.5)
-        return False
-
-    def release(self) -> None:
-        """Release the lock."""
-        if self.lock_fd:
-            try:
-                fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_UN)
-                self.lock_fd.close()
-            except Exception:
-                pass
-            finally:
-                self.lock_fd = None
-                with contextlib.suppress(Exception):
-                    os.unlink(self.lock_file)
-
-
 @pytest.fixture(scope="module")
-def vite_and_api_ports() -> Generator[tuple[int, int], None, None]:
-    """Get ports for Vite and API servers with exclusive access to port 8000."""
-    # API port must be 8000 because Vite proxy is configured for it
-    api_port = 8000
-    port_lock = PortLock(api_port)
-
-    # Try to acquire exclusive lock on port 8000
-    if not port_lock.acquire(timeout=120):  # Wait up to 2 minutes
-        pytest.skip(f"Could not acquire lock for port {api_port} after 2 minutes")
-
-    try:
-        vite_port = find_free_port()
-        yield vite_port, api_port
-    finally:
-        # Always release the lock
-        port_lock.release()
+def vite_and_api_ports() -> tuple[int, int]:
+    """Get random free ports for both Vite and API servers."""
+    # Get random ports for both servers to avoid conflicts in parallel tests
+    vite_port = find_free_port()
+    api_port = find_free_port()
+    return vite_port, api_port
 
 
 @pytest.fixture(scope="module")
@@ -157,15 +103,14 @@ def vite_server(vite_and_api_ports: tuple[int, int]) -> Generator[str, None, Non
     vite_port, api_port = vite_and_api_ports
     print(f"Starting Vite on port {vite_port}, proxying to API on port {api_port}")
 
-    # Start Vite dev server with custom port
-    # API port is locked to 8000 for this test module
+    # Start Vite dev server with custom port and API port via env var
     process = subprocess.Popen(
         f"npm run dev -- --port {vite_port} --host 127.0.0.1",
         shell=True,
         cwd=str(frontend_dir),
         stdout=None,  # Inherit parent's stdout
         stderr=None,  # Inherit parent's stderr
-        env={**os.environ, "NODE_ENV": "test"},
+        env={**os.environ, "NODE_ENV": "test", "VITE_API_PORT": str(api_port)},
     )
 
     vite_url = f"http://localhost:{vite_port}"
