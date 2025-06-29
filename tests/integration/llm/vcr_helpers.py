@@ -86,12 +86,8 @@ def llm_request_matcher(r1: Any, r2: Any) -> bool:
     # For POST requests, compare normalized bodies
     if r1.method == "POST":
         try:
-            body1 = (
-                json.loads(r1.body) if isinstance(r1.body, (str, bytes)) else r1.body
-            )
-            body2 = (
-                json.loads(r2.body) if isinstance(r2.body, (str, bytes)) else r2.body
-            )
+            body1 = json.loads(r1.body) if isinstance(r1.body, str | bytes) else r1.body
+            body2 = json.loads(r2.body) if isinstance(r2.body, str | bytes) else r2.body
 
             if isinstance(body1, dict) and isinstance(body2, dict):
                 norm1 = normalize_llm_request_body(body1)

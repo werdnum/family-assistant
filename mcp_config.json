@@ -45,9 +45,8 @@
       "token": "$HOMEASSISTANT_API_KEY"
     },
     "scrape": {
-      "command": "uv",
+      "command": "python",
       "args": [
-        "run",
         "contrib/scrape_mcp.py"
       ]
     },

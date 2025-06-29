@@ -97,7 +97,7 @@ async def execute_script_tool(
         # Add the script result
         if result is None:
             response_parts.append("Script executed successfully with no return value.")
-        elif isinstance(result, (dict, list)):
+        elif isinstance(result, dict | list):
             # Pretty-print JSON-serializable structures
             response_parts.append(f"Script result:\n{json.dumps(result, indent=2)}")
         else:

@@ -62,7 +62,7 @@ def safe_json_loads(data: str | dict | list) -> Any:
     SQLite returns JSON columns as strings, while PostgreSQL returns them as
     already-parsed dicts/lists. This function handles both cases.
     """
-    if isinstance(data, (dict, list)):
+    if isinstance(data, dict | list):
         # Already parsed (PostgreSQL)
         return data
     # String that needs parsing (SQLite)

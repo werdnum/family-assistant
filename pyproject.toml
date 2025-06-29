@@ -151,6 +151,9 @@ family-assistant = "family_assistant.__main__:main"
 # We'll use package_data below. Setting this true is good practice.
 include-package-data = true
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.setuptools.package-data]
 # Specify that the 'family_assistant' package should include
 # all files within its 'templates' and 'static' subdirectories.

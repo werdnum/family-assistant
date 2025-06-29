@@ -312,7 +312,7 @@ class ToolsAPI:
             logger.debug(f"Tool '{tool_name}' executed successfully")
 
             # Convert result to JSON string if it's a dict or list
-            if isinstance(result, (dict, list)):
+            if isinstance(result, dict | list):
                 return json.dumps(result)
             else:
                 return str(result)

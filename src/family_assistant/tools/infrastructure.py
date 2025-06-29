@@ -265,7 +265,7 @@ class LocalToolsProvider:
             if result is None:  # Handle None case explicitly
                 result_str = "Tool executed successfully (returned None)."
                 logger.info(f"Local tool '{name}' returned None.")
-            elif isinstance(result, (dict, list)):
+            elif isinstance(result, dict | list):
                 # Convert dict or list to JSON string.
                 result_str = json.dumps(result, indent=2, ensure_ascii=False)
             elif not isinstance(result, str):
