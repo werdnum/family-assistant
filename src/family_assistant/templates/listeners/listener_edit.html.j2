@@ -211,6 +211,8 @@
             <label>Script Code</label>
             <div id="script-editor-container">
                 <div id="script-editor"></div>
+                <!-- Fallback textarea that will be hidden when CodeMirror loads -->
+                <textarea id="script-editor-fallback" class="json-editor-textarea" style="display: none;">{{ (listener.action_config or {}).get('script_code', '') }}</textarea>
             </div>
             <input type="hidden" name="script_code" id="script-code-value" value="{{ (listener.action_config or {}).get('script_code', '') }}">
             <div id="validation-status" class="validation-pending">Ready to validate...</div>
@@ -255,8 +257,7 @@
 {% block scripts_extra %}
 <script src="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/jsoneditor.min.js"></script>
 <script>
-// Use regular script instead of module to ensure it runs
-
+// Regular script for JSONEditor initialization
 // Initialize when DOM is ready
 function initializeEditors() {
     console.log('Initializing editors...');
@@ -399,17 +400,72 @@ function initializeEditors() {
 let scriptEditor = null;
 let validationTimeout;
 window.scriptEditorInitialized = false;
+window.validationTimeout = null;
 
 // Function to initialize script editor
 function initializeScriptEditor() {
-    // Script editor disabled for now since we're not using ES modules
-    console.log('Script editor initialization skipped (requires ES modules)');
+    // Show fallback textarea first
+    const fallbackTextarea = document.getElementById('script-editor-fallback');
+    if (fallbackTextarea) {
+        fallbackTextarea.style.display = 'block';
+    }
+    
+    // Try multiple times to load CodeMirror
+    let attempts = 0;
+    const maxAttempts = 10; // 5 seconds total
+    
+    function tryLoadCodeMirror() {
+        attempts++;
+        if (window.initializeCodeMirrorEditor) {
+            console.log('CodeMirror loaded after ' + attempts + ' attempts');
+            window.initializeCodeMirrorEditor();
+        } else if (attempts < maxAttempts) {
+            console.log('Waiting for CodeMirror module to load... attempt ' + attempts);
+            setTimeout(tryLoadCodeMirror, 500);
+        } else {
+            console.error('CodeMirror failed to load after ' + maxAttempts + ' attempts, using fallback textarea');
+        }
+    }
+    
+    tryLoadCodeMirror();
 }
 
 async function validateScript() {
-    // Script validation disabled for now
-    console.log('Script validation skipped');
+    if (!window.scriptEditor) return;
+    
+    const statusDiv = document.getElementById('validation-status');
+    const sourceId = document.getElementById('source_id').value || "home_assistant";
+    
+    try {
+        const response = await fetch('/event-listeners/api/validate-script', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                script_code: window.scriptEditor.state.doc.toString(),
+                sample_event: {
+                    source_id: sourceId,
+                    event_data: {}
+                }
+            })
+        });
+        
+        const result = await response.json();
+        if (result.valid) {
+            statusDiv.textContent = '✓ Script is valid';
+            statusDiv.className = 'validation-success';
+        } else {
+            const error = result.diagnostics[0];
+            statusDiv.textContent = `✗ Line ${error.line}: ${error.message}`;
+            statusDiv.className = 'validation-error';
+        }
+    } catch (e) {
+        statusDiv.textContent = '⚠ Could not validate script';
+        statusDiv.className = 'validation-error';
+    }
 }
+
+// Make validateScript globally available
+window.validateScript = validateScript;
 
 // Function to show/hide action fields
 function showActionFields() {
@@ -497,10 +553,16 @@ document.getElementById('edit-form').addEventListener('submit', (e) => {
             llmConfig.llm_callback_prompt || '';
     }
     
-    // Only update script code if script editor exists
+    // Update script code from editor or fallback
     if (window.scriptEditor) {
         document.getElementById('script-code-value').value = 
             window.scriptEditor.state.doc.toString();
+    } else {
+        // Use fallback textarea if CodeMirror didn't load
+        const fallbackTextarea = document.getElementById('script-editor-fallback');
+        if (fallbackTextarea) {
+            document.getElementById('script-code-value').value = fallbackTextarea.value;
+        }
     }
 });
 
@@ -513,5 +575,79 @@ if (document.readyState === 'loading') {
     // DOM is already loaded, initialize immediately
     initializeEditors();
 }
+</script>
+
+<!-- Test if ES modules work at all -->
+<script type="module">
+console.log('ES modules are supported!');
+</script>
+
+<!-- Separate module script for CodeMirror -->
+<script type="module">
+console.log('Loading CodeMirror module...');
+
+// Try with explicit versions and different approach
+try {
+    const {EditorView, basicSetup} = await import("https://unpkg.com/@codemirror/basic-setup@0.20.0/dist/index.js");
+    const {python} = await import("https://unpkg.com/@codemirror/lang-python@6.1.6/dist/index.js");
+    const {EditorState} = await import("https://unpkg.com/@codemirror/state@6.4.1/dist/index.js");
+    
+    console.log('CodeMirror modules imported successfully');
+    
+    // Make CodeMirror available globally
+    window.CodeMirror = {
+        EditorView,
+        EditorState,
+        basicSetup,
+        python
+    };
+} catch (error) {
+    console.error('Failed to import CodeMirror modules:', error);
+    // Continue without CodeMirror
+}
+
+// Initialize script editor when needed
+window.initializeCodeMirrorEditor = function() {
+    const container = document.getElementById('script-editor');
+    if (!container || window.scriptEditor) return;
+    
+    const scriptCodeValue = document.getElementById('script-code-value').value || '';
+    
+    window.scriptEditor = new EditorView({
+        state: EditorState.create({
+            doc: scriptCodeValue,
+            extensions: [
+                basicSetup,
+                python(), // Starlark is close enough to Python for syntax highlighting
+                EditorView.updateListener.of((update) => {
+                    if (update.docChanged && window.validateScript) {
+                        // Debounce validation
+                        clearTimeout(window.validationTimeout);
+                        document.getElementById('validation-status').textContent = 'Validating...';
+                        document.getElementById('validation-status').className = 'validation-pending';
+                        window.validationTimeout = setTimeout(() => window.validateScript(), 500);
+                    }
+                })
+            ]
+        }),
+        parent: container
+    });
+    
+    // Hide the fallback textarea
+    const fallbackTextarea = document.getElementById('script-editor-fallback');
+    if (fallbackTextarea) {
+        fallbackTextarea.style.display = 'none';
+    }
+    
+    window.scriptEditorInitialized = true;
+    console.log('CodeMirror script editor initialized');
+    
+    // Initial validation
+    if (window.validateScript) {
+        window.validateScript();
+    }
+};
+
+console.log('CodeMirror module script finished loading, initializeCodeMirrorEditor is now available');
 </script>
 {% endblock %}
