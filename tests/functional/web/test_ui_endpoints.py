@@ -55,6 +55,9 @@ def app_fixture() -> FastAPI:
     could include logic to override dependencies (e.g., database connections)
     with test-specific versions.
     """
+    # Ensure the app has the required config for auth dependencies
+    if not hasattr(actual_app.state, "config"):
+        actual_app.state.config = {"auth_enabled": False}
     return actual_app
 
 

@@ -1,15 +1,8 @@
 """Test fixtures for Playwright-based web UI integration tests."""
 
-# IMPORTANT: Disable auth BEFORE importing any web modules
-import os
-
-os.environ["OIDC_CLIENT_ID"] = ""  # Empty to ensure auth is disabled
-os.environ["OIDC_CLIENT_SECRET"] = ""
-os.environ["OIDC_DISCOVERY_URL"] = ""
-os.environ["SESSION_SECRET_KEY"] = ""
-
 import asyncio
 import contextlib
+import os
 import subprocess
 import time
 from collections.abc import AsyncGenerator, Generator
