@@ -257,7 +257,7 @@ For each endpoint, add basic interaction:
 ### Phase 1: Foundation
 
 - [x] Set up Page Object structure (2025-06-30)
-- [ ] Enhance test fixtures
+- [x] Enhance test fixtures (2025-06-30)
 - [ ] Migrate `test_ui_endpoints.py`
 - [ ] Add console error checking
 

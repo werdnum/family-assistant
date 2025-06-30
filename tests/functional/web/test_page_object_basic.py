@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from tests.functional.web.pages import BasePage  # pylint: disable=import-error
+from tests.functional.web.pages import BasePage
 
 
 @pytest.mark.asyncio
