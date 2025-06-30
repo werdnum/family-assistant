@@ -15,4 +15,6 @@ repository.
   it. Linters in this project are generally set up to be correct. If there is a false positive you
   MUST document your evidence for that alongside the ignore comment or wherever you disable it.
 
-\[Rest of the existing content remains unchanged\]
+## Testing
+
+- Try pytest --json-report for detailed test results - can query with jq ... .report.json

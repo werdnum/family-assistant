@@ -101,18 +101,4 @@ def get_static_asset(filename: str, entry_name: str = "main") -> str:
 
 def should_use_vite_dev() -> bool:
     """Check if we should use Vite dev server for assets."""
-    # Check if DEV_MODE is explicitly set
-    if os.getenv("DEV_MODE", "false").lower() == "true":
-        return True
-
-    # Auto-detect if Vite dev server is running
-    import socket
-
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.1)
-        result = sock.connect_ex(("localhost", 5173))
-        sock.close()
-        return result == 0  # Port is open, Vite is running
-    except Exception:
-        return False
+    return os.getenv("DEV_MODE", "false").lower() == "true"

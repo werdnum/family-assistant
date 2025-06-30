@@ -137,6 +137,12 @@ app.state.server_url = SERVER_URL
 app.state.docs_user_dir = docs_user_dir
 
 
+def configure_app_debug(debug: bool = True) -> None:
+    """Configure the FastAPI app debug mode. Useful for tests to get detailed error messages."""
+    app.debug = debug
+    logger.info(f"FastAPI debug mode set to: {debug}")
+
+
 # --- Mount Static Files ---
 if "static_dir" in locals() and static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")

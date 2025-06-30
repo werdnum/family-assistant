@@ -211,7 +211,7 @@ sequence = [
     { shell = "echo '   - Both servers listening on 0.0.0.0 for remote access'" },
     { shell = "echo ''" },
     { shell = "echo 'Press Ctrl+C to stop'" },
-    { shell = "trap 'echo \"\\n🛑 Stopping servers...\"; exit' INT; (poe serve & poe ui-dev & wait)" }
+    { shell = "trap 'echo \"\\n🛑 Stopping servers...\"; exit' INT; (DEV_MODE=true poe serve & poe ui-dev & wait)" }
 ]
 
 

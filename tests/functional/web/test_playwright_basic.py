@@ -263,24 +263,36 @@ async def test_css_and_styling_loads(web_test_fixture: WebTestFixture) -> None:
         "CSS should be loaded and applied to elements"
     )
 
-    # Check that Vite injected the CSS properly by looking for style/link tags
+    # Check that CSS is loaded properly (either Vite dev or production build)
     style_tags = await page.evaluate("""
         () => {
             const styles = document.querySelectorAll('style, link[rel="stylesheet"]');
+            const styleInfo = Array.from(styles).map(el => ({
+                tagName: el.tagName,
+                href: el.href || null,
+                rel: el.getAttribute('rel'),
+                hasContent: el.textContent ? el.textContent.length > 0 : false
+            }));
             return {
                 count: styles.length,
                 hasViteStyles: Array.from(styles).some(el => 
                     el.href?.includes('/src/') || 
                     el.textContent?.includes('--vite-') ||
                     el.getAttribute('data-vite-dev-id')
-                )
+                ),
+                hasProductionStyles: Array.from(styles).some(el =>
+                    el.href?.includes('/static/dist/') ||
+                    el.href?.includes('/assets/')
+                ),
+                styleInfo: styleInfo
             };
         }
     """)
 
     assert style_tags["count"] > 0, (
-        "Should have at least one style tag or stylesheet link"
+        f"Should have at least one style tag or stylesheet link. Found: {style_tags}"
     )
-    assert style_tags["hasViteStyles"], (
-        "Should have Vite-injected styles in development mode"
+    # In tests we run in production mode, so check for production styles
+    assert style_tags["hasViteStyles"] or style_tags["hasProductionStyles"], (
+        "Should have either Vite dev styles or production build styles"
     )
