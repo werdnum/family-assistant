@@ -63,8 +63,10 @@
             {% if user %}
             <span class="nav-separator">|</span>
             <a href="{{ request.app.url_path_for('ui_manage_api_tokens') }}">API Tokens</a>
+            {% if AUTH_ENABLED %}
             <span class="nav-separator">|</span>
             <a href="{{ request.app.url_path_for('logout') }}">Logout ({{ user.get("name", user.get("sub")) }})</a>
+            {% endif %}
             {% elif AUTH_ENABLED %}
             <span class="nav-separator">|</span>
             <a href="{{ request.app.url_path_for('login') }}">Login</a>

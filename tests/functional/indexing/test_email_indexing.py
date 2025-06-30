@@ -414,6 +414,7 @@ async def test_email_indexing_and_query_e2e(
     dummy_calendar_config = {}  # Not used by email/embedding tasks
     dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
     mock_chat_interface_e2e = MagicMock()
+    test_shutdown_event = asyncio.Event()  # Create shutdown event early
     worker = TaskWorker(
         processing_service=MagicMock(
             spec=ProcessingService
@@ -422,6 +423,8 @@ async def test_email_indexing_and_query_e2e(
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
+        shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
+        engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
     worker.register_task_handler(
         "index_email", email_indexer_instance.handle_index_email
@@ -432,7 +435,6 @@ async def test_email_indexing_and_query_e2e(
     # --- Act: Start Background Worker ---
     # Start the worker in the background *before* ingesting
     worker_id = f"test-worker-{uuid.uuid4()}"
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()  # Worker will wait on this
     # No need to reassign module-level events since we'll use our own worker instance
 
@@ -634,6 +636,7 @@ async def test_vector_ranking(
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
     mock_chat_interface_kw = MagicMock()
+    test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker = TaskWorker(
         processing_service=MagicMock(
             spec=ProcessingService
@@ -642,6 +645,8 @@ async def test_vector_ranking(
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,
         timezone_str=dummy_timezone_str_kw,
+        shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
+        engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
     worker.register_task_handler(
         "index_email", email_indexer_instance_kw.handle_index_email
@@ -649,7 +654,6 @@ async def test_vector_ranking(
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-rank-{uuid.uuid4()}"
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
 
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
@@ -826,6 +830,7 @@ async def test_metadata_filtering(
     dummy_calendar_config_meta = {}  # Define dummy_calendar_config_meta
     dummy_timezone_str_meta = "UTC"
     mock_chat_interface_meta = MagicMock()
+    test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker = TaskWorker(
         processing_service=MagicMock(
             spec=ProcessingService
@@ -834,6 +839,8 @@ async def test_metadata_filtering(
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_meta,
         timezone_str=dummy_timezone_str_meta,
+        shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
+        engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
     worker.register_task_handler(
         "index_email", email_indexer_instance_meta.handle_index_email
@@ -841,7 +848,6 @@ async def test_metadata_filtering(
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-meta-{uuid.uuid4()}"
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
 
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
@@ -1008,6 +1014,7 @@ async def test_keyword_filtering(
     dummy_timezone_str_kw = "UTC"
     # Define new mocks for this test scope
     mock_chat_interface_keyword_test = MagicMock()
+    test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
 
     worker = TaskWorker(
         processing_service=MagicMock(
@@ -1017,6 +1024,8 @@ async def test_keyword_filtering(
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,  # Now defined
         timezone_str=dummy_timezone_str_kw,
+        shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
+        engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
     worker.register_task_handler(
         "index_email", email_indexer_instance_kw.handle_index_email
@@ -1024,7 +1033,6 @@ async def test_keyword_filtering(
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-keyword-{uuid.uuid4()}"
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
 
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
@@ -1264,12 +1272,15 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     dummy_calendar_config_pdf = {}
     dummy_timezone_str_pdf = "UTC"
     mock_chat_interface_pdf = MagicMock()
+    test_shutdown_event = asyncio.Event()  # Create shutdown event early
     worker = TaskWorker(
         processing_service=MagicMock(spec=ProcessingService),
         chat_interface=mock_chat_interface_pdf,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_pdf,
         timezone_str=dummy_timezone_str_pdf,
+        shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
+        engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
     worker.register_task_handler(
         "index_email", email_indexer_instance_pdf.handle_index_email
@@ -1277,7 +1288,6 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
     worker_id = f"test-worker-pdf-{uuid.uuid4()}"
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     logger.info(f"Started background task worker {worker_id} for PDF test...")
@@ -1310,6 +1320,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
             form_data_dict=email_form_data_with_pdf,
             files_to_upload=files_to_upload,
             notify_event=test_new_task_event,
+            task_timeout=30.0,  # Increase timeout from default 15s to 30s
         )
 
         # --- Act: Query Vectors for PDF Content ---
@@ -1546,12 +1557,15 @@ async def test_email_indexing_with_llm_summary_e2e(
     mock_application_summary.state = mock_app_state_summary
 
     mock_chat_interface_summary = MagicMock()
+    test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker_email_summary = TaskWorker(
         processing_service=MagicMock(spec=ProcessingService),
         chat_interface=mock_chat_interface_summary,
         embedding_generator=current_embedder,  # Use the updated embedder
         calendar_config={},
         timezone_str="UTC",
+        shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
+        engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
     worker_email_summary.register_task_handler(
         "index_email", email_indexer_instance_summary.handle_index_email
@@ -1562,7 +1576,6 @@ async def test_email_indexing_with_llm_summary_e2e(
 
     worker_id = f"test-email-summary-worker-{uuid.uuid4()}"
     logger.info(f"Starting email summary worker: {worker_id}")  # Use worker_id
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker_email_summary.run(test_new_task_event))
     await asyncio.sleep(0.1)
@@ -1821,12 +1834,15 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     mock_application_link_ext.state = mock_app_state_link_ext
 
     mock_chat_interface_link_ext = MagicMock()
+    test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker_link_ext = TaskWorker(
         processing_service=MagicMock(spec=ProcessingService),
         chat_interface=mock_chat_interface_link_ext,
         embedding_generator=current_embedder,
         calendar_config={},
         timezone_str="UTC",
+        shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
+        engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
     worker_link_ext.register_task_handler(
         "index_email", email_indexer_instance_link.handle_index_email
@@ -1836,7 +1852,6 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     )
 
     # worker_id was unused
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker_link_ext.run(test_new_task_event))
     await asyncio.sleep(0.1)
