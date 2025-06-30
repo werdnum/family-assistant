@@ -101,10 +101,14 @@ async def test_ui_endpoint_accessibility_playwright(
             # Dump HTML content to help debug
             page_content = await page.content()
             html_file = f"scratch/failed_{path.replace('/', '_')}.html"
-            with open(html_file, "w") as f:
+            with open(html_file, "w", encoding="utf-8") as f:
                 f.write(page_content)
             # Also write a summary file that won't be captured by pytest
-            with open(f"scratch/failed_{path.replace('/', '_')}_summary.txt", "w") as f:
+            with open(
+                f"scratch/failed_{path.replace('/', '_')}_summary.txt",
+                "w",
+                encoding="utf-8",
+            ) as f:
                 f.write(f"Failed to find selector: {selector}\n")
                 f.write(f"Page URL: {page.url}\n")
                 f.write(f"Page title: {await page.title()}\n")
