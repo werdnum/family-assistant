@@ -241,6 +241,9 @@ async def web_only_assistant(
     await assistant.setup_dependencies()
     print("Dependencies set up")
 
+    # Set SERVER_URL env var so document upload knows where to send API calls
+    os.environ["SERVER_URL"] = f"http://localhost:{api_port}"
+
     # Start services in background task
     print(f"Starting API services on port {api_port}...")
     start_task = asyncio.create_task(assistant.start_services())
