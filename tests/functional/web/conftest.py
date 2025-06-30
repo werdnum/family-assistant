@@ -30,15 +30,19 @@ class WebTestFixture(NamedTuple):
 
 
 async def wait_for_server(url: str, timeout: int = 30) -> None:
-    """Wait for a server to become available."""
+    """Wait for a server to become available by polling health endpoint."""
     start_time = time.time()
+    health_url = f"{url}/api/health"
     async with httpx.AsyncClient() as client:
         while time.time() - start_time < timeout:
             try:
-                response = await client.get(url)
-                if response.status_code < 500:
+                # First check if the health endpoint is responding
+                response = await client.get(health_url)
+                if response.status_code == 200:
+                    print(f"Health check passed for {health_url}")
                     return
             except (httpx.ConnectError, httpx.ReadTimeout):
+                # Server not ready yet
                 pass
             await asyncio.sleep(0.5)
     raise TimeoutError(
@@ -124,9 +128,20 @@ def vite_server(vite_and_api_ports: tuple[int, int]) -> Generator[str, None, Non
                 sock.close()
                 if result == 0:
                     print(f"Vite port {vite_port} is open")
-                    # Give it a moment to fully initialize
-                    time.sleep(2)
-                    return True
+                    # Check if Vite is actually serving content
+                    import httpx
+
+                    try:
+                        # Check if we can get the index page
+                        response = httpx.get(
+                            f"http://127.0.0.1:{vite_port}/", timeout=2
+                        )
+                        if response.status_code < 500 and "<!DOCTYPE" in response.text:
+                            print("Vite is serving HTML content")
+                            return True
+                    except Exception:
+                        pass  # Not ready yet
+                    return False
             except Exception as e:
                 print(f"Vite check error: {e}")
             time.sleep(0.5)
