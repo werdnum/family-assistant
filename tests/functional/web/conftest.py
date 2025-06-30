@@ -16,6 +16,7 @@ from playwright.async_api import Page, async_playwright
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
+from family_assistant.storage.context import DatabaseContext
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -314,3 +315,143 @@ async def web_test_fixture(
         page=playwright_page,
         base_url=vite_server,  # Use Vite dev server for full JS/CSS support
     )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def authenticated_page(web_test_fixture: WebTestFixture) -> Page:
+    """Page with simulated authentication if needed.
+
+    Currently returns the same page since auth is disabled in tests.
+    This fixture provides a consistent interface for future auth testing.
+    """
+    # In the future, this could:
+    # - Set auth cookies/tokens
+    # - Navigate through login flow
+    # - Set up mock auth state
+    return web_test_fixture.page
+
+
+class TestDataFactory:
+    """Factory for creating test data consistently."""
+
+    def __init__(self, db_context: DatabaseContext) -> None:
+        self.db_context = db_context
+        self._note_counter = 0
+        self._document_counter = 0
+
+    async def create_note(
+        self,
+        title: str | None = None,
+        content: str | None = None,
+        tags: list[str] | None = None,
+    ) -> Any:
+        """Create a test note with optional custom data."""
+        self._note_counter += 1
+        default_title = f"Test Note {self._note_counter}"
+        default_content = f"Test content for note {self._note_counter}"
+
+        # Create note with tags in content if provided
+        final_content = content or default_content
+        if tags:
+            final_content += f"\n\nTags: {', '.join(tags)}"
+
+        await self.db_context.notes.add_or_update(
+            title=title or default_title,
+            content=final_content,
+        )
+        # Return a simple object with the data
+        return type(
+            "Note",
+            (),
+            {
+                "title": title or default_title,
+                "content": content or default_content,
+                "tags": tags or [],
+            },
+        )
+
+    async def create_multiple_notes(self, count: int) -> list[Any]:
+        """Create multiple test notes."""
+        notes = []
+        for i in range(count):
+            note = await self.create_note(
+                title=f"Bulk Note {i + 1}",
+                content=f"Content for bulk note {i + 1}",
+            )
+            notes.append(note)
+        return notes
+
+    def get_test_document_content(self) -> str:
+        """Get sample document content for testing."""
+        self._document_counter += 1
+        return f"""# Test Document {self._document_counter}
+
+This is a test document created for automated testing.
+
+## Section 1
+Some content in section 1.
+
+## Section 2
+More content in section 2 with **bold** and *italic* text.
+
+- List item 1
+- List item 2
+- List item 3
+"""
+
+
+@pytest_asyncio.fixture(scope="function")
+async def test_data_factory(
+    web_only_assistant: Assistant,
+) -> AsyncGenerator[TestDataFactory, None]:
+    """Factory for creating test data consistently."""
+    # Use the same database engine as the web application
+    engine = web_only_assistant.storage_engine
+    async with DatabaseContext(engine=engine) as db_context:
+        yield TestDataFactory(db_context)
+
+
+class ConsoleErrorCollector:
+    """Collector for browser console errors during tests."""
+
+    def __init__(self, page: Page) -> None:
+        self.page = page
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
+        self._setup_listeners()
+
+    def _setup_listeners(self) -> None:
+        """Set up console message listeners."""
+
+        def handle_console_message(msg: Any) -> None:
+            if msg.type == "error":
+                self.errors.append(
+                    f"{msg.location.get('url', 'unknown')}:{msg.location.get('lineNumber', '?')} - {msg.text}"
+                )
+            elif msg.type == "warning":
+                self.warnings.append(msg.text)
+
+        self.page.on("console", handle_console_message)
+
+    def assert_no_errors(self) -> None:
+        """Assert that no console errors were collected."""
+        assert len(self.errors) == 0, (
+            f"Found {len(self.errors)} console errors:\n" + "\n".join(self.errors)
+        )
+
+    def assert_no_warnings(self) -> None:
+        """Assert that no console warnings were collected."""
+        assert len(self.warnings) == 0, (
+            f"Found {len(self.warnings)} console warnings:\n" + "\n".join(self.warnings)
+        )
+
+    def clear(self) -> None:
+        """Clear collected errors and warnings."""
+        self.errors.clear()
+        self.warnings.clear()
+
+
+@pytest.fixture(scope="function")
+def console_error_checker(playwright_page: Page) -> ConsoleErrorCollector:
+    """Fixture to collect and assert on console errors."""
+    return ConsoleErrorCollector(playwright_page)
