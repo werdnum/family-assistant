@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from playwright.async_api import Page
+from playwright.async_api import Page, Response
 
 
 class BasePage:
@@ -18,15 +18,19 @@ class BasePage:
         self.page = page
         self.base_url = base_url or "http://localhost:5173"
 
-    async def navigate_to(self, path: str = "") -> None:
+    async def navigate_to(self, path: str = "") -> Response | None:
         """Navigate to a specific path relative to the base URL.
 
         Args:
             path: The path to navigate to (e.g., "/notes", "/documents")
+
+        Returns:
+            The response object from the navigation, or None if no response
         """
         url = f"{self.base_url}{path}"
-        await self.page.goto(url)
+        response = await self.page.goto(url)
         await self.wait_for_load()
+        return response
 
     async def wait_for_load(self) -> None:
         """Wait for the page to fully load."""
