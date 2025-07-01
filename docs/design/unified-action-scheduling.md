@@ -2,9 +2,14 @@
 
 ## Overview
 
-This document describes the implementation plan for unifying the action model across scheduled tasks and event listeners in Family Assistant. Currently, event listeners support multiple action types (wake_llm, script) while scheduled tasks only support LLM callbacks. This design extends scheduled tasks to use the same action abstraction.
+This document describes the implementation plan for unifying the action model across scheduled tasks
+and event listeners in Family Assistant. Currently, event listeners support multiple action types
+(wake_llm, script) while scheduled tasks only support LLM callbacks. This design extends scheduled
+tasks to use the same action abstraction.
 
-**Key Insight**: The existing task system already provides everything we need for scheduled actions. Tasks ARE actions - we don't need database changes, just a thin abstraction layer that maps action types to task types.
+**Key Insight**: The existing task system already provides everything we need for scheduled actions.
+Tasks ARE actions - we don't need database changes, just a thin abstraction layer that maps action
+types to task types.
 
 ## Goals
 
@@ -18,7 +23,8 @@ This document describes the implementation plan for unifying the action model ac
 
 ### Step 1: Create Shared Action Executor ✓ COMPLETED
 
-Create a new module `src/family_assistant/actions.py` to house shared action logic that maps actions to existing task types:
+Create a new module `src/family_assistant/actions.py` to house shared action logic that maps actions
+to existing task types:
 
 ```python
 # src/family_assistant/actions.py
@@ -149,7 +155,8 @@ async def _execute_action_in_context(
     logger.info(f"Executed {action_type.value} action for listener {listener['id']}")
 ```
 
-**Verification**: Run all event listener tests after this change. They should pass without modification.
+**Verification**: Run all event listener tests after this change. They should pass without
+modification.
 
 ### Step 3: Extend Action Executor for Scheduling
 
@@ -207,11 +214,13 @@ async def execute_action(
         )
 ```
 
-**Note**: No database changes needed! The existing `tasks` table already has `scheduled_at` and `recurrence_rule` columns.
+**Note**: No database changes needed! The existing `tasks` table already has `scheduled_at` and
+`recurrence_rule` columns.
 
 ### Step 4: Update Scheduling Tools
 
-Update `src/family_assistant/tools/tasks.py` to support action-based scheduling. The key insight is that we're just adding a convenience layer over the existing task system:
+Update `src/family_assistant/tools/tasks.py` to support action-based scheduling. The key insight is
+that we're just adding a convenience layer over the existing task system:
 
 ```python
 from family_assistant.actions import ActionType, execute_action
@@ -309,7 +318,8 @@ async def schedule_action_tool(
     return f"OK. {action_type} action scheduled for {schedule_time}"
 ```
 
-**Note**: The existing `schedule_future_callback` tool continues to work as before. We're adding new capabilities without breaking existing ones.
+**Note**: The existing `schedule_future_callback` tool continues to work as before. We're adding new
+capabilities without breaking existing ones.
 
 ### Step 5: Add Recurring Action Support
 
@@ -422,8 +432,10 @@ async def schedule_recurring_action_tool(
 
 ## Key Design Decisions
 
-1. **No Database Migration**: The existing task system already has all the fields we need (`task_type`, `payload`, `scheduled_at`, `recurrence_rule`)
-2. **Actions as Task Types**: Actions map directly to existing task types (`wake_llm` → `llm_callback`, `script` → `script_execution`)
+1. **No Database Migration**: The existing task system already has all the fields we need
+   (`task_type`, `payload`, `scheduled_at`, `recurrence_rule`)
+2. **Actions as Task Types**: Actions map directly to existing task types (`wake_llm` →
+   `llm_callback`, `script` → `script_execution`)
 3. **Thin Abstraction Layer**: The action system is just a convenience layer over the task system
 4. **Preserve Existing APIs**: All existing scheduling tools continue to work
 

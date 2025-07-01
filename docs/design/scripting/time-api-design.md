@@ -2,7 +2,9 @@
 
 ## Overview
 
-This document describes the design of a time API for Family Assistant's Starlark scripting engine. The goal is to provide time manipulation capabilities that feel natural to Starlark users while working within the constraints of starlark-pyo3.
+This document describes the design of a time API for Family Assistant's Starlark scripting engine.
+The goal is to provide time manipulation capabilities that feel natural to Starlark users while
+working within the constraints of starlark-pyo3.
 
 ## Background
 
@@ -11,25 +13,31 @@ This document describes the design of a time API for Family Assistant's Starlark
 The starlark-go implementation provides a comprehensive time module with the following features:
 
 1. **Time Construction**:
-   - `time(year?, month?, day?, hour?, minute?, second?, nanosecond?, location?)` - Create a Time object
+
+   - `time(year?, month?, day?, hour?, minute?, second?, nanosecond?, location?)` - Create a Time
+     object
    - `from_timestamp(sec, nsec?)` - Convert Unix timestamp to Time
    - `now()` - Get current local time
    - `parse_time(x, format?, location?)` - Parse time from string
 
 2. **Time Object Methods**:
+
    - `in_location(location)` - Convert time to specified location
    - `format(format_string)` - Format time according to a string
 
 3. **Time Object Attributes**:
+
    - `year`, `month`, `day`, `hour`, `minute`, `second`, `nanosecond`
    - `unix`, `unix_nano` - Unix timestamp representations
 
 4. **Duration Support**:
+
    - Constants: `nanosecond`, `microsecond`, `millisecond`, `second`, `minute`, `hour`
    - `parse_duration(d)` - Parse duration from string
    - Arithmetic: Time ± Duration, Duration ± Duration, Duration × number
 
 5. **Timezone Support**:
+
    - `is_valid_timezone(loc)` - Check if timezone name is valid
    - Support for named timezones (e.g., "America/New_York")
 
@@ -44,7 +52,8 @@ The starlark-pyo3 library has significant limitations compared to starlark-go:
 
 ## Proposed API Design
 
-Given these constraints, we propose a function-based API that mimics starlark-go's patterns as closely as possible.
+Given these constraints, we propose a function-based API that mimics starlark-go's patterns as
+closely as possible.
 
 ### Time Representation
 
@@ -237,14 +246,14 @@ print("Actual work time:", duration_human(actual_work))
 
 ### API Mapping
 
-| starlark-go | Our Implementation | Notes |
-|-------------|-------------------|-------|
-| `time.now()` | `time_now()` | Returns dict instead of Time object |
-| `t.format(fmt)` | `time_format(t, fmt)` | Function instead of method |
-| `t.in_location(loc)` | `time_in_location(t, loc)` | Function instead of method |
-| `t + duration` | `time_add(t, seconds)` | Explicit function call |
-| `t1 - t2` | `time_diff(t1, t2)` | Returns seconds |
-| `time.parse_duration(s)` | `duration_parse(s)` | Returns seconds |
+| starlark-go              | Our Implementation         | Notes                               |
+| ------------------------ | -------------------------- | ----------------------------------- |
+| `time.now()`             | `time_now()`               | Returns dict instead of Time object |
+| `t.format(fmt)`          | `time_format(t, fmt)`      | Function instead of method          |
+| `t.in_location(loc)`     | `time_in_location(t, loc)` | Function instead of method          |
+| `t + duration`           | `time_add(t, seconds)`     | Explicit function call              |
+| `t1 - t2`                | `time_diff(t1, t2)`        | Returns seconds                     |
+| `time.parse_duration(s)` | `duration_parse(s)`        | Returns seconds                     |
 
 ### Design Rationale
 
@@ -303,7 +312,10 @@ These differences exist because:
 
 ## Conclusion
 
-This design provides a comprehensive time API that balances familiarity for Starlark users with the technical constraints of our implementation. While we cannot perfectly replicate starlark-go's object-oriented API, our function-based approach provides equivalent functionality with clear, explicit operations.
+This design provides a comprehensive time API that balances familiarity for Starlark users with the
+technical constraints of our implementation. While we cannot perfectly replicate starlark-go's
+object-oriented API, our function-based approach provides equivalent functionality with clear,
+explicit operations.
 
 The API is designed to be:
 

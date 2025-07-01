@@ -1,0 +1,34 @@
+[
+  {
+    "regexp": "\\bgit\\s+commit\\b.*--no-verify",
+    "explanation": "Using --no-verify bypasses important pre-commit hooks. Please allow the hooks to run to ensure code quality."
+  },
+  {
+    "regexp": "^\\s*rm\\s+-rf\\s+/\\s*$",
+    "explanation": "This command would delete the entire filesystem. Please use a more specific path."
+  },
+  {
+    "regexp": "^\\s*rm\\s+-rf\\s+~/?\\s*$",
+    "explanation": "This command would delete your entire home directory. Please use a more specific path."
+  },
+  {
+    "regexp": "^\\s*:(){ :|:& };:\\s*$",
+    "explanation": "This is a fork bomb that would crash the system. This command is not allowed."
+  },
+  {
+    "regexp": "^\\s*dd\\s+.*of=/dev/[sh]da\\s*$",
+    "explanation": "Direct disk writes can corrupt the system. Please use safer file operations."
+  },
+  {
+    "regexp": "^\\s*mkfs\\..*\\s+/dev/",
+    "explanation": "Formatting system devices can destroy data. This operation is not allowed."
+  },
+  {
+    "regexp": "^\\s*chmod\\s+-R\\s+777\\s+/",
+    "explanation": "Making system directories world-writable is a security risk. Please use more restrictive permissions."
+  },
+  {
+    "regexp": "^\\s*>\\s*/dev/sda",
+    "explanation": "Writing directly to disk devices can corrupt the system. This operation is not allowed."
+  }
+]

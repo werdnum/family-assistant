@@ -1,6 +1,7 @@
 # PostgreSQL Test Failures Analysis
 
-This document analyzes test failures that occur when running the test suite with PostgreSQL (`--postgres` flag) but pass with SQLite.
+This document analyzes test failures that occur when running the test suite with PostgreSQL
+(`--postgres` flag) but pass with SQLite.
 
 ## Current Status (2025-06-21)
 
@@ -26,11 +27,12 @@ This document analyzes test failures that occur when running the test suite with
 
 Running `pytest --postgres -q` revealed 29 test failures across 6 main categories of issues:
 
-1. **SQL Function Incompatibility** - `json_extract()` doesn't exist in PostgreSQL [FIXED]
-2. **Event Loop Attachment Issues** - asyncpg's strict event loop affinity causes conflicts [FIXED with NullPool]
-3. **Starlark Script Syntax Error** - Reserved keyword usage [FIXED]
-4. **JSON Serialization Issues** - Incorrect parameter types [FIXED]
-5. **Transaction/Connection Errors** - Cascading failures from above issues [FIXED]
+1. **SQL Function Incompatibility** - `json_extract()` doesn't exist in PostgreSQL \[FIXED\]
+2. **Event Loop Attachment Issues** - asyncpg's strict event loop affinity causes conflicts \[FIXED
+   with NullPool\]
+3. **Starlark Script Syntax Error** - Reserved keyword usage \[FIXED\]
+4. **JSON Serialization Issues** - Incorrect parameter types \[FIXED\]
+5. **Transaction/Connection Errors** - Cascading failures from above issues \[FIXED\]
 
 ## Detailed Analysis
 
@@ -53,7 +55,8 @@ function json_extract(jsonb, unknown) does not exist
 
 **Code Locations:**
 
-- `tests/functional/indexing/test_indexing_events.py`: Lines using `json_extract(event_data, '$.event_type')` and `json_extract(event_data, '$.document_id')`
+- `tests/functional/indexing/test_indexing_events.py`: Lines using
+  `json_extract(event_data, '$.event_type')` and `json_extract(event_data, '$.document_id')`
 - `tests/functional/test_event_system.py`: Lines using `json_extract(event_data, '$.entity_id')`
 
 **PostgreSQL Equivalent:**
@@ -61,17 +64,22 @@ function json_extract(jsonb, unknown) does not exist
 - SQLite: `json_extract(event_data, '$.event_type')`
 - PostgreSQL: `event_data->>'event_type'`
 
-**Note:** The codebase already handles this correctly in `src/family_assistant/indexing/tasks.py` with conditional logic based on dialect.
+**Note:** The codebase already handles this correctly in `src/family_assistant/indexing/tasks.py`
+with conditional logic based on dialect.
 
 ### 2. Event Loop Attachment Issues
 
-These errors occur because PostgreSQL's asyncpg driver maintains strict event loop affinity, while SQLite's aiosqlite uses thread pools.
+These errors occur because PostgreSQL's asyncpg driver maintains strict event loop affinity, while
+SQLite's aiosqlite uses thread pools.
 
 #### 2.1 Starlark Tools API Event Loop Issues (8 failures)
 
-**Root Cause:** The Starlark scripting engine's ToolsAPI (`src/family_assistant/scripting/apis/tools.py`) creates complex event loop handling to bridge synchronous Starlark code and asynchronous tool execution.
+**Root Cause:** The Starlark scripting engine's ToolsAPI
+(`src/family_assistant/scripting/apis/tools.py`) creates complex event loop handling to bridge
+synchronous Starlark code and asynchronous tool execution.
 
-**Error Pattern:** `Task ... got Future ... attached to a different loop` in `CompositeToolsProvider.execute_tool`
+**Error Pattern:** `Task ... got Future ... attached to a different loop` in
+`CompositeToolsProvider.execute_tool`
 
 **Affected Tests:**
 
@@ -84,7 +92,8 @@ These errors occur because PostgreSQL's asyncpg driver maintains strict event lo
 - `tests/functional/test_script_wake_llm.py::test_script_conditional_wake_llm`
 - `tests/functional/test_event_script_integration.py::test_create_script_listener_via_tool_and_execute`
 
-**Code Location:** `src/family_assistant/scripting/apis/tools.py` - The `_run_async` method (lines 101-132) attempts to handle multiple event loop scenarios.
+**Code Location:** `src/family_assistant/scripting/apis/tools.py` - The `_run_async` method (lines
+101-132) attempts to handle multiple event loop scenarios.
 
 #### 2.2 SQLAlchemy Error Handler Event Loop Issue (1 failure)
 
@@ -96,7 +105,8 @@ These errors occur because PostgreSQL's asyncpg driver maintains strict event lo
 
 - `tests/functional/test_error_logging.py::test_error_logging_integration`
 
-**Code Location:** `src/family_assistant/utils/logging_handler.py` - Already has a fix for cross-event-loop execution (lines 87-93).
+**Code Location:** `src/family_assistant/utils/logging_handler.py` - Already has a fix for
+cross-event-loop execution (lines 87-93).
 
 #### 2.3 Background Task Event Loop Issue (1 failure)
 
@@ -139,7 +149,8 @@ the JSON object must be str, bytes or bytearray, not dict
 - `tests/functional/test_event_system.py::test_test_event_listener_tool_matches_person_coming_home`
 - `tests/functional/test_event_system.py::test_test_event_listener_tool_no_match_wrong_state`
 
-**Code Location:** Event testing tools that need to serialize dicts to JSON strings before passing to functions.
+**Code Location:** Event testing tools that need to serialize dicts to JSON strings before passing
+to functions.
 
 ### 5. Other Affected Tests
 
@@ -161,44 +172,54 @@ These tests fail due to cascading effects from the above issues:
 ## Fix Priority
 
 1. **High Priority:**
+
    - Fix `json_extract` SQL incompatibility (4 direct test failures)
    - Fix Starlark tools API event loop handling (8 test failures)
 
 2. **Medium Priority:**
+
    - Fix SQLAlchemy error handler (1 failure, partial fix exists)
    - Fix background task event loop issue (1 failure)
 
 3. **Low Priority:**
+
    - Fix Starlark syntax error (`is` keyword)
    - Fix JSON serialization issue
 
 ## Key Differences: PostgreSQL vs SQLite
 
 1. **JSON Functions:**
+
    - SQLite: `json_extract(column, '$.path')`
    - PostgreSQL: `column->>'path'` or `column->'path'`
 
 2. **Event Loop Handling:**
+
    - SQLite (aiosqlite): Uses thread pool executor, forgiving of event loop switches
    - PostgreSQL (asyncpg): Native asyncio with strict event loop affinity
 
 3. **Transaction Management:**
+
    - SQLite: Lenient, errors don't abort entire transaction
    - PostgreSQL: Strict, requires explicit rollback after errors
 
 ## Next Steps
 
-1. Update tests to use database-agnostic JSON queries (SQLAlchemy operators or conditional SQL) [DONE]
-2. Fix Starlark tools API event loop handling to properly manage asyncio contexts [FIXED via NullPool]
-3. Review and fix remaining event loop issues in error handler and background tasks [FIXED via NullPool]
-4. Update tests to avoid reserved keywords in Starlark scripts [DONE]
-5. Fix JSON serialization in event testing tools [DONE]
+1. Update tests to use database-agnostic JSON queries (SQLAlchemy operators or conditional SQL)
+   \[DONE\]
+2. Fix Starlark tools API event loop handling to properly manage asyncio contexts \[FIXED via
+   NullPool\]
+3. Review and fix remaining event loop issues in error handler and background tasks \[FIXED via
+   NullPool\]
+4. Update tests to avoid reserved keywords in Starlark scripts \[DONE\]
+5. Fix JSON serialization in event testing tools \[DONE\]
 
 ## Solution Implemented
 
 ### NullPool for PostgreSQL
 
-We resolved the event loop affinity issues by implementing NullPool for PostgreSQL connections in `storage/base.py`:
+We resolved the event loop affinity issues by implementing NullPool for PostgreSQL connections in
+`storage/base.py`:
 
 ```python
 def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
@@ -223,5 +244,5 @@ def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
 - **Pros**: Completely eliminates event loop affinity errors, simple implementation
 - **Cons**: Slightly higher latency due to connection overhead (1-5ms locally, 10-50ms remote)
 
-**Future Optimization:**
-Consider implementing an event-loop-aware engine registry that maintains separate connection pools per event loop for better performance while maintaining correctness.
+**Future Optimization:** Consider implementing an event-loop-aware engine registry that maintains
+separate connection pools per event loop for better performance while maintaining correctness.

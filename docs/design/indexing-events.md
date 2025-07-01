@@ -2,20 +2,27 @@
 
 ## Overview
 
-This document describes the design for adding document indexing events to the event listener system. The goal is to enable users to create event listeners that trigger when documents complete indexing, allowing automations like "Tell me when the school newsletter is indexed" or "Alert me if any document fails to index."
+This document describes the design for adding document indexing events to the event listener system.
+The goal is to enable users to create event listeners that trigger when documents complete indexing,
+allowing automations like "Tell me when the school newsletter is indexed" or "Alert me if any
+document fails to index."
 
 ## Key Insights
 
-After careful analysis, we can achieve reliable completion detection without modifying the documents table or the existing pipeline architecture:
+After careful analysis, we can achieve reliable completion detection without modifying the documents
+table or the existing pipeline architecture:
 
-1. **Leverage Existing Task Queue**: Document IDs are already in task payloads - we can query the tasks table to check completion
-2. **Check Only After Embedding Tasks**: To avoid race conditions, only check for completion when embedding tasks finish
+1. **Leverage Existing Task Queue**: Document IDs are already in task payloads - we can query the
+   tasks table to check completion
+2. **Check Only After Embedding Tasks**: To avoid race conditions, only check for completion when
+   embedding tasks finish
 3. **No Database Changes Needed**: No new tables or columns required
 4. **Simple and Reliable**: Minimal code changes with maximum reliability
 
 ## Design Principles
 
-1. **Preserve Existing Architecture**: Add completion tracking without disrupting the fire-and-forget nature of the pipeline
+1. **Preserve Existing Architecture**: Add completion tracking without disrupting the
+   fire-and-forget nature of the pipeline
 2. **Avoid Race Conditions**: Never check for completion until we know indexing has occurred
 3. **Minimal Performance Impact**: Use existing data structures and indexes
 4. **Reliable Events**: Ensure events are emitted exactly once per document
@@ -25,7 +32,8 @@ After careful analysis, we can achieve reliable completion detection without mod
 
 ### 1. Completion Detection Strategy
 
-Check for document completion ONLY after embedding tasks complete. This avoids race conditions where the pipeline hasn't yet created tasks.
+Check for document completion ONLY after embedding tasks complete. This avoids race conditions where
+the pipeline hasn't yet created tasks.
 
 ```python
 
@@ -112,9 +120,11 @@ if indexing_source and is_critical_failure:
 
 #### 4.1 Documents with No Embeddings
 
-Some documents might not generate any embeddings (empty files, errors). These won't trigger completion checks since no embedding tasks are created.
+Some documents might not generate any embeddings (empty files, errors). These won't trigger
+completion checks since no embedding tasks are created.
 
-Solution: This is acceptable - if no embeddings are created, the document isn't truly "indexed" and shouldn't emit DOCUMENT_READY.
+Solution: This is acceptable - if no embeddings are created, the document isn't truly "indexed" and
+shouldn't emit DOCUMENT_READY.
 
 #### 4.2 Concurrent Processing
 
@@ -126,7 +136,8 @@ Solution: The completion check handles this naturally - it only emits when ALL t
 
 Individual embedding tasks might fail while others succeed.
 
-Solution: Failed tasks move to 'failed' status, so they won't block completion detection. Consider emitting DOCUMENT_READY with metadata about partial success.
+Solution: Failed tasks move to 'failed' status, so they won't block completion detection. Consider
+emitting DOCUMENT_READY with metadata about partial success.
 
 ### 5. Implementation Steps
 
@@ -199,6 +210,7 @@ Solution: Failed tasks move to 'failed' status, so they won't block completion d
 ### 8. Performance Considerations
 
 1. **Database Impact**:
+
    - Uses existing tasks table - no new tables needed
    - JSON queries with SQLAlchemy's `func.json_extract()`
    - Consider adding functional index for better performance
@@ -243,4 +255,8 @@ Solution: Failed tasks move to 'failed' status, so they won't block completion d
 
 ## Conclusion
 
-This design adds reliable completion tracking to the indexing pipeline by leveraging the existing task queue infrastructure. By querying the tasks table for pending embedding tasks, we can detect when a document completes indexing without adding new tracking tables or modifying the pipeline architecture. This simpler approach reduces complexity while still providing users with powerful automation capabilities through the event listener system.
+This design adds reliable completion tracking to the indexing pipeline by leveraging the existing
+task queue infrastructure. By querying the tasks table for pending embedding tasks, we can detect
+when a document completes indexing without adding new tracking tables or modifying the pipeline
+architecture. This simpler approach reduces complexity while still providing users with powerful
+automation capabilities through the event listener system.

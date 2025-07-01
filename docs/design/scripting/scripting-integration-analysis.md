@@ -2,7 +2,9 @@
 
 ## Executive Summary
 
-This document analyzes where a scripting language could be integrated into the family-assistant codebase to enhance flexibility and user customization. The analysis identifies specific integration points, current code patterns that could benefit from scripting, and security considerations.
+This document analyzes where a scripting language could be integrated into the family-assistant
+codebase to enhance flexibility and user customization. The analysis identifies specific integration
+points, current code patterns that could benefit from scripting, and security considerations.
 
 ## Most Promising Integration Points
 
@@ -36,7 +38,7 @@ elif action_type == "script":
 
 ```
 
-**Security Boundary:**Scripts would need sandboxed access to:
+\*\*Security Boundary:\*\*Scripts would need sandboxed access to:
 
 - Event data (read-only)
 - Tool execution via controlled API
@@ -267,4 +269,7 @@ class EventContextAPI:
 
 ## Conclusion
 
-The event listener system presents the most immediate and high-value integration point for scripting. It has clear use cases, well-defined boundaries, and would provide significant user value without major architectural changes. Starting here would allow validating the scripting approach before expanding to other areas of the system.
+The event listener system presents the most immediate and high-value integration point for
+scripting. It has clear use cases, well-defined boundaries, and would provide significant user value
+without major architectural changes. Starting here would allow validating the scripting approach
+before expanding to other areas of the system.
