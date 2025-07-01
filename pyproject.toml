@@ -188,37 +188,19 @@ fi
 
 [tool.poe.tasks.test]
 help = "Run linting and tests with smart parallel execution"
-shell = """
-# Run fast checks first
-echo "🚀 Running quick checks..."
-${VIRTUAL_ENV:-.venv}/bin/ruff check --fix --preview --ignore=E501 src tests && \
-${VIRTUAL_ENV:-.venv}/bin/ruff format --preview src tests && \
-echo "🔍 Starting deep analysis and tests in parallel..." && \
-# Start long-running tasks in parallel
-(${VIRTUAL_ENV:-.venv}/bin/basedpyright src tests && echo "✓ Type checking complete") & \
-PYRIGHT_PID=$! && \
-# Give pyright a moment to start, then begin tests
-sleep 2 && \
-(pytest tests && echo "✓ Tests complete") & \
-TEST_PID=$! && \
-# Run pylint in parallel too
-(${VIRTUAL_ENV:-.venv}/bin/pylint -j0 src tests && echo "✓ Linting complete") & \
-PYLINT_PID=$! && \
-# Wait for all processes
-wait $PYRIGHT_PID $TEST_PID $PYLINT_PID
-"""
+shell = "scripts/run-tests.sh"
 
 [tool.poe.tasks.test-postgres]
 help = "Run tests with PostgreSQL database backend"
-shell = "pytest --db postgres -xq"
+shell = "scripts/run-tests.sh --skip-lint --db postgres -xq"
 
 [tool.poe.tasks.test-postgres-verbose]
 help = "Run tests with PostgreSQL database backend (verbose output)"
-shell = "pytest --db postgres -xvs"
+shell = "scripts/run-tests.sh --skip-lint --db postgres -xvs"
 
 [tool.poe.tasks.test-sqlite]
 help = "Run tests with SQLite database backend only"
-shell = "pytest --db sqlite -xq"
+shell = "scripts/run-tests.sh --skip-lint --db sqlite -xq"
 
 [tool.poe.tasks.ui-dev]
 help = "Run Vite development server for frontend"
