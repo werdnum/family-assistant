@@ -14,7 +14,31 @@ repository.
 - NEVER assume that linter errors are false positives unless you have very clear evidence proving
   it. Linters in this project are generally set up to be correct. If there is a false positive you
   MUST document your evidence for that alongside the ignore comment or wherever you disable it.
+- NEVER leave linting errors unfixed. All code must pass linting checks before completion
+
+## Linting and Formatting
+
+The project uses several linting and formatting tools. Use these poe commands:
+
+- `poe lint` - Run full linting suite (ruff, basedpyright, pylint in parallel) - takes ~4 minutes
+- `poe lint-fast` - Run only fast checks (ruff check/format, mdformat) - completes in ~3 seconds
+- `poe format` - Format code only (ruff format + mdformat for markdown files)
+
+The linting script (`scripts/format-and-lint.sh`) runs in two phases:
+
+1. **Fast sequential checks** (fail fast): ruff check, ruff format, mdformat
+2. **Parallel deep analysis**: basedpyright and pylint run concurrently
+
+If ruff check fails, it will show suggested fixes including unsafe ones with
+`--unsafe-fixes --diff`.
 
 ## Testing
 
 - Try pytest --json-report for detailed test results - can query with jq ... .report.json
+- NEVER leave tests broken or failing. If a test is failing and cannot be fixed immediately, it MUST
+  be skipped with a pytest.skip() or @pytest.mark.skip decorator, along with a detailed comment
+  explaining why it's being skipped and what needs to be done to fix it
+- When running scripts/format-and-lint.sh or poe test, use a timeout of 10 minutes to ensure tests
+  have enough time to complete
+- `poe test` - Runs linting and tests with smart parallel execution (tests start after type checking
+  begins)
