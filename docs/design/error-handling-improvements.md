@@ -2,7 +2,9 @@
 
 ## Problem Statement
 
-When errors occur in the system, especially in background tasks, we often see cascading failures where the error handling code itself fails. This makes it difficult to diagnose the root cause and leaves the system in an inconsistent state.
+When errors occur in the system, especially in background tasks, we often see cascading failures
+where the error handling code itself fails. This makes it difficult to diagnose the root cause and
+leaves the system in an inconsistent state.
 
 ### Example: Task Worker Cascading Errors
 
@@ -14,7 +16,8 @@ A concrete example from the codebase:
    error: Type of parameter `x` doesn't match, expected `int`, actual `float`
    ```
 
-2. **Secondary Error**: The task worker tries to reschedule the failed task, but the database update fails
+2. **Secondary Error**: The task worker tries to reschedule the failed task, but the database update
+   fails
 
    ```
    Reschedule Failed: Unconsumed column names: last_error
@@ -30,14 +33,17 @@ This happens because:
 ## Root Causes
 
 1. **Insufficient Testing of Error Paths**
+
    - Error handling code is often not as thoroughly tested as the happy path
    - No tests exist for `reschedule_for_retry` method
 
 2. **Schema/Code Mismatches**
+
    - Column naming inconsistencies between code and database schema
    - No compile-time checking of SQL column names
 
 3. **Error Context Loss**
+
    - When error handling fails, the original error context can be lost
    - Makes debugging difficult
 
@@ -99,34 +105,41 @@ except Exception as e:
 Improve error tracking and debugging:
 
 1. **Structured Error Logging**
+
    - Include context (task_id, retry_count, etc.) in all error logs
    - Use consistent error formats
 
 2. **Error Correlation**
+
    - Link related errors (original error + handling error)
    - Maintain error chains for debugging
 
 3. **Health Checks**
+
    - Add health check endpoints that verify error handling paths work
    - Regular automated testing of error scenarios
 
 ## Implementation Plan
 
 1. **Phase 1: Fix Immediate Issues** (1 day)
+
    - Fix column name mismatches
    - Add basic tests for error paths
 
 2. **Phase 2: Comprehensive Testing** (3 days)
+
    - Add tests for all error handling methods
    - Create test utilities for simulating various error conditions
    - Test cascading error scenarios
 
 3. **Phase 3: Error Handling Framework** (1 week)
+
    - Establish error handling patterns
    - Create base classes with proper error handling
    - Add error correlation and tracking
 
 4. **Phase 4: Monitoring and Alerting** (1 week)
+
    - Add metrics for error rates
    - Create alerts for cascading errors
    - Build debugging tools

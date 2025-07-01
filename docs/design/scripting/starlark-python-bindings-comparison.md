@@ -2,7 +2,9 @@
 
 ## Overview
 
-Both libraries provide Python bindings for the Starlark configuration language, offering sandboxed execution of Python-like code. However, they differ significantly in their implementation approach, architecture, and characteristics.
+Both libraries provide Python bindings for the Starlark configuration language, offering sandboxed
+execution of Python-like code. However, they differ significantly in their implementation approach,
+architecture, and characteristics.
 
 ## starlark-pyo3
 
@@ -23,6 +25,7 @@ pip install starlark-pyo3
 - Binary wheels available for major platforms
 
 - No additional runtime dependencies required
+
 - Development requires nightly Rust and maturin
 
 ### API Design
@@ -103,6 +106,7 @@ pip install starlark-go
 - Requires CGO and C compiler at build time
 
 - Pre-built wheels may be available
+
 - Embeds starlark-go version v0.0.0-20230302034142-4b1e35fe2254
 
 ### API Design
@@ -166,22 +170,22 @@ s.eval("x")  # 5
 
 ## Comparison Summary
 
-| Feature | starlark-pyo3 | python-starlark-go |
-|---------|---------------|-------------------|
-| **Implementation Language**| Rust | Go |
-| **Binding Technology**| PyO3 | CGO |
-| **Installation Complexity**| Simple (binary wheels) | Moderate (CGO required) |
-| **Architecture Layers**| 2 (Python → Rust) | 3 (Python → C → Go) |
-| **Performance**| Excellent (Rust) | Good (Go + CGO overhead) |
-| **Parallel Execution**| Yes (no GIL) | Yes (no GIL) |
-| **API Style**| Module/AST-based | Interpreter object |
-| **Value Conversion**| JSON intermediate | Direct via CGO |
-| **Development Activity**| Active | Less active |
-| **Weekly Downloads**| 35,305 | Not specified |
-| **Documentation**| Comprehensive | Basic |
-| **Maturity**| "Reasonably complete" | Based on mature Go impl |
-| **Build Requirements**| Rust (dev only) | C compiler |
-| **Error Handling**| Rust-style | Go-style via CGO |
+| Feature                     | starlark-pyo3          | python-starlark-go       |
+| --------------------------- | ---------------------- | ------------------------ |
+| **Implementation Language** | Rust                   | Go                       |
+| **Binding Technology**      | PyO3                   | CGO                      |
+| **Installation Complexity** | Simple (binary wheels) | Moderate (CGO required)  |
+| **Architecture Layers**     | 2 (Python → Rust)      | 3 (Python → C → Go)      |
+| **Performance**             | Excellent (Rust)       | Good (Go + CGO overhead) |
+| **Parallel Execution**      | Yes (no GIL)           | Yes (no GIL)             |
+| **API Style**               | Module/AST-based       | Interpreter object       |
+| **Value Conversion**        | JSON intermediate      | Direct via CGO           |
+| **Development Activity**    | Active                 | Less active              |
+| **Weekly Downloads**        | 35,305                 | Not specified            |
+| **Documentation**           | Comprehensive          | Basic                    |
+| **Maturity**                | "Reasonably complete"  | Based on mature Go impl  |
+| **Build Requirements**      | Rust (dev only)        | C compiler               |
+| **Error Handling**          | Rust-style             | Go-style via CGO         |
 
 ## Recommendations
 
@@ -220,4 +224,8 @@ s.eval("x")  # 5
 
 ## Conclusion
 
-Both libraries provide secure, sandboxed execution of Starlark code with good performance. starlark-pyo3 offers a more polished Python experience with better documentation and simpler installation, while python-starlark-go provides access to Google's reference implementation with its specific features and behaviors. The choice depends on your specific requirements, existing toolchain, and preference for Rust vs Go ecosystems.
+Both libraries provide secure, sandboxed execution of Starlark code with good performance.
+starlark-pyo3 offers a more polished Python experience with better documentation and simpler
+installation, while python-starlark-go provides access to Google's reference implementation with its
+specific features and behaviors. The choice depends on your specific requirements, existing
+toolchain, and preference for Rust vs Go ecosystems.

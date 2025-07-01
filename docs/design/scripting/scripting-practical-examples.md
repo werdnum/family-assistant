@@ -1,12 +1,14 @@
 # Scripting Language Practical Examples
 
-This document provides concrete examples of how scripting would work in Family Assistant across different use cases.
+This document provides concrete examples of how scripting would work in Family Assistant across
+different use cases.
 
 ## Event Listener Examples
 
 ### Example 1: Smart Temperature Alerts
 
-**Use Case**: Only alert about high temperatures during waking hours and not more than once per hour.
+**Use Case**: Only alert about high temperatures during waking hours and not more than once per
+hour.
 
 **Current Approach**(requires LLM):
 
@@ -420,4 +422,5 @@ These examples demonstrate how scripting can:
 4. **Enhance security**- Pre-plan actions before processing untrusted data
 5. **Provide customization**- User-defined logic without code changes
 
-The combination of CEL for simple expressions and Starlark for complex logic provides a powerful and secure scripting environment for Family Assistant.
+The combination of CEL for simple expressions and Starlark for complex logic provides a powerful and
+secure scripting environment for Family Assistant.

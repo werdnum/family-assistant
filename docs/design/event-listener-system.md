@@ -2,7 +2,10 @@
 
 ## Overview
 
-The event listener system will enable the assistant to react to events from various sources (Home Assistant, email arrivals, document indexing completion, etc.) and trigger appropriate actions or notifications. It's designed to handle lightweight, one-off automations that benefit from LLM intelligence and integration with the assistant's existing tools.
+The event listener system will enable the assistant to react to events from various sources (Home
+Assistant, email arrivals, document indexing completion, etc.) and trigger appropriate actions or
+notifications. It's designed to handle lightweight, one-off automations that benefit from LLM
+intelligence and integration with the assistant's existing tools.
 
 ### Use Cases
 
@@ -52,18 +55,21 @@ class EventSource(Protocol):
 #### Initial Event Sources
 
 1. **Home Assistant Events**(`home_assistant`)
+
    - WebSocket connection to HA event bus
    - Source-level filtering by entity_id patterns
    - Subdivisions: `state_changed`, `automation_triggered`, etc.
    - Example events: motion detected, door opened, temperature threshold
 
 2. **Document Indexing Events**(`indexing`)
+
    - Internal events from indexing pipeline
    - Subdivisions by document type: `email`, `pdf`, `note`
    - Triggers when documents complete processing with metadata
    - Example: "School newsletter email indexed with subject/sender"
 
 3. **Webhook Events**(`webhook`)
+
    - HTTP endpoint for custom integrations
    - Subdivisions by webhook path or header
    - Allows external systems to push events
@@ -113,9 +119,11 @@ CREATE TABLE recent_events (
 
 **Schema Design Decisions:**
 
-1. **Single `id` field**: The `id` field serves as the unique identifier. We use `UNIQUE(name, conversation_id)` to ensure user-friendly names are unique per conversation.
+1. **Single `id` field**: The `id` field serves as the unique identifier. We use
+   `UNIQUE(name, conversation_id)` to ensure user-friendly names are unique per conversation.
 
-2. **Moved `entity_id` into `match_conditions`**: This reduces the API surface area and allows more flexibility. Example:
+2. **Moved `entity_id` into `match_conditions`**: This reduces the API surface area and allows more
+   flexibility. Example:
 
    ```json
    {"entity_id": "person.andrew", "new_state.state": "home"}
@@ -123,13 +131,16 @@ CREATE TABLE recent_events (
 
    ```
 
-3. **Removed `time_constraints`**: Too specific for MVP. Complex conditions can be added later or handled by the LLM when woken.
+3. **Removed `time_constraints`**: Too specific for MVP. Complex conditions can be added later or
+   handled by the LLM when woken.
 
 4. **Removed `created_by`**: Not needed for MVP functionality.
 
-5. **Added `conversation_id` and `interface_type`**: These match the schema in `message_history_table` to properly identify which conversation to wake.
+5. **Added `conversation_id` and `interface_type`**: These match the schema in
+   `message_history_table` to properly identify which conversation to wake.
 
-6. **Flexible `action_config`**: JSON field allows different action types to define their own configuration structure.
+6. **Flexible `action_config`**: JSON field allows different action types to define their own
+   configuration structure.
 
 7. **SQLAlchemy Enum for `source_id`**:
 
@@ -420,7 +431,8 @@ async def _execute_action(
 
 ```
 
-The LLM receives the full event data and action_config, allowing flexible handling based on the specific configuration.
+The LLM receives the full event data and action_config, allowing flexible handling based on the
+specific configuration.
 
 Future optimizations could include:
 
@@ -430,9 +442,12 @@ Future optimizations could include:
 
 ### 5. LLM Tools for Event Management
 
-Since there's no web UI initially, ALL interaction happens through LLM tools. The LLM handles all complexity of translating user intent to technical configuration.
+Since there's no web UI initially, ALL interaction happens through LLM tools. The LLM handles all
+complexity of translating user intent to technical configuration.
 
-**Note**: Event listeners are created within a conversation context and will wake/notify in that same conversation. Listeners are isolated by conversation for security - you can only see and manage listeners from your own conversation.
+**Note**: Event listeners are created within a conversation context and will wake/notify in that
+same conversation. Listeners are isolated by conversation for security - you can only see and manage
+listeners from your own conversation.
 
 ```python
 
@@ -636,12 +651,14 @@ Event-triggered actions use the existing task queue:
 
 ### Event Storage (Required for Testing)
 
-Recent events MUST be stored to enable the test_event_listener tool. Without this, users cannot debug why listeners aren't triggering.
+Recent events MUST be stored to enable the test_event_listener tool. Without this, users cannot
+debug why listeners aren't triggering.
 
 #### Storage Strategy
 
 - Store ALL events that trigger listeners (audit trail)
-- Sample other events for testing (1 per entity per minute for Home Assistant, 1 per type per minute for other sources)
+- Sample other events for testing (1 per entity per minute for Home Assistant, 1 per type per minute
+  for other sources)
 - Retain for 24-48 hours only
 - This is NOT optional - it's core functionality for debugging and testing
 
@@ -815,12 +832,12 @@ For complex logic like thresholds, inequalities, or string contains:
 
 The LLM translates natural language to dictionary match conditions:
 
-| User Says | LLM Generates JSON Config |
-|-----------|---------------------------|
-| "When the garage door opens" | `{"entity_id": "cover.garage_door", "match_conditions": {"new_state.state": "open"}}` |
+| User Says                                           | LLM Generates JSON Config                                                                                                        |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| "When the garage door opens"                        | `{"entity_id": "cover.garage_door", "match_conditions": {"new_state.state": "open"}}`                                            |
 | "If motion is detected in the backyard after 11 PM" | `{"entity_id": "sensor.backyard_motion", "match_conditions": {"new_state.state": "on"}, "time_constraints": {"after_hour": 23}}` |
-| "When an email arrives from the school" | `{"entity_id": "email:*@school.edu", "match_conditions": {"document_type": "email"}}` |
-| "If the temperature goes above 30 degrees" | `{"entity_id": "sensor.server_temp_high", "match_conditions": {"new_state.state": "on"}}` |
+| "When an email arrives from the school"             | `{"entity_id": "email:*@school.edu", "match_conditions": {"document_type": "email"}}`                                            |
+| "If the temperature goes above 30 degrees"          | `{"entity_id": "sensor.server_temp_high", "match_conditions": {"new_state.state": "on"}}`                                        |
 
 Note: For threshold conditions, the LLM should:
 
@@ -912,10 +929,11 @@ Use cases:
 
 - ✅ Rate limiting implemented in check_and_update_rate_limit()
 - ✅ Event cleanup task scheduling (system_event_cleanup handler registered and scheduled)
-- ✅ Wake LLM action execution (EventProcessor._execute_action implemented)
+- ✅ Wake LLM action execution (EventProcessor.\_execute_action implemented)
 - ✅ Concurrent processing fix - Queue-based event handling prevents database conflicts
 - ✅ Connection retry logic for Home Assistant - Exponential backoff with max 5 minute delay
-- ✅ Health check and auto-reconnect - Periodic health checks every 30 seconds, reconnects if no events for 5 minutes
+- ✅ Health check and auto-reconnect - Periodic health checks every 30 seconds, reconnects if no
+  events for 5 minutes
 - ⏳ Basic monitoring/alerting for connection issues (deferred)
 
 ### Phase 3: Additional Sources (as needed)
@@ -928,21 +946,28 @@ Use cases:
 
 ### Completed Tasks ✅
 
-1. **Event Cleanup Task**- The system cleanup task handler is already registered and scheduled to run daily at 3 AM
-2. **Wake LLM Action**- The `_execute_action` method has been implemented in EventProcessor to create llm_callback tasks when listeners match
-3. **End-to-End Tests**- Tests verify the complete flow from event → listener match → LLM callback task creation
-4. **Concurrent Processing Fix**- Implemented queue-based event processing to prevent database connection conflicts
+1. **Event Cleanup Task**- The system cleanup task handler is already registered and scheduled to
+   run daily at 3 AM
+2. **Wake LLM Action**- The `_execute_action` method has been implemented in EventProcessor to
+   create llm_callback tasks when listeners match
+3. **End-to-End Tests**- Tests verify the complete flow from event → listener match → LLM callback
+   task creation
+4. **Concurrent Processing Fix**- Implemented queue-based event processing to prevent database
+   connection conflicts
 
 ### Production Hardening Complete
 
 The event listener system now includes comprehensive production hardening features:
 
 1. **Connection retry logic**- Exponential backoff starting at 5 seconds, capping at 5 minutes
-2. **Health check system**- Checks every 30 seconds, triggers reconnection if no events for 5 minutes
-3. **Connection state tracking**- Tracks connection health, reconnection attempts, and last event time
+2. **Health check system**- Checks every 30 seconds, triggers reconnection if no events for 5
+   minutes
+3. **Connection state tracking**- Tracks connection health, reconnection attempts, and last event
+   time
 4. **Graceful error handling**- Queue-based processing prevents concurrent database conflicts
 
-The only deferred feature is monitoring/alerting for connection issues, which can be added later based on operational needs.
+The only deferred feature is monitoring/alerting for connection issues, which can be added later
+based on operational needs.
 
 ## Testing Strategy
 
@@ -979,7 +1004,8 @@ The only deferred feature is monitoring/alerting for connection issues, which ca
 
 ## API Token Protection
 
-Misconfigured listeners could burn through API tokens by waking the LLM too frequently. Protection strategies:
+Misconfigured listeners could burn through API tokens by waking the LLM too frequently. Protection
+strategies:
 
 ### Hybrid Rate Limiting (DB + Memory)
 
@@ -1333,7 +1359,8 @@ event_system:
 
 ## System Scheduled Tasks
 
-The event system requires periodic maintenance tasks that should run reliably regardless of restarts or configuration changes. These "system tasks" are automatically upserted on startup with fixed IDs.
+The event system requires periodic maintenance tasks that should run reliably regardless of restarts
+or configuration changes. These "system tasks" are automatically upserted on startup with fixed IDs.
 
 ### System Task Design Principles
 
@@ -1370,11 +1397,13 @@ async def setup_system_tasks(db_context: DatabaseContext):
 ### System Task Types
 
 1. **Event Cleanup**(`system_event_cleanup`)
+
    - Deletes events older than retention period
    - Runs daily at 3 AM
    - Logs cleanup statistics
 
 2. **Future System Tasks**:
+
    - Event compaction (aggregate old events)
    - Listener statistics (usage patterns)
    - Health checks (source connectivity)
@@ -1413,28 +1442,36 @@ async def handle_system_event_cleanup(
 
 ### Implementation Note
 
-The `cleanup_old_events` function already exists in `storage/events.py` (lines 423-446) but needs to be:
+The `cleanup_old_events` function already exists in `storage/events.py` (lines 423-446) but needs to
+be:
 
 1. Registered as a task handler in the task worker
 2. Scheduled as a recurring system task on startup
 
 ## Conclusion
 
-The event listener system provides a flexible, extensible way to handle automation requests that benefit from LLM intelligence and integration with the assistant's tools. By building on existing infrastructure and using safe, sandboxed filtering, it enables powerful automation scenarios while maintaining security and reliability.
+The event listener system provides a flexible, extensible way to handle automation requests that
+benefit from LLM intelligence and integration with the assistant's tools. By building on existing
+infrastructure and using safe, sandboxed filtering, it enables powerful automation scenarios while
+maintaining security and reliability.
 
-The phased implementation approach allows for iterative development and testing, ensuring each component is robust before adding complexity. The system's design prioritizes ease of use through natural language configuration while keeping the matching logic simple and predictable.
+The phased implementation approach allows for iterative development and testing, ensuring each
+component is robust before adding complexity. The system's design prioritizes ease of use through
+natural language configuration while keeping the matching logic simple and predictable.
 
 ## Entity Discovery and Home Assistant Integration
 
 ### The Entity Discovery Problem
 
-Users don't know exact entity names or states. The LLM has access to Home Assistant tools to query entities, but recent events provide crucial additional context:
+Users don't know exact entity names or states. The LLM has access to Home Assistant tools to query
+entities, but recent events provide crucial additional context:
 
 - **Entity names vary**: `person.andrew` vs `person.andrew_smith` vs `device_tracker.andrews_iphone`
 - **State values vary**: `home`/`away` vs `Home`/`Away` vs `home`/`not_home`
 - **Attributes matter**: Some entities have useful attributes beyond state
 
-The `explore_entity_events` tool combined with Home Assistant API access gives the LLM everything needed to correctly configure listeners.
+The `explore_entity_events` tool combined with Home Assistant API access gives the LLM everything
+needed to correctly configure listeners.
 
 ### Connection State Management
 
@@ -1533,7 +1570,10 @@ WHERE source_id = 'home_assistant'
 
 ### Problem: Database Connection Conflicts
 
-When processing high-volume events from Home Assistant WebSocket, the initial implementation encountered `asyncpg.exceptions.InterfaceError: cannot perform operation: another operation is in progress` errors. This occurred because:
+When processing high-volume events from Home Assistant WebSocket, the initial implementation
+encountered
+`asyncpg.exceptions.InterfaceError: cannot perform operation: another operation is in progress`
+errors. This occurred because:
 
 1. WebSocket events arrive in a blocking thread (homeassistant_api limitation)
 2. Each event was processed with `asyncio.run()`, creating new event loops
@@ -1579,7 +1619,8 @@ This architecture ensures:
 
 ### Security Through Capability Parity
 
-The event listener system follows a critical security principle: **The LLM cannot do anything via scheduled event listeners that it couldn't do directly when asked by the user**. This ensures that:
+The event listener system follows a critical security principle: **The LLM cannot do anything via
+scheduled event listeners that it couldn't do directly when asked by the user**. This ensures that:
 
 - Event listeners don't introduce new security risks
 - All actions are still subject to existing permission checks
@@ -1599,8 +1640,10 @@ The hybrid DB/memory approach for rate limiting reflects practical tradeoffs:
 
 The system uses a three-stage filtering approach to minimize computational overhead:
 
-1. **Source-level filtering**: Sources only subscribe to relevant events (e.g., specific Home Assistant entities)
+1. **Source-level filtering**: Sources only subscribe to relevant events (e.g., specific Home
+   Assistant entities)
 2. **Entity-based indexing**: Events are routed by (source_id, entity_id) to relevant listeners
 3. **Simple matching**: Only check dict equality for potentially matching listeners
 
-This hierarchical approach ensures minimal overhead - most events are filtered out before any matching logic runs, making the system efficient even with hundreds of listeners.
+This hierarchical approach ensures minimal overhead - most events are filtered out before any
+matching logic runs, making the system efficient even with hundreds of listeners.

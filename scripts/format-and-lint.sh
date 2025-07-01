@@ -70,7 +70,7 @@ if ! ${VIRTUAL_ENV:-.venv}/bin/ruff check --fix --preview --ignore=E501 $TARGETS
     echo "${YELLOW}💡 Showing suggested fixes (including unsafe ones):${NC}"
     ${VIRTUAL_ENV:-.venv}/bin/ruff check --unsafe-fixes --diff --preview --ignore=E501 $TARGETS
     echo ""
-    echo "${RED}❌ ruff check failed. Fix the issues above and try again.${NC}"
+    echo "${RED}❌ ruff check failed. Fix the issues above and try again. Use ruff check --fix --unsafe-fixes to apply.${NC}"
     exit 1
 fi
 echo -n "${GREEN} ✓${NC}"

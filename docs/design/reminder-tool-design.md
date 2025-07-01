@@ -2,7 +2,8 @@
 
 ## Problem Statement
 
-The current callback tool with `skip_if_user_responded` parameter is not being used consistently by the LLM for reminder functionality. Common issues include:
+The current callback tool with `skip_if_user_responded` parameter is not being used consistently by
+the LLM for reminder functionality. Common issues include:
 
 - LLM sets `skip_if_user_responded=true` on initial reminders, causing them to never be sent
 - LLM forgets to schedule follow-up reminders in callback handlers
@@ -12,7 +13,8 @@ The current callback tool with `skip_if_user_responded` parameter is not being u
 
 ### Overview
 
-Create a purpose-built reminder tool that handles the complete reminder lifecycle automatically, removing the need for the LLM to orchestrate multiple callbacks.
+Create a purpose-built reminder tool that handles the complete reminder lifecycle automatically,
+removing the need for the LLM to orchestrate multiple callbacks.
 
 ### Tool Definition
 
@@ -47,17 +49,20 @@ Add to the existing tasks table:
 #### Task Processing
 
 1. **Initial Reminder**:
+
    - Send the reminder message at scheduled time
    - If `follow_up=true`, automatically schedule next reminder
    - Track message ID for response detection
 
 2. **Follow-up Logic**:
+
    - Check if user has sent any messages since last reminder
    - Analyze if user's response acknowledges the reminder
-   - If not acknowledged and attempts < max_follow_ups, send follow-up
+   - If not acknowledged and attempts \< max_follow_ups, send follow-up
    - If acknowledged, mark complete and cancel future follow-ups
 
 3. **Acknowledgment Detection**:
+
    - Simple: Any user message cancels follow-ups
    - Advanced (future): Use LLM to determine if response acknowledges task completion
 
@@ -68,13 +73,15 @@ When a follow-up is triggered:
 - System wakes the LLM with context about the original reminder
 - LLM can see conversation history since last reminder
 - LLM crafts appropriate follow-up message based on context
-- Allows for natural progression (e.g., "Just following up on...", "This is your second reminder about...")
+- Allows for natural progression (e.g., "Just following up on...", "This is your second reminder
+  about...")
 
 ### Implementation Architecture
 
 #### Shared Task Implementation
 
-Both reminder and callback tools can share the same underlying task implementation with different configurations:
+Both reminder and callback tools can share the same underlying task implementation with different
+configurations:
 
 ```python
 
@@ -107,7 +114,7 @@ The task handler would:
 1. Wake LLM with appropriate context
 2. For reminders with follow-up enabled:
    - Check if user responded since last trigger
-   - If not, and attempts < max, schedule next follow-up
+   - If not, and attempts \< max, schedule next follow-up
    - Pass attempt count to LLM for context
 
 #### LLM Context for Wake-ups
@@ -210,23 +217,27 @@ schedule_reminder(
 ### Testing Considerations
 
 1. **Unit Tests**:
+
    - Reminder scheduling
    - Follow-up generation
    - User response detection
 
 2. **Integration Tests**:
+
    - Full reminder lifecycle
    - Interaction with message history
    - Concurrent reminders
 
 3. **LLM Behavior Tests**:
+
    - Correct tool selection
    - Parameter usage
    - Edge cases (overlapping reminders, etc.)
 
 ### Test Implementation
 
-A comprehensive test `test_schedule_reminder_with_follow_up` has been added to `tests/functional/test_smoke_callback.py` that covers:
+A comprehensive test `test_schedule_reminder_with_follow_up` has been added to
+`tests/functional/test_smoke_callback.py` that covers:
 
 - Scheduling a reminder with follow-up enabled
 - Verifying reminder configuration in database
@@ -236,12 +247,14 @@ A comprehensive test `test_schedule_reminder_with_follow_up` has been added to `
 - Verifying max follow-ups limit is respected
 - User response interaction
 
-The previous `test_callback_skip_behavior_on_user_response` test has been removed as the `skip_if_user_responded` parameter was removed from the callback tool.
+The previous `test_callback_skip_behavior_on_user_response` test has been removed as the
+`skip_if_user_responded` parameter was removed from the callback tool.
 
 ### Open Questions
 
 1. How to handle reminders when user is in active conversation?
 2. Should we support reminder modification after creation?
 3. Maximum time limit for follow-ups (e.g., stop after 24 hours)?
-4. Should we use a single `task_type` (e.g., "llm_trigger") or keep separate types for database clarity?
+4. Should we use a single `task_type` (e.g., "llm_trigger") or keep separate types for database
+   clarity?
 5. For shared implementation, should the reminder config be in the top-level payload or nested?

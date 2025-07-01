@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "(.venv/bin/poe format && .venv/bin/poe lint-fast) || return 2"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 /data/ssd/sync/workspace/src/family-assistant/.claude/check_banned_commands.py"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -4,11 +4,13 @@
 
 ### Problem
 
-The tools UI at `/tools` only shows tools available to the default profile because it gets its tools provider from `app.state.processing_service.tools_provider`.
+The tools UI at `/tools` only shows tools available to the default profile because it gets its tools
+provider from `app.state.processing_service.tools_provider`.
 
 ### Minimal Solution
 
-Create a single root ToolsProvider with ALL tools, then use FilteredToolsProvider to create profile-specific views for ProcessingService instances.
+Create a single root ToolsProvider with ALL tools, then use FilteredToolsProvider to create
+profile-specific views for ProcessingService instances.
 
 ### Implementation Steps
 
@@ -118,23 +120,26 @@ Create a single root ToolsProvider with ALL tools, then use FilteredToolsProvide
 - Calendar config needs special handling
 - ~~MCP tool filtering by server ID not yet implemented~~ ✅ IMPLEMENTED
 
----
+______________________________________________________________________
 
 ## Phase 2: Comprehensive Refactoring (Future Work)
 
 ### Current Architecture Issues
 
-The current implementation creates separate ToolsProvider instances for each ProcessingService profile:
+The current implementation creates separate ToolsProvider instances for each ProcessingService
+profile:
 
 - Each profile creates its own LocalToolsProvider with filtered tools based on `enable_local_tools`
-- Each profile creates its own MCPToolsProvider with filtered servers based on `enable_mcp_server_ids`
+- Each profile creates its own MCPToolsProvider with filtered servers based on
+  `enable_mcp_server_ids`
 - These are wrapped in CompositeToolsProvider and ConfirmingToolsProvider
 - The tools UI gets the tools from the default ProcessingService's provider
 - This means the tools UI only sees the filtered tools from the default profile
 
 ### Problems to Address
 
-1. **Law of Demeter violation**: Tools UI accesses tools through `app.state.processing_service.tools_provider`
+1. **Law of Demeter violation**: Tools UI accesses tools through
+   `app.state.processing_service.tools_provider`
 2. **Incomplete tool visibility**: Tools UI only sees tools available to the default profile
 3. **Redundant tool instances**: Each profile creates its own copy of the same tools
 4. **Profile restrictions leak**: Tool filtering meant for LLM safety affects the UI
@@ -143,8 +148,10 @@ The current implementation creates separate ToolsProvider instances for each Pro
    - `processing_service.app_config` (documents.py needs storage path)
    - `processing_service.processing_services_registry` (services.py)
    - `processing_service.home_assistant_client` (home_assistant.py)
-6. **Broken tools in API**: Tools executed via `/api/tools/execute/{tool_name}` can't access these dependencies
-7. **ToolExecutionContext overloading**: Context carries both execution info AND service dependencies
+6. **Broken tools in API**: Tools executed via `/api/tools/execute/{tool_name}` can't access these
+   dependencies
+7. **ToolExecutionContext overloading**: Context carries both execution info AND service
+   dependencies
 
 ### Proposed Architecture
 
@@ -354,6 +361,7 @@ Changes needed:
    ```
 
 4. **Update the delegate_to_service tool description**:
+
    - Move this logic before creating the root provider
    - Apply it to the base_local_tools_definition before creating root_local_provider
 
@@ -423,7 +431,8 @@ execution_context = ToolExecutionContext(
 
 #### 8. Update tools_ui.py
 
-No changes needed! It already accesses `request.app.state.tools_provider` and `request.app.state.tool_definitions`, which will now contain the root provider with all tools.
+No changes needed! It already accesses `request.app.state.tools_provider` and
+`request.app.state.tool_definitions`, which will now contain the root provider with all tools.
 
 #### 9. Update TaskWorker
 
@@ -447,7 +456,8 @@ exec_context = ToolExecutionContext(
 
 ### Migration Strategy
 
-1. **Backward Compatibility**: The changes are mostly internal and maintain the same external interfaces
+1. **Backward Compatibility**: The changes are mostly internal and maintain the same external
+   interfaces
 2. **Testing**: Existing tests should continue to work with minimal changes
 3. **Rollback**: Easy to revert by keeping the old per-profile provider creation logic
 
@@ -472,10 +482,15 @@ exec_context = ToolExecutionContext(
 
 ### Potential Issues
 
-1. **MCP Tool Filtering**: Currently, we can't easily filter MCP tools by server ID. We might need to enhance MCPToolsProvider to track which server provides each tool.
-2. **Calendar Config**: Tools that need calendar_config will need to get it from the execution context rather than provider initialization. This is profile-specific so can't go in ServiceContainer.
-3. **Memory**: Keeping a single root provider means all tool definitions are kept in memory even if not used by any profile.
-4. **Circular Dependency**: execute_script.py needs access to root_tools_provider, which we'll add to ServiceContainer to break the cycle.
+1. **MCP Tool Filtering**: Currently, we can't easily filter MCP tools by server ID. We might need
+   to enhance MCPToolsProvider to track which server provides each tool.
+2. **Calendar Config**: Tools that need calendar_config will need to get it from the execution
+   context rather than provider initialization. This is profile-specific so can't go in
+   ServiceContainer.
+3. **Memory**: Keeping a single root provider means all tool definitions are kept in memory even if
+   not used by any profile.
+4. **Circular Dependency**: execute_script.py needs access to root_tools_provider, which we'll add
+   to ServiceContainer to break the cycle.
 5. **Backward Compatibility**: Need to maintain old ToolExecutionContext fields during transition.
 
 ### Tool Updates Required
@@ -483,29 +498,38 @@ exec_context = ToolExecutionContext(
 Based on analysis of current usage:
 
 1. **execute_script.py**:
+
    - Currently: `exec_context.processing_service.tools_provider`
    - Update to: `exec_context.service_container.root_tools_provider`
 
 2. **documents.py**:
+
    - Currently: `exec_context.processing_service.app_config.get("document_storage_path")`
    - Update to: `exec_context.service_container.app_config.get("document_storage_path")`
 
 3. **services.py**:
+
    - Currently: `exec_context.processing_service.processing_services_registry`
    - Update to: `exec_context.service_container.processing_services_registry`
 
 4. **home_assistant.py**:
+
    - Currently: `exec_context.home_assistant_client`
    - Update to: `exec_context.service_container.home_assistant_client`
 
 5. **tasks.py**:
-   - Currently: `exec_context.clock or SystemClock()`
-   - Update to: `exec_context.service_container.clock if exec_context.service_container else SystemClock()`
 
----
+   - Currently: `exec_context.clock or SystemClock()`
+   - Update to:
+     `exec_context.service_container.clock if exec_context.service_container else SystemClock()`
+
+______________________________________________________________________
 
 ## Summary
 
-**Phase 1 (Current Focus)**: Create a separate root ToolsProvider with all tools for the UI/API to fix the immediate visibility issue with minimal code changes.
+**Phase 1 (Current Focus)**: Create a separate root ToolsProvider with all tools for the UI/API to
+fix the immediate visibility issue with minimal code changes.
 
-**Phase 2 (Future Work)**: Comprehensive refactoring using ServiceContainer pattern to properly separate service dependencies from profile restrictions and ensure all tools work from all entry points.
+**Phase 2 (Future Work)**: Comprehensive refactoring using ServiceContainer pattern to properly
+separate service dependencies from profile restrictions and ensure all tools work from all entry
+points.

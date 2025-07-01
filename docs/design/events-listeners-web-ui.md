@@ -2,11 +2,14 @@
 
 ## Overview
 
-This document outlines the design for web UI pages to view and manage events and event listeners in the Family Assistant application. The UI will follow the existing server-side rendering patterns using FastAPI and Jinja2 templates.
+This document outlines the design for web UI pages to view and manage events and event listeners in
+the Family Assistant application. The UI will follow the existing server-side rendering patterns
+using FastAPI and Jinja2 templates.
 
 ## Goals
 
-1. **Visibility**: Provide clear visibility into events flowing through the system and which listeners they trigger
+1. **Visibility**: Provide clear visibility into events flowing through the system and which
+   listeners they trigger
 2. **Debugging**: Help users understand why listeners did or didn't trigger for specific events
 3. **Management**: Allow users to view, enable/disable, and delete event listeners
 4. **History**: Show execution history for script-based listeners via the task queue
@@ -156,7 +159,7 @@ Manage event listeners - view configurations, monitor executions, enable/disable
    # web/routers/events_ui.py
    - GET /events - List view
    - GET /events/{event_id} - Detail view
-   
+
    # web/routers/listeners_ui.py  
    - GET /event-listeners - List view
    - GET /event-listeners/{listener_id} - Detail view
@@ -170,13 +173,14 @@ Manage event listeners - view configurations, monitor executions, enable/disable
    templates/events/
    ├── events_list.html.j2
    └── event_detail.html.j2
-   
+
    templates/listeners/
    ├── listeners_list.html.j2
    └── listener_detail.html.j2
    ```
 
 3. **Update Navigation**:
+
    - Add "Events" and "Event Listeners" to the automation section in base.html.j2
 
 ### Phase 2: Repository Enhancements
@@ -192,7 +196,7 @@ Manage event listeners - view configurations, monitor executions, enable/disable
        only_triggered: bool = False
    ) -> tuple[list[dict], int]:
        """Get events with listener information."""
-   
+
    async def get_listener_execution_stats(
        listener_id: int
    ) -> dict:
@@ -212,22 +216,26 @@ Manage event listeners - view configurations, monitor executions, enable/disable
 ### Phase 3: UI Components
 
 1. **Reusable Components**:
+
    - JSON viewer component (already exists)
    - Match conditions formatter
    - Script syntax highlighter (use Prism.js)
    - Status badge component
 
 2. **JavaScript Enhancements**:
+
    - `events_filters.js` - Filter form handling
    - `listener_toggle.js` - AJAX enable/disable without page reload
 
 ### Phase 4: Testing
 
 1. **Add to UI endpoint tests**:
+
    - Add `/events` and `/event-listeners` to BASE_UI_ENDPOINTS
    - Test pagination, filters, and detail pages
 
 2. **Integration tests**:
+
    - Test event → listener → task execution flow
    - Test UI updates when listeners are toggled
 
@@ -236,16 +244,19 @@ Manage event listeners - view configurations, monitor executions, enable/disable
 ### Visual Design
 
 1. **Status Indicators**:
+
    - Green dot: Enabled listener
-   - Gray dot: Disabled listener  
+   - Gray dot: Disabled listener
    - Yellow dot: Rate limited
    - Red dot: Recent failures
 
 2. **Action Type Icons**:
+
    - 🤖 LLM callback
    - 📜 Script execution
 
 3. **Color Coding**:
+
    - Use SimpleCSS's semantic colors
    - Success: green backgrounds
    - Errors: red text on light red background
@@ -267,36 +278,43 @@ Manage event listeners - view configurations, monitor executions, enable/disable
 ## Security Considerations
 
 1. **Authorization**:
+
    - Respect conversation_id filtering
    - Users can only see their own listeners
    - Admin mode shows all listeners
 
 2. **CSRF Protection**:
+
    - Use CSRF tokens for all POST forms
    - Validate referrer for state changes
 
 3. **Input Validation**:
+
    - Sanitize search inputs
    - Validate listener IDs belong to user
 
 ## Future Enhancements
 
 1. **Real-time Updates**:
+
    - WebSocket connection for live event stream
    - Show events as they occur
    - Update execution counts in real-time
 
 2. **Advanced Filtering**:
+
    - Filter events by JSON path expressions
    - Save common filters as presets
    - Export filtered data as CSV
 
 3. **Batch Operations**:
+
    - Clone multiple listeners
    - Bulk update match conditions
    - Import/export listener configurations
 
 4. **Analytics Dashboard**:
+
    - Event volume over time
    - Most active listeners
    - Performance metrics
@@ -304,4 +322,7 @@ Manage event listeners - view configurations, monitor executions, enable/disable
 
 ## Conclusion
 
-This design provides comprehensive visibility into the event system while maintaining consistency with the existing UI patterns. The server-side rendering approach ensures good performance and SEO while keeping complexity low. The phased implementation allows for incremental delivery of value while building toward a complete event management solution.
+This design provides comprehensive visibility into the event system while maintaining consistency
+with the existing UI patterns. The server-side rendering approach ensures good performance and SEO
+while keeping complexity low. The phased implementation allows for incremental delivery of value
+while building toward a complete event management solution.
