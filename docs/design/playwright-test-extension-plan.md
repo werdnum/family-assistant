@@ -306,7 +306,7 @@ Priority implementation order:
 
 Priority Order:
 
-1. [ ] History/Message History - HIGH PRIORITY
+1. [x] History/Message History - HIGH PRIORITY ✅ COMPLETED (2025-07-01)
 2. [ ] Error Logs Viewer (/errors endpoint)
 3. [ ] Event listeners
 4. [ ] Events UI (/events endpoint)
@@ -360,6 +360,23 @@ Priority Order:
    - Fixed `/settings/tokens` endpoint to work when auth is disabled
    - Resolved Vite/API server startup sequencing issues
    - Added responsive design and form interaction tests
+
+#### Phase 3 Progress (2025-07-01)
+
+1. **History/Message History Tests COMPLETED**
+
+   - Created `HistoryPage` page object with comprehensive interaction methods
+   - Implemented test suite covering:
+     - Page loading and navigation
+     - UI element verification (filters, conversation groups, messages)
+     - Empty state handling with tolerance for pre-existing data
+     - Tool call display verification
+     - Filter functionality (interface type, conversation, date range)
+     - Pagination controls
+     - Trace expansion functionality
+   - Tests simplified to verify UI functionality without depending on specific test data
+   - Note: Database isolation between test framework and dev server requires UI-only testing
+     approach
 
 ## Next Steps
 
