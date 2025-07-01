@@ -225,9 +225,9 @@ For each endpoint, add basic interaction:
 
 ### Phase 2: Core Flows (Week 2)
 
-1. Navigation tests
-2. Notes management
-3. Document management
+1. Navigation tests ✓
+2. Notes management ✓
+3. Document management ✓
 4. Basic error handling
 
 ### Phase 3: Advanced Features (Week 3)
