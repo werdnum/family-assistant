@@ -264,8 +264,9 @@ For each endpoint, add basic interaction:
 ### Phase 2: Core Flows
 
 - [x] Navigation tests (basic navigation link testing completed)
-- [ ] Notes management
-- [ ] Document management
+- [x] Notes management (tests/functional/web/test_notes_flow.py - 7 tests passing)
+- [x] Document management (tests/functional/web/test_documents_flow.py - 9 tests passing, 2 skipped)
+  - Note: Upload tests skipped due to internal HTTP call limitation in test environment
 - [ ] Basic error handling
 
 ### Phase 3: Advanced Features

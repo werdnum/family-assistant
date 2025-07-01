@@ -19,10 +19,22 @@ from .conftest import WebTestFixture
 async def test_upload_document_with_file_flow(web_test_fixture: WebTestFixture) -> None:
     """Test uploading a document with a file through the UI.
 
-    Note: This test is skipped because the document upload UI makes an internal
-    HTTP call to the API endpoint, which fails with 'Connection refused' in the
-    test environment. The functionality is tested via direct API calls in
-    test_document_indexing.py instead.
+    SKIP REASON:
+    This test is skipped because the document upload form submits to the API endpoint
+    via an internal HTTP call (from server to itself). In the test environment, this
+    fails with 'Connection refused' because the test server is not fully accessible
+    for internal HTTP requests.
+
+    The document upload flow works as follows:
+    1. User fills form at /documents/upload
+    2. Form submits to /documents/upload (POST)
+    3. The UI handler makes an HTTP call to http://localhost:PORT/api/documents/upload
+    4. This internal call fails in tests with httpx.ConnectError
+
+    ALTERNATIVE TESTING:
+    The document upload functionality is thoroughly tested via direct API calls in
+    tests/functional/indexing/test_document_indexing.py which tests the actual
+    document processing pipeline without the UI layer.
     """
     page = web_test_fixture.page
     docs_page = DocumentsPage(page, web_test_fixture.base_url)
@@ -141,10 +153,18 @@ async def test_upload_document_with_content_parts_flow(
 ) -> None:
     """Test uploading a document with content parts instead of a file.
 
-    Note: This test is skipped because the document upload UI makes an internal
-    HTTP call to the API endpoint, which fails with 'Connection refused' in the
-    test environment. The functionality is tested via direct API calls in
-    test_document_indexing.py instead.
+    SKIP REASON:
+    Same issue as test_upload_document_with_file_flow - the UI handler at
+    /documents/upload makes an internal HTTP call to the API endpoint which
+    fails in the test environment.
+
+    This test would validate uploading documents with JSON content parts
+    (instead of file upload), but faces the same architectural limitation
+    where the UI layer cannot reach the API layer via HTTP in tests.
+
+    ALTERNATIVE TESTING:
+    Content parts upload is tested in test_document_indexing.py via direct
+    API calls, validating the JSON parsing and document creation logic.
     """
     page = web_test_fixture.page
     docs_page = DocumentsPage(page, web_test_fixture.base_url)
@@ -413,15 +433,6 @@ async def test_multiple_document_upload_flow(web_test_fixture: WebTestFixture) -
             assert (
                 "submitted" in success_msg.lower() or "success" in success_msg.lower()
             )
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="Progress indication not implemented in current UI")
-async def test_upload_progress_indication(web_test_fixture: WebTestFixture) -> None:
-    """Test that upload progress is shown for large files."""
-    # This test is skipped as the current UI doesn't show upload progress
-    # It's included in the test plan for future implementation
-    pass
 
 
 @pytest.mark.asyncio
