@@ -112,7 +112,16 @@ Create utilities for common operations:
 - **File Type Validation**: Try invalid file → See error
 - **Progress Indication**: Large file shows upload progress
 
-### 4. Event Listeners (`test_event_listeners.py`)
+### 4. History/Message History (`test_history_flow.py`) - HIGH PRIORITY
+
+- **View History**: Navigate to history → See message list
+- **Message Details**: Click message → View full conversation
+- **Filtering**: Filter by date range, user, or content
+- **Pagination**: Navigate through multiple pages of history
+- **Search History**: Search for specific messages or conversations
+- **Export History**: Export conversation history (if available)
+
+### 5. Event Listeners (`test_event_listeners.py`)
 
 - **Create Listener**: Fill form → Submit → See in list
 - **Edit Listener**: Modify conditions → Save → Verify
@@ -120,43 +129,62 @@ Create utilities for common operations:
 - **Toggle Active State**: Disable/enable → Verify state
 - **Form Validation**: Invalid input → See field errors
 
-### 5. Settings Management (`test_settings_flow.py`)
+### 6. Events UI (`test_events_flow.py`)
+
+- **View Events**: Navigate to events → See event list
+- **Event Details**: Click event → View event data
+- **Event Filtering**: Filter by type, date, source
+- **Real-time Updates**: New events appear without refresh
+- **Event Actions**: Trigger actions from event (if available)
+
+### 7. Settings Management (`test_settings_flow.py`)
 
 - **API Token Creation**: Generate token → Copy → Verify display
 - **Token Deletion**: Delete token → Confirm → Verify removal
+- **Token List**: View all tokens with metadata
+- **Token Permissions**: Set/view token permissions (if available)
 - **Settings Navigation**: Navigate between settings sections
 - **Form Persistence**: Changes persist on page reload
 
-### 6. Search and Discovery (`test_search_flow.py`)
+### 8. Search and Discovery (`test_search_flow.py`)
 
 - **Vector Search**: Enter query → See results → Click result
 - **Empty Search**: No results → See helpful message
 - **Search Filters**: Apply filters → See filtered results
 - **Result Interaction**: Click result → Navigate to source
 
-### 7. Chat Interface (`test_chat_flow.py`)
+### 9. Error Logs Viewer (`test_error_logs.py`)
 
-- **Send Message**: Type → Send → See response
-- **Message History**: Scroll through past messages
-- **Tool Execution Display**: See tool calls in UI
-- **Error Messages**: API error → User-friendly message
-- **Loading States**: Message sending shows spinner
+- **View Error Logs**: Navigate to /errors → See error list
+- **Filter by Level**: Filter errors, warnings, info
+- **Filter by Logger**: Filter by logger name
+- **Time Range Filter**: Filter by date/time range
+- **Error Details**: Click error → View full traceback
+- **Pagination**: Navigate through pages of errors
+- **Empty State**: Verify UI when no errors exist
 
-### 8. Task Queue Monitoring (`test_task_queue.py`)
+### 10. Tools Page (`test_tools_flow.py`)
 
-- **View Tasks**: See task list with statuses
+- **View Tools List**: Navigate to /tools → See available tools
+- **Tool Details**: Click tool → View description and parameters
+- **Tool Execution**: Execute tool with parameters (if UI allows)
+- **Tool Results**: View execution results or status
+
+### 11. Task Queue Monitoring (`test_task_queue.py`)
+
+- **View Tasks**: Navigate to /tasks → See task list with statuses
 - **Task Details**: Click task → See execution details
 - **Auto-refresh**: Page updates without reload
 - **Filter by Status**: Show only failed/pending tasks
 
-### 9. Error Handling (`test_error_handling.py`)
+### 12. Error Handling (`test_error_handling.py`) - LOW PRIORITY
 
 - **API Errors**: Simulate 500 → See error message
 - **Network Timeout**: Slow response → Timeout message
 - **Form Validation**: Invalid data → Field-level errors
 - **Session Expiry**: Expired session → Redirect to login
 
-### 10. Cross-cutting Concerns (`test_common_features.py`)
+### 13. Cross-cutting Concerns (`test_common_features.py`)
 
 - **Responsive Design**: Test key flows on mobile viewport
 - **Keyboard Navigation**: Tab through forms and links
@@ -216,33 +244,38 @@ For each endpoint, add basic interaction:
 
 ## Implementation Order
 
-### Phase 1: Foundation (Week 1)
+### Phase 1: Foundation ✅ COMPLETED
 
 1. Set up Page Object structure
 2. Enhance test fixtures
 3. Migrate `test_ui_endpoints.py`
 4. Add console error checking
 
-### Phase 2: Core Flows (Week 2)
+### Phase 2: Core Flows ✅ COMPLETED
 
-1. Navigation tests ✓
-2. Notes management ✓
-3. Document management ✓
-4. Basic error handling
+1. Navigation tests
+2. Notes management
+3. Document management
+4. ~~Basic error handling~~ (moved to Phase 4)
 
-### Phase 3: Advanced Features (Week 3)
+### Phase 3: Advanced Features (IN PROGRESS)
 
-1. Event listeners
-2. Settings/API tokens
-3. Search functionality
-4. Chat interface
+Priority implementation order:
 
-### Phase 4: Polish (Week 4)
+1. History/Message History - HIGH PRIORITY
+2. Error Logs Viewer
+3. Event listeners + Events UI
+4. Settings/API tokens (comprehensive)
+5. Search functionality
+6. Tools page
 
-1. Task queue monitoring
-2. Cross-cutting concerns
-3. Visual regression setup
-4. CI/CD integration
+### Phase 4: Polish
+
+1. Task queue monitoring (/tasks)
+2. Basic error handling
+3. Cross-cutting concerns
+4. Visual regression setup
+5. CI/CD integration
 
 ## Success Metrics
 
@@ -261,20 +294,25 @@ For each endpoint, add basic interaction:
 - [x] Migrate `test_ui_endpoints.py`
 - [x] Add console error checking
 
-### Phase 2: Core Flows
+### Phase 2: Core Flows ✅ COMPLETED
 
 - [x] Navigation tests (basic navigation link testing completed)
 - [x] Notes management (tests/functional/web/test_notes_flow.py - 7 tests passing)
 - [x] Document management (tests/functional/web/test_documents_flow.py - 9 tests passing, 2 skipped)
   - Note: Upload tests skipped due to internal HTTP call limitation in test environment
-- [ ] Basic error handling
+- [x] Basic error handling (deprioritized - moved to Phase 4)
 
-### Phase 3: Advanced Features
+### Phase 3: Advanced Features (IN PROGRESS)
 
-- [ ] Event listeners
-- [ ] Settings/API tokens
-- [ ] Search functionality
-- [ ] Chat interface
+Priority Order:
+
+1. [ ] History/Message History - HIGH PRIORITY
+2. [ ] Error Logs Viewer (/errors endpoint)
+3. [ ] Event listeners
+4. [ ] Events UI (/events endpoint)
+5. [ ] Settings/API tokens (comprehensive tests for create/delete/copy)
+6. [ ] Search functionality
+7. [ ] Tools page (/tools endpoint)
 
 ### Phase 4: Polish
 
