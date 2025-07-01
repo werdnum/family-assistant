@@ -99,7 +99,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Start pytest
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    pytest $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json $PYTEST_ARGS &
     TEST_PID=$!
     TEST_START=$START_TIME
 
@@ -113,7 +113,7 @@ else
     # Just run pytest when linting is skipped
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    pytest $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json $PYTEST_ARGS &
     TEST_PID=$!
     TEST_START=$START_TIME
 fi
@@ -184,8 +184,24 @@ echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
 # Exit with appropriate code
 if [ $PYRIGHT_EXIT -ne 0 ] || [ $TEST_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ]; then
     echo "${RED}Some checks failed!${NC}"
+    if [ -f .report.json ]; then
+        echo ""
+        echo "${YELLOW}📊 Test results saved to .report.json${NC}"
+        echo "${YELLOW}   Use jq to query results:${NC}"
+        echo "${YELLOW}   - Failed tests: jq '.tests | map(select(.outcome == \"failed\"))' .report.json${NC}"
+        echo "${YELLOW}   - Test summary: jq '.summary' .report.json${NC}"
+        echo "${YELLOW}   - Slow tests: jq '.tests | sort_by(.duration) | reverse | .[0:5]' .report.json${NC}"
+    fi
     exit 1
 else
     echo "${GREEN}All checks passed! 🎉${NC}"
+    if [ -f .report.json ]; then
+        echo ""
+        echo "${GREEN}📊 Test results saved to .report.json${NC}"
+        echo "${GREEN}   Use jq to query results:${NC}"
+        echo "${GREEN}   - Test summary: jq '.summary' .report.json${NC}"
+        echo "${GREEN}   - Slow tests: jq '.tests | sort_by(.duration) | reverse | .[0:5]' .report.json${NC}"
+        echo "${GREEN}   - Test count by file: jq '.tests | group_by(.nodeid | split(\":\")[0]) | map({file: .[0].nodeid | split(\":\")[0], count: length})' .report.json${NC}"
+    fi
     exit 0
 fi
