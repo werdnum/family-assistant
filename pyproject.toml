@@ -168,9 +168,45 @@ help = "Generate SYMBOLS.md map using symbex"
 # and saves the output to SYMBOLS.md using shell redirection.
 shell = "symbex -m family_assistant --docs -ni > SYMBOLS.md"
 
+[tool.poe.tasks.lint]
+help = "Run full linting suite with parallel execution"
+shell = "scripts/format-and-lint.sh"
+
+[tool.poe.tasks.lint-fast]
+help = "Run only fast linting checks (ruff) - completes in ~1 second"
+shell = "scripts/format-and-lint.sh --fast"
+
+[tool.poe.tasks.format]
+help = "Format code (ruff format + mdformat)"
+shell = """
+${VIRTUAL_ENV:-.venv}/bin/ruff format --preview src tests && \
+if command -v ${VIRTUAL_ENV:-.venv}/bin/mdformat >/dev/null 2>&1; then \
+    find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "./node_modules/*" 2>/dev/null | \
+    head -20 | xargs ${VIRTUAL_ENV:-.venv}/bin/mdformat --wrap 100 2>/dev/null || true; \
+fi
+"""
+
 [tool.poe.tasks.test]
-help = "Run pylint in errors-only mode and full pytest suite with verbose output"
-shell = "scripts/format-and-lint.sh && pytest tests"
+help = "Run linting and tests with smart parallel execution"
+shell = """
+# Run fast checks first
+echo "🚀 Running quick checks..."
+${VIRTUAL_ENV:-.venv}/bin/ruff check --fix --preview --ignore=E501 src tests && \
+${VIRTUAL_ENV:-.venv}/bin/ruff format --preview src tests && \
+echo "🔍 Starting deep analysis and tests in parallel..." && \
+# Start long-running tasks in parallel
+(${VIRTUAL_ENV:-.venv}/bin/basedpyright src tests && echo "✓ Type checking complete") & \
+PYRIGHT_PID=$! && \
+# Give pyright a moment to start, then begin tests
+sleep 2 && \
+(pytest tests && echo "✓ Tests complete") & \
+TEST_PID=$! && \
+# Run pylint in parallel too
+(${VIRTUAL_ENV:-.venv}/bin/pylint -j0 src tests && echo "✓ Linting complete") & \
+PYLINT_PID=$! && \
+# Wait for all processes
+wait $PYRIGHT_PID $TEST_PID $PYLINT_PID
+"""
 
 [tool.poe.tasks.test-postgres]
 help = "Run tests with PostgreSQL database backend"
