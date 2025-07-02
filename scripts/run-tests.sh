@@ -99,7 +99,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Start pytest
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    pytest --json-report --json-report-file=.report.json $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q $PYTEST_ARGS &
     TEST_PID=$!
     TEST_START=$START_TIME
 
@@ -113,7 +113,7 @@ else
     # Just run pytest when linting is skipped
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    pytest --json-report --json-report-file=.report.json $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q $PYTEST_ARGS &
     TEST_PID=$!
     TEST_START=$START_TIME
 fi
