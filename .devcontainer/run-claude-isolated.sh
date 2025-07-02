@@ -69,6 +69,10 @@ cleanup() {
 # Set trap to cleanup on exit
 trap cleanup EXIT
 
+# Expand the .claude path to absolute
+CLAUDE_DIR="$(realpath ~/.claude)"
+echo "Mounting Claude config from: $CLAUDE_DIR"
+
 # Run interactive Claude container
 podman run -it --rm \
   --name family-assistant-claude \
@@ -80,7 +84,7 @@ podman run -it --rm \
   --env PATH="/root/.local/bin:/root/.deno/bin:$PATH" \
   --env DEV_MODE=true \
   --volume family-assistant-claude-workspace:/workspace \
-  --volume ~/.claude:/root/.claude:ro \
+  --volume "${CLAUDE_DIR}:/root/.claude:ro,Z" \
   --workdir /workspace \
   --entrypoint /bin/bash \
   localhost/family-assistant-devcontainer:latest \
@@ -88,6 +92,16 @@ podman run -it --rm \
     # Setup workspace
     echo "Setting up workspace..."
     /usr/local/bin/setup-workspace.sh
+    
+    # Check Claude auth
+    echo "Checking Claude authentication..."
+    if [ -f /root/.claude/.credentials.json ]; then
+        echo "✅ Claude credentials found"
+    else
+        echo "⚠️  No Claude credentials found at /root/.claude/.credentials.json"
+        echo "Contents of /root/.claude:"
+        ls -la /root/.claude/ || echo "Directory not found"
+    fi
     
     # Activate virtualenv
     source .venv/bin/activate
