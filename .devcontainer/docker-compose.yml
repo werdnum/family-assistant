@@ -27,6 +27,8 @@ services:
     environment:
       # Repository cloning - defaults to the family-assistant repo
       - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+      # GitHub token for private repo access
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       # Database connection
       - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
       - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test

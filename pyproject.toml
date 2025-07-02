@@ -127,6 +127,7 @@ dev = [
     "radicale>=3",
     "symbex>=2.0",
     "pytest-timeout",
+    "pytest-json-report",
     "ruff",
     "pre-commit>=4.2.0",
     "basedpyright",

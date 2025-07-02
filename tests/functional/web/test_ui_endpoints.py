@@ -5,12 +5,9 @@ Ensures that top-level UI pages load without server errors (status code < 500).
 
 import httpx
 import pytest
-from fastapi import FastAPI
 
-# Import the main FastAPI application instance
-# In a typical test setup, this might be provided by a more complex fixture
-# that also handles test-specific configurations (e.g., test database).
-from family_assistant.web.app_creator import app as actual_app
+from family_assistant.assistant import Assistant
+from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.auth import AUTH_ENABLED
 
 # Base UI endpoints accessible regardless of auth state (or will redirect to login if auth is on)
@@ -47,30 +44,25 @@ if AUTH_ENABLED:
     ALL_UI_ENDPOINTS_TO_TEST.extend(AUTH_UI_ENDPOINTS)
 
 
-@pytest.fixture(scope="session")
-def app_fixture() -> FastAPI:
-    """
-    Provides the FastAPI application instance for testing.
-    In a real test suite, this fixture might live in conftest.py and
-    could include logic to override dependencies (e.g., database connections)
-    with test-specific versions.
-    """
-    # Ensure the app has the required config for auth dependencies
-    if not hasattr(actual_app.state, "config"):
-        actual_app.state.config = {"auth_enabled": False}
-    return actual_app
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path, description", ALL_UI_ENDPOINTS_TO_TEST)
 async def test_ui_endpoint_accessibility(
-    path: str, description: str, app_fixture: FastAPI
+    path: str, description: str, web_only_assistant: Assistant
 ) -> None:
     """
     Tests that a given UI endpoint is accessible and does not return a server error.
     It follows redirects and asserts that the final status code is less than 500.
+
+    Uses the web_only_assistant fixture which properly sets up the database and app.
+
+    TODO: Investigate why these tests pass in the container even though it uses
+    the old version from GitHub with app_fixture instead of web_only_assistant.
+    The container's version imports the app directly which might bypass proper
+    database setup, yet tests still pass. Need to understand what's happening.
     """
-    transport = httpx.ASGITransport(app=app_fixture)
+    # Use the fastapi app directly - the web_only_assistant fixture ensures it's properly configured
+    # with database setup and all dependencies
+    transport = httpx.ASGITransport(app=fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:

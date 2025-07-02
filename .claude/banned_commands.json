@@ -30,5 +30,9 @@
   {
     "regexp": "^\\s*>\\s*/dev/sda",
     "explanation": "Writing directly to disk devices can corrupt the system. This operation is not allowed."
+  },
+  {
+    "regexp": "timeout\\s+\\d+\\s+.*",
+    "explanation": "Use the Bash tool's timeout parameter instead of the timeout command for better control and consistency."
   }
 ]

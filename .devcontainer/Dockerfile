@@ -52,6 +52,14 @@ ENV PATH="/root/.deno/bin:$PATH"
 # Install Claude Code CLI globally
 RUN npm install -g @anthropic-ai/claude-code
 
+# Install jq for JSON processing
+RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
+
+# Install Playwright globally and its system dependencies
+# This ensures the dependencies are available for any Python environment
+RUN npm install -g playwright && \
+    npx playwright install --with-deps chromium
+
 # Create workspace directory
 WORKDIR /workspace
 

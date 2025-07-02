@@ -1,37 +1,103 @@
 # Claude Code Development Container
 
-This directory contains the Docker configuration for running Claude Code in isolated development
-containers.
+This directory contains the Docker/Podman configuration for running Claude Code in isolated
+development containers.
 
 ## Overview
 
 The development container system provides:
 
-- Isolated environments for parallel Claude Code instances
-- Multi-container architecture (claude, backend, frontend, postgres)
-- Shared volumes for file synchronization
-- PostgreSQL sidecar replacing testcontainers for faster tests
+- **Isolated Workspaces**: Each container gets its own fresh git clone in an isolated Docker volume
+- **No Host Mounts**: Containers don't mount host directories, preventing conflicts
+- **PostgreSQL Sidecar**: Dedicated PostgreSQL service replacing testcontainers for faster tests
+- **Full Development Tooling**: All required tools pre-installed (uv, poe, playwright, ast-grep,
+  etc.)
+- **Private Repository Support**: Handles authentication via GitHub tokens
+
+## Architecture
+
+```
+┌─────────────────────────┐     ┌─────────────────────────┐
+│   PostgreSQL Sidecar    │     │    Claude Container     │
+│  pgvector/pgvector:pg17 │     │   Ubuntu 24.04 base     │
+│                         │◄────┤                         │
+│  - Test database        │     │  - Fresh git clone      │
+│  - Vector support       │     │  - Isolated .venv       │
+│  - Shared network       │     │  - All dev tools        │
+└─────────────────────────┘     └─────────────────────────┘
+```
 
 ## Quick Start
 
-```bash
-# Start all services
-docker compose up -d
+### Running Tests in Isolated Container
 
-# Connect to Claude
-docker compose exec claude claude
+```bash
+# Run integration tests only
+./.devcontainer/run-tests-isolated.sh
+
+# Run full test suite (linting + all tests)
+./.devcontainer/run-full-tests-isolated.sh
+```
+
+This script:
+
+1. Starts a fresh PostgreSQL container
+2. Builds the development container image
+3. Creates an isolated workspace volume
+4. Clones the repository
+5. Installs all dependencies
+6. Runs the tests
+7. Cleans up resources
+
+### Interactive Development
+
+```bash
+# Start the development environment
+./.devcontainer/run-dev-isolated.sh
+
+# Connect to the container
+podman exec -it devcontainer_claude_1 bash
+
+# Inside the container, run tests
+source .venv/bin/activate
+poe test
+```
+
+### Using Docker Compose
+
+```bash
+# Start all services (using podman-compose)
+podman-compose -f .devcontainer/docker-compose.yml up -d
+
+# Connect to Claude container
+podman exec -it devcontainer_claude_1 bash
 
 # View logs
-docker compose logs -f
+podman-compose -f .devcontainer/docker-compose.yml logs -f
+
+# Stop all services
+podman-compose -f .devcontainer/docker-compose.yml down
 ```
 
 ## Environment Variables
 
-- `TEST_DATABASE_URL`: External PostgreSQL URL (bypass testcontainers)
-- `CLAUDE_PROJECT_REPO`: Git repository to clone on startup
-- `BRAVE_API_KEY`: API key for Brave search MCP server
-- `HOMEASSISTANT_API_KEY`: API key for Home Assistant MCP server
-- `GOOGLE_MAPS_API_KEY`: API key for Google Maps MCP server
+Set these in your `.env` file:
+
+```bash
+# For private repository access
+GITHUB_TOKEN=your_github_token
+
+# Repository to clone (defaults to werdnum/family-assistant)
+CLAUDE_PROJECT_REPO=https://github.com/your/repo.git
+
+# Database connection (automatically configured)
+TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+
+# API keys for MCP servers
+BRAVE_API_KEY=...
+HOMEASSISTANT_API_KEY=...
+GOOGLE_MAPS_API_KEY=...
+```
 
 ## Implementation Status
 
@@ -41,17 +107,63 @@ design and implementation plan.
 ### Completed
 
 - [x] Phase 1.1: Test infrastructure updates (TEST_DATABASE_URL support)
-- [x] Phase 1.2: Project configuration
-
-### In Progress
-
-- [ ] Phase 2.1: Dockerfile creation
-- [ ] Phase 2.2: Workspace setup script
-- [ ] Phase 2.3: Basic Docker Compose
+- [x] Phase 1.2: Project configuration (.gitignore, placeholders)
+- [x] Phase 2.1: Dockerfile creation with all tools
+- [x] Phase 2.2: Workspace setup script with auto-cloning
+- [x] Phase 2.3: Basic Docker Compose with PostgreSQL sidecar
+- [x] Isolated workspace implementation (no host mounts)
 
 ### Pending
 
-- [ ] Phase 3: Multi-service architecture
-- [ ] Phase 4: Claude integration
-- [ ] Phase 5: Advanced features
-- [ ] Phase 6: Documentation and testing
+- [ ] Phase 3: Multi-service architecture (separate backend/frontend)
+- [ ] Phase 4: Claude integration (MCP servers, configuration)
+- [ ] Phase 5: Advanced features (multiple instances, K8s manifests)
+- [ ] Phase 6: Documentation and comprehensive testing
+
+## Advantages of Isolated Workspaces
+
+1. **No Conflicts**: Host and container environments are completely separate
+2. **Clean State**: Each container starts with a fresh clone
+3. **Parallel Execution**: Multiple containers can run simultaneously without interference
+4. **Resource Isolation**: Container resource limits don't affect host
+5. **Security**: No risk of container modifying host files
+6. **Reproducibility**: Every run starts from the same clean state
+
+## Troubleshooting
+
+### Container Issues
+
+```bash
+# Check running containers
+podman ps -a | grep devcontainer
+
+# View container logs
+podman logs devcontainer_claude_1
+
+# Clean up old containers
+podman ps -a | grep devcontainer | awk '{print $1}' | xargs podman rm -f
+```
+
+### Network Issues
+
+```bash
+# Check if network exists
+podman network ls | grep devcontainer_devnet
+
+# Recreate network if needed
+podman network rm devcontainer_devnet
+podman network create devcontainer_devnet
+```
+
+### Volume Management
+
+```bash
+# List volumes
+podman volume ls | grep family-assistant
+
+# Inspect a volume
+podman volume inspect workspace-claude
+
+# Clean up test volumes
+podman volume ls | grep family-assistant-test | awk '{print $2}' | xargs podman volume rm
+```
