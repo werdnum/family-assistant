@@ -9,23 +9,41 @@ echo "Starting workspace setup..."
 # Clone repository if CLAUDE_PROJECT_REPO is set
 if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
     echo "Cloning repository from $CLAUDE_PROJECT_REPO..."
-    git clone "$CLAUDE_PROJECT_REPO" .
+    
+    # Use GitHub token if available
+    if [ -n "$GITHUB_TOKEN" ]; then
+        # Extract repo path from URL
+        REPO_PATH=$(echo "$CLAUDE_PROJECT_REPO" | sed -E 's|https://github.com/||; s|\.git$||')
+        AUTHED_URL="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
+        git clone "$AUTHED_URL" .
+    else
+        git clone "$CLAUDE_PROJECT_REPO" .
+    fi
 fi
 
 # Check if we're in a Python project
 if [ -f "pyproject.toml" ]; then
     echo "Python project detected. Setting up virtual environment..."
     
-    # Create virtual environment (recreate if it exists but is broken)
-    if [ ! -d ".venv" ] || ! [ -x ".venv/bin/python" ]; then
-        echo "Creating fresh virtual environment..."
-        rm -rf .venv
-        uv venv .venv
-    fi
+    # Always create fresh virtual environment in isolated workspace
+    echo "Creating fresh virtual environment..."
+    rm -rf .venv
+    uv venv .venv
+    
+    # Activate the virtual environment
+    source .venv/bin/activate
     
     # Install dependencies
     echo "Installing Python dependencies..."
     uv pip install -e ".[dev]"
+    
+    # Ensure poethepoet is installed
+    echo "Installing poethepoet..."
+    uv pip install poethepoet
+    
+    # Ensure pytest-xdist is installed for parallel test execution
+    echo "Installing pytest-xdist..."
+    uv pip install pytest-xdist
     
     # Install pre-commit hooks if available
     if [ -f ".pre-commit-config.yaml" ]; then
@@ -48,7 +66,7 @@ fi
 
 # Install Playwright browsers if needed
 if [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
-    echo "Installing Playwright browsers..."
+    echo "Installing Playwright browsers for Python environment..."
     .venv/bin/playwright install chromium || true
 fi
 
