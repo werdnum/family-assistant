@@ -42,9 +42,10 @@ services:
       # Create isolated workspace for each container
       - workspace-claude:/workspace
       # Mount Claude configuration (read-only)
-      - ${HOME}/.claude:/home/claude/.claude:ro
+      - ${HOME}/.claude:/root/.claude:ro
     stdin_open: true
     tty: true
+    entrypoint: ["/usr/local/bin/setup-workspace.sh"]
     command: ["claude"]
     networks:
       - devnet
