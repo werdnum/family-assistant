@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database service
+  postgres:
+    image: pgvector/pgvector:0.8.0-pg17
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - devnet
+
+  # Claude Code interactive container
+  claude:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Repository cloning - defaults to the family-assistant repo
+      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+      # Database connection
+      - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      # MCP server API keys
+      - BRAVE_API_KEY=${BRAVE_API_KEY:-}
+      - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY:-}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      # Development mode
+      - DEV_MODE=true
+    volumes:
+      # Create isolated workspace for each container
+      - workspace-claude:/workspace
+      # Mount Claude configuration (read-only)
+      - ${HOME}/.claude:/home/claude/.claude:ro
+    stdin_open: true
+    tty: true
+    command: ["claude"]
+    networks:
+      - devnet
+
+volumes:
+  postgres-data:
+  workspace-claude:
+
+networks:
+  devnet:
+    driver: bridge

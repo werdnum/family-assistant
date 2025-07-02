@@ -288,7 +288,33 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
     """
     Starts and manages a PostgreSQL container for the test session.
     Respects DOCKER_HOST environment variable.
+
+    If TEST_DATABASE_URL is set, returns a mock container that provides that URL
+    instead of starting a real testcontainer.
     """
+    # Check for external PostgreSQL first
+    test_database_url = os.getenv("TEST_DATABASE_URL")
+    if test_database_url:
+        logger.info(
+            f"Using external PostgreSQL from TEST_DATABASE_URL: {test_database_url}"
+        )
+
+        # Create a mock container that returns the external URL
+        class MockContainer:
+            def get_connection_url(self) -> str:
+                # Convert asyncpg URL to standard postgresql URL if needed
+                return test_database_url.replace(
+                    "postgresql+asyncpg://", "postgresql://"
+                )
+
+            def get_container_host_ip(self) -> str:
+                return "external"
+
+        yield MockContainer()
+        logger.info("External PostgreSQL usage completed.")
+        return
+
+    # Original testcontainer logic
     # Use an image that includes postgresql-contrib for extensions like pgvector
     # Note: pgvector might need explicit installation depending on the base image.
     # If using a standard postgres image, you might need to execute
