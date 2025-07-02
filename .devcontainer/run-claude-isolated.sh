@@ -73,6 +73,15 @@ trap cleanup EXIT
 CLAUDE_DIR="$(realpath ~/.claude)"
 echo "Mounting Claude config from: $CLAUDE_DIR"
 
+# Check if .config/claude directory exists
+if [ -d ~/.config/claude ]; then
+    CONFIG_CLAUDE_DIR="$(realpath ~/.config/claude)"
+    echo "Also mounting: $CONFIG_CLAUDE_DIR"
+    CONFIG_MOUNT="--volume ${CONFIG_CLAUDE_DIR}:/root/.config/claude:Z"
+else
+    CONFIG_MOUNT=""
+fi
+
 # Run interactive Claude container
 podman run -it --rm \
   --name family-assistant-claude \
@@ -83,8 +92,10 @@ podman run -it --rm \
   --env DATABASE_URL="postgresql+asyncpg://test:test@postgres:5432/test" \
   --env PATH="/root/.local/bin:/root/.deno/bin:$PATH" \
   --env DEV_MODE=true \
+  --env HOME=/root \
   --volume family-assistant-claude-workspace:/workspace \
-  --volume "${CLAUDE_DIR}:/root/.claude:ro,Z" \
+  --volume "${CLAUDE_DIR}:/root/.claude:Z" \
+  $CONFIG_MOUNT \
   --workdir /workspace \
   --entrypoint /bin/bash \
   localhost/family-assistant-devcontainer:latest \
@@ -96,11 +107,17 @@ podman run -it --rm \
     # Check Claude auth
     echo "Checking Claude authentication..."
     if [ -f /root/.claude/.credentials.json ]; then
-        echo "✅ Claude credentials found"
+        echo "✅ Claude credentials found at /root/.claude/.credentials.json"
+        # Ensure correct permissions
+        chmod 600 /root/.claude/.credentials.json 2>/dev/null || true
     else
         echo "⚠️  No Claude credentials found at /root/.claude/.credentials.json"
         echo "Contents of /root/.claude:"
-        ls -la /root/.claude/ || echo "Directory not found"
+        ls -la /root/.claude/ 2>/dev/null || echo "Directory not found"
+        echo ""
+        echo "To fix this, run on your host system:"
+        echo "  claude login"
+        echo "Then try this script again."
     fi
     
     # Activate virtualenv
