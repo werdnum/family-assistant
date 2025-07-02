@@ -1,378 +1,223 @@
-# Claude Code Development Container Design
+# Claude Code Development Container
 
 ## Overview
 
-This document outlines the design and implementation plan for a containerized development
-environment for Claude Code. The system provides isolated, resource-controlled environments for
-parallel development work on the family-assistant project using a multi-container architecture with
-shared volumes.
+This document describes the containerized development environment for Claude Code working on the
+family-assistant project. The system provides completely isolated workspaces with no host mounts,
+ensuring clean, reproducible environments for development and testing.
 
-## Goals
+## Key Features
 
-1. **Isolation**: Provide safe, isolated environments for Claude Code experimentation
-2. **Parallelization**: Enable multiple Claude instances to work simultaneously without interference
-3. **Consistency**: Ensure identical development environments across instances
-4. **Performance**: Optimize for fast startup and test execution
-5. **Flexibility**: Support various deployment scenarios (local Docker, Podman, Kubernetes)
+1. **Complete Isolation**: Each container gets its own git clone - no host filesystem mounts
+2. **Podman Compatible**: Works with both Docker and Podman (rootless containers)
+3. **Fast Testing**: PostgreSQL sidecar replaces testcontainers for instant database access
+4. **Parallel Safe**: Multiple instances can run simultaneously without interference
+5. **Full Tool Support**: All development tools (ast-grep, ripgrep, uv, playwright, etc.)
+   pre-installed
 
 ## Architecture
 
-### Container Services
+### Current Implementation (Phase 2)
 
-The system uses a sidecar pattern with four main services:
+The system currently provides a single development container with PostgreSQL sidecar:
 
-1. **claude** - Interactive Claude Code environment
+1. **Development Container** (`family-assistant-devcontainer`)
 
-   - Runs Claude Code CLI
-   - Has access to all project files and tools
-   - Connects to other services via Docker networking
+   - Ubuntu 24.04 base with all development tools
+   - Clones fresh copy of the repository
+   - Creates isolated Python virtual environment
+   - Runs tests with PostgreSQL sidecar
 
-2. **backend** - Python backend server
+2. **PostgreSQL Sidecar** (`devcontainer-postgres-test`)
 
-   - Runs FastAPI application on port 8000
-   - Auto-reloads on code changes
-   - Uses shared workspace volume
+   - pgvector/pgvector:0.8.0-pg17 image
+   - Provides instant database for tests (no testcontainers startup)
+   - Cleaned up after each test run
 
-3. **frontend** - Vite development server
+### Isolated Workspace Design
 
-   - Runs on port 5173
-   - Hot module replacement enabled
-   - Proxies API requests to backend
-
-4. **postgres** - PostgreSQL database
+Key design decision: **No host filesystem mounts**
 
-   - Uses pgvector/pgvector:0.8.0-pg17 image
-   - Replaces testcontainers for faster test execution
-   - Persistent data volume for development
-
-### Shared Resources
-
-All containers share:
-
-- **workspace volume**: Contains project code and dependencies
-- **Docker network**: Enables inter-container communication
-- **Environment variables**: API keys and configuration
-
-## Technical Design
-
-### Base Container Image
-
-```dockerfile
-FROM ubuntu:24.04
-
-# System essentials
-RUN apt-get update && apt-get install -y \
-    curl git wget gnupg ca-certificates \
-    ripgrep fd-find micro \
-    && rm -rf /var/lib/apt/lists/*
-
-# Development tools not in pyproject.toml
-# ast-grep is required by CLAUDE.md instructions
-RUN curl -L https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-x86_64-unknown-linux-gnu.tar.gz \
-    | tar xz -C /usr/local/bin/
-
-# Node.js 20 LTS for Claude Code and npm packages
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs
-
-# Python package manager
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
-
-# Deno for MCP servers
-RUN curl -fsSL https://deno.land/install.sh | sh
-ENV PATH="/root/.deno/bin:$PATH"
-
-# Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
-
-WORKDIR /workspace
-```
-
-### Workspace Initialization
-
-The setup script handles:
-
-1. Git repository cloning (if CLAUDE_PROJECT_REPO is set)
-2. Python virtual environment creation
-3. Dependency installation via `uv pip install -e .[dev]`
-4. Playwright browser installation
-5. Node.js dependency installation
-6. MCP server tool installation
-
-### Docker Compose Configuration
-
-```yaml
-version: '3.8'
-
-volumes:
-  workspace:     # Shared code and virtual environment
-  postgres-data: # Database persistence
-
-services:
-  postgres:
-    image: pgvector/pgvector:0.8.0-pg17
-    environment:
-      POSTGRES_USER: test
-      POSTGRES_PASSWORD: test
-      POSTGRES_DB: test
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test"]
-      interval: 5s
-      retries: 5
-
-  backend:
-    build: .devcontainer
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
-      - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
-      - DEV_MODE=true
-    volumes:
-      - workspace:/workspace
-      - ${PWD}:/workspace:z  # Optional local mount override
-    command: ["/usr/local/bin/setup-workspace.sh", "poe", "serve"]
-    ports:
-      - "8000:8000"
-
-  frontend:
-    build: .devcontainer
-    volumes:
-      - workspace:/workspace
-      - ${PWD}:/workspace:z
-    working_dir: /workspace/frontend
-    command: ["/usr/local/bin/setup-workspace.sh", "npm", "run", "dev"]
-    ports:
-      - "5173:5173"
-
-  claude:
-    build: .devcontainer
-    depends_on:
-      - backend
-      - frontend
-      - postgres
-    environment:
-      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-}
-      - BRAVE_API_KEY=${BRAVE_API_KEY}
-      - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY}
-      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
-      - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
-      - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
-    volumes:
-      - workspace:/workspace
-      - ${PWD}:/workspace:z
-      - ~/.claude:/home/claude/.claude:ro
-    stdin_open: true
-    tty: true
-    command: ["/usr/local/bin/setup-workspace.sh", "claude"]
-```
-
-### Claude Configuration
-
-**CLAUDE.local.md** provides container-specific context:
-
-- Service URLs and ports
-- Available commands
-- Container-specific notes
-
-**settings.local.json** adapted from project settings:
+- Each container clones the repository fresh from GitHub
+- Ensures complete isolation between host and container
+- Prevents virtualenv conflicts and permission issues
+- Changes must be committed and pushed to test in container
 
-- Removes notification hooks (incompatible with container)
-- Adds container-specific allowed commands
-- Maintains all existing permissions
+## Implementation Details
 
-### MCP Server Support
+### Container Image (`.devcontainer/Dockerfile`)
 
-All MCP servers from mcp_config.json are supported with adjusted paths:
+The Dockerfile installs all required development tools:
 
-- Python servers use `/workspace/.venv/bin/python`
-- Node servers use deno with npm: imports
-- uvx tools installed in container
+- **Base**: Ubuntu 24.04 with build essentials
+- **Search/Edit Tools**: ripgrep, fd-find, micro, ast-grep
+- **Languages**: Python 3, Node.js 20 LTS, Deno
+- **Package Managers**: uv (Python), npm
+- **Claude Code**: Latest CLI version
+- **Testing**: Playwright with Chromium, jq for JSON processing
 
-## Implementation Plan
+### Workspace Setup Script (`.devcontainer/setup-workspace.sh`)
 
-### Phase 1: Infrastructure Preparation
+The setup script creates a completely isolated environment:
 
-#### 1.1 Test Infrastructure Updates
+1. **Repository Cloning**
 
-- Modify `tests/conftest.py` to support external PostgreSQL
-- Add environment variable check for `TEST_DATABASE_URL`
-- Create bypass mechanism for testcontainers
-- Ensure backward compatibility (testcontainers still work locally)
+   - Uses `GITHUB_TOKEN` from `.env` for private repos
+   - Clones from `CLAUDE_PROJECT_REPO` environment variable
+   - Falls back to running command if already in workspace
 
-#### 1.2 Project Configuration
+2. **Python Environment**
 
-- Add `.devcontainer/` to `.gitignore`
-- Create placeholder for container-specific configurations
-- Document environment variables needed
+   - Always creates fresh virtual environment
+   - Installs all dependencies with `uv pip install -e .[dev]`
+   - Installs additional tools (poethepoet, pytest-xdist)
 
-### Phase 2: Basic Container Implementation
+3. **Frontend Setup**
 
-#### 2.1 Dockerfile Creation
+   - Installs npm dependencies
+   - Configures Playwright browsers
 
-- Create `.devcontainer/Dockerfile`
-- Install system dependencies
-- Add language runtimes (Node.js, Python/uv, Deno)
-- Install Claude Code globally
+4. **Pre-commit Hooks**
 
-#### 2.2 Workspace Setup Script
+   - Installs git hooks for code quality
 
-- Create `scripts/setup-workspace.sh`
-- Handle git cloning logic
-- Implement dependency installation
-- Add Playwright browser setup
+## Test Scripts
 
-#### 2.3 Basic Docker Compose
+The implementation includes several test runner scripts:
 
-- Single Claude container initially
-- Volume mounts for code and auth
-- Basic environment variables
+### Basic Testing Scripts
 
-### Phase 3: Multi-Service Architecture
+1. **`run-tests-isolated.sh`**
 
-#### 3.1 PostgreSQL Sidecar
+   - Runs integration tests in isolated container
+   - Creates fresh PostgreSQL and workspace
+   - Quick feedback (~30 seconds for integration tests)
 
-- Add postgres service to compose
-- Configure health checks
-- Update environment variables
-- Test database connectivity
+2. **`run-full-tests-isolated.sh`**
 
-#### 3.2 Backend Service
+   - Runs complete test suite (`poe test`)
+   - Includes linting and all tests
+   - Takes 10-15 minutes
+   - Returns proper exit codes
 
-- Add backend container definition
-- Configure auto-reload
-- Set up proper networking
-- Verify API accessibility
+3. **`run-full-tests-keep-on-failure.sh`**
 
-#### 3.3 Frontend Service
+   - Same as above but keeps container running on failure
+   - Useful for debugging test failures
+   - Provides commands to inspect results
 
-- Add frontend container
-- Configure Vite for container environment
-- Set up proxy to backend
-- Test hot module replacement
+### Docker Compose (Phase 3 - Future)
 
-### Phase 4: Claude Integration
+The `docker-compose.yml` file is prepared for multi-service architecture:
 
-#### 4.1 Claude Configuration Files
+- Separate containers for backend, frontend, and Claude
+- Shared workspace volumes
+- Service dependencies and health checks
 
-- Create CLAUDE.local.md template
-- Adapt settings.local.json
-- Set up proper file copying in setup script
+## Current Status
 
-#### 4.2 MCP Server Configuration
+### Completed (Phases 1-2)
 
-- Update mcp_config.json paths
-- Test each MCP server
-- Document any limitations
+✅ Infrastructure preparation (TEST_DATABASE_URL support) ✅ Basic container with all development
+tools ✅ Isolated workspace implementation (no host mounts) ✅ PostgreSQL sidecar integration ✅ Test
+runner scripts ✅ Podman compatibility verified ✅ Proper exit code handling
 
-#### 4.3 Volume Optimization
+### Pending (Phases 3-6)
 
-- Implement proper volume strategy
-- Optimize for performance
-- Handle node_modules separately if needed
+- Multi-service architecture (backend/frontend separation)
+- Claude configuration files (CLAUDE.local.md, settings)
+- MCP server integration
+- Documentation and examples
 
-### Phase 5: Advanced Features
+## Usage
 
-#### 5.1 Multiple Instance Support
+### Prerequisites
 
-- Document COMPOSE_PROJECT_NAME usage
-- Create example configurations
-- Test parallel execution
+1. Create a GitHub personal access token with repo read permissions
 
-#### 5.2 Podman Compatibility
+2. Add to `.env` file:
 
-- Test with podman-compose
-- Document any differences
-- Create podman-specific instructions
+   ```bash
+   GITHUB_TOKEN=your_token_here
+   ```
 
-#### 5.3 Kubernetes Manifests (Optional)
-
-- Create Kubernetes deployment examples
-- Use emptyDir for shared storage
-- Document kubectl usage
-
-### Phase 6: Documentation and Testing
-
-#### 6.1 User Documentation
-
-- Create README in .devcontainer/
-- Add usage examples
-- Document common issues
-
-#### 6.2 Integration Testing
-
-- Test all poe commands
-- Verify MCP servers work
-- Test parallel instances
-
-#### 6.3 Performance Optimization
-
-- Measure startup times
-- Optimize image layers
-- Cache dependency installation
-
-## Usage Examples
-
-### Basic Usage
+### Running Tests
 
 ```bash
-# Start all services
-docker compose up -d
+# Quick integration tests (~30 seconds)
+.devcontainer/run-tests-isolated.sh
 
-# Connect to Claude
-docker compose exec claude claude
+# Full test suite (~10-15 minutes)
+.devcontainer/run-full-tests-isolated.sh
 
-# View logs
-docker compose logs -f
+# Debug failures (keeps container running)
+.devcontainer/run-full-tests-keep-on-failure.sh
 ```
 
-### With Git Repository
+### Building the Container
 
 ```bash
-# Clone and set up from repository
-CLAUDE_PROJECT_REPO=https://github.com/user/repo docker compose up -d
+# With Docker
+docker build -t family-assistant-devcontainer .devcontainer/
+
+# With Podman
+podman build -t family-assistant-devcontainer .devcontainer/
 ```
 
-### Multiple Instances
+## Key Design Decisions
+
+### Why No Host Mounts?
+
+The decision to avoid host filesystem mounts was made to ensure:
+
+- **Complete isolation** between host and container environments
+- **No virtualenv conflicts** (container .venv vs host .venv)
+- **Clean testing** - forces proper git workflow
+- **Reproducibility** - every run starts from known state
+
+### Why PostgreSQL Sidecar?
+
+Using a PostgreSQL sidecar instead of testcontainers provides:
+
+- **Instant startup** - database ready immediately
+- **Consistent behavior** - same database for all tests
+- **Podman compatibility** - avoids Docker-in-Docker issues
+- **Resource efficiency** - one database instance per test run
+
+## Known Limitations
+
+1. **Test Isolation**: Some tests may fail when run in parallel due to shared state in the test
+   suite (not a container issue)
+2. **Push Required**: Changes must be committed and pushed to test in container
+3. **Resource Usage**: Full test suite requires significant CPU/memory
+
+## Troubleshooting
+
+### Container won't start
+
+- Check if podman/docker daemon is running
+- Verify GITHUB_TOKEN is set in .env
+- Ensure no conflicting containers with same names
+
+### Tests fail in container but pass locally
+
+- Likely due to test parallelization issues
+- Try running specific tests individually
+- Check test report with jq: `podman exec CONTAINER jq '.summary' /workspace/.report.json`
+
+### Debugging failed tests
 
 ```bash
-# Developer 1
-COMPOSE_PROJECT_NAME=dev1 docker compose up -d
+# Use the keep-on-failure script
+.devcontainer/run-full-tests-keep-on-failure.sh
 
-# Developer 2  
-COMPOSE_PROJECT_NAME=dev2 docker compose up -d
+# When it fails, inspect with:
+podman exec -it family-assistant-full-test bash
+cat /workspace/.report.json
 ```
-
-## Benefits
-
-1. **Fast Testing**: PostgreSQL always ready, no testcontainer startup
-2. **Consistency**: Identical environments across all instances
-3. **Isolation**: Each instance completely separated
-4. **Flexibility**: Works with Docker, Podman, or Kubernetes
-5. **Developer Experience**: Everything works out of the box
-
-## Future Enhancements
-
-1. **Resource Limits**: Add CPU/memory constraints
-2. **GPU Support**: For ML workloads
-3. **Cloud Integration**: Deploy to cloud providers
-4. **CI/CD Integration**: Use in GitHub Actions
-5. **Extension System**: Allow custom tool installation
-
-## Security Considerations
-
-1. **Authentication**: Mount Claude auth read-only
-2. **Network Isolation**: Containers on isolated network
-3. **Secret Management**: Use Docker secrets for API keys
-4. **File Permissions**: Run as non-root user (future)
-5. **Resource Limits**: Prevent resource exhaustion
 
 ## Conclusion
 
-This development container system provides a robust, scalable solution for running Claude Code in
-isolated environments. The multi-container architecture with shared volumes offers the best balance
-of isolation, performance, and developer experience.
+This containerized development environment provides a clean, isolated way to run Claude Code with
+the family-assistant project. The focus on complete isolation ensures reproducible environments
+while the PostgreSQL sidecar pattern enables fast, reliable testing.
