@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import AsyncGenerator, Generator
-from typing import Any
+from typing import Any, Protocol
 from unittest.mock import MagicMock, patch
 
 import caldav
@@ -283,8 +283,16 @@ async def db_engine(
 # --- PostgreSQL Test Fixtures (using testcontainers) ---
 
 
+# Protocol for container-like objects
+class ContainerProtocol(Protocol):
+    def get_connection_url(
+        self, host: str | None = None, driver: str | None = None
+    ) -> str: ...
+    def get_container_host_ip(self) -> str: ...
+
+
 @pytest.fixture(scope="session")
-def postgres_container() -> Generator[PostgresContainer, None, None]:
+def postgres_container() -> Generator[ContainerProtocol, None, None]:
     """
     Starts and manages a PostgreSQL container for the test session.
     Respects DOCKER_HOST environment variable.
@@ -301,7 +309,9 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
 
         # Create a mock container that returns the external URL
         class MockContainer:
-            def get_connection_url(self) -> str:
+            def get_connection_url(
+                self, host: str | None = None, driver: str | None = None
+            ) -> str:
                 # Convert asyncpg URL to standard postgresql URL if needed
                 return test_database_url.replace(
                     "postgresql+asyncpg://", "postgresql://"
@@ -354,7 +364,7 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
     scope="function"
 )  # Use function scope for engine to ensure isolation
 async def pg_vector_db_engine(
-    postgres_container: PostgresContainer,
+    postgres_container: ContainerProtocol,
     request: pytest.FixtureRequest,
 ) -> AsyncGenerator[AsyncEngine, None]:
     """
