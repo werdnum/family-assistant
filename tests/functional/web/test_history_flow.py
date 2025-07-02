@@ -13,7 +13,7 @@ from tests.functional.web.pages.history_page import HistoryPage
 @pytest.fixture
 async def history_page(web_test_fixture: Any) -> HistoryPage:
     """Create a history page object."""
-    return HistoryPage(web_test_fixture.page)
+    return HistoryPage(web_test_fixture.page, base_url=web_test_fixture.base_url)
 
 
 async def create_test_conversation(

@@ -1,0 +1,94 @@
+version: '3.8'
+
+# This compose file demonstrates running multiple Claude instances
+# Use with: COMPOSE_FILE=docker-compose.yml:docker-compose.multi.yml
+
+services:
+  # Backend service shared by all Claude instances
+  backend:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - DEV_MODE=true
+      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+    volumes:
+      - workspace-backend:/workspace
+    command: ["bash", "-c", "source /root/.local/bin/env && poe serve"]
+    ports:
+      - "8000:8000"
+    networks:
+      - devnet
+
+  # Frontend service shared by all Claude instances
+  frontend:
+    build: .
+    depends_on:
+      - backend
+    environment:
+      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+    volumes:
+      - workspace-frontend:/workspace
+    working_dir: /workspace/frontend
+    command: ["bash", "-c", "source /root/.local/bin/env && npm run dev"]
+    ports:
+      - "5173:5173"
+    networks:
+      - devnet
+
+  # Second Claude instance for parallel work
+  claude2:
+    build: .
+    depends_on:
+      - backend
+      - frontend
+      - postgres
+    environment:
+      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+      - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - BRAVE_API_KEY=${BRAVE_API_KEY:-}
+      - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY:-}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      - DEV_MODE=true
+    volumes:
+      - workspace-claude2:/workspace
+      - ${HOME}/.claude:/home/claude/.claude:ro
+    stdin_open: true
+    tty: true
+    command: ["claude"]
+    networks:
+      - devnet
+
+  # Third Claude instance
+  claude3:
+    build: .
+    depends_on:
+      - backend
+      - frontend
+      - postgres
+    environment:
+      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+      - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - BRAVE_API_KEY=${BRAVE_API_KEY:-}
+      - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY:-}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      - DEV_MODE=true
+    volumes:
+      - workspace-claude3:/workspace
+      - ${HOME}/.claude:/home/claude/.claude:ro
+    stdin_open: true
+    tty: true
+    command: ["claude"]
+    networks:
+      - devnet
+
+volumes:
+  workspace-backend:
+  workspace-frontend:
+  workspace-claude2:
+  workspace-claude3:
