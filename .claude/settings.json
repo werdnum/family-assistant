@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 /data/ssd/sync/workspace/src/family-assistant/.claude/check_banned_commands.py"
+            "command": "/usr/bin/env python3 .claude/check_banned_commands.py"
           }
         ]
       }
