@@ -55,6 +55,9 @@ RUN npm install -g @google/gemini-cli
 # Install jq for JSON processing and PostgreSQL client
 RUN apt-get update && apt-get install -y jq postgresql-client && rm -rf /var/lib/apt/lists/*
 
+# Set Playwright browsers path to a system-wide location to avoid user-specific paths
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+
 # Install Playwright globally and its system dependencies
 # This ensures the dependencies are available for any Python environment
 RUN npm install -g playwright && \

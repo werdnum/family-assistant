@@ -94,7 +94,7 @@ NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 claude mcp list | cut -d: -f1 | xargs -I: claude mcp remove --scope user :
 claude mcp add --scope user context7 $(which npx) -- -yq @upstash/context7-mcp
 claude mcp add --scope user scraper /workspace-bin/scrape_mcp
-claude mcp add --scope user serena sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
+claude mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
 claude mcp add --scope user playwright $(which npx) -- -yq @playwright/mcp@latest --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org" --headless --isolated --browser chromium
 echo "Workspace setup complete!"
 
