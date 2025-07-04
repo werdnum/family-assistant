@@ -7,7 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Configuration
 REGISTRY="containers.andrewgarrett.dev"
 IMAGE_NAME="family-assistant-devcontainer"
-TAG="${1:-latest}"
+# Default to timestamp format if no tag provided
+DEFAULT_TAG=$(date +%Y%m%d_%H%M%S)
+TAG="${1:-$DEFAULT_TAG}"
 
 # Change to the .devcontainer directory to ensure correct context
 cd "${SCRIPT_DIR}"
