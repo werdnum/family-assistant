@@ -42,8 +42,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Install Deno for MCP servers
 RUN curl -fsSL https://deno.land/install.sh | sh
@@ -51,14 +50,25 @@ ENV PATH="/root/.deno/bin:$PATH"
 
 # Install Claude Code CLI globally
 RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @google/gemini-cli
 
-# Install jq for JSON processing
-RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
+# Install jq for JSON processing and PostgreSQL client
+RUN apt-get update && apt-get install -y jq postgresql-client && rm -rf /var/lib/apt/lists/*
 
 # Install Playwright globally and its system dependencies
 # This ensures the dependencies are available for any Python environment
 RUN npm install -g playwright && \
     npx playwright install --with-deps chromium
+
+# Install Python dependencies for scraper MCP (contrib/scrape_mcp.py)
+RUN uv venv /venv
+RUN uv pip install -p /venv/bin/python --system "playwright>=1.0" "markitdown[html]>=0.1.0"
+RUN /venv/bin/playwright install --with-deps chromium
+
+# Create claude user with UID 1001 to match Kubernetes deployment
+RUN useradd -m -s /bin/bash -u 1001 claude && \
+    mkdir -p /home/claude/.cache/uv && \
+    chown -R claude:claude /home/claude
 
 # Create workspace directory
 WORKDIR /workspace
