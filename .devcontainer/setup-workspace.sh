@@ -81,6 +81,13 @@ if [ -f "/home/claude/.claude/CLAUDE.local.md" ]; then
     cp /home/claude/.claude/CLAUDE.local.md .claude/
 fi
 
+# Configure MCP servers for Claude
+echo "Configuring MCP servers..."
+claude mcp add --scope local context7 "deno run -A npm:@upstash/context7-mcp" || true
+claude mcp add --scope local scraper "/workspace-bin/scrape_mcp" || true
+claude mcp add --scope local serena "sh -c 'uvx --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace'" || true
+claude mcp add --scope local playwright "npx @playwright/mcp@latest --allowed-origins localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org --headless --isolated --browser chromium" || true
+
 echo "Workspace setup complete!"
 
 # Execute the command passed to the container
