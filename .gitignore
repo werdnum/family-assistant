@@ -13,3 +13,6 @@ coverage_annotated/
 logs.log
 .serena/
 local-logs.txt
+
+# Kubernetes secrets (contains sensitive tokens)
+.devcontainer/k8s/secrets.yaml
