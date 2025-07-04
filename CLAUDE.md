@@ -42,3 +42,12 @@ If ruff check fails, it will show suggested fixes including unsafe ones with
   have enough time to complete
 - `poe test` - Runs linting and tests with smart parallel execution (tests start after type checking
   begins)
+
+## DevContainer
+
+- To build and push the development container, use: `.devcontainer/build-and-push.sh [tag]`
+- If no tag is provided, it defaults to timestamp format: `YYYYMMDD_HHMMSS`
+- Example: `.devcontainer/build-and-push.sh` (uses timestamp tag)
+- Example: `.devcontainer/build-and-push.sh v1.2.3` (uses custom tag)
+- This script builds the container with podman and pushes to the registry, then updates the
+  Kubernetes deployment
