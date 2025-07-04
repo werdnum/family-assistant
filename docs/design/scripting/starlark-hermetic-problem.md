@@ -199,7 +199,8 @@ The system would then:
 
 ## The Uncomfortable Truth
 
-Using Starlark for scripting with side effects is **philosophically wrong**according to its design principles. We have three choices:
+Using Starlark for scripting with side effects is **philosophically wrong**according to its design
+principles. We have three choices:
 
 1. **Respect the design**: Use Starlark properly with two-phase execution
 2. **Violate the design**: Add side-effecting functions and lose guarantees

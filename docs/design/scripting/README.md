@@ -2,7 +2,9 @@
 
 ## Executive Summary
 
-After extensive analysis and design iteration, **we recommend implementing Starlark as the single scripting language**for Family Assistant. This provides a secure, performant, and LLM-friendly scripting environment for event automation, custom tools, and workflow orchestration.
+After extensive analysis and design iteration, **we recommend implementing Starlark as the single
+scripting language**for Family Assistant. This provides a secure, performant, and LLM-friendly
+scripting environment for event automation, custom tools, and workflow orchestration.
 
 ### Key Decision
 
@@ -258,18 +260,27 @@ scripting:
 
 ### Design Evolution
 
-1. **[Initial Proposal](./scripting-language-proposal.md)**- Original CEL + Starlark recommendation
-2. **[Integration Analysis](./scripting-integration-analysis.md)**- Where to integrate scripting in the codebase
-3. **[Starlark Python Bindings](./starlark-python-bindings-comparison.md)**- Comparison of starlark-pyo3 vs python-starlark-go
-4. **[Integration Example](./starlark-integration-example.md)**- Detailed implementation example with starlark-pyo3
-5. **[Practical Examples](./scripting-practical-examples.md)**- Real-world use cases and code examples
-6. **[Starlark-Only Analysis](./starlark-only-analysis.md)**- Why one language is better than two
-7. **[Revised Proposal](./scripting-language-proposal-v2.md)**- Starlark-only recommendation
-8. **[Comparison Analysis](./scripting-comparison.md)**- Detailed comparison of single vs dual language
-9. **[Hermetic Problem](./starlark-hermetic-problem.md)**- Initial concern about Starlark's hermetic design
-10. **[Hermetic Concerns](./scripting-language-reconsidered.md)**- Reconsidering due to Starlark's hermetic design
-11. **[Hermetic Analysis](./hermetic-practical-analysis.md)**- Why hermeticity isn't a practical problem
-12. **[Final Recommendation](./final-scripting-recommendation.md)**- Addressing hermiticity with pragmatic approach
+01. **[Initial Proposal](./scripting-language-proposal.md)**- Original CEL + Starlark recommendation
+02. **[Integration Analysis](./scripting-integration-analysis.md)**- Where to integrate scripting in
+    the codebase
+03. **[Starlark Python Bindings](./starlark-python-bindings-comparison.md)**- Comparison of
+    starlark-pyo3 vs python-starlark-go
+04. **[Integration Example](./starlark-integration-example.md)**- Detailed implementation example
+    with starlark-pyo3
+05. **[Practical Examples](./scripting-practical-examples.md)**- Real-world use cases and code
+    examples
+06. **[Starlark-Only Analysis](./starlark-only-analysis.md)**- Why one language is better than two
+07. **[Revised Proposal](./scripting-language-proposal-v2.md)**- Starlark-only recommendation
+08. **[Comparison Analysis](./scripting-comparison.md)**- Detailed comparison of single vs dual
+    language
+09. **[Hermetic Problem](./starlark-hermetic-problem.md)**- Initial concern about Starlark's
+    hermetic design
+10. **[Hermetic Concerns](./scripting-language-reconsidered.md)**- Reconsidering due to Starlark's
+    hermetic design
+11. **[Hermetic Analysis](./hermetic-practical-analysis.md)**- Why hermeticity isn't a practical
+    problem
+12. **[Final Recommendation](./final-scripting-recommendation.md)**- Addressing hermiticity with
+    pragmatic approach
 13. **[Summary](./scripting-recommendation-summary.md)**- Concise recommendation summary
 
 ### Key Evolution Points
@@ -337,6 +348,12 @@ handle_motion()
 
 ## Conclusion
 
-Starlark provides the ideal balance of security, simplicity, and power for Family Assistant's scripting needs. The single-language approach with pragmatic handling of side effects offers a cleaner, more maintainable solution than alternatives. This design enables users to create sophisticated automations while maintaining system security and predictability.
+Starlark provides the ideal balance of security, simplicity, and power for Family Assistant's
+scripting needs. The single-language approach with pragmatic handling of side effects offers a
+cleaner, more maintainable solution than alternatives. This design enables users to create
+sophisticated automations while maintaining system security and predictability.
 
-The journey through multiple design iterations has led to a solution that is both theoretically sound and practically effective. By embracing Starlark's security model while pragmatically exposing controlled side effects, we achieve the best of both worlds: a secure sandbox with the ability to perform useful automation tasks.
+The journey through multiple design iterations has led to a solution that is both theoretically
+sound and practically effective. By embracing Starlark's security model while pragmatically exposing
+controlled side effects, we achieve the best of both worlds: a secure sandbox with the ability to
+perform useful automation tasks.

@@ -2,7 +2,8 @@
 
 ## Overview
 
-Add persistent error logging to a database table in addition to stderr output. This provides searchable error history that survives container restarts.
+Add persistent error logging to a database table in addition to stderr output. This provides
+searchable error history that survives container restarts.
 
 ## Implementation Plan
 

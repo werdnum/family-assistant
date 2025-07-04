@@ -2,23 +2,29 @@
 
 ## Executive Summary
 
-This proposal outlines the integration of Starlark as the single scripting language for Family Assistant. After careful analysis, we recommend using **Starlark for all scripting needs**- from simple event conditions to complex automations. This approach reduces complexity while providing a secure, performant, and LLM-friendly scripting environment.
+This proposal outlines the integration of Starlark as the single scripting language for Family
+Assistant. After careful analysis, we recommend using **Starlark for all scripting needs**- from
+simple event conditions to complex automations. This approach reduces complexity while providing a
+secure, performant, and LLM-friendly scripting environment.
 
 ## Why Scripting?
 
 ### Primary Use Cases
 
 1. **Event Automation**
+
    - Simple conditions: `event.temperature > 30 and time.hour >= 6`
    - Complex workflows with branching logic and tool orchestration
    - Rate limiting and state management
 
 2. **Security Enhancement**
+
    - Pre-planned action sequences before processing untrusted input
    - Deterministic execution with predictable outcomes
    - Comprehensive audit trails
 
 3. **Cost Reduction**
+
    - Eliminate LLM calls for mechanical tasks
    - Cache computed results
    - Reduce token usage for repetitive operations
@@ -28,21 +34,25 @@ This proposal outlines the integration of Starlark as the single scripting langu
 ### Single Language Benefits
 
 1. **Simplicity**
+
    - One parser, one evaluator, one set of APIs
    - Half the integration code to maintain
    - Single mental model for all automation
 
 2. **Natural Progression**
+
    - Simple expressions work just like complex scripts
    - No rewriting when requirements grow
    - Consistent syntax throughout
 
 3. **LLM-Optimized**
+
    - LLMs write Starlark as easily as any expression language
    - No language selection decision needed
    - Simpler prompts and consistent examples
 
 4. **Industry-Proven**
+
    - Bazel uses Starlark for all configuration complexity levels
    - Follows successful automation system patterns
    - Well-tested in production environments
@@ -407,4 +417,8 @@ All script executions are logged with:
 
 ## Conclusion
 
-Using Starlark as the single scripting language for Family Assistant provides a simpler, more maintainable, and equally powerful solution compared to a dual-language approach. The Rust-based starlark-pyo3 implementation offers excellent security and performance characteristics while maintaining the simplicity needed for LLM-generated scripts. This unified approach follows industry best practices and provides a solid foundation for extensible automation.
+Using Starlark as the single scripting language for Family Assistant provides a simpler, more
+maintainable, and equally powerful solution compared to a dual-language approach. The Rust-based
+starlark-pyo3 implementation offers excellent security and performance characteristics while
+maintaining the simplicity needed for LLM-generated scripts. This unified approach follows industry
+best practices and provides a solid foundation for extensible automation.

@@ -107,9 +107,9 @@ You can ask the assistant a wide variety of things:
 
 - **Ingest Documents (Files and URLs):**
 
-  - \*\*From URLs:\*\*Ask the assistant to "Save this page for later: \[Full URL\]" or "Index this
-    article: \[Full URL\] with title 'My Article Title'". If you don't provide a title, the
-    assistant will try to extract one automatically.
+  - \*\*From URLs:\*\*Ask the assistant to "Save this page for later: [Full URL]" or "Index this
+    article: [Full URL] with title 'My Article Title'". If you don't provide a title, the assistant
+    will try to extract one automatically.
   - \*\*From Files:\*\*You can upload files (like PDFs, text files, etc.) directly through the Web
     Interface on the "Upload Document" page. The assistant will then process and index these files
     so you can search their content later.
@@ -172,7 +172,7 @@ You can ask the assistant a wide variety of things:
   listeners: \*Much faster execution (no LLM processing delay) \*No API costs \*Predictable,
   repeatable behavior \*Perfect for logging, simple notifications, and data collection \*Managing
   script listeners: \*"Show me the script for my temperature alert" \*"Test this script with a
-  sample temperature event: \[provide script code\]" \*"Convert my garage door listener to use a
+  sample temperature event: [provide script code]" \*"Convert my garage door listener to use a
   script instead"
 
 ## 4. How the Assistant Stays Informed
@@ -312,7 +312,7 @@ interface has been reorganized for better navigation with grouped sections.
   appropriate tools.
 
 - \*\*Event Listeners:\*\*If an event listener isn't triggering as expected: \*Use "Show me recent
-  events from \[source\]" to see what events are being captured \*Use the test tool to check if your
+  events from [source]" to see what events are being captured \*Use the test tool to check if your
   conditions would match recent events \*Make sure you're using the exact field names from the event
   data (use dot notation for nested fields like "new_state.state")
 

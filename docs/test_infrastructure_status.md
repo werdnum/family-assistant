@@ -2,8 +2,7 @@
 
 **Date**: 2025-06-22\
 **Updated**: 2025-06-27\
-**Status**: ✅ MIGRATION COMPLETE - All tests run
-against all databases by default
+**Status**: ✅ MIGRATION COMPLETE - All tests run against all databases by default
 
 ## Executive Summary
 

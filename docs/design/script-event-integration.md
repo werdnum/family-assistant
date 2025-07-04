@@ -2,11 +2,14 @@
 
 ## Overview
 
-This document outlines the design for integrating the Starlark scripting engine with the event listener system, enabling users to write scripts that execute automatically in response to events from Home Assistant, document indexing, and other sources.
+This document outlines the design for integrating the Starlark scripting engine with the event
+listener system, enabling users to write scripts that execute automatically in response to events
+from Home Assistant, document indexing, and other sources.
 
 ## Motivation
 
-While the current `wake_llm` action is powerful for complex, context-aware responses, many automation use cases are deterministic and don't require LLM intelligence:
+While the current `wake_llm` action is powerful for complex, context-aware responses, many
+automation use cases are deterministic and don't require LLM intelligence:
 
 - Logging sensor data to notes
 - Sending notifications based on thresholds
@@ -333,12 +336,14 @@ if air_quality < 50:
 
 - `wake_llm(context: dict, include_event: bool = True)` - Request to wake LLM with context
 - Multiple calls within a script accumulate - LLM is woken at most once per script execution
-- The `context` dict is passed to the LLM along with the original event data (if `include_event=True`)
+- The `context` dict is passed to the LLM along with the original event data (if
+  `include_event=True`)
 - This enables hybrid automation: deterministic logic in scripts, complex decisions delegated to LLM
 
 ### 8. Script Limitations and Workarounds
 
-**starlark-pyo3 Restriction**: Loops and certain constructs must be inside functions. This is actually beneficial for event handlers as it encourages modular code:
+**starlark-pyo3 Restriction**: Loops and certain constructs must be inside functions. This is
+actually beneficial for event handlers as it encourages modular code:
 
 ```starlark
 # This will fail:
@@ -355,7 +360,8 @@ def process_all():
 process_all()
 ```
 
-For simple scripts, we could auto-wrap in a function, but the explicit requirement helps prevent accidentally complex top-level code.
+For simple scripts, we could auto-wrap in a function, but the explicit requirement helps prevent
+accidentally complex top-level code.
 
 ### 9. Security Considerations
 
@@ -402,6 +408,7 @@ Script execution tasks use the standard task queue retry mechanism:
    ```
 
 3. **Task History Debugging**: All script executions appear in task history with:
+
    - Full script code
    - Event that triggered it
    - Tool calls made
@@ -410,7 +417,8 @@ Script execution tasks use the standard task queue retry mechanism:
 
 ## Storage Considerations
 
-Scripts are stored directly in the `action_config` JSON field. There's more than enough space for any reasonable automation script.
+Scripts are stored directly in the `action_config` JSON field. There's more than enough space for
+any reasonable automation script.
 
 ## Implementation Plan
 
@@ -454,6 +462,7 @@ Assistant: "I can convert that to a script for faster execution and no API usage
 ## Future Enhancements
 
 1. **Dry Run Capability**: Test scripts with mock tool responses
+
    - starlark-pyo3 exception handling behavior:
      - All Python exceptions are wrapped in StarlarkError
      - Original exception type and message preserved as: `error: <ExceptionType>: <message>`
@@ -533,27 +542,32 @@ elif temp <= 25 and prev_temp > 25:
 ### ✅ Phase 1: Core Infrastructure (Complete)
 
 1. **Database Schema** ✓
+
    - Added `SCRIPT` to `EventActionType` enum
    - Created Alembic migration (`add_script_enum`)
    - Updated event listeners table to support script action type
 
 2. **Event Handler Profile** ✓
+
    - Created `event_handler` processing profile in config
    - Configured with restricted tool access for safety
    - Using fast Haiku model for script execution
 
 3. **Script Execution Task** ✓
+
    - Implemented `handle_script_execution` in task_worker.py
    - Full StarlarkEngine integration with tool access
    - Proper error handling and retry mechanism
    - Comprehensive logging for debugging
 
 4. **Event Processor Integration** ✓
+
    - Updated EventProcessor to handle script actions
    - Scripts execute via task queue (non-blocking)
    - Proper task ID generation and payload structure
 
 5. **Testing Infrastructure** ✓
+
    - Created comprehensive functional tests in `test_script_execution_handler.py`
    - Tests cover: successful execution, syntax errors, multiple tool calls
    - Fixed test helper `wait_for_tasks_to_complete` to filter by task type
@@ -562,12 +576,14 @@ elif temp <= 25 and prev_temp > 25:
 ### ✅ Phase 2: Tool Integration (Complete)
 
 1. **Tool Updates** ✓
+
    - Extended `create_event_listener` tool to support script actions
    - Added `validate_event_listener_script` tool for syntax checking
    - Added `test_event_listener_script` tool for dry runs
    - All tools fully tested with comprehensive integration tests
 
 2. **Web UI** (In Progress)
+
    - ✅ Show script code and execution history on listener detail page
    - ✅ Link to task details from listener page
    - ✅ Show triggered listeners on event detail page
@@ -578,11 +594,13 @@ elif temp <= 25 and prev_temp > 25:
 ### 📋 Phase 3: Production Hardening (Future)
 
 1. **Monitoring** (TODO)
+
    - Performance metrics for script execution
    - Alert thresholds for failed scripts
    - Script execution analytics
 
 2. **Documentation** (TODO)
+
    - User guide for writing event scripts
    - Common patterns and examples
    - Troubleshooting guide
@@ -590,18 +608,21 @@ elif temp <= 25 and prev_temp > 25:
 ### Key Implementation Details
 
 1. **Script Context**: Scripts receive:
+
    - `event`: Full event data dictionary
    - `conversation_id`: Associated conversation
    - `listener_id`: ID of triggering listener
    - Access to all time/date APIs and allowed tools
 
 2. **Security Model**:
+
    - Scripts use event_handler profile tools only
    - No destructive operations by default
    - 10-minute timeout for long-running operations
    - Full audit trail in task history
 
 3. **Error Handling**:
+
    - Syntax errors prevent script creation
    - Runtime errors trigger task retry with backoff
    - Clear error messages with line numbers
@@ -609,6 +630,10 @@ elif temp <= 25 and prev_temp > 25:
 
 ## Conclusion
 
-This integration provides a powerful automation capability while maintaining the simplicity and security of the existing system. By leveraging the task queue and existing permission model, we can add scripting without major architectural changes. The design prioritizes user safety and system reliability while enabling sophisticated automation workflows.
+This integration provides a powerful automation capability while maintaining the simplicity and
+security of the existing system. By leveraging the task queue and existing permission model, we can
+add scripting without major architectural changes. The design prioritizes user safety and system
+reliability while enabling sophisticated automation workflows.
 
-Phase 1 is now complete with full test coverage. The core infrastructure is ready for tool integration and UI enhancements in Phase 2.
+Phase 1 is now complete with full test coverage. The core infrastructure is ready for tool
+integration and UI enhancements in Phase 2.

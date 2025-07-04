@@ -2,7 +2,8 @@
 
 ## The Flawed Premise
 
-The original proposal suggested CEL for "simple expressions" and Starlark for "complex scripts." But this distinction is artificial when the primary author is an LLM.
+The original proposal suggested CEL for "simple expressions" and Starlark for "complex scripts." But
+this distinction is artificial when the primary author is an LLM.
 
 ## Problems with Two Languages
 
@@ -45,7 +46,8 @@ event.temperature > 30 and time.hour >= 6 and time.hour <= 22
 
 ```
 
-They're virtually identical! Starlark doesn't require functions or complex logic for simple conditions.
+They're virtually identical! Starlark doesn't require functions or complex logic for simple
+conditions.
 
 ### 4. LLMs Don't Need Language Simplicity
 
@@ -64,7 +66,8 @@ Looking at successful automation systems:
 - **Ansible**: Jinja2 for both simple variables and complex templating
 - **Home Assistant**: Jinja2 templates scale from simple to complex
 
-I can't find examples of successful systems using two different languages for "simple" vs "complex" automation.
+I can't find examples of successful systems using two different languages for "simple" vs "complex"
+automation.
 
 ## Benefits of Starlark-Only
 
@@ -214,7 +217,8 @@ Both CEL and Starlark:
 - Are deterministic
 - Prevent infinite loops (with execution timeouts)
 
-The "non-Turing complete" advantage of CEL is theoretical - in practice, Starlark with timeouts is equally safe.
+The "non-Turing complete" advantage of CEL is theoretical - in practice, Starlark with timeouts is
+equally safe.
 
 ## Migration Path is Cleaner
 
@@ -235,4 +239,6 @@ Using Starlark for everything is:
 - **Better for LLMs**: Consistent syntax, no language selection decision
 - **Industry-proven**: Follows patterns of successful automation systems
 
-The marginal benefits of CEL (slightly faster, non-Turing complete) don't justify the complexity of maintaining two language integrations. For an LLM-first system, a single expressive language is the better choice.
+The marginal benefits of CEL (slightly faster, non-Turing complete) don't justify the complexity of
+maintaining two language integrations. For an LLM-first system, a single expressive language is the
+better choice.

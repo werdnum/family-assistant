@@ -182,8 +182,15 @@ help = "Format code (ruff format + mdformat)"
 shell = """
 ${VIRTUAL_ENV:-.venv}/bin/ruff format --preview src tests && \
 if command -v ${VIRTUAL_ENV:-.venv}/bin/mdformat >/dev/null 2>&1; then \
-    find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "./node_modules/*" 2>/dev/null | \
-    head -20 | xargs ${VIRTUAL_ENV:-.venv}/bin/mdformat --wrap 100 2>/dev/null || true; \
+    find . -name "*.md" \
+        -not -path "./.venv/*" \
+        -not -path "./venv/*" \
+        -not -path "./.git/*" \
+        -not -path "./node_modules/*" \
+        -not -path "./docs/python-telegram-bot-abridged.md" \
+        -not -path "./docs/python-telegram-bot-abridged-filtered.md" \
+        2>/dev/null | \
+    xargs ${VIRTUAL_ENV:-.venv}/bin/mdformat --wrap 100 2>/dev/null || true; \
 fi
 """
 

@@ -58,7 +58,7 @@ Add to the existing tasks table:
 
    - Check if user has sent any messages since last reminder
    - Analyze if user's response acknowledges the reminder
-   - If not acknowledged and attempts \< max_follow_ups, send follow-up
+   - If not acknowledged and attempts < max_follow_ups, send follow-up
    - If acknowledged, mark complete and cancel future follow-ups
 
 3. **Acknowledgment Detection**:
@@ -114,7 +114,7 @@ The task handler would:
 1. Wake LLM with appropriate context
 2. For reminders with follow-up enabled:
    - Check if user responded since last trigger
-   - If not, and attempts \< max, schedule next follow-up
+   - If not, and attempts < max, schedule next follow-up
    - Pass attempt count to LLM for context
 
 #### LLM Context for Wake-ups
