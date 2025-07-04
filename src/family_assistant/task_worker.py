@@ -101,6 +101,7 @@ async def _schedule_reminder_follow_up(
 
 # --- Constants ---
 TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
+TASK_HANDLER_TIMEOUT = 300  # Seconds to wait for task handler execution (5 minutes)
 
 # --- Events for coordination (can remain module-level) ---
 shutdown_event = asyncio.Event()
@@ -418,7 +419,13 @@ class TaskWorker:
             str, Callable[[ToolExecutionContext, Any], Awaitable[None]]
         ] = {}
         self.worker_id = f"worker-{uuid.uuid4()}"
+        self.last_activity: datetime | None = None  # Track last activity time
+        self._update_last_activity()  # Set initial activity
         logger.info(f"TaskWorker instance {self.worker_id} created.")
+
+    def _update_last_activity(self) -> None:
+        """Updates the last activity timestamp."""
+        self.last_activity = self.clock.now()
 
     def register_task_handler(
         self,
@@ -522,8 +529,17 @@ class TaskWorker:
             logger.debug(
                 f"Worker {self.worker_id} executing handler for task {task['task_id']} with context."
             )
-            # Pass the context and the original payload
-            await handler(exec_context, task["payload"])
+            # Pass the context and the original payload with timeout
+            try:
+                await asyncio.wait_for(
+                    handler(exec_context, task["payload"]), timeout=TASK_HANDLER_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Task {task['task_id']} (type: {task['task_type']}) timed out after {TASK_HANDLER_TIMEOUT} seconds"
+                )
+                # Re-raise to trigger retry logic in _handle_task_failure
+                raise
 
             # Task details for logging and recurrence
             task_id = task["task_id"]
@@ -751,9 +767,11 @@ class TaskWorker:
                         if task:
                             logger.debug("Dequeued task: %s", task["task_id"])
                             await self._process_task(db_context, task, wake_up_event)
+                            self._update_last_activity()  # Update after successful task processing
                         else:
                             logger.debug("No tasks found, waiting for next poll")
                             await self._wait_for_next_poll(wake_up_event)
+                            self._update_last_activity()  # Update after polling cycle
 
                     # --- Exception handling for the inner try block (catches dequeue or helper errors) ---
                     except Exception as e:

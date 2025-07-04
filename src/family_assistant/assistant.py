@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import copy
 import logging
 import os
@@ -155,6 +156,7 @@ class Assistant:
         self.notes_indexer: NotesIndexer | None = None
         self.telegram_service: TelegramService | None = None
         self.task_worker_instance: TaskWorker | None = None
+        self.task_worker_task: asyncio.Task | None = None  # Track the worker task
         self.uvicorn_server_task: asyncio.Task | None = None
         self._is_shutdown_complete = False
 
@@ -858,7 +860,10 @@ class Assistant:
         logger.info(
             f"Registered task handlers for worker {self.task_worker_instance.worker_id}"
         )
-        asyncio.create_task(self.task_worker_instance.run())
+        self.task_worker_task = asyncio.create_task(self.task_worker_instance.run())
+
+        # Start health monitoring for the task worker
+        asyncio.create_task(self._monitor_task_worker_health())
 
         # Start event processor if initialized
         if self.event_processor:
@@ -975,6 +980,70 @@ class Assistant:
                 logger.error(f"Failed to setup system tasks: {e}")
         except Exception as e:
             logger.error(f"Failed to setup system tasks: {e}")
+
+    async def _monitor_task_worker_health(self) -> None:
+        """Monitors the health of the task worker and restarts it if necessary."""
+        HEALTH_CHECK_INTERVAL = 30  # Check every 30 seconds
+        WORKER_INACTIVITY_TIMEOUT = (
+            120  # Consider worker dead after 2 minutes of inactivity
+        )
+
+        while not self.shutdown_event.is_set():
+            try:
+                await asyncio.sleep(HEALTH_CHECK_INTERVAL)
+
+                if not self.task_worker_instance or not self.task_worker_task:
+                    continue
+
+                # Check if the task is still running
+                if self.task_worker_task.done():
+                    # Task has completed or failed
+                    try:
+                        # This will raise any exception that occurred in the task
+                        self.task_worker_task.result()
+                        logger.warning("Task worker exited normally, restarting...")
+                    except Exception as e:
+                        logger.error(
+                            f"Task worker crashed with error: {e}", exc_info=True
+                        )
+
+                    # Restart the worker
+                    logger.info("Restarting task worker...")
+                    self.task_worker_task = asyncio.create_task(
+                        self.task_worker_instance.run()
+                    )
+                    continue
+
+                # Check last activity time
+                if self.task_worker_instance.last_activity:
+                    time_since_activity = (
+                        datetime.now(timezone.utc)
+                        - self.task_worker_instance.last_activity
+                    ).total_seconds()
+
+                    if time_since_activity > WORKER_INACTIVITY_TIMEOUT:
+                        logger.error(
+                            f"Task worker appears stuck (no activity for {time_since_activity:.0f}s), "
+                            "cancelling and restarting..."
+                        )
+                        self.task_worker_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await self.task_worker_task
+
+                        # Restart the worker
+                        self.task_worker_task = asyncio.create_task(
+                            self.task_worker_instance.run()
+                        )
+                        logger.info("Task worker restarted after inactivity timeout")
+
+            except asyncio.CancelledError:
+                # Shutdown requested
+                break
+            except Exception as e:
+                logger.error(f"Error in task worker health monitor: {e}", exc_info=True)
+                await asyncio.sleep(HEALTH_CHECK_INTERVAL)
+
+        logger.info("Task worker health monitor stopped")
 
     async def stop_services(self) -> None:
         """Gracefully stops all managed services."""

@@ -30,11 +30,11 @@ async def wait_for_tasks_to_complete(
     poll_interval_seconds: float = 0.5,
     task_ids: set[str] | None = None,
     task_types: set[str] | None = None,
+    allow_failures: bool = False,
 ) -> None:
     """
     Waits until all specified tasks (or all tasks if none specified)
     in the database reach a terminal state ('done' or 'failed').
-    Fails immediately if any tasks enter the 'failed' state or have encountered an error (indicated by `last_error`).
 
     Args:
         engine: The SQLAlchemy AsyncEngine to use for database connections.
@@ -45,11 +45,15 @@ async def wait_for_tasks_to_complete(
                   in a terminal state to complete.
         task_types: An optional set of task types to wait for. If specified,
                     only tasks with these types will be considered.
+        allow_failures: If True, allows tasks to fail without raising RuntimeError.
+                       If False (default), fails immediately if any tasks enter the
+                       'failed' state or have encountered an error.
 
     Raises:
         asyncio.TimeoutError: If the timeout is reached before all relevant
                               tasks reach a terminal state.
-        RuntimeError: If any task enters the 'failed' state or has a recorded error.
+        RuntimeError: If any task enters the 'failed' state or has a recorded error
+                     (only when allow_failures=False).
         Exception: If a database error occurs during polling.
     """
     start_time = datetime.now(timezone.utc)
@@ -92,7 +96,7 @@ async def wait_for_tasks_to_complete(
                 failed_result = await db.execute_with_retry(failed_query)
                 failed_count = failed_result.scalar_one_or_none()
 
-                if failed_count and failed_count > 0:
+                if failed_count and failed_count > 0 and not allow_failures:
                     # Get details of failed tasks including their last error
                     failed_task_details_query = select(
                         tasks_table.c.task_id,

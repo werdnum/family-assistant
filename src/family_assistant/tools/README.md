@@ -1,6 +1,7 @@
 # Family Assistant Tools
 
-This module contains all the tools that can be used by the LLM to perform various actions. Tools are organized into thematic submodules for better maintainability.
+This module contains all the tools that can be used by the LLM to perform various actions. Tools are
+organized into thematic submodules for better maintainability.
 
 ## Architecture
 
@@ -121,7 +122,8 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
 
 ### 3. Enable the Tool in Configuration
 
-**IMPORTANT**: Tools must be enabled in `config.yaml` for each profile that should have access to them.
+**IMPORTANT**: Tools must be enabled in `config.yaml` for each profile that should have access to
+them.
 
 Add the tool name to `config.yaml` under the appropriate profile's `enable_local_tools` list:
 
@@ -149,7 +151,9 @@ service_profiles:
 
 ```
 
-**Note**: If `enable_local_tools` is not specified for a profile, ALL tools defined in the code are enabled by default. This dual registration system provides security and flexibility - different profiles can have different tool access.
+**Note**: If `enable_local_tools` is not specified for a profile, ALL tools defined in the code are
+enabled by default. This dual registration system provides security and flexibility - different
+profiles can have different tool access.
 
 ## Tool Execution Context
 
@@ -174,10 +178,13 @@ Tools receive a `ToolExecutionContext` object with the following attributes:
 
 Some parameters are automatically injected by the `LocalToolsProvider`:
 
-- If your tool has a parameter named `exec_context` with type `ToolExecutionContext`, it will be injected
+- If your tool has a parameter named `exec_context` with type `ToolExecutionContext`, it will be
+  injected
 - If your tool has a parameter named `db_context` with type `DatabaseContext`, it will be injected
-- If your tool has a parameter named `embedding_generator` with type `EmbeddingGenerator`, it will be injected
-- If your tool has a parameter named `calendar_config` with type `dict[str, Any]`, it will be injected
+- If your tool has a parameter named `embedding_generator` with type `EmbeddingGenerator`, it will
+  be injected
+- If your tool has a parameter named `calendar_config` with type `dict[str, Any]`, it will be
+  injected
 
 ## Tool Categories
 
@@ -211,4 +218,5 @@ Some parameters are automatically injected by the `LocalToolsProvider`:
 
 ## Testing Tools
 
-Tools can be tested through the web UI at `/tools` or programmatically in tests. See the functional tests in `tests/functional/` for examples.
+Tools can be tested through the web UI at `/tools` or programmatically in tests. See the functional
+tests in `tests/functional/` for examples.

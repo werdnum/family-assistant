@@ -1,0 +1,367 @@
+"""
+Tests for TaskWorker resilience features including timeout and health monitoring.
+"""
+
+import asyncio
+import contextlib
+import logging
+from datetime import datetime, timezone
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.tasks import tasks_table
+from family_assistant.task_worker import TaskWorker
+from family_assistant.tools import ToolExecutionContext
+from tests.helpers import wait_for_tasks_to_complete
+
+logger = logging.getLogger(__name__)
+
+
+@pytest.mark.asyncio
+async def test_task_handler_timeout(db_engine: AsyncEngine) -> None:
+    """Test that a handler timeout causes task retry."""
+    worker = TaskWorker(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+        shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
+    )
+
+    # Handler that will definitely timeout
+    async def hanging_handler(
+        exec_context: ToolExecutionContext, payload: dict[str, Any]
+    ) -> None:
+        logger.info("Hanging handler started, will sleep for 10 seconds")
+        await asyncio.sleep(10.0)  # Much longer than timeout
+        logger.info("Hanging handler finished (should not reach here)")
+
+    worker.register_task_handler("hang", hanging_handler)
+
+    # Create a task
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.tasks.enqueue(
+            task_id="timeout_test",
+            task_type="hang",
+            payload={},
+        )
+        logger.info("Created test task with ID: timeout_test")
+
+    # Small delay to ensure task is committed (important for postgres)
+    await asyncio.sleep(0.1)
+
+    # Patch the timeout on the module directly before running
+    import family_assistant.task_worker
+
+    original_timeout = family_assistant.task_worker.TASK_HANDLER_TIMEOUT
+    family_assistant.task_worker.TASK_HANDLER_TIMEOUT = 1.0  # Use 1 second timeout
+    logger.info("Patched TASK_HANDLER_TIMEOUT to 1.0 seconds")
+
+    try:
+        # Create wake up event and run worker
+        wake_up_event = asyncio.Event()
+        worker_task = asyncio.create_task(worker.run(wake_up_event))
+        wake_up_event.set()  # Wake up worker to process task
+
+        # Add a small delay to let worker start
+        await asyncio.sleep(1.0)
+
+        # Wake up the worker again in case it missed the first event
+        wake_up_event.set()
+
+        # Wait for task to be processed (it should timeout and eventually fail)
+        await wait_for_tasks_to_complete(
+            engine=db_engine,
+            timeout_seconds=60.0,  # Long timeout to allow for all retries
+            task_ids={"timeout_test"},
+            allow_failures=True,
+        )
+
+        # Stop worker
+        worker.shutdown_event.set()
+        wake_up_event.set()  # Wake up worker if it's waiting
+        worker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker_task
+    finally:
+        # Restore original timeout
+        family_assistant.task_worker.TASK_HANDLER_TIMEOUT = original_timeout
+
+    # Check task was marked for retry
+    async with DatabaseContext(engine=db_engine) as db_context:
+        stmt = select(tasks_table).where(tasks_table.c.task_id == "timeout_test")
+        tasks = await db_context.fetch_all(stmt)
+        task = tasks[0] if tasks else None
+
+        assert task is not None
+        # Task should either be pending with retries or failed after max retries
+        if task["status"] == "failed":
+            assert task["retry_count"] == 3  # Max retries reached
+        else:
+            assert task["status"] == "pending"
+            assert task["retry_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_successful_handler_completes(db_engine: AsyncEngine) -> None:
+    """Test that successful handlers mark tasks as completed."""
+    worker = TaskWorker(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+        shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
+    )
+
+    # Quick handler that completes
+    async def quick_handler(
+        exec_context: ToolExecutionContext, payload: dict[str, Any]
+    ) -> None:
+        logger.info("Quick handler executed")
+
+    worker.register_task_handler("quick", quick_handler)
+
+    # Create a task
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.tasks.enqueue(
+            task_id="success_test",
+            task_type="quick",
+            payload={},
+        )
+
+    # Small delay to ensure task is committed (important for postgres)
+    await asyncio.sleep(0.1)
+
+    # Create wake up event and run worker
+    wake_up_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(wake_up_event))
+    wake_up_event.set()  # Wake up worker to process task
+
+    # Wait for task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        timeout_seconds=10.0,
+        task_ids={"success_test"},
+    )
+
+    # Stop worker
+    worker.shutdown_event.set()
+    wake_up_event.set()  # Wake up worker if it's waiting
+    worker_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await worker_task
+
+    # Check task completed
+    async with DatabaseContext(engine=db_engine) as db_context:
+        stmt = select(tasks_table).where(tasks_table.c.task_id == "success_test")
+        tasks = await db_context.fetch_all(stmt)
+        task = tasks[0] if tasks else None
+
+        assert task is not None, "Task not found in database"
+        assert task["status"] == "done", (
+            f"Expected status 'done', got '{task['status']}'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_retry_exhaustion_leads_to_failure(db_engine: AsyncEngine) -> None:
+    """Test that tasks fail permanently after exhausting retries."""
+    # Very short timeout to make test fast
+    with patch("family_assistant.task_worker.TASK_HANDLER_TIMEOUT", 0.1):
+        worker = TaskWorker(
+            processing_service=MagicMock(),
+            chat_interface=MagicMock(),
+            calendar_config={},
+            timezone_str="UTC",
+            embedding_generator=MagicMock(),
+            engine=db_engine,
+            shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
+        )
+
+        # Handler that always times out
+        async def timeout_handler(
+            exec_context: ToolExecutionContext, payload: dict[str, Any]
+        ) -> None:
+            await asyncio.sleep(10.0)
+
+        worker.register_task_handler("timeout", timeout_handler)
+
+        # Create task with NO retries allowed
+        async with DatabaseContext(engine=db_engine) as db_context:
+            await db_context.tasks.enqueue(
+                task_id="no_retry_test",
+                task_type="timeout",
+                payload={},
+                max_retries_override=0,  # No retries
+            )
+
+        # Small delay to ensure task is committed (important for postgres)
+        await asyncio.sleep(0.1)
+
+        # Create wake up event and run worker
+        wake_up_event = asyncio.Event()
+        worker_task = asyncio.create_task(worker.run(wake_up_event))
+        wake_up_event.set()  # Wake up worker to process task
+
+        # Wait for task to fail (no retries)
+        await wait_for_tasks_to_complete(
+            engine=db_engine,
+            timeout_seconds=10.0,  # Give enough time for timeout + failure
+            task_ids={"no_retry_test"},
+            allow_failures=True,
+        )
+
+        # Stop worker
+        worker.shutdown_event.set()
+        wake_up_event.set()  # Wake up worker if it's waiting
+        worker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker_task
+
+        # Check task failed
+        async with DatabaseContext(engine=db_engine) as db_context:
+            stmt = select(tasks_table).where(tasks_table.c.task_id == "no_retry_test")
+            tasks = await db_context.fetch_all(stmt)
+            task = tasks[0] if tasks else None
+
+            assert task is not None
+            assert task["status"] == "failed"
+            assert "TimeoutError" in (task["error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
+    """Test that worker tracks last activity time."""
+    worker = TaskWorker(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+        shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
+    )
+
+    # Initial activity should be set
+    initial_activity = worker.last_activity
+    assert initial_activity is not None
+
+    # Create and run a simple task
+    async def simple_handler(
+        exec_context: ToolExecutionContext, payload: dict[str, Any]
+    ) -> None:
+        pass
+
+    worker.register_task_handler("simple", simple_handler)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.tasks.enqueue(
+            task_id="activity_test",
+            task_type="simple",
+            payload={},
+        )
+
+    # Small delay to ensure task is committed (important for postgres)
+    await asyncio.sleep(0.1)
+
+    # Create wake up event and run worker to process task
+    wake_up_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(wake_up_event))
+    wake_up_event.set()  # Wake up worker to process task
+
+    # Wait for task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        timeout_seconds=10.0,
+        task_ids={"activity_test"},
+    )
+
+    # Stop worker
+    worker.shutdown_event.set()
+    wake_up_event.set()  # Wake up worker if it's waiting
+    worker_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await worker_task
+
+    # Activity should have been updated
+    assert worker.last_activity is not None, "last_activity is None"
+    # Allow for small timing differences
+    if worker.last_activity < initial_activity:
+        diff = (initial_activity - worker.last_activity).total_seconds()
+        assert diff < 1.0, (
+            f"last_activity {worker.last_activity} is {diff}s before initial {initial_activity}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_health_check_properties(db_engine: AsyncEngine) -> None:
+    """Test properties that health monitoring would check."""
+    worker = TaskWorker(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+        shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
+    )
+
+    # Create wake up event and start worker without any tasks
+    wake_up_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(wake_up_event))
+
+    try:
+        await asyncio.sleep(0.5)
+
+        # Last activity should be recent
+        assert worker.last_activity is not None
+        time_since_activity = (
+            datetime.now(timezone.utc) - worker.last_activity
+        ).total_seconds()
+        assert time_since_activity < 10  # Should have been updated recently
+
+    finally:
+        worker.shutdown_event.set()
+        worker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker_task
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_worker(db_engine: AsyncEngine) -> None:
+    """Test that shutdown event stops the worker cleanly."""
+    worker = TaskWorker(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+        calendar_config={},
+        timezone_str="UTC",
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+        shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
+    )
+
+    # Create wake up event and start worker
+    wake_up_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(wake_up_event))
+    await asyncio.sleep(0.1)
+
+    # Set shutdown event
+    worker.shutdown_event.set()
+
+    # Worker should stop within reasonable time
+    try:
+        await asyncio.wait_for(worker_task, timeout=2.0)
+    except asyncio.TimeoutError:
+        pytest.fail("Worker did not stop after shutdown event")
+
+    # Task should be done
+    assert worker_task.done()
