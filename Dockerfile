@@ -62,8 +62,7 @@ RUN deno install --global -A --name playwright-mcp npm:@playwright/mcp@latest &&
 # Install Playwright Chromium browser and its dependencies using Deno
 # Using --with-deps is crucial for installing necessary OS libraries
 # Running this after installing @playwright/mcp
-RUN --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked \
-    deno run -A npm:playwright install --with-deps chromium
+RUN deno run -A npm:playwright install --with-deps chromium
 
 # --- Configure Environment ---
 # Set environment variables
@@ -73,6 +72,7 @@ RUN --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked \
 # - UV_CACHE_DIR: Explicit cache location for uv operations
 # - PATH: Ensure uv tool binaries and Deno bin directory are findable
 # - DOCS_USER_DIR: Path to user documentation directory
+# - PLAYWRIGHT_BROWSERS_PATH: System-wide location for Playwright browsers
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_TOOL_BIN_DIR=/uv/bin \
@@ -80,7 +80,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_CACHE_DIR=/uv-cache \
     UV_HTTP_TIMEOUT=300 \
     ALEMBIC_CONFIG=/app/alembic.ini \
-    DOCS_USER_DIR=/app/docs/user
+    DOCS_USER_DIR=/app/docs/user \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
 
 # Update PATH separately
 ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
