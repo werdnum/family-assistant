@@ -1,6 +1,7 @@
 # Scheduling and Task Management Guide
 
-This guide explains how to use the Family Assistant's scheduling features to set reminders, schedule tasks, and automate recurring actions.
+This guide explains how to use the Family Assistant's scheduling features to set reminders, schedule
+tasks, and automate recurring actions.
 
 ## Overview
 
@@ -173,7 +174,8 @@ Creates a recurring action (LLM callback or script) with more flexibility.
 "Delete all callbacks related to project X"
 ```
 
-For recurring tasks, each future instance appears as a separate task that can be cancelled individually.
+For recurring tasks, each future instance appears as a separate task that can be cancelled
+individually.
 
 ## RRULE Format Guide
 

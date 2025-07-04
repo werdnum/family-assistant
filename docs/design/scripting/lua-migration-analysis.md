@@ -2,13 +2,18 @@
 
 ## Executive Summary
 
-This document analyzes the feasibility and implications of migrating Family Assistant's scripting system from Starlark to Lua. While technically feasible with an estimated 2-3 week implementation effort, the migration presents mixed benefits. The current Starlark implementation provides strong security guarantees and adequate functionality, while Lua would offer more power and flexibility at the cost of increased complexity and security considerations.
+This document analyzes the feasibility and implications of migrating Family Assistant's scripting
+system from Starlark to Lua. While technically feasible with an estimated 2-3 week implementation
+effort, the migration presents mixed benefits. The current Starlark implementation provides strong
+security guarantees and adequate functionality, while Lua would offer more power and flexibility at
+the cost of increased complexity and security considerations.
 
 ## Current System Overview
 
 ### Starlark Implementation
 
-The current scripting system uses Starlark, a Python-like configuration language designed by Google for use in Bazel. Key characteristics:
+The current scripting system uses Starlark, a Python-like configuration language designed by Google
+for use in Bazel. Key characteristics:
 
 - **Language**: Starlark via `starlark-pyo3`
 - **Security**: Sandboxed by design with no file/network access
@@ -154,15 +159,15 @@ class LuaToolsBridge:
 
 **Conversion Requirements**:
 
-| Python Type | Lua Type | Notes |
-|------------|----------|-------|
-| dict | table | Key differences in iteration |
-| list | table (array) | 1-based indexing in Lua |
-| str | string | UTF-8 handling needed |
-| int/float | number | Single numeric type in Lua |
-| bool | boolean | Direct mapping |
-| None | nil | Direct mapping |
-| async function | coroutine | Wrapper needed |
+| Python Type    | Lua Type      | Notes                        |
+| -------------- | ------------- | ---------------------------- |
+| dict           | table         | Key differences in iteration |
+| list           | table (array) | 1-based indexing in Lua      |
+| str            | string        | UTF-8 handling needed        |
+| int/float      | number        | Single numeric type in Lua   |
+| bool           | boolean       | Direct mapping               |
+| None           | nil           | Direct mapping               |
+| async function | coroutine     | Wrapper needed               |
 
 **Special Handling**:
 
@@ -224,46 +229,48 @@ table.merge = function(t1, t2) ... end
 
 ### Security Comparison
 
-| Aspect | Starlark | Lua |
-|--------|----------|-----|
-| File System Access | ❌ Impossible | ⚠️ Must remove |
-| Network Access | ❌ Impossible | ⚠️ Must remove |
-| Module Loading | ❌ No imports | ⚠️ Must disable |
-| Memory Safety | ✅ Built-in | ✅ GC + limits |
-| Execution Limits | ✅ Bounded | ⚠️ Debug hooks |
-| Type Safety | ✅ Strong | ⚠️ Dynamic |
+| Aspect             | Starlark      | Lua             |
+| ------------------ | ------------- | --------------- |
+| File System Access | ❌ Impossible | ⚠️ Must remove  |
+| Network Access     | ❌ Impossible | ⚠️ Must remove  |
+| Module Loading     | ❌ No imports | ⚠️ Must disable |
+| Memory Safety      | ✅ Built-in   | ✅ GC + limits  |
+| Execution Limits   | ✅ Bounded    | ⚠️ Debug hooks  |
+| Type Safety        | ✅ Strong     | ⚠️ Dynamic      |
 
 ### Feature Comparison
 
-| Feature | Starlark | Lua |
-|---------|----------|-----|
-| Performance | ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Excellent (LuaJIT) |
-| Language Features | ⭐⭐⭐ Limited | ⭐⭐⭐⭐⭐ Full language |
-| Debugging | ⭐⭐⭐ Basic | ⭐⭐⭐⭐ Native debug hooks |
-| Ecosystem | ⭐⭐ Minimal | ⭐⭐⭐⭐ Rich |
-| Learning Curve | ⭐⭐⭐⭐ Python-like | ⭐⭐⭐ Different syntax |
-| Documentation | ⭐⭐⭐ Adequate | ⭐⭐⭐⭐⭐ Extensive |
+| Feature           | Starlark             | Lua                           |
+| ----------------- | -------------------- | ----------------------------- |
+| Performance       | ⭐⭐⭐ Good          | ⭐⭐⭐⭐⭐ Excellent (LuaJIT) |
+| Language Features | ⭐⭐⭐ Limited       | ⭐⭐⭐⭐⭐ Full language      |
+| Debugging         | ⭐⭐⭐ Basic         | ⭐⭐⭐⭐ Native debug hooks   |
+| Ecosystem         | ⭐⭐ Minimal         | ⭐⭐⭐⭐ Rich                 |
+| Learning Curve    | ⭐⭐⭐⭐ Python-like | ⭐⭐⭐ Different syntax       |
+| Documentation     | ⭐⭐⭐ Adequate      | ⭐⭐⭐⭐⭐ Extensive          |
 
 ### Implementation Complexity
 
-| Component | Starlark (Current) | Lua (Proposed) |
-|-----------|-------------------|----------------|
-| Core Engine | Simple | Moderate |
-| Security | Built-in | Manual implementation |
-| Tool Bridge | Thread-based | Similar approach |
-| Type Conversion | Automatic | Semi-automatic |
-| Error Handling | Straightforward | More complex |
+| Component       | Starlark (Current) | Lua (Proposed)        |
+| --------------- | ------------------ | --------------------- |
+| Core Engine     | Simple             | Moderate              |
+| Security        | Built-in           | Manual implementation |
+| Tool Bridge     | Thread-based       | Similar approach      |
+| Type Conversion | Automatic          | Semi-automatic        |
+| Error Handling  | Straightforward    | More complex          |
 
 ## Risk Assessment
 
 ### High Risks
 
 1. **Security Vulnerabilities**
+
    - **Risk**: Incomplete sandboxing could expose system
    - **Mitigation**: Comprehensive security audit and testing
    - **Impact**: Critical
 
 2. **Migration Complexity**
+
    - **Risk**: Existing scripts need rewriting
    - **Mitigation**: Automated conversion tools
    - **Impact**: High
@@ -271,11 +278,13 @@ table.merge = function(t1, t2) ... end
 ### Medium Risks
 
 1. **Performance Regression**
+
    - **Risk**: Despite LuaJIT, bridge overhead could impact performance
    - **Mitigation**: Benchmark and optimize critical paths
    - **Impact**: Medium
 
 2. **Type Conversion Issues**
+
    - **Risk**: Subtle bugs in Python ↔ Lua conversions
    - **Mitigation**: Extensive test coverage
    - **Impact**: Medium
@@ -283,11 +292,13 @@ table.merge = function(t1, t2) ... end
 ### Low Risks
 
 1. **User Adoption**
+
    - **Risk**: Users unfamiliar with Lua syntax
    - **Mitigation**: Good documentation and examples
    - **Impact**: Low
 
 2. **Maintenance Burden**
+
    - **Risk**: More complex codebase to maintain
    - **Mitigation**: Clear architecture and documentation
    - **Impact**: Low
@@ -338,16 +349,23 @@ table.merge = function(t1, t2) ... end
 
 If proceeding with migration:
 
-| Week | Phase | Deliverables |
-|------|-------|--------------|
-| 1 | Core Development | LuaEngine, basic sandbox, type conversions |
-| 2 | Integration | Tools bridge, stdlib additions, error handling |
-| 3 | Testing & Polish | Security audit, performance testing, migration tools |
+| Week | Phase            | Deliverables                                         |
+| ---- | ---------------- | ---------------------------------------------------- |
+| 1    | Core Development | LuaEngine, basic sandbox, type conversions           |
+| 2    | Integration      | Tools bridge, stdlib additions, error handling       |
+| 3    | Testing & Polish | Security audit, performance testing, migration tools |
 
 ## Conclusion
 
-While migrating to Lua is technically feasible and would provide certain advantages (performance, flexibility, ecosystem), the current Starlark implementation already provides a secure and functional scripting environment. The migration would require significant effort and introduce security complexity without addressing any critical limitations in the current system.
+While migrating to Lua is technically feasible and would provide certain advantages (performance,
+flexibility, ecosystem), the current Starlark implementation already provides a secure and
+functional scripting environment. The migration would require significant effort and introduce
+security complexity without addressing any critical limitations in the current system.
 
-**Recommendation**: Unless there are specific compelling reasons (performance requirements, user demand, feature limitations), maintaining the current Starlark implementation is the pragmatic choice. The security-by-design nature of Starlark and the elegant existing implementation outweigh the potential benefits of Lua for Family Assistant's use case.
+**Recommendation**: Unless there are specific compelling reasons (performance requirements, user
+demand, feature limitations), maintaining the current Starlark implementation is the pragmatic
+choice. The security-by-design nature of Starlark and the elegant existing implementation outweigh
+the potential benefits of Lua for Family Assistant's use case.
 
-If migration becomes necessary in the future, this analysis provides a comprehensive roadmap for implementation.
+If migration becomes necessary in the future, this analysis provides a comprehensive roadmap for
+implementation.

@@ -8,15 +8,21 @@
 
 ## Executive Summary
 
-This document outlines the refactoring of the task notification system in Family Assistant. The current design requires passing a `new_task_event` through multiple layers of the application, leading to missed notifications and performance issues. The new design encapsulates task notifications within the storage layer, providing automatic notifications for all enqueued tasks.
+This document outlines the refactoring of the task notification system in Family Assistant. The
+current design requires passing a `new_task_event` through multiple layers of the application,
+leading to missed notifications and performance issues. The new design encapsulates task
+notifications within the storage layer, providing automatic notifications for all enqueued tasks.
 
 ## Problem Statement
 
 ### Current Issues
 
-1. **Event Propagation Complexity**: The `new_task_event` is created in `Assistant.__init__` and must be passed through ~15 different components
-2. **Missing Notifications**: Many code paths enqueue tasks without passing the event, causing up to 5-second delays
-3. **Leaky Abstraction**: Task notification is an implementation detail that shouldn't be exposed throughout the codebase
+1. **Event Propagation Complexity**: The `new_task_event` is created in `Assistant.__init__` and
+   must be passed through ~15 different components
+2. **Missing Notifications**: Many code paths enqueue tasks without passing the event, causing up to
+   5-second delays
+3. **Leaky Abstraction**: Task notification is an implementation detail that shouldn't be exposed
+   throughout the codebase
 4. **Test Performance**: Tests wait up to 5 seconds for tasks due to missing notifications
 
 ### Affected Components
@@ -38,7 +44,8 @@ This document outlines the refactoring of the task notification system in Family
 
 ### Core Design
 
-Add a module-level event in `storage/tasks.py` that is automatically triggered when immediate tasks are enqueued:
+Add a module-level event in `storage/tasks.py` that is automatically triggered when immediate tasks
+are enqueued:
 
 ```python
 
@@ -271,8 +278,8 @@ worker = TaskWorker(
 ## Success Metrics
 
 1. **No Manual Notifications**: All `notify_event` parameters removed
-2. **Performance**: Task notification latency <100ms (was 0-5s)
-3. **Test Speed**: Indexing tests run in <3s (was 5-8s)
+2. **Performance**: Task notification latency \<100ms (was 0-5s)
+3. **Test Speed**: Indexing tests run in \<3s (was 5-8s)
 4. **Code Simplicity**: ~200 lines removed from propagation code
 
 ## Future Enhancements

@@ -1,40 +1,49 @@
 # Scripting Language Integration Proposal for Family Assistant
 
-> **Note**: This is the original proposal that recommended CEL + Starlark. After further analysis, we now recommend a **Starlark-only approach**. See [scripting-language-proposal-v2.md](./scripting-language-proposal-v2.md) for the updated recommendation.
+> **Note**: This is the original proposal that recommended CEL + Starlark. After further analysis,
+> we now recommend a **Starlark-only approach**. See
+> [scripting-language-proposal-v2.md](./scripting-language-proposal-v2.md) for the updated
+> recommendation.
 
 ## Executive Summary
 
-This proposal outlines options for integrating a restricted scripting language into Family Assistant to enable user customization, reduce LLM costs, and improve security. Based on extensive research, we recommend **CEL (Common Expression Language)**for simple expressions and **Starlark**for more complex scripting needs, with a phased implementation starting with event listener actions.
+This proposal outlines options for integrating a restricted scripting language into Family Assistant
+to enable user customization, reduce LLM costs, and improve security. Based on extensive research,
+we recommend \*\*CEL (Common Expression Language)\*\*for simple expressions and **Starlark**for more
+complex scripting needs, with a phased implementation starting with event listener actions.
 
 ## Use Case Analysis
 
 ### Primary Use Cases
 
 1. **Event Listener Actions**
+
    - Complex conditions based on time, entity states, or tool results
    - Custom message formatting without LLM calls
    - Multi-step automations with branching logic
 
 2. **Security Enhancement**
+
    - Pre-planned action sequences before untrusted input exposure
    - Predictable execution patterns
    - Audit trail of scripted actions
 
 3. **Cost Reduction**
+
    - Mechanical tasks executed as code instead of LLM calls
    - Reduced token usage for repetitive operations
    - Cached script results
 
 ## Language Comparison Matrix
 
-| Language | Security | Performance | Python Integration | Learning Curve | Use Case Fit |
-|----------|----------|-------------|-------------------|----------------|--------------|
-| **CEL**| ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Event conditions, simple rules |
-| **Starlark**| ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Complex automation, workflows |
-| **Lua (lupa)**| ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | General scripting |
-| **RestrictedPython**| ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Python compatibility |
-| **JavaScript (pyduktape)**| ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | Web developers |
-| **WebAssembly**| ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | Maximum isolation |
+| Language                   | Security   | Performance | Python Integration | Learning Curve | Use Case Fit                   |
+| -------------------------- | ---------- | ----------- | ------------------ | -------------- | ------------------------------ |
+| **CEL**                    | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐  | ⭐⭐⭐⭐           | ⭐⭐⭐⭐       | Event conditions, simple rules |
+| **Starlark**               | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐    | ⭐⭐⭐             | ⭐⭐⭐⭐⭐     | Complex automation, workflows  |
+| **Lua (lupa)**             | ⭐⭐⭐     | ⭐⭐⭐⭐    | ⭐⭐⭐⭐           | ⭐⭐⭐         | General scripting              |
+| **RestrictedPython**       | ⭐⭐       | ⭐⭐⭐      | ⭐⭐⭐⭐⭐         | ⭐⭐⭐⭐⭐     | Python compatibility           |
+| **JavaScript (pyduktape)** | ⭐⭐⭐     | ⭐⭐⭐      | ⭐⭐⭐             | ⭐⭐⭐⭐       | Web developers                 |
+| **WebAssembly**            | ⭐⭐⭐⭐⭐ | ⭐⭐⭐      | ⭐⭐               | ⭐⭐           | Maximum isolation              |
 
 ### Detailed Analysis
 
@@ -64,6 +73,7 @@ This proposal outlines options for integrating a restricted scripting language i
 We evaluated two main options for Starlark integration:
 
 1. **starlark-pyo3**(Recommended)
+
    - Built on Facebook's Rust implementation with PyO3 bindings
    - Simple installation via binary wheels (no build dependencies)
    - Active maintenance (35K+ weekly PyPI downloads)
@@ -72,6 +82,7 @@ We evaluated two main options for Starlark integration:
    - Uses JSON for value conversion (sufficient for our use cases)
 
 2. **python-starlark-go**
+
    - Built on Google's Go implementation with CGO
    - Requires C compiler for installation
    - Based on the reference implementation used in Bazel
@@ -221,23 +232,27 @@ class SafeToolsAPI:
 ### Multi-Layer Security Model
 
 1. **Language Level**
+
    - CEL: Non-Turing complete, no infinite loops
    - Starlark: No I/O, deterministic execution
    - Type-safe APIs prevent data leakage
 
 2. **API Level**
+
    - Capability-based security model
    - Whitelisted tool access only
    - Rate limiting on all operations
    - Read-only database access
 
 3. **Execution Level**
+
    - Resource limits (CPU, memory, time)
    - Separate execution context per script
    - No access to Python internals
    - Comprehensive audit logging
 
 4. **Data Level**
+
    - Input sanitization
    - Output validation
    - No direct access to sensitive data
@@ -353,18 +368,22 @@ action:
 ## Success Metrics
 
 1. **Cost Reduction**
+
    - Track LLM tokens saved by scripting
    - Measure percentage of automations handled by scripts
 
 2. **Performance**
+
    - Script execution time percentiles
    - Resource usage statistics
 
 3. **User Adoption**
+
    - Number of user-created scripts
    - Script execution frequency
 
 4. **Security**
+
    - Zero security incidents from scripts
    - Audit log completeness
 
@@ -406,4 +425,9 @@ result = sl.eval(module, ast, globals)
 
 ## Conclusion
 
-The hybrid CEL + Starlark approach provides the best balance of security, performance, and usability for Family Assistant's scripting needs. CEL handles simple expressions efficiently while Starlark (via starlark-pyo3) enables complex automations with Python-like syntax. The Rust-based implementation ensures excellent security and performance characteristics. The phased implementation allows for validation and refinement at each stage while maintaining system security and reliability.
+The hybrid CEL + Starlark approach provides the best balance of security, performance, and usability
+for Family Assistant's scripting needs. CEL handles simple expressions efficiently while Starlark
+(via starlark-pyo3) enables complex automations with Python-like syntax. The Rust-based
+implementation ensures excellent security and performance characteristics. The phased implementation
+allows for validation and refinement at each stage while maintaining system security and
+reliability.

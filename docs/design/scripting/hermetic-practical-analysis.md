@@ -6,7 +6,8 @@
 
 **Theoretical Definition**: No I/O, no side effects, purely deterministic
 
-**Practical Reality**: Starlark can't do I/O *directly*, but it can call functions you provide that do I/O
+**Practical Reality**: Starlark can't do I/O *directly*, but it can call functions you provide that
+do I/O
 
 ### How Others Actually Use Starlark
 
@@ -38,12 +39,12 @@ globals["save"] = DataSaver()        // Database writes
 
 ### Do We Actually Need Hermetic Properties?
 
-| Property | Do We Need It? | Why/Why Not |
-|----------|----------------|-------------|
-| **Determinism**| No | Event automation inherently depends on external state (time, sensors, etc.) |
-| **Safe Parallelism**| No | We're not evaluating thousands of scripts simultaneously |
-| **Reproducible Builds**| No | We're not building software |
-| **Pure Functions**| No | The whole point is to have side effects |
+| Property                | Do We Need It? | Why/Why Not                                                                 |
+| ----------------------- | -------------- | --------------------------------------------------------------------------- |
+| **Determinism**         | No             | Event automation inherently depends on external state (time, sensors, etc.) |
+| **Safe Parallelism**    | No             | We're not evaluating thousands of scripts simultaneously                    |
+| **Reproducible Builds** | No             | We're not building software                                                 |
+| **Pure Functions**      | No             | The whole point is to have side effects                                     |
 
 ### What We DO Need
 
@@ -121,7 +122,8 @@ The second approach adds complexity for no practical benefit.
 
 ## Conclusion: It's a Theoretical Problem
 
-1. **Starlark's hermeticity is about what the language can do directly, not what functions you expose**
+1. **Starlark's hermeticity is about what the language can do directly, not what functions you
+   expose**
 2. **Many production users expose side-effecting functions to Starlark**
 3. **We don't need the properties that true hermeticity provides**
 4. **The sandboxing we need still works**

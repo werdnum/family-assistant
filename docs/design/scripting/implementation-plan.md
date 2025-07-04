@@ -2,17 +2,22 @@
 
 ## Overview
 
-This document outlines the implementation plan for the core Starlark scripting engine in Family Assistant. The implementation follows a phased approach with incremental functionality and comprehensive testing at each stage.
+This document outlines the implementation plan for the core Starlark scripting engine in Family
+Assistant. The implementation follows a phased approach with incremental functionality and
+comprehensive testing at each stage.
 
 ## Current Status (Updated: December 2024)
 
 ### Summary
 
-The Starlark scripting engine has been successfully implemented with Phases 1, 3, and most of Phase 4 completed. The engine is production-ready with full tool integration, security controls, and comprehensive testing. Only Phase 2 (TimeAPI and StateAPI) remains unimplemented.
+The Starlark scripting engine has been successfully implemented with Phases 1, 3, and most of Phase
+4 completed. The engine is production-ready with full tool integration, security controls, and
+comprehensive testing. Only Phase 2 (TimeAPI and StateAPI) remains unimplemented.
 
 ### Completed Features
 
 1. **Core Starlark Engine**✅
+
    - StarlarkEngine class implemented in `src/family_assistant/scripting/engine.py`
    - Basic expression evaluation working
    - 10-minute execution timeout (to allow for external API calls)
@@ -20,6 +25,7 @@ The Starlark scripting engine has been successfully implemented with Phases 1, 3
    - JSON encode/decode functions built-in
 
 2. **Tool Integration**✅
+
    - ToolsAPI fully implemented in `src/family_assistant/scripting/apis/tools.py`
    - Scripts can discover and execute all available tools
    - Two interfaces: functional (`tools_execute()`) and direct callable
@@ -27,12 +33,14 @@ The Starlark scripting engine has been successfully implemented with Phases 1, 3
    - Comprehensive error handling and result serialization
 
 3. **Execute Script Tool**✅
+
    - `execute_script` tool added to the tool registry
    - Accessible via LLM and web API
    - Supports passing global variables to scripts
    - Integration with root tools provider for web API calls
 
 4. **Production Features**✅
+
    - Execution timeout (10 minutes for scripts, configurable)
    - Comprehensive error handling with line numbers
    - Sandboxing via Starlark's built-in restrictions
@@ -41,6 +49,7 @@ The Starlark scripting engine has been successfully implemented with Phases 1, 3
    - StarlarkConfig class for configuration management
 
 5. **TimeAPI**✅
+
    - Full time manipulation API implemented
    - Time creation, parsing, and formatting
    - Timezone support with zoneinfo
@@ -127,6 +136,7 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
 ### Immediate Priorities
 
 1. **Documentation and Examples**✅ COMPLETED
+
    - Created comprehensive user documentation at `docs/user/scripting.md` ✅
    - Added multiple example scripts demonstrating common patterns ✅
    - Documented all available functions and APIs ✅
@@ -134,6 +144,7 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
    - Updated prompts.yaml to inform assistant about scripting ✅
 
 2. **Integration with Event System**
+
    - Allow scripts to be triggered by events
    - Add event context to script execution
    - Create event listener that executes scripts
@@ -142,6 +153,7 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
 ### Medium-term Goals
 
 1. **Enhanced Security and Limits**
+
    - Per-user script execution quotas
    - Memory usage tracking (if supported by starlark-pyo3)
    - Script size limits
@@ -149,6 +161,7 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
    - Audit logging for all script executions
 
 2. **Script Management**
+
    - Script storage and versioning
    - Script library/templates
    - Web UI for script editing and testing
@@ -172,15 +185,18 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
 #### Tasks
 
 1. **Set up starlark-pyo3 dependency**✅
+
    - Add to pyproject.toml
    - Verify installation and import
 
 2. **Create basic StarlarkEngine class**✅
+
    - Location: `src/family_assistant/scripting/engine.py`
    - Basic structure with initialization
    - Simple evaluate method for expressions
 
 3. **Add test for basic expression evaluation**✅
+
    - Location: `tests/functional/scripting/test_engine.py`
    - Test arithmetic expressions
    - Test boolean logic
@@ -225,6 +241,7 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
 #### Tasks
 
 1. **Create ToolsAPI wrapper**✅
+
    - Bridge between Starlark and ToolsProvider
    - Handle tool discovery (`tools_list`, `tools_get`)
    - Execute tools with parameters (`tools_execute`, `tools_execute_json`)
@@ -232,16 +249,19 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
    - Direct callable interface (tools as functions)
 
 2. **Implement tool execution**✅
+
    - Parameter validation
    - Async tool execution from sync Starlark
    - Result serialization back to Starlark
 
 3. **Add security controls**✅
+
    - Tool allowlist configuration (`allowed_tools`)
    - Execution permission checks (`deny_all_tools`)
    - Security event logging
 
 4. **Add tests for tool execution**✅
+
    - Mock ToolsProvider integration
    - Test successful tool calls
    - Test error handling
@@ -261,24 +281,28 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
 #### Tasks
 
 1. **Add execution limits**✅ PARTIAL
+
    - CPU timeout (configurable, default 10 minutes for scripts) ✅
    - Memory limits (not supported by starlark-pyo3) ❌
    - Script size limits ❌
    - Recursion depth limits (built into Starlark) ✅
 
 2. **Implement error handling**✅
+
    - Graceful handling of syntax errors (ScriptSyntaxError) ✅
    - Runtime error capture and reporting (ScriptExecutionError) ✅
    - Useful error messages for debugging ✅
    - Error context (line numbers, etc.) ✅
 
 3. **Add audit logging**✅ PARTIAL
+
    - Script execution logging ✅
    - Performance metrics ❌
    - Error tracking ✅
    - Tool call auditing (via security events) ✅
 
 4. **Create integration tests**✅
+
    - Real-world automation scenarios ✅
    - Complex multi-step scripts ✅
    - Error recovery scenarios ✅
@@ -295,7 +319,11 @@ print("Meeting time in NY:", time_format(meeting_ny, "%Y-%m-%d %H:%M %Z"))
 
 ### API Interface Design Note
 
-**Important**: The exact interface exposed to scripts is subject to refinement based on anticipated use cases. The TimeAPI and ToolsAPI have been implemented based on common patterns from starlark-go and real automation needs. The StateAPI has been deferred as possible future work, pending concrete use cases that would benefit from persistent state between script executions. The implemented APIs may still evolve as we gather feedback from actual usage.
+**Important**: The exact interface exposed to scripts is subject to refinement based on anticipated
+use cases. The TimeAPI and ToolsAPI have been implemented based on common patterns from starlark-go
+and real automation needs. The StateAPI has been deferred as possible future work, pending concrete
+use cases that would benefit from persistent state between script executions. The implemented APIs
+may still evolve as we gather feedback from actual usage.
 
 ### Directory Structure
 

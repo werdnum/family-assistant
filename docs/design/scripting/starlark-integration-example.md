@@ -1,6 +1,7 @@
 # Starlark Integration Example for Family Assistant
 
-This document demonstrates how starlark-pyo3 could be integrated into Family Assistant to provide secure scripting capabilities.
+This document demonstrates how starlark-pyo3 could be integrated into Family Assistant to provide
+secure scripting capabilities.
 
 ## Installation
 
@@ -509,7 +510,8 @@ async def get_script_examples():
 
 ## Benefits of This Implementation
 
-1. **Security**: Starlark provides true sandboxing - scripts cannot access filesystem, network, or system resources
+1. **Security**: Starlark provides true sandboxing - scripts cannot access filesystem, network, or
+   system resources
 
 2. **Performance**: Rust-based implementation with no Python GIL restrictions
 

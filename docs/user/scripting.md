@@ -1,24 +1,28 @@
 # Family Assistant Scripting Guide
 
-This guide provides a reference for assistants to write Starlark scripts when responding to user requests for automation and complex operations.
+This guide provides a reference for assistants to write Starlark scripts when responding to user
+requests for automation and complex operations.
 
-**Important**: Scripts are primarily a tool for assistants to fulfill user requests, not for direct user interaction. Before writing scripts, understand Starlark's limitations and available APIs to write effective scripts.
+**Important**: Scripts are primarily a tool for assistants to fulfill user requests, not for direct
+user interaction. Before writing scripts, understand Starlark's limitations and available APIs to
+write effective scripts.
 
 ## Starlark Language Overview
 
-Starlark is a dialect of Python designed for configuration and deterministic execution. While it looks like Python, it has important differences:
+Starlark is a dialect of Python designed for configuration and deterministic execution. While it
+looks like Python, it has important differences:
 
 ### Key Differences from Python
 
-1. **No exceptions or try-except**: Errors terminate the script. Check inputs carefully.
-2. **No while loops**: Use for loops and recursion instead.
-3. **No generators or yield**: All functions return complete values.
-4. **Limited standard library**: Only basic functions are available.
-5. **No isinstance()**: Use `type(x) == type("")` for type checking.
-6. **Immutable globals**: After initial evaluation, global variables cannot be changed.
-7. **No implicit string concatenation**: Use `+` explicitly (`"hello" + "world"`).
-8. **No chained comparisons**: Write `1 < x and x < 5` instead of `1 < x < 5`.
-9. **Integer limits**: 32-bit signed integers only (no arbitrary precision).
+01. **No exceptions or try-except**: Errors terminate the script. Check inputs carefully.
+02. **No while loops**: Use for loops and recursion instead.
+03. **No generators or yield**: All functions return complete values.
+04. **Limited standard library**: Only basic functions are available.
+05. **No isinstance()**: Use `type(x) == type("")` for type checking.
+06. **Immutable globals**: After initial evaluation, global variables cannot be changed.
+07. **No implicit string concatenation**: Use `+` explicitly (`"hello" + "world"`).
+08. **No chained comparisons**: Write `1 < x and x < 5` instead of `1 < x < 5`.
+09. **Integer limits**: 32-bit signed integers only (no arbitrary precision).
 10. **Dictionary iteration order**: Guaranteed to be deterministic.
 
 ### Restricted Top-Level Statements
@@ -27,13 +31,15 @@ Starlark is a dialect of Python designed for configuration and deterministic exe
 - Global variables cannot be reassigned after definition
 - Use list comprehensions for top-level data generation
 
-For full Starlark syntax details, see the [official Starlark documentation](https://github.com/bazelbuild/starlark/blob/master/spec.md).
+For full Starlark syntax details, see the
+[official Starlark documentation](https://github.com/bazelbuild/starlark/blob/master/spec.md).
 
 ## Available APIs
 
 ### Tools API
 
-**Note**: The available tools depend on your profile's permissions. To see all available tools and their parameters, ask the assistant to list them or check the tool reference documentation.
+**Note**: The available tools depend on your profile's permissions. To see all available tools and
+their parameters, ask the assistant to list them or check the tool reference documentation.
 
 All Family Assistant tools are available in scripts through two interfaces:
 
@@ -376,7 +382,8 @@ smart_reminder("Team standup", check_calendar=True)
 
 ## Event-Triggered Scripts
 
-Scripts can now be automatically triggered by events from Home Assistant, document indexing, and other sources. This enables powerful automation without the delay and cost of LLM processing.
+Scripts can now be automatically triggered by events from Home Assistant, document indexing, and
+other sources. This enables powerful automation without the delay and cost of LLM processing.
 
 ### Creating Event-Triggered Scripts
 
@@ -508,7 +515,8 @@ Event scripts run with the `event_handler` profile which has restricted tools:
 - Cannot delete data or control devices (to prevent automation loops)
 - Cannot delegate to other services
 
-Scripts have a 10-minute timeout to support long-running operations but should aim to complete quickly.
+Scripts have a 10-minute timeout to support long-running operations but should aim to complete
+quickly.
 
 ### Testing Event Scripts
 
@@ -532,7 +540,9 @@ Before creating an event listener, test your script:
 
 ### wake_llm Function
 
-The `wake_llm` function allows scripts to wake the LLM with custom context when certain conditions are met. This is particularly useful in event-triggered scripts where you want to provide the LLM with specific information about what happened.
+The `wake_llm` function allows scripts to wake the LLM with custom context when certain conditions
+are met. This is particularly useful in event-triggered scripts where you want to provide the LLM
+with specific information about what happened.
 
 ```starlark
 # Wake the LLM with custom context
@@ -541,10 +551,13 @@ wake_llm(context, include_event=True)
 
 **Parameters:**
 
-- `context` (str or dict): Either a simple string message or a dictionary of key-value pairs to provide to the LLM as context
-  - **String (recommended for simple messages)**: When you just need to send a message, pass a string directly
+- `context` (str or dict): Either a simple string message or a dictionary of key-value pairs to
+  provide to the LLM as context
+  - **String (recommended for simple messages)**: When you just need to send a message, pass a
+    string directly
   - **Dictionary**: For structured data with multiple fields
-- `include_event` (bool, optional): Whether to include the original event data in the wake context (default: True)
+- `include_event` (bool, optional): Whether to include the original event data in the wake context
+  (default: True)
 
 **Usage in Event Scripts:**
 

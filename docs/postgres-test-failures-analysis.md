@@ -27,12 +27,12 @@ This document analyzes test failures that occur when running the test suite with
 
 Running `pytest --postgres -q` revealed 29 test failures across 6 main categories of issues:
 
-1. **SQL Function Incompatibility** - `json_extract()` doesn't exist in PostgreSQL \[FIXED\]
+1. **SQL Function Incompatibility** - `json_extract()` doesn't exist in PostgreSQL [FIXED]
 2. **Event Loop Attachment Issues** - asyncpg's strict event loop affinity causes conflicts \[FIXED
    with NullPool\]
-3. **Starlark Script Syntax Error** - Reserved keyword usage \[FIXED\]
-4. **JSON Serialization Issues** - Incorrect parameter types \[FIXED\]
-5. **Transaction/Connection Errors** - Cascading failures from above issues \[FIXED\]
+3. **Starlark Script Syntax Error** - Reserved keyword usage [FIXED]
+4. **JSON Serialization Issues** - Incorrect parameter types [FIXED]
+5. **Transaction/Connection Errors** - Cascading failures from above issues [FIXED]
 
 ## Detailed Analysis
 
@@ -206,13 +206,13 @@ These tests fail due to cascading effects from the above issues:
 ## Next Steps
 
 1. Update tests to use database-agnostic JSON queries (SQLAlchemy operators or conditional SQL)
-   \[DONE\]
+   [DONE]
 2. Fix Starlark tools API event loop handling to properly manage asyncio contexts \[FIXED via
    NullPool\]
 3. Review and fix remaining event loop issues in error handler and background tasks \[FIXED via
    NullPool\]
-4. Update tests to avoid reserved keywords in Starlark scripts \[DONE\]
-5. Fix JSON serialization in event testing tools \[DONE\]
+4. Update tests to avoid reserved keywords in Starlark scripts [DONE]
+5. Fix JSON serialization in event testing tools [DONE]
 
 ## Solution Implemented
 

@@ -2,7 +2,8 @@
 
 ## The Hermetic Problem Changes Everything
 
-After realizing that Starlark's hermetic design principle conflicts with our need for side effects, we need to reconsider our options.
+After realizing that Starlark's hermetic design principle conflicts with our need for side effects,
+we need to reconsider our options.
 
 ## What We Actually Need
 
@@ -219,4 +220,5 @@ Because using Starlark with side effects is:
 - Proven pattern in production systems
 - Good Python integration
 
-The Starlark hermeticity issue is a fundamental design mismatch. Rather than fight it, choose a tool designed for what we need: embedded scripting with controlled side effects.
+The Starlark hermeticity issue is a fundamental design mismatch. Rather than fight it, choose a tool
+designed for what we need: embedded scripting with controlled side effects.

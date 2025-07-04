@@ -1,6 +1,8 @@
 # Notes V2: Enhanced Features Design
 
-This document outlines a phased approach to enhance the notes feature, focusing on controlling their inclusion in system prompts and integrating them with the document indexing and vector search system.
+This document outlines a phased approach to enhance the notes feature, focusing on controlling their
+inclusion in system prompts and integrating them with the document indexing and vector search
+system.
 
 ## Implementation Status
 
@@ -37,117 +39,144 @@ This document outlines a phased approach to enhance the notes feature, focusing 
 
 ## Phase 1: Proactive/Reactive Switch for Notes
 
-This phase introduces mechanisms to control whether a note's content is proactively included in an LLM's system prompt or if it's reactively available (i.e., fetchable by tools but not in the default prompt context).
+This phase introduces mechanisms to control whether a note's content is proactively included in an
+LLM's system prompt or if it's reactively available (i.e., fetchable by tools but not in the default
+prompt context).
 
 ### 1.1. Schema Changes
 
 The `notes_table` will be augmented with the following columns:
 
-*`include_in_prompt_default` (Boolean, NOT NULL, Default: `True`):
-    *If `True`, the note is generally considered for proactive inclusion in system prompts.
-    *If `False`, the note is generally considered reactive (not in prompts by default).
-*`proactive_for_profile_ids` (Text or Array type, Nullable, Indexed):
-    *A list of processing profile IDs (e.g., `["research", "k8s_debug"]`).
-    *If the current profile ID is in this list, this note *will be*included in the system prompt, overriding `include_in_prompt_default`.
-*`exclude_from_prompt_profile_ids` (Text or Array type, Nullable, Indexed):
-    *A list of processing profile IDs.
-    *If the current profile ID is in this list, this note *will not be*included in the system prompt. This exclusion takes precedence over `include_in_prompt_default` and `proactive_for_profile_ids`.
+\*`include_in_prompt_default` (Boolean, NOT NULL, Default: `True`): \*If `True`, the note is
+generally considered for proactive inclusion in system prompts. \*If `False`, the note is generally
+considered reactive (not in prompts by default). \*`proactive_for_profile_ids` (Text or Array type,
+Nullable, Indexed): \*A list of processing profile IDs (e.g., `["research", "k8s_debug"]`). \*If the
+current profile ID is in this list, this note *will be*included in the system prompt, overriding
+`include_in_prompt_default`. \*`exclude_from_prompt_profile_ids` (Text or Array type, Nullable,
+Indexed): \*A list of processing profile IDs. \*If the current profile ID is in this list, this note
+*will not be*included in the system prompt. This exclusion takes precedence over
+`include_in_prompt_default` and `proactive_for_profile_ids`.
 
-**Migration Considerations:**
-*Existing notes will need `include_in_prompt_default` backfilled (e.g., to `True` to maintain current behavior).
-*`proactive_for_profile_ids` and `exclude_from_prompt_profile_ids` will default to `NULL` or an empty list/array.
+**Migration Considerations:** \*Existing notes will need `include_in_prompt_default` backfilled
+(e.g., to `True` to maintain current behavior). \*`proactive_for_profile_ids` and
+`exclude_from_prompt_profile_ids` will default to `NULL` or an empty list/array.
 
 ### 1.2. Logic for `NotesContextProvider`
 
-The `NotesContextProvider` will be updated to determine if a note should be included in the system prompt for the current `profile_id`. For each note, the logic is as follows:
+The `NotesContextProvider` will be updated to determine if a note should be included in the system
+prompt for the current `profile_id`. For each note, the logic is as follows:
 
-1.  **Check Exclusion:**If `current_profile_id` is present in the note's `exclude_from_prompt_profile_ids` list, the note is **Reactive**(not included in the prompt).
-2.  **Check Profile-Specific Proactive Inclusion:**Else, if `current_profile_id` is present in the note's `proactive_for_profile_ids` list, the note is **Proactive**(included in the prompt).
-3.  **Check Default Behavior:**Else (no specific profile rule applies):
+1. \*\*Check Exclusion:\*\*If `current_profile_id` is present in the note's
+   `exclude_from_prompt_profile_ids` list, the note is **Reactive**(not included in the prompt).
 
-    *If `note.include_in_prompt_default` is `True`, the note is **Proactive**.
-    *Otherwise (`note.include_in_prompt_default` is `False`), the note is **Reactive**.
+2. \*\*Check Profile-Specific Proactive Inclusion:\*\*Else, if `current_profile_id` is present in
+   the note's `proactive_for_profile_ids` list, the note is **Proactive**(included in the prompt).
+
+3. \*\*Check Default Behavior:\*\*Else (no specific profile rule applies):
+
+   \*If `note.include_in_prompt_default` is `True`, the note is **Proactive**. \*Otherwise
+   (`note.include_in_prompt_default` is `False`), the note is **Reactive**.
 
 ### 1.3. Tooling Updates
 
-* **`add_or_update_note` Tool:**
+- **`add_or_update_note` Tool:**
 
-    *The existing `add_or_update_note` tool (implemented in `src/family_assistant/tools/__init__.py` and using `src/family_assistant/storage/notes.py`) will be modified.
-    *It will need to accept new optional parameters:
-        *`include_in_prompt_default` (boolean)
-        *`proactive_for_profile_ids` (list of strings)
-        *`exclude_from_prompt_profile_ids` (list of strings)
-    *When a note is created or updated, these values will be stored in the `notes_table`.
+  \*The existing `add_or_update_note` tool (implemented in `src/family_assistant/tools/__init__.py`
+  and using `src/family_assistant/storage/notes.py`) will be modified. \*It will need to accept new
+  optional parameters: \*`include_in_prompt_default` (boolean) \*`proactive_for_profile_ids` (list
+  of strings) \*`exclude_from_prompt_profile_ids` (list of strings) \*When a note is created or
+  updated, these values will be stored in the `notes_table`.
 
 ## Phase 2: Note Discovery and Indexing
 
-Once notes can be "reactive" (not in the system prompt), mechanisms for discovering and accessing them become crucial. This involves integrating notes into the existing document indexing and vector search subsystem.
+Once notes can be "reactive" (not in the system prompt), mechanisms for discovering and accessing
+them become crucial. This involves integrating notes into the existing document indexing and vector
+search subsystem.
 
 ### 2.1. Indexing Notes
 
-When a note is added or its content (or its prompt-related attributes relevant to search) is updated via `add_or_update_note`:
+When a note is added or its content (or its prompt-related attributes relevant to search) is updated
+via `add_or_update_note`:
 
-1.  **Adapt Note to `Document` Protocol:**
+1. **Adapt Note to `Document` Protocol:**
 
-    *The note's data (title, content, new prompt-related attributes) will be adapted to conform to the `Document` protocol (defined in `src/family_assistant/storage/vector.py`).
-    *`source_type` will be `"note"`.
-    *`source_id` could be the note's unique title or its database ID.
-    *The new prompt-related attributes (`include_in_prompt_default`, `proactive_for_profile_ids`, `exclude_from_prompt_profile_ids`) should be stored as key-value pairs within the `metadata` JSONB field of the `documents` record (e.g., `{"note_include_in_prompt_default": true, "note_proactive_profiles": ["research"], ...}`).
+   \*The note's data (title, content, new prompt-related attributes) will be adapted to conform to
+   the `Document` protocol (defined in `src/family_assistant/storage/vector.py`). \*`source_type`
+   will be `"note"`. \*`source_id` could be the note's unique title or its database ID. \*The new
+   prompt-related attributes (`include_in_prompt_default`, `proactive_for_profile_ids`,
+   `exclude_from_prompt_profile_ids`) should be stored as key-value pairs within the `metadata`
+   JSONB field of the `documents` record (e.g.,
+   `{"note_include_in_prompt_default": true, "note_proactive_profiles": ["research"], ...}`).
 
-2.  **Create/Update `documents` Record:**
+2. **Create/Update `documents` Record:**
 
-    *Call `storage.add_document()` to create or update the corresponding record in the `documents` table. This function handles upsert logic based on `source_type` and `source_id` and returns the `document_id`.
+   \*Call `storage.add_document()` to create or update the corresponding record in the `documents`
+   table. This function handles upsert logic based on `source_type` and `source_id` and returns the
+   `document_id`.
 
-3.  **Re-indexing Modified Notes (Handling Content Changes):**
+3. **Re-indexing Modified Notes (Handling Content Changes):**
 
-    *If the note's content or any attributes that affect its indexed representation have changed, any existing embeddings for this `document_id` must be removed from the `document_embeddings` table before new ones are generated.
-    *This requires a new storage function: `async def delete_document_embeddings(db_context: DatabaseContext, document_id: int)` in `src/family_assistant/storage/vector.py`. This function will execute a `DELETE` statement on `document_embeddings` for the given `document_id`.
-    *This deletion step ensures that stale embeddings are removed.
+   \*If the note's content or any attributes that affect its indexed representation have changed,
+   any existing embeddings for this `document_id` must be removed from the `document_embeddings`
+   table before new ones are generated. \*This requires a new storage function:
+   `async def delete_document_embeddings(db_context: DatabaseContext, document_id: int)` in
+   `src/family_assistant/storage/vector.py`. This function will execute a `DELETE` statement on
+   `document_embeddings` for the given `document_id`. \*This deletion step ensures that stale
+   embeddings are removed.
 
-4.  **Prepare `IndexableContent`:**
+4. **Prepare `IndexableContent`:**
 
-    *Create an `IndexableContent` object (from `src/family_assistant/indexing/pipeline.py`) using the note's current content.
-    *`embedding_type` could be `"note_content_chunk"` or a generic `"content_chunk"`.
-    *`mime_type` will be `"text/plain"`.
-    *`metadata` within `IndexableContent` can include the note's title.
+   \*Create an `IndexableContent` object (from `src/family_assistant/indexing/pipeline.py`) using
+   the note's current content. \*`embedding_type` could be `"note_content_chunk"` or a generic
+   `"content_chunk"`. \*`mime_type` will be `"text/plain"`. \*`metadata` within `IndexableContent`
+   can include the note's title.
 
-5.  **Enqueue Indexing Task:**
+5. **Enqueue Indexing Task:**
 
-    *Enqueue a `process_document` task (handled by `DocumentIndexer.process_document` as outlined in `docs/design/indexing.md`).
-    *The task payload will include the `document_id` and the `IndexableContent` (serialized) as `initial_content_parts`.
-    *The `IndexingPipeline` will then process this content, leading to the generation and storage of new embeddings.
+   \*Enqueue a `process_document` task (handled by `DocumentIndexer.process_document` as outlined in
+   `docs/design/indexing.md`). \*The task payload will include the `document_id` and the
+   `IndexableContent` (serialized) as `initial_content_parts`. \*The `IndexingPipeline` will then
+   process this content, leading to the generation and storage of new embeddings.
 
 ### 2.2. Discovery Tools for Reactive Notes
 
-1.  **Vector Search (`search_documents_tool`):**
+1. **Vector Search (`search_documents_tool`):**
 
-    *Users or the LLM can use the existing `search_documents_tool` to find notes.
-    *The search query can be augmented to filter by `source_type = 'note'`.
-    *The ACLs (once implemented in Phase 3+) for user and profile access will be applied at the `documents` table level during the search, ensuring only accessible notes are returned.
-    *The metadata stored in `documents.metadata` (like `note_include_in_prompt_default`) could potentially be used for finer-grained filtering if required by specific use cases, though the primary access control will be through dedicated ACL fields.
+   \*Users or the LLM can use the existing `search_documents_tool` to find notes. \*The search query
+   can be augmented to filter by `source_type = 'note'`. \*The ACLs (once implemented in Phase 3+)
+   for user and profile access will be applied at the `documents` table level during the search,
+   ensuring only accessible notes are returned. \*The metadata stored in `documents.metadata` (like
+   `note_include_in_prompt_default`) could potentially be used for finer-grained filtering if
+   required by specific use cases, though the primary access control will be through dedicated ACL
+   fields.
 
-2.  **Direct Retrieval (`get_full_document_content_tool`):**
+2. **Direct Retrieval (`get_full_document_content_tool`):**
 
-    *If a note's `document_id` is known (e.g., from search results), its full content can be retrieved using `get_full_document_content_tool`.
+   \*If a note's `document_id` is known (e.g., from search results), its full content can be
+   retrieved using `get_full_document_content_tool`.
 
-3.  **Direct Note Access (`get_note_by_title`):**
+3. **Direct Note Access (`get_note_by_title`):**
 
-    *The existing `storage.get_note_by_title` function can still be used for direct lookups.
-    *If exposed as an LLM tool, this tool must be enhanced to respect the access rules: it should only return notes that are at least "Reactive" for the current user and profile context (i.e., not excluded and matching any ownership or profile list criteria once those are implemented).
+   \*The existing `storage.get_note_by_title` function can still be used for direct lookups. \*If
+   exposed as an LLM tool, this tool must be enhanced to respect the access rules: it should only
+   return notes that are at least "Reactive" for the current user and profile context (i.e., not
+   excluded and matching any ownership or profile list criteria once those are implemented).
 
 ## Phase 3: Access Control (Future Enhancement)
 
-While not part of the initial implementation, the design should anticipate future access control requirements:
+While not part of the initial implementation, the design should anticipate future access control
+requirements:
 
-* **User Ownership:**Add `owner_user_identifier` to `notes_table` and `doc_owner_user_identifier` to `documents` table.
-* **Profile-Based ACLs:**The `proactive_for_profile_ids` and `exclude_from_prompt_profile_ids` (or more general `allowed_profile_ids`) fields will form the basis of profile-level access.
+- \*\*User Ownership:\*\*Add `owner_user_identifier` to `notes_table` and
+  `doc_owner_user_identifier` to `documents` table.
+- \*\*Profile-Based ACLs:\*\*The `proactive_for_profile_ids` and `exclude_from_prompt_profile_ids`
+  (or more general `allowed_profile_ids`) fields will form the basis of profile-level access.
 
-*These ACLs will be enforced in:
-    *`NotesContextProvider`.
-    *Direct note retrieval tools.
-    *The `query_vector_store` function by filtering `documents` records.
+\*These ACLs will be enforced in: \*`NotesContextProvider`. \*Direct note retrieval tools. \*The
+`query_vector_store` function by filtering `documents` records.
 
-This phased approach allows for incremental delivery of functionality, starting with the ability to manage system prompt content more granularly, followed by robust search and retrieval for all notes.
+This phased approach allows for incremental delivery of functionality, starting with the ability to
+manage system prompt content more granularly, followed by robust search and retrieval for all notes.
 
 ## Implementation Plan
 
@@ -168,28 +197,34 @@ With Milestones 1 and 2 complete, we'll do a refactoring phase before proceeding
 #### Areas to Consider:
 
 1. **Storage Layer**:
+
    - Consolidate duplicate SQL queries
    - Improve error handling consistency
    - Consider adding a Note dataclass/TypedDict for type safety
 
 2. **Tool Interface**:
+
    - Separate concerns: split `add_or_update_note` into distinct operations?
    - Add validation for parameters
    - Improve error messages
 
 3. **Testing**:
+
    - Reduce test duplication
    - Add more edge case coverage
    - Improve test isolation
 
 4. **Documentation**:
+
    - Add docstrings to all public functions
    - Update inline comments
    - Create architectural decision records (ADRs) if needed
 
 ### Overview
 
-The implementation will be reordered to deliver incremental value while maintaining system stability. We'll start with note indexing (simpler, foundation for later features), then add profile-based filtering, and finally implement access control.
+The implementation will be reordered to deliver incremental value while maintaining system
+stability. We'll start with note indexing (simpler, foundation for later features), then add
+profile-based filtering, and finally implement access control.
 
 ### Indexing Architecture Decision
 
@@ -198,9 +233,11 @@ The system currently has two indexers:
 - **DocumentIndexer**: Handles generic documents (PDFs, text files, URLs)
 - **EmailIndexer**: Handles email-specific indexing
 
-Both indexers share the same `IndexingPipeline` instance, which processes content through a configurable chain of processors (text extraction, chunking, embedding generation, etc.).
+Both indexers share the same `IndexingPipeline` instance, which processes content through a
+configurable chain of processors (text extraction, chunking, embedding generation, etc.).
 
-For notes, we'll create a dedicated **NotesIndexer**following the same pattern as EmailIndexer. This approach:
+For notes, we'll create a dedicated **NotesIndexer**following the same pattern as EmailIndexer. This
+approach:
 
 - Maintains consistency with existing architecture
 - Allows note-specific handling (e.g., using note title as source_id)
@@ -209,9 +246,11 @@ For notes, we'll create a dedicated **NotesIndexer**following the same pattern a
 
 ### Milestone 1: Basic Note Indexing (Foundation) ✅ COMPLETE
 
-**Goal**: Index all notes in the vector search system, making them discoverable alongside other documents.
+**Goal**: Index all notes in the vector search system, making them discoverable alongside other
+documents.
 
-**Status**: This milestone has been fully implemented and tested. Notes are now automatically indexed on creation/update, searchable via vector search, and re-indexed when content changes.
+**Status**: This milestone has been fully implemented and tested. Notes are now automatically
+indexed on creation/update, searchable via vector search, and re-indexed when content changes.
 
 #### 1.1 Create NotesIndexer Infrastructure ✅
 
@@ -479,6 +518,7 @@ For notes, we'll create a dedicated **NotesIndexer**following the same pattern a
    ```
 
 3. Handle re-indexing on updates:
+
    - The existing `delete_document_embeddings()` call in NotesIndexer handles re-indexing
    - No additional logic needed since we always enqueue on note changes
 
@@ -494,9 +534,11 @@ For notes, we'll create a dedicated **NotesIndexer**following the same pattern a
 
 **Files to create**:
 
-- `alembic/versions/xxx_index_existing_notes.py` (Not yet created - existing notes need manual indexing)
+- `alembic/versions/xxx_index_existing_notes.py` (Not yet created - existing notes need manual
+  indexing)
 
-**Note**: Since the indexing system is now in place, any existing notes will need to be manually re-saved to trigger indexing, or a migration can be created if needed.
+**Note**: Since the indexing system is now in place, any existing notes will need to be manually
+re-saved to trigger indexing, or a migration can be created if needed.
 
 **Implementation**:
 
@@ -579,10 +621,12 @@ For notes, we'll create a dedicated **NotesIndexer**following the same pattern a
 **Implementation completed**:
 
 1. The existing pipeline configuration should work well for notes:
+
    - TextChunker will split long notes appropriately
    - EmbeddingDispatchProcessor will create embeddings
 
 2. Consider if notes need special handling:
+
    - Different chunk sizes?
    - Custom embedding type like "note_content_chunk"?
    - Skip certain processors (e.g., PDFTextExtractor)?
@@ -617,7 +661,8 @@ For notes, we'll create a dedicated **NotesIndexer**following the same pattern a
 
 **Goal**: Add simple include/exclude flag for notes without profile logic.
 
-**Status**: This milestone has been fully implemented. Users can now mark notes to exclude from system prompts while keeping them searchable.
+**Status**: This milestone has been fully implemented. Users can now mark notes to exclude from
+system prompts while keeping them searchable.
 
 #### 2.1 Database Schema Update
 
@@ -688,7 +733,8 @@ For notes, we'll create a dedicated **NotesIndexer**following the same pattern a
 
 ### Milestone 2.5: Tool and UI Enhancements for Note Status Management (NEW)
 
-**Goal**: Improve the ability to manage note prompt inclusion status through both LLM tools and web UI.
+**Goal**: Improve the ability to manage note prompt inclusion status through both LLM tools and web
+UI.
 
 #### 2.5.1 Enhanced Note Management Tools
 
@@ -744,16 +790,19 @@ For notes, we'll create a dedicated **NotesIndexer**following the same pattern a
 **Implementation**:
 
 1. Update note edit form:
+
    - Add checkbox for "Include in system prompt"
    - Show current status prominently
    - Add help text explaining the feature
 
 2. Update note list view:
+
    - Add visual indicator (icon/badge) for prompt inclusion status
    - Add filter buttons: "All", "In Prompt", "Excluded"
    - Allow toggling status directly from list view
 
 3. Update backend routes:
+
    - Modify POST handler to accept `include_in_prompt` parameter
    - Add AJAX endpoint for status toggle from list view
    - Add query parameter support for filtering
@@ -975,4 +1024,7 @@ Each milestone can be rolled back independently:
 5. **Milestone 5**: Direct note access tool for LLM
 6. **Future**: Access control and user ownership
 
-The core functionality is now in place. Users can control which notes appear in prompts while maintaining full searchability. The immediate focus is on improving the existing implementation through refactoring and adding better management tools before proceeding with more advanced features.
+The core functionality is now in place. Users can control which notes appear in prompts while
+maintaining full searchability. The immediate focus is on improving the existing implementation
+through refactoring and adding better management tools before proceeding with more advanced
+features.

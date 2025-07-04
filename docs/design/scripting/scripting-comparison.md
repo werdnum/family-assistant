@@ -2,17 +2,17 @@
 
 ## Quick Comparison
 
-| Aspect | Starlark-Only | CEL + Starlark |
-|--------|---------------|----------------|
-| **Languages to maintain**| 1 | 2 |
-| **Integration code**| ~500 lines | ~1000 lines |
-| **Dependencies**| starlark-pyo3 | cel-python + starlark-pyo3 |
-| **Simple expression syntax**| `event.temp > 30 and time.hour > 6` | `event.temp > 30 && time.hour > 6` |
-| **LLM complexity**| One language to learn | Two languages, must choose which |
-| **Migration path**| Expressions grow into scripts naturally | Must rewrite when moving from CEL to Starlark |
-| **Testing burden**| Test one system | Test two systems + interaction |
-| **Security surface**| One sandbox to secure | Two sandboxes to secure |
-| **Documentation**| One language to document | Two languages + when to use which |
+| Aspect                       | Starlark-Only                           | CEL + Starlark                                |
+| ---------------------------- | --------------------------------------- | --------------------------------------------- |
+| **Languages to maintain**    | 1                                       | 2                                             |
+| **Integration code**         | ~500 lines                              | ~1000 lines                                   |
+| **Dependencies**             | starlark-pyo3                           | cel-python + starlark-pyo3                    |
+| **Simple expression syntax** | `event.temp > 30 and time.hour > 6`     | `event.temp > 30 && time.hour > 6`            |
+| **LLM complexity**           | One language to learn                   | Two languages, must choose which              |
+| **Migration path**           | Expressions grow into scripts naturally | Must rewrite when moving from CEL to Starlark |
+| **Testing burden**           | Test one system                         | Test two systems + interaction                |
+| **Security surface**         | One sandbox to secure                   | Two sandboxes to secure                       |
+| **Documentation**            | One language to document                | Two languages + when to use which             |
 
 ## Code Comparison
 
@@ -235,4 +235,5 @@ The Starlark-only approach is:
 - **Maintainable**: One system to update and secure
 - **User-friendly**: Even human users only need to learn one language
 
-The marginal performance benefit of CEL (microseconds vs milliseconds) doesn't justify doubling the system complexity.
+The marginal performance benefit of CEL (microseconds vs milliseconds) doesn't justify doubling the
+system complexity.
