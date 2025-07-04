@@ -1,0 +1,248 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: family-assistant-dev
+  namespace: family-assistant-dev
+spec:
+  selector:
+    app: family-assistant-dev
+  ports:
+    - name: backend
+      port: 8000
+      targetPort: 8000
+    - name: frontend
+      port: 5173
+      targetPort: 5173
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  type: NodePort  # Or LoadBalancer if available
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: family-assistant-dev
+  namespace: family-assistant-dev
+  labels:
+    app: family-assistant-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: family-assistant-dev
+  template:
+    metadata:
+      labels:
+        app: family-assistant-dev
+    spec:
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      initContainers:
+      # Setup workspace and fix permissions
+      - name: setup-workspace
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:latest
+        imagePullPolicy: Always
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            echo "Setting up workspace..."
+            
+            # Create claude user with UID 1001 if needed
+            if ! id -u claude >/dev/null 2>&1; then
+                useradd -m -u 1001 -g 1001 -s /bin/bash claude
+            fi
+            
+            # Fix permissions on persistent directories
+            # The claude-home volume is mounted at /home/claude
+            mkdir -p /home/claude/.claude
+            chown -R 1001:1001 /home/claude
+            chmod 755 /home/claude
+            chmod -R 755 /home/claude/.claude || true
+            
+            # Fix postgres data directory permissions
+            mkdir -p /var/lib/postgresql/data
+            chown -R 999:999 /var/lib/postgresql/data
+            chmod 700 /var/lib/postgresql/data
+            
+            # Clone repository if not present
+            cd /workspace
+            if [ ! -d .git ]; then
+                /usr/local/bin/setup-workspace.sh
+            else
+                echo "Workspace already exists, skipping clone"
+                # Just install/update dependencies
+                cd /workspace
+                source .venv/bin/activate || (uv venv .venv && source .venv/bin/activate)
+                uv pip install -e .[dev]
+            fi
+            
+            # Ensure ownership
+            chown -R 1001:1001 /workspace
+        securityContext:
+          runAsUser: 0  # Run as root for setup
+        env:
+        - name: CLAUDE_PROJECT_REPO
+          value: "https://github.com/werdnum/family-assistant.git"
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-token
+              key: token
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: claude-home
+          mountPath: /home/claude
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      containers:
+      # PostgreSQL container
+      - name: postgres
+        image: pgvector/pgvector:0.8.0-pg17
+        ports:
+        - containerPort: 5432
+        securityContext:
+          runAsUser: 999  # postgres user in the container
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+        env:
+        - name: POSTGRES_USER
+          value: "test"
+        - name: POSTGRES_PASSWORD
+          value: "test"
+        - name: POSTGRES_DB
+          value: "test"
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "test"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      
+      # Backend service container
+      - name: backend
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:latest
+        imagePullPolicy: Always
+        workingDir: /workspace
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            cd /workspace
+            source .venv/bin/activate
+            
+            # Wait for postgres
+            echo "Waiting for PostgreSQL..."
+            for i in {1..30}; do
+              if pg_isready -h localhost -U test; then
+                echo "PostgreSQL is ready!"
+                break
+              fi
+              sleep 1
+            done
+            
+            # Run migrations if needed
+            alembic upgrade head || true
+            
+            # Start backend in full development mode
+            # This runs both the backend server AND the frontend dev server
+            exec poe dev
+        ports:
+        - containerPort: 8000
+        - containerPort: 5173
+        env:
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://test:test@localhost:5432/test"
+        - name: TEST_DATABASE_URL
+          value: "postgresql+asyncpg://test:test@localhost:5432/test"
+        - name: DEV_MODE
+          value: "true"
+        - name: HOME
+          value: "/home/claude"
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      # Claude Code container
+      - name: claude
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:latest
+        imagePullPolicy: Always
+        workingDir: /workspace
+        tty: true
+        stdin: true
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            cd /workspace
+            source .venv/bin/activate
+            
+            # CLAUDE.md is now in /home/claude/.claude/CLAUDE.md (mounted volume)
+            
+            echo "Claude Code environment ready!"
+            echo "Connect with: kubectl exec -it deployment/family-assistant-dev -c claude -- claude"
+            
+            # Keep container running
+            tail -f /dev/null
+        env:
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://test:test@localhost:5432/test"
+        - name: TEST_DATABASE_URL  
+          value: "postgresql+asyncpg://test:test@localhost:5432/test"
+        - name: DEV_MODE
+          value: "true"
+        - name: HOME
+          value: "/home/claude"
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: claude-home
+          mountPath: /home/claude
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+      
+      volumes:
+      # Shared workspace - ephemeral within pod
+      - name: workspace
+        emptyDir:
+          sizeLimit: 20Gi
+      
+      # Claude home directory - persistent on host
+      - name: claude-home
+        hostPath:
+          path: /data/ssd/sync/workspace/k8s-storage/family-assistant-dev/claude-home
+          type: DirectoryOrCreate
+      
+      # PostgreSQL data - persistent on host  
+      - name: postgres-data
+        hostPath:
+          path: /data/ssd/sync/workspace/k8s-storage/family-assistant-dev/postgres-data
+          type: DirectoryOrCreate
+      
