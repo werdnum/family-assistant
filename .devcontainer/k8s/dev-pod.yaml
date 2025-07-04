@@ -146,9 +146,6 @@ spec:
               sleep 1
             done
             
-            # Run migrations if needed
-            alembic upgrade head || true
-            
             # Start backend in full development mode
             # This runs both the backend server AND the frontend dev server
             exec poe dev
@@ -224,8 +221,6 @@ spec:
           value: "true"
         - name: HOME
           value: "/home/claude"
-        - name: PLAYWRIGHT_BROWSERS_PATH
-          value: "/opt/playwright-browsers"
         volumeMounts:
         - name: workspace
           mountPath: /workspace
