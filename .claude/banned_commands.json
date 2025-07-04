@@ -34,5 +34,9 @@
   {
     "regexp": "timeout\\s+\\d+\\s+.*",
     "explanation": "Use the Bash tool's timeout parameter instead of the timeout command for better control and consistency."
+  },
+  {
+    "regexp": "^\\s*cd\\s+",
+    "explanation": "Using cd changes the working directory for all subsequent commands. If you need to run commands in a different directory, use a subshell like: (cd /path && command) or use absolute paths."
   }
 ]
