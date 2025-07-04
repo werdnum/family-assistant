@@ -1,0 +1,85 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-egress
+  namespace: family-assistant-dev
+spec:
+  podSelector: {}  # Apply to all pods in namespace
+  policyTypes:
+  - Egress
+  - Ingress
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow external internet access ONLY (for GitHub, npm, etc)
+  # IPv4 rules
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        # Block private/local networks (except Kubernetes pod network)
+        # Note: Can't block 10.0.0.0/8 entirely as Kubernetes uses it
+        - 192.168.0.0/16  # Private network
+        - 172.16.0.0/12   # Private network (includes Docker networks)
+        - 169.254.0.0/16  # Link-local
+        - 127.0.0.0/8     # Loopback
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 22  # Git SSH
+  # IPv6 rules (separate from IPv4)
+  - to:
+    - ipBlock:
+        cidr: ::/0
+        except:
+        - fc00::/7        # IPv6 private
+        - fe80::/10       # IPv6 link-local
+        - 2401:d002:703:9f01::/64  # Your local IPv6 network
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 22  # Git SSH
+  # Allow pods in same namespace to communicate
+  - to:
+    - podSelector: {}
+  ingress:
+  # Allow ingress from same namespace only
+  - from:
+    - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-port-forward
+  namespace: family-assistant-dev
+spec:
+  podSelector:
+    matchLabels:
+      app: family-assistant-dev
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow kubectl port-forward and exec (comes from node)
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8000
+    - protocol: TCP
+      port: 5173
