@@ -84,11 +84,18 @@ fi
 # Configure MCP servers for Claude
 echo "Configuring MCP servers..."
 cd /workspace
-claude mcp add --scope local context7 "deno run -A npm:@upstash/context7-mcp" || true
-claude mcp add --scope local scraper "/workspace-bin/scrape_mcp" || true
-claude mcp add --scope local serena "sh -c 'uvx --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace'" || true
-claude mcp add --scope local playwright "npx @playwright/mcp@latest --allowed-origins localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org --headless --isolated --browser chromium" || true
 
+# Find full paths for executables
+DENO_PATH=$(which deno 2>/dev/null || echo "/root/.deno/bin/deno")
+UVX_PATH=$(which uvx 2>/dev/null || echo "uvx")
+NPX_PATH=$(which npx 2>/dev/null || echo "npx")
+
+# Configure MCP servers with full paths
+claude mcp list | cut -d: -f1 | xargs -I: claude mcp remove --scope user :
+claude mcp add --scope user context7 "$(which npx) @upstash/context7-mcp"
+claude mcp add --scope user scraper "/workspace-bin/scrape_mcp"
+claude mcp add --scope user serena "sh -c '$(which uvx) --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace'"
+claude mcp add --scope user playwright "$(which npx) @playwright/mcp@latest --allowed-origins localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org --headless --isolated --browser chromium"
 echo "Workspace setup complete!"
 
 # Execute the command passed to the container
