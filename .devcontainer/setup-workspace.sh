@@ -83,6 +83,7 @@ fi
 
 # Configure MCP servers for Claude
 echo "Configuring MCP servers..."
+cd /workspace
 claude mcp add --scope local context7 "deno run -A npm:@upstash/context7-mcp" || true
 claude mcp add --scope local scraper "/workspace-bin/scrape_mcp" || true
 claude mcp add --scope local serena "sh -c 'uvx --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace'" || true

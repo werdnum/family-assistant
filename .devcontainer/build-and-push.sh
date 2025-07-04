@@ -43,6 +43,9 @@ if [ "${TAG}" != "latest" ]; then
     echo "Also pushed as: ${REGISTRY}/${IMAGE_NAME}:latest"
 fi
 echo ""
-echo "To use this image in Kubernetes, update the image tag in:"
-echo "  ${SCRIPT_DIR}/k8s/kustomization.yaml"
-echo "Or use: kubectl set image pod/family-assistant-dev *=${REGISTRY}/${IMAGE_NAME}:${TAG} -n family-assistant-dev"
+echo "Updating Kubernetes deployment..."
+kubectl set image deployment/family-assistant-dev claude="${REGISTRY}/${IMAGE_NAME}:${TAG}" -n family-assistant-dev
+echo "Kubernetes deployment updated successfully!"
+echo ""
+echo "To manually update the image in the future, use:"
+echo "  kubectl set image deployment/family-assistant-dev claude=${REGISTRY}/${IMAGE_NAME}:${TAG} -n family-assistant-dev"
