@@ -1,14 +1,18 @@
 # Web Directory
 
-This directory contains the FastAPI web application layer for the Family Assistant. It provides both a web UI and REST API endpoints for interacting with the assistant's functionality.
+This directory contains the FastAPI web application layer for the Family Assistant. It provides both
+a web UI and REST API endpoints for interacting with the assistant's functionality.
 
 ## Architecture Overview
 
 The web layer follows a modular FastAPI structure with clear separation of concerns:
 
-- **Application Creation**: `app_creator.py` sets up the FastAPI app with middleware, routers, and static files
-- **Authentication**: `auth.py` provides OIDC and API token authentication with configurable public paths
-- **Dependencies**: `dependencies.py` contains FastAPI dependency injection for database context and services
+- **Application Creation**: `app_creator.py` sets up the FastAPI app with middleware, routers, and
+  static files
+- **Authentication**: `auth.py` provides OIDC and API token authentication with configurable public
+  paths
+- **Dependencies**: `dependencies.py` contains FastAPI dependency injection for database context and
+  services
 - **Models**: `models.py` defines Pydantic models for API requests and responses
 - **Utilities**: `utils.py` contains shared utility functions
 
@@ -17,23 +21,27 @@ The web layer follows a modular FastAPI structure with clear separation of conce
 ### Core Files
 
 - **`app_creator.py`**: Main FastAPI application factory that:
+
   - Configures middleware (sessions, authentication)
   - Registers all routers with appropriate prefixes
   - Sets up static file serving and Jinja2 templates
   - Handles application startup and shutdown events
 
 - **`auth.py`**: Authentication system supporting:
+
   - OIDC (OpenID Connect) integration for web UI authentication
   - API token authentication for programmatic access
   - Configurable public paths that bypass authentication
   - Middleware for request authentication and authorization
 
 - **`dependencies.py`**: FastAPI dependency providers for:
+
   - Database context injection (`get_db`)
   - Processing service access (`get_processing_service`)
   - Shared service configuration
 
 - **`models.py`**: Pydantic models for:
+
   - Chat API requests and responses
   - Document upload responses
   - API token management
@@ -93,7 +101,8 @@ The `routers/` directory contains modular FastAPI routers organized by functiona
 
 ### Vector Search
 
-- **Hybrid Search**: Combines vector similarity with full-text search using RRF (Reciprocal Rank Fusion)
+- **Hybrid Search**: Combines vector similarity with full-text search using RRF (Reciprocal Rank
+  Fusion)
 - **Multiple Embedding Types**: Support for different embedding models and strategies
 - **Search Interface**: Both API and web UI for semantic search capabilities
 
@@ -147,4 +156,5 @@ Web layer components should be tested through:
 - **Router Tests**: Individual endpoint testing with mocked dependencies
 - **Authentication Tests**: Auth flow validation with test tokens
 
-The web layer integrates closely with the core application services and storage layer, providing a comprehensive interface for all Family Assistant functionality.
+The web layer integrates closely with the core application services and storage layer, providing a
+comprehensive interface for all Family Assistant functionality.
