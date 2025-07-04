@@ -129,6 +129,30 @@ design and implementation plan.
 5. **Security**: No risk of container modifying host files
 6. **Reproducibility**: Every run starts from the same clean state
 
+## Building the Container
+
+The development container can be built using the provided script:
+
+```bash
+# Run from anywhere - the script handles the correct directory
+.devcontainer/build-and-push.sh
+
+# Or with a specific tag
+.devcontainer/build-and-push.sh v1.0.0
+```
+
+Or manually with Docker/Podman (must be run from .devcontainer directory):
+
+```bash
+cd .devcontainer
+docker build -t family-assistant-devcontainer .
+# or
+podman build -t family-assistant-devcontainer .
+```
+
+**Important**: Always build from the `.devcontainer` directory to use the development Dockerfile.
+The root directory contains a production Dockerfile that builds frontend assets.
+
 ## Troubleshooting
 
 ### Container Issues
