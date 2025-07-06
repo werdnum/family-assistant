@@ -1,10 +1,16 @@
 #!/bin/bash
 set -e
 
-# Ensure uv is in PATH
-export PATH="/root/.local/bin:$PATH"
+# Ensure uv is in PATH and include user paths
+export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/root/.local/bin:$PATH"
 
 echo "Starting workspace setup..."
+
+# If running as root, ensure proper ownership later
+RUNNING_AS_ROOT=false
+if [ "$(id -u)" = "0" ]; then
+    RUNNING_AS_ROOT=true
+fi
 
 # Clone repository if CLAUDE_PROJECT_REPO is set
 if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
@@ -18,6 +24,11 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
         git clone "$AUTHED_URL" .
     else
         git clone "$CLAUDE_PROJECT_REPO" .
+    fi
+    
+    # Ensure claude owns the workspace if running as root
+    if [ "$RUNNING_AS_ROOT" = "true" ]; then
+        chown -R claude:claude /workspace
     fi
 fi
 
@@ -86,7 +97,7 @@ echo "Configuring MCP servers..."
 cd /workspace
 
 # Find full paths for executables
-DENO_PATH=$(which deno 2>/dev/null || echo "/root/.deno/bin/deno")
+DENO_PATH=$(which deno 2>/dev/null || echo "/home/claude/.deno/bin/deno")
 UVX_PATH=$(which uvx 2>/dev/null || echo "uvx")
 NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 
@@ -96,6 +107,12 @@ claude mcp add --scope user context7 $(which npx) -- -y -q @upstash/context7-mcp
 claude mcp add --scope user scraper /workspace-bin/scrape_mcp
 claude mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
 claude mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@latest --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org" --headless --isolated --browser chromium
+
+# Ensure proper ownership if running as root
+if [ "$RUNNING_AS_ROOT" = "true" ]; then
+    chown -R claude:claude /workspace
+fi
+
 echo "Workspace setup complete!"
 
 # Execute the command passed to the container
