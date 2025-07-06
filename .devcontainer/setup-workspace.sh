@@ -2,9 +2,45 @@
 set -e
 
 # Ensure uv is in PATH and include user paths
-export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/root/.local/bin:$PATH"
+export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/root/.local/bin:$PATH"
 
 echo "Starting workspace setup..."
+
+# Check if /home/claude is a mount point
+HOME_IS_MOUNTED=false
+if mountpoint -q /home/claude 2>/dev/null || [ -n "$(findmnt -n -o SOURCE --target /home/claude 2>/dev/null)" ]; then
+    echo "/home/claude is mounted - will install tools if needed"
+    HOME_IS_MOUNTED=true
+fi
+
+# Install npm tools if they don't exist (e.g., when home is mounted)
+if [ "$HOME_IS_MOUNTED" = "true" ] && [ ! -f "/home/claude/.npm-global/bin/claude" ]; then
+    echo "Installing npm tools in mounted home directory..."
+    
+    # Ensure npm global directory exists
+    mkdir -p /home/claude/.npm-global
+    export NPM_CONFIG_PREFIX=/home/claude/.npm-global
+    
+    # Install tools
+    npm install -g @anthropic-ai/claude-code
+    npm install -g @google/gemini-cli
+    npm install -g playwright
+    
+    # Install Playwright browsers
+    if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ]; then
+        npx playwright install chromium
+    fi
+    
+    # Install LLM tools using uv
+    export PATH="/home/claude/.local/bin:$PATH"
+    uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
+    
+    # Ensure proper ownership of installed tools
+    chown -R claude:claude /home/claude/.npm-global
+    chown -R claude:claude /home/claude/.local
+    
+    echo "npm tools installation complete"
+fi
 
 # If running as root, ensure proper ownership later
 RUNNING_AS_ROOT=false
