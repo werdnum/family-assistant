@@ -44,41 +44,75 @@ RUN apt-get update && apt-get install -y \
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install Deno for MCP servers
-RUN curl -fsSL https://deno.land/install.sh | sh
-ENV PATH="/root/.deno/bin:$PATH"
-
-# Install Claude Code CLI globally
-RUN npm install -g @anthropic-ai/claude-code
-RUN npm install -g @google/gemini-cli
-
 # Install jq for JSON processing and PostgreSQL client
 RUN apt-get update && apt-get install -y jq postgresql-client && rm -rf /var/lib/apt/lists/*
-
-# Set Playwright browsers path to a system-wide location to avoid user-specific paths
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
-
-# Install Playwright globally and its system dependencies
-# This ensures the dependencies are available for any Python environment
-RUN npm install -g playwright && \
-    npx playwright install --with-deps chromium
-
-# Install Python dependencies for scraper MCP (contrib/scrape_mcp.py)
-RUN uv venv /venv
-RUN uv pip install -p /venv/bin/python --system "playwright>=1.0" "markitdown[html]>=0.1.0"
-RUN /venv/bin/playwright install --with-deps chromium
 
 # Create claude user with UID 1001 to match Kubernetes deployment
 RUN useradd -m -s /bin/bash -u 1001 claude && \
     mkdir -p /home/claude/.cache/uv && \
+    mkdir -p /home/claude/.npm-global && \
+    mkdir -p /home/claude/.cache/deno && \
+    mkdir -p /home/claude/.deno && \
     chown -R claude:claude /home/claude
+
+# Set up npm global directory for claude user
+ENV NPM_CONFIG_PREFIX=/home/claude/.npm-global
+ENV PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:$PATH"
+
+# Switch to claude user for user-specific installations
+USER claude
+
+# Install Deno for MCP servers as claude user
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
+
+# Install Claude Code CLI as claude user
+RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @google/gemini-cli
+
+# Install LLM tools globally using uv tool install
+RUN uv tool install llm && \
+    uv tool install llm-gemini && \
+    uv tool install llm-openrouter && \
+    uv tool install llm-fragments-github
+
+# Add uv tools to PATH
+ENV PATH="/home/claude/.local/bin:$PATH"
+
+# Set Playwright browsers path to user's home to avoid permission issues
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/claude/.cache/playwright-browsers
+
+# Install Playwright globally as claude user
+RUN npm install -g playwright && \
+    npx playwright install chromium
+
+# Switch back to root for system-level operations
+USER root
+
+# Install Playwright system dependencies (must be done as root)
+RUN npx playwright install-deps chromium
+
+# Install Python dependencies for scraper MCP (contrib/scrape_mcp.py)
+RUN uv venv /venv && \
+    uv pip install -p /venv/bin/python --system "playwright>=1.0" "markitdown[html]>=0.1.0" && \
+    /venv/bin/playwright install chromium && \
+    chown -R claude:claude /venv
+
+# Ensure claude user can access the virtual environment
+RUN chmod -R 755 /venv
 
 # Create workspace directory
 WORKDIR /workspace
 
-# Create setup script
+# Create setup script and claude wrapper
 COPY setup-workspace.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/setup-workspace.sh
+COPY claude-wrapper.sh /usr/local/bin/claude-wrapper
+RUN chmod +x /usr/local/bin/setup-workspace.sh /usr/local/bin/claude-wrapper
+
+# Create symlink for claude command that uses the wrapper
+RUN ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude
+
+# Switch to claude user
+USER claude
 
 # Set up entry point that handles both interactive and service modes
 ENTRYPOINT ["/usr/local/bin/setup-workspace.sh"]
