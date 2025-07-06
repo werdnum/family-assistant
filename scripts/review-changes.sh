@@ -78,7 +78,10 @@ fi
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 # Check if CLAUDE.md exists
-if [[ ! -f "$REPO_ROOT/CLAUDE.md" ]]; then
+HAS_CLAUDE_MD=false
+if [[ -f "$REPO_ROOT/CLAUDE.md" ]]; then
+    HAS_CLAUDE_MD=true
+else
     echo "${YELLOW}Warning: CLAUDE.md not found in repository root${NC}"
 fi
 
@@ -194,11 +197,17 @@ REVIEW_PROMPT="Review the following git diff and identify any issues according t
 DIFF:
 $DIFF"
 
+# Build LLM command arguments
+LLM_ARGS=()
+if [[ "$HAS_CLAUDE_MD" == "true" ]]; then
+    LLM_ARGS+=("-f" "$REPO_ROOT/CLAUDE.md")
+fi
+LLM_ARGS+=("-f" "$REPO_ROOT/REVIEW_GUIDELINES.md")
+LLM_ARGS+=("--schema" "$SCHEMA")
+LLM_ARGS+=("-s" "$SYSTEM_PROMPT")
+
 # Execute LLM call (redirect stderr to a separate file for debugging)
-if llm -f "$REPO_ROOT/CLAUDE.md" -f "$REPO_ROOT/REVIEW_GUIDELINES.md" \
-    --schema "$SCHEMA" \
-    -s "$SYSTEM_PROMPT" \
-    "$REVIEW_PROMPT" > "$TEMP_RESPONSE" 2>"$TEMP_STDERR"; then
+if llm "${LLM_ARGS[@]}" "$REVIEW_PROMPT" > "$TEMP_RESPONSE" 2>"$TEMP_STDERR"; then
     
     # Parse the JSON response
     if ! jq empty "$TEMP_RESPONSE" 2>/dev/null; then
