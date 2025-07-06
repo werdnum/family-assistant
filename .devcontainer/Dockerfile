@@ -65,31 +65,34 @@ USER claude
 # Install Deno for MCP servers as claude user
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
 
+# Add uv tools to PATH before installing
+ENV PATH="/home/claude/.local/bin:$PATH"
+
 # Install Claude Code CLI as claude user
 RUN npm install -g @anthropic-ai/claude-code
 RUN npm install -g @google/gemini-cli
 
-# Install LLM tools globally using uv tool install
-RUN uv tool install llm && \
-    uv tool install llm-gemini && \
-    uv tool install llm-openrouter && \
-    uv tool install llm-fragments-github
-
-# Add uv tools to PATH
-ENV PATH="/home/claude/.local/bin:$PATH"
+# Install LLM tools globally using uv tool install with plugins
+RUN uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
 
 # Set Playwright browsers path to user's home to avoid permission issues
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/claude/.cache/playwright-browsers
 
-# Install Playwright globally as claude user
+# Switch back to root to install system dependencies first
+USER root
+
+# Install Playwright system dependencies (must be done as root before installing browsers)
+RUN npx playwright install-deps chromium
+
+# Switch back to claude user
+USER claude
+
+# Install Playwright globally as claude user (after system deps are installed)
 RUN npm install -g playwright && \
     npx playwright install chromium
 
-# Switch back to root for system-level operations
+# Switch back to root for remaining system-level operations
 USER root
-
-# Install Playwright system dependencies (must be done as root)
-RUN npx playwright install-deps chromium
 
 # Install Python dependencies for scraper MCP (contrib/scrape_mcp.py)
 RUN uv venv /venv && \

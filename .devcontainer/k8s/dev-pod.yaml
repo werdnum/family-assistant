@@ -136,6 +136,9 @@ spec:
             cd /workspace
             source .venv/bin/activate
             
+            # Ensure PATH includes npm and uv tools
+            export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:$PATH"
+            
             # Wait for postgres
             echo "Waiting for PostgreSQL..."
             for i in {1..30}; do
@@ -195,6 +198,10 @@ spec:
           - |
             cd /workspace
             source .venv/bin/activate
+            
+            # Ensure PATH includes npm and uv tools
+            export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:$PATH"
+            export NPM_CONFIG_PREFIX=/home/claude/.npm-global
             
             # Configure MCP servers
             echo "Configuring MCP servers..."
