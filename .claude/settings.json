@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "(.venv/bin/poe format && .venv/bin/poe lint-fast) || return 2"
+          },
+          {
+            "type": "command",
+            "command": "/bin/bash .claude/stop-feedback-hook.sh"
           }
         ]
       }
