@@ -135,7 +135,11 @@ dev = [
     "mdformat>=0.7.17",
     "mdformat-gfm>=0.3.5",
     "mdformat-frontmatter>=2.0.0",
-    "mdformat-tables>=0.4.1"
+    "mdformat-tables>=0.4.1",
+    "llm>=0.26.0",
+    "llm-gemini>=0.23.0",
+    "llm-openrouter>=0.4.1",
+    "llm-fragments-github>=0.4.0"
 ]
 
 [project.scripts]
