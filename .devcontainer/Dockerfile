@@ -57,7 +57,7 @@ RUN useradd -m -s /bin/bash -u 1001 claude && \
 
 # Set up npm global directory for claude user
 ENV NPM_CONFIG_PREFIX=/home/claude/.npm-global
-ENV PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:$PATH"
+ENV PATH="/usr/local/bin:/home/claude/.npm-global/bin:/home/claude/.deno/bin:$PATH"
 
 # Switch to claude user for user-specific installations
 USER claude
@@ -65,8 +65,8 @@ USER claude
 # Install Deno for MCP servers as claude user
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
 
-# Add uv tools to PATH before installing
-ENV PATH="/home/claude/.local/bin:$PATH"
+# Add uv tools to PATH before installing - maintaining /usr/local/bin first
+ENV PATH="/usr/local/bin:/home/claude/.local/bin:$PATH"
 
 # Install Claude Code CLI as claude user
 RUN npm install -g @anthropic-ai/claude-code
