@@ -15,6 +15,12 @@ repository.
   it. Linters in this project are generally set up to be correct. If there is a false positive you
   MUST document your evidence for that alongside the ignore comment or wherever you disable it.
 - NEVER leave linting errors unfixed. All code must pass linting checks before completion
+- When stuck debugging complex issues or needing a second opinion, use the `llm` CLI tool:
+  - `cat myscript.py | llm 'explain this code'` - Analyze a script
+  - `git diff | llm -s 'Describe these changes'` - Understand code changes
+  - `llm -f error.log 'debug this error'` - Debug from log files
+  - `cat file1.py file2.py | llm 'how do these interact?'` - Analyze multiple files
+  - Use `llm chat` for multi-line inputs (paste errors/tracebacks with `!multi` and `!end`)
 
 ## Linting and Formatting
 
