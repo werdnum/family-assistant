@@ -449,19 +449,33 @@ class ConfirmingToolsProvider(ToolsProvider):
 
             uid = args.get("uid")
             calendar_url = args.get("calendar_url")
-            if uid and calendar_url and context.db_context:
-                # Try to get calendar config - function might not exist
-                get_config_func = getattr(
-                    calendar_integration, "get_calendar_config_from_context", None
-                )
-                if get_config_func and callable(get_config_func):
-                    # Work around pylint not understanding dynamic callables
-                    try:
-                        calendar_config = await get_config_func(context.db_context)  # type: ignore[misc]  # pylint: disable=not-callable
-                    except Exception:
-                        calendar_config = None
+            if uid and calendar_url:
+                # Try to get calendar config from the wrapped provider
+                calendar_config = None
+
+                # Check if wrapped provider is LocalToolsProvider with calendar config
+                if hasattr(self.wrapped_provider, "_calendar_config"):
+                    calendar_config = self.wrapped_provider._calendar_config
+                    logger.debug(
+                        f"Found calendar config in wrapped LocalToolsProvider: {bool(calendar_config)}"
+                    )
+                # Check if it's a CompositeToolsProvider wrapping a LocalToolsProvider
+                elif hasattr(self.wrapped_provider, "providers"):
+                    logger.debug(
+                        "Wrapped provider is CompositeToolsProvider, checking providers..."
+                    )
+                    for provider in self.wrapped_provider.providers:
+                        if hasattr(provider, "_calendar_config"):
+                            calendar_config = provider._calendar_config
+                            logger.debug(
+                                f"Found calendar config in provider {type(provider).__name__}: {bool(calendar_config)}"
+                            )
+                            break
                 else:
-                    calendar_config = None
+                    logger.debug(
+                        f"Wrapped provider type: {type(self.wrapped_provider).__name__}, has no calendar config"
+                    )
+
                 if calendar_config:
                     try:
                         # Fetch event details using the dedicated function
