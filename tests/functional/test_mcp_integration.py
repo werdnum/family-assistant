@@ -65,6 +65,63 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
+async def wait_for_server(
+    url: str, timeout: float = 30.0, check_interval: float = 0.5
+) -> None:
+    """
+    Wait for a server to be ready by attempting to connect to it.
+
+    Args:
+        url: The URL to check
+        timeout: Maximum time to wait in seconds
+        check_interval: Time between checks in seconds
+
+    Raises:
+        RuntimeError: If the server doesn't start within the timeout
+    """
+    import httpx
+
+    start_time = asyncio.get_event_loop().time()
+    last_error = None
+
+    while asyncio.get_event_loop().time() - start_time < timeout:
+        try:
+            async with (
+                httpx.AsyncClient() as client,
+                client.stream("GET", url, timeout=1.0) as response,
+            ):
+                # Just check if we can connect and get headers
+                if response.status_code == 200:
+                    logger.info(
+                        f"Server is ready on {url} (status: {response.status_code})"
+                    )
+                    return
+                # Non-200 status might indicate server is up but misconfigured
+                elif response.status_code:
+                    logger.warning(
+                        f"Server responded with status {response.status_code} on {url}"
+                    )
+                    return
+        except httpx.ConnectError as e:
+            # Connection refused - server not ready yet
+            last_error = e
+            await asyncio.sleep(check_interval)
+        except httpx.ReadTimeout:
+            # For SSE, read timeout is expected - server is up!
+            logger.info(f"Server is ready on {url} (SSE stream established)")
+            return
+        except Exception as e:
+            # For other exceptions, log but continue trying
+            logger.warning(f"Unexpected error checking {url}: {type(e).__name__}: {e}")
+            last_error = e
+            await asyncio.sleep(check_interval)
+
+    raise RuntimeError(
+        f"Server did not start on {url} within {timeout} seconds. "
+        f"Last error: {last_error}"
+    )
+
+
 # --- Fixture to manage mcp-proxy subprocess for SSE tests ---
 @pytest_asyncio.fixture(scope="function")  # Use pytest_asyncio.fixture
 async def mcp_proxy_server() -> AsyncGenerator[str, None]:
@@ -77,19 +134,40 @@ async def mcp_proxy_server() -> AsyncGenerator[str, None]:
     sse_url = f"http://{host}:{port}/sse"
     command = [
         "mcp-proxy",
-        "--sse-port",
+        "--port",
         str(port),
-        "--sse-host",
+        "--host",
         host,
         "mcp-server-time",  # The stdio command mcp-proxy should run
     ]
 
     logger.info(f"Starting MCP proxy server: {' '.join(command)}")
-    # Let subprocess stdout/stderr go to parent (test runner) to avoid pipe buffers filling up
+    # Capture stderr to see any errors, stdout can go to parent
     # Use preexec_fn to ensure the child process gets its own process group,
     # so signals don't affect the parent pytest process.
-    process = await asyncio.create_subprocess_exec(*command, preexec_fn=os.setpgrp)
-    await asyncio.sleep(5)  # Increased wait time for server and proxy to start reliably
+    process = await asyncio.create_subprocess_exec(
+        *command, preexec_fn=os.setpgrp, stderr=asyncio.subprocess.PIPE
+    )
+
+    # Wait for the server to be ready
+    try:
+        await wait_for_server(sse_url, timeout=30.0)
+    except RuntimeError as e:
+        # If server didn't start, capture any stderr output
+        stderr_output = ""
+        if process.stderr:
+            stderr_data = await process.stderr.read()
+            stderr_output = stderr_data.decode("utf-8", errors="replace")
+            logger.error(f"MCP proxy stderr: {stderr_output}")
+
+        # Kill the process and re-raise with more info
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+        raise RuntimeError(
+            f"Failed to start MCP proxy: {e}\nstderr: {stderr_output}"
+        ) from e
 
     yield sse_url  # Provide the SSE URL to the test
 
