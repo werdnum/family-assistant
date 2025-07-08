@@ -1,4 +1,5 @@
 #!/bin/bash
+set -x  # Enable debug output
 
 # This hook runs the code review script before git commits
 # It reads JSON input from stdin
@@ -34,8 +35,13 @@ echo "🔍 Running code review before commit..." >&2
 echo "" >&2
 
 # Run the review script and redirect output to stderr
+echo "DEBUG: About to run review script: $REVIEW_SCRIPT" >&2
+echo "DEBUG: Current directory: $(pwd)" >&2
+echo "DEBUG: Git status:" >&2
+git status --short >&2
 "$REVIEW_SCRIPT" 2>&1 >&2
 REVIEW_EXIT_CODE=$?
+echo "DEBUG: Review script exit code: $REVIEW_EXIT_CODE" >&2
 
 # Decide what to do based on the review result
 if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
