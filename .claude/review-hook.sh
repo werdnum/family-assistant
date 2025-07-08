@@ -1,5 +1,4 @@
 #!/bin/bash
-set -x  # Enable debug output
 
 # This hook runs the code review script before git commits
 # It reads JSON input from stdin
@@ -12,7 +11,11 @@ JSON_INPUT=$(cat)
 COMMAND=$(echo "$JSON_INPUT" | jq -r '.tool_input.command // ""')
 
 # Check if this is a git commit command
-if ! echo "$COMMAND" | grep -qE "git\s+(commit|ci)\s+"; then
+# This regex matches:
+# - Simple: git commit -m "message"
+# - Compound: git add . && git commit -m "message"
+# - With semicolon: git add .; git commit -m "message"
+if ! echo "$COMMAND" | grep -qE "(^|[;&|])\s*git\s+(commit|ci)\s+"; then
     # Not a git commit, allow it
     exit 0
 fi
@@ -34,14 +37,24 @@ fi
 echo "🔍 Running code review before commit..." >&2
 echo "" >&2
 
-# Run the review script and redirect output to stderr
-echo "DEBUG: About to run review script: $REVIEW_SCRIPT" >&2
-echo "DEBUG: Current directory: $(pwd)" >&2
-echo "DEBUG: Git status:" >&2
-git status --short >&2
-"$REVIEW_SCRIPT" 2>&1 >&2
+# Extract the commit message from the git command
+# Look for patterns like: -m "message" or --message="message" or --message "message"
+COMMIT_MESSAGE=""
+if [[ "$COMMAND" =~ -m[[:space:]]+[\"\']([^\"\']+)[\"\'] ]]; then
+    COMMIT_MESSAGE="${BASH_REMATCH[1]}"
+elif [[ "$COMMAND" =~ --message[[:space:]]*=[[:space:]]*[\"\']([^\"\']+)[\"\'] ]]; then
+    COMMIT_MESSAGE="${BASH_REMATCH[1]}"
+elif [[ "$COMMAND" =~ --message[[:space:]]+[\"\']([^\"\']+)[\"\'] ]]; then
+    COMMIT_MESSAGE="${BASH_REMATCH[1]}"
+fi
+
+# Run the review script and capture output
+# Pass the commit message via environment variable
+COMMIT_MESSAGE="$COMMIT_MESSAGE" REVIEW_OUTPUT=$("$REVIEW_SCRIPT" 2>&1)
 REVIEW_EXIT_CODE=$?
-echo "DEBUG: Review script exit code: $REVIEW_EXIT_CODE" >&2
+
+# Echo the captured output to stderr
+echo "$REVIEW_OUTPUT" >&2
 
 # Decide what to do based on the review result
 if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
