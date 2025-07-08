@@ -30,8 +30,8 @@ if [[ ! -x "$REVIEW_SCRIPT" ]]; then
     exit 0
 fi
 
-echo "🔍 Running code review before commit..."
-echo ""
+echo "🔍 Running code review before commit..." >&2
+echo "" >&2
 
 # Run the review script
 "$REVIEW_SCRIPT"
@@ -40,8 +40,8 @@ REVIEW_EXIT_CODE=$?
 # Decide what to do based on the review result
 if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
     # No issues found
-    echo ""
-    echo "✅ Code review passed, proceeding with commit"
+    echo "" >&2
+    echo "✅ Code review passed, proceeding with commit" >&2
     exit 0
 elif [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
     # Only warnings found - use exit 1 to show as non-blocking error
@@ -55,12 +55,12 @@ elif [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
     exit 1
 else
     # Blocking issues found
-    echo ""
-    echo "❌ Code review found blocking issues"
-    echo ""
-    echo "Claude Code should either:"
-    echo "1. Fix the issues and try again"
-    echo "2. Acknowledge the issues in the commit message to explain why they're acceptable"
-    echo "3. Stop and ask for help if unsure how to proceed"
+    echo "" >&2
+    echo "❌ Code review found blocking issues" >&2
+    echo "" >&2
+    echo "Claude Code should either:" >&2
+    echo "1. Fix the issues and try again" >&2
+    echo "2. Acknowledge the issues in the commit message to explain why they're acceptable" >&2
+    echo "3. Stop and ask for help if unsure how to proceed" >&2
     exit 2
 fi
