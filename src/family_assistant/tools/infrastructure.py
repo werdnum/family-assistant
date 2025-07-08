@@ -161,6 +161,8 @@ class LocalToolsProvider:
         try:
             # Prepare arguments, potentially injecting context or generator
             call_args = arguments.copy()
+            logger.debug(f"Tool '{name}' - Initial arguments from LLM: {arguments}")
+            logger.debug(f"Tool '{name}' - Initial call_args (copy): {call_args}")
             sig = inspect.signature(callable_func)
 
             resolved_hints = {}
@@ -221,11 +223,28 @@ class LocalToolsProvider:
                             f"Identified 'embedding_generator' for {callable_func.__name__} via string annotation."
                         )
 
-                elif (
-                    param_name == "calendar_config"
-                    and annotation_to_check == dict[str, Any]
-                ):  # For dict, use ==
-                    needs_calendar_config = True
+                elif param_name == "calendar_config":
+                    # Check if it's a dict type annotation
+                    if annotation_to_check == dict[str, Any]:
+                        needs_calendar_config = True
+                    # Handle string annotation fallback
+                    elif (
+                        isinstance(param.annotation, str)
+                        and param.annotation == "dict[str, Any]"
+                    ):
+                        needs_calendar_config = True
+                        logger.debug(
+                            f"Identified 'calendar_config' for {callable_func.__name__} via string annotation fallback."
+                        )
+                    # Also handle cases where the type might not match exactly
+                    elif (
+                        hasattr(annotation_to_check, "__origin__")
+                        and annotation_to_check.__origin__ is dict
+                    ):
+                        needs_calendar_config = True
+                        logger.debug(
+                            f"Matched calendar_config via __origin__ check for {callable_func.__name__}"
+                        )
 
             # Inject dependencies based on resolved needs
             if needs_exec_context:
@@ -258,6 +277,13 @@ class LocalToolsProvider:
                 if arg_name not in arguments:
                     del call_args[arg_name]
 
+            # Ensure all original arguments that are expected by the function are included
+            for param_name in sig.parameters:
+                if param_name in arguments and param_name not in call_args:
+                    call_args[param_name] = arguments[param_name]
+
+            logger.debug(f"Tool '{name}' - Final call_args after cleanup: {call_args}")
+
             # Execute the function with prepared arguments
             result = await callable_func(**call_args)
 
@@ -285,6 +311,10 @@ class LocalToolsProvider:
             logger.error(f"Error executing local tool '{name}': {e}", exc_info=True)
             # Re-raise or return formatted error string? Returning error string for now.
             return f"Error executing tool '{name}': {e}"
+
+    def get_calendar_config(self) -> dict[str, Any] | None:
+        """Get the calendar configuration."""
+        return self._calendar_config
 
     async def close(self) -> None:
         """Local provider has no resources to clean up."""
@@ -346,6 +376,10 @@ class CompositeToolsProvider:
             raise last_error
         else:
             raise ToolNotFoundError(name, "any provider")
+
+    def get_providers(self) -> list[ToolsProvider]:
+        """Get the list of providers."""
+        return self._providers
 
     async def close(self) -> None:
         """Closes all wrapped providers."""
@@ -454,19 +488,19 @@ class ConfirmingToolsProvider(ToolsProvider):
                 calendar_config = None
 
                 # Check if wrapped provider is LocalToolsProvider with calendar config
-                if hasattr(self.wrapped_provider, "_calendar_config"):
-                    calendar_config = self.wrapped_provider._calendar_config
+                if isinstance(self.wrapped_provider, LocalToolsProvider):
+                    calendar_config = self.wrapped_provider.get_calendar_config()
                     logger.debug(
                         f"Found calendar config in wrapped LocalToolsProvider: {bool(calendar_config)}"
                     )
                 # Check if it's a CompositeToolsProvider wrapping a LocalToolsProvider
-                elif hasattr(self.wrapped_provider, "providers"):
+                elif isinstance(self.wrapped_provider, CompositeToolsProvider):
                     logger.debug(
                         "Wrapped provider is CompositeToolsProvider, checking providers..."
                     )
-                    for provider in self.wrapped_provider.providers:
-                        if hasattr(provider, "_calendar_config"):
-                            calendar_config = provider._calendar_config
+                    for provider in self.wrapped_provider.get_providers():
+                        if isinstance(provider, LocalToolsProvider):
+                            calendar_config = provider.get_calendar_config()
                             logger.debug(
                                 f"Found calendar config in provider {type(provider).__name__}: {bool(calendar_config)}"
                             )

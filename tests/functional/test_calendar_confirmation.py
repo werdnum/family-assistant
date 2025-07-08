@@ -11,14 +11,13 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import caldav
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -46,36 +45,64 @@ async def create_test_event_in_radicale(
     start_dt: datetime,
     end_dt: datetime,
 ) -> str:
-    """Helper to create an event in Radicale and return its UID."""
+    """Helper to create an event in Radicale using the actual calendar tool and return its UID."""
     base_url, user, passwd, calendar_url = radicale_server_details
 
-    # Create event using the calendar integration tool
-    event_uid = f"test-{uuid.uuid4()}@example.com"
+    # Use the actual add_calendar_event_tool to create the event
+    from family_assistant.tools.calendar import add_calendar_event_tool
 
-    # Use sync caldav client to create event
-    def create_event_sync() -> str:
-        with caldav.DAVClient(
-            url=base_url, username=user, password=passwd, timeout=30
-        ) as client:
-            calendar = client.calendar(url=calendar_url)
+    calendar_config = {
+        "caldav": {
+            "username": user,
+            "password": passwd,
+            "base_url": base_url,
+            "calendar_urls": [calendar_url],
+        }
+    }
 
-            # Create vEvent using vobject
-            import vobject
+    # Create a minimal database context for the test
+    async with DatabaseContext() as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-create",
+            user_name="TestUser",
+            turn_id="test-turn-create",
+            db_context=db_ctx,
+            chat_interface=None,
+            timezone_str=TEST_TIMEZONE_STR,
+            request_confirmation_callback=None,
+        )
 
-            cal = vobject.iCalendar()
-            vevent = cal.add("vevent")
-            vevent.add("summary").value = event_summary
-            vevent.add("dtstart").value = start_dt
-            vevent.add("dtend").value = end_dt
-            vevent.add("uid").value = event_uid
+        result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=calendar_config,
+            summary=event_summary,
+            start_time=start_dt.isoformat(),
+            end_time=end_dt.isoformat(),
+            all_day=False,
+        )
 
-            # Save to calendar
-            calendar.save_event(cal.serialize())
-            return event_uid
+        logger.info(f"Event creation result: {result}")
 
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, create_event_sync)
-    return event_uid
+        # Now search for the event to get its UID
+        from family_assistant.tools.calendar import search_calendar_events_tool
+
+        search_result = await search_calendar_events_tool(
+            exec_context=exec_context,
+            calendar_config=calendar_config,
+            search_text=event_summary,
+        )
+
+    # Extract UID from search result
+    import re
+
+    uid_match = re.search(r"UID: ([^\n]+)", search_result)
+    if uid_match:
+        uid = uid_match.group(1).strip()
+        logger.info(f"Found event UID: {uid}")
+        return uid
+    else:
+        raise ValueError(f"Could not find UID in search result: {search_result}")
 
 
 @pytest.mark.asyncio
@@ -108,6 +135,7 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
             "username": r_user,
             "password": r_pass,
             "base_url": radicale_base_url,
+            "calendar_urls": [test_calendar_url],
         }
     }
 
@@ -200,6 +228,7 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
             "username": r_user,
             "password": r_pass,
             "base_url": radicale_base_url,
+            "calendar_urls": [test_calendar_url],
         }
     }
 
@@ -261,12 +290,20 @@ async def test_confirming_tools_provider_with_calendar_events(
         radicale_server, event_summary, start_dt, end_dt
     )
 
+    # Debug logging
+    logger.info(f"Created event with UID: {event_uid}")
+    logger.info(f"Using calendar URL: {test_calendar_url}")
+
+    # Small delay to ensure event is saved
+    await asyncio.sleep(0.1)
+
     # Setup providers with real calendar config
     test_calendar_config = {
         "caldav": {
             "username": r_user,
             "password": r_pass,
             "base_url": radicale_base_url,
+            "calendar_urls": [test_calendar_url],
         }
     }
 
