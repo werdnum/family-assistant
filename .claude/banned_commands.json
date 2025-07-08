@@ -38,5 +38,13 @@
   {
     "regexp": "^\\s*cd\\s+",
     "explanation": "Using cd changes the working directory for all subsequent commands. If you need to run commands in a different directory, use a subshell like: (cd /path && command) or use absolute paths."
+  },
+  {
+    "regexp": "\\bpython\\s+-m\\s+pytest\\b",
+    "explanation": "Use 'pytest' directly instead of 'python -m pytest' - it's already properly configured in the virtual environment."
+  },
+  {
+    "regexp": "\\bpytest\\b.*\\s+-[a-zA-Z]*v[a-zA-Z]*s[a-zA-Z]*\\s",
+    "explanation": "pytest with -v and -s flags together creates excessive verbose output. Run pytest without these flags first. If you truly need verbose output after seeing the results, use separate flags like '-x -v -s' to bypass this check."
   }
 ]
