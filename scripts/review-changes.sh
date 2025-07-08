@@ -1,5 +1,4 @@
 #!/bin/bash
-set -x  # Enable debug output
 
 # Color codes for output
 RED='\033[0;31m'
@@ -193,10 +192,20 @@ echo ""
 echo "${CYAN}Running review analysis...${NC}"
 
 # Create the review prompt
-REVIEW_PROMPT="Review the following git diff and identify any issues according to the severity levels defined in the guidelines. Be thorough but focus on actual problems.
+if [[ -n "$COMMIT_MESSAGE" ]]; then
+    REVIEW_PROMPT="Review the following git diff and commit message. Identify any issues according to the severity levels defined in the guidelines. Be thorough but focus on actual problems. Also check if the commit message accurately describes the changes.
+
+COMMIT MESSAGE:
+$COMMIT_MESSAGE
 
 DIFF:
 $DIFF"
+else
+    REVIEW_PROMPT="Review the following git diff and identify any issues according to the severity levels defined in the guidelines. Be thorough but focus on actual problems.
+
+DIFF:
+$DIFF"
+fi
 
 # Build LLM command arguments
 LLM_ARGS=()
