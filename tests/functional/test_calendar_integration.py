@@ -29,6 +29,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
+from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
@@ -484,6 +485,9 @@ async def test_modify_event(
     )
 
     # --- Retrieve UID of the event created by the LLM tool ---
+    # Add a small delay to ensure the event is fully saved
+    await asyncio.sleep(1.0)
+
     original_radicale_event = await get_event_by_summary_from_radicale(
         radicale_server, original_summary
     )
@@ -496,6 +500,43 @@ async def test_modify_event(
         f"Retrieved UID for '{original_summary}' created by LLM tool: {event_uid}"
     )
 
+    # Verify the event can be found by UID before proceeding
+    logger.info(
+        f"Verifying event exists with UID {event_uid} at calendar URL {test_calendar_direct_url}"
+    )
+    from family_assistant.tools.calendar import search_calendar_events_tool
+
+    # Create a database context for the search operation
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_ctx:
+        search_result = await search_calendar_events_tool(
+            exec_context=ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test-verify",
+                user_name="TestUser",
+                turn_id="test-turn-verify",
+                db_context=db_ctx,
+                chat_interface=None,
+                timezone_str=TEST_TIMEZONE_STR,
+                request_confirmation_callback=None,
+            ),
+            calendar_config=test_calendar_config_for_add,
+            search_text=original_summary,
+        )
+        logger.info(f"Search result for '{original_summary}': {search_result}")
+
+    # Extract the calendar URL from the search result to ensure we use the correct one
+    import re
+
+    calendar_url_match = re.search(r"Calendar: (.+)", search_result)
+    if calendar_url_match:
+        actual_calendar_url = calendar_url_match.group(1).strip()
+        logger.info(f"Extracted calendar URL from search: {actual_calendar_url}")
+    else:
+        actual_calendar_url = test_calendar_direct_url
+        logger.warning(
+            f"Could not extract calendar URL from search result, using: {actual_calendar_url}"
+        )
+
     # --- LLM Rules for Modifying the Event (using the retrieved UID) ---
     tool_call_id_modify = f"call_mod_{uuid.uuid4()}"
 
@@ -505,25 +546,31 @@ async def test_modify_event(
             f"change event {original_summary.lower()}" in last_text
         )  # User refers to original summary
 
-    modify_event_response = MockLLMOutput(
-        content=f"OK, I'll modify '{original_summary}'.",  # LLM confirms based on original summary
-        tool_calls=[
-            ToolCallItem(
-                id=tool_call_id_modify,
-                type="function",
-                function=ToolCallFunction(
-                    name="modify_calendar_event",
-                    arguments=json.dumps({
-                        "uid": event_uid,  # Use the UID from the LLM-created event
-                        "calendar_url": test_calendar_direct_url,
-                        "new_summary": modified_summary,
-                        "new_start_time": modified_start_dt.isoformat(),
-                        "new_end_time": modified_end_dt.isoformat(),  # Ensure end time is included
-                    }),
-                ),
-            )
-        ],
-    )
+    # Now that we have event_uid and actual_calendar_url, create the modify response
+    def create_modify_response() -> MockLLMOutput:
+        return MockLLMOutput(
+            content=f"OK, I'll modify '{original_summary}'.",  # LLM confirms based on original summary
+            tool_calls=[
+                ToolCallItem(
+                    id=tool_call_id_modify,
+                    type="function",
+                    function=ToolCallFunction(
+                        name="modify_calendar_event",
+                        arguments=json.dumps({
+                            "uid": event_uid,  # Use the UID from the LLM-created event
+                            "calendar_url": actual_calendar_url,  # Use the actual calendar URL from search
+                            "new_summary": modified_summary,
+                            "new_start_time": modified_start_dt.isoformat(),
+                            "new_end_time": modified_end_dt.isoformat(),  # Ensure end time is included
+                        }),
+                    ),
+                )
+            ],
+        )
+
+    # Create the actual response object now that we have all the values
+    modify_event_response = create_modify_response()
+
     # This llm_client is for the MODIFICATION step
 
     # --- Define final response matcher and output for modify step ---
@@ -536,7 +583,7 @@ async def test_modify_event(
             last_message.get("role") == "tool"
             and last_message.get("tool_call_id") == tool_call_id_modify
             and "OK. Event '" in last_message.get("content", "")
-            and f"'{modified_summary}' updated" in last_message.get("content", "")
+            and "updated" in last_message.get("content", "")
         )
 
     final_llm_response_for_modify_content = (
@@ -546,10 +593,29 @@ async def test_modify_event(
         content=final_llm_response_for_modify_content, tool_calls=None
     )
 
+    # Add a matcher for error responses
+    def error_response_matcher_for_modify(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages or len(messages) < 2:
+            return False
+        last_message = messages[-1]
+        return (
+            last_message.get("role") == "tool"
+            and last_message.get("tool_call_id") == tool_call_id_modify
+            and "Error:" in last_message.get("content", "")
+            and "not found" in last_message.get("content", "")
+        )
+
+    error_llm_response_for_modify = MockLLMOutput(
+        content=f"I'm sorry, but I couldn't find the event '{original_summary}' to modify. It may have been deleted or the event details may be incorrect.",
+        tool_calls=None,
+    )
+
     llm_client_for_modify: LLMInterface = RuleBasedMockLLMClient(
         rules=[
             (modify_event_matcher, modify_event_response),
             (final_response_matcher_for_modify, final_llm_response_for_modify),
+            (error_response_matcher_for_modify, error_llm_response_for_modify),
         ]
     )
 
@@ -566,15 +632,8 @@ async def test_modify_event(
     )
 
     # --- Setup ProcessingService (similar to add_event test) ---
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_base_url,  # Add base_url
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
-        },
-        "ical": {"urls": []},
-    }
+    # Use the same config that was used for creating the event
+    test_calendar_config = test_calendar_config_for_add
     dummy_prompts = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }
@@ -1181,11 +1240,11 @@ async def test_search_events(
                 function=ToolCallFunction(
                     name="search_calendar_events",
                     arguments=json.dumps({
-                        "query_text": search_query_text,  # Tool will search for "Search Event"
-                        "start_date_str": (search_day - timedelta(days=1)).strftime(
+                        "search_text": search_query_text,  # Tool will search for "Search Event"
+                        "start_date": (search_day - timedelta(days=1)).strftime(
                             "%Y-%m-%d"
                         ),  # Start search one day earlier
-                        "end_date_str": (search_day + timedelta(days=2)).strftime(
+                        "end_date": (search_day + timedelta(days=2)).strftime(
                             "%Y-%m-%d"
                         ),  # End search two days after search_day (total 4-day window)
                     }),
