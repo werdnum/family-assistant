@@ -33,8 +33,8 @@ fi
 echo "🔍 Running code review before commit..." >&2
 echo "" >&2
 
-# Run the review script
-"$REVIEW_SCRIPT"
+# Run the review script and redirect output to stderr
+"$REVIEW_SCRIPT" 2>&1 >&2
 REVIEW_EXIT_CODE=$?
 
 # Decide what to do based on the review result
