@@ -118,11 +118,20 @@ if [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
 fi
 
 # Copy Claude configuration if provided
+# Copy settings.local.json if it exists in the container
+if [ -f "/opt/claude-settings/settings.local.json" ]; then
+    echo "Copying default Claude settings..."
+    mkdir -p .claude
+    cp /opt/claude-settings/settings.local.json .claude/
+fi
+
+# Override with user's settings if provided
 if [ -f "/home/claude/.claude/settings.local.json" ]; then
     mkdir -p .claude
     cp /home/claude/.claude/settings.local.json .claude/
 fi
 
+# Copy user's CLAUDE.local.md if provided
 if [ -f "/home/claude/.claude/CLAUDE.local.md" ]; then
     mkdir -p .claude
     cp /home/claude/.claude/CLAUDE.local.md .claude/

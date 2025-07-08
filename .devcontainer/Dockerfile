@@ -106,6 +106,10 @@ RUN chmod -R 755 /venv
 # Create workspace directory
 WORKDIR /workspace
 
+# Copy default Claude settings
+RUN mkdir -p /opt/claude-settings
+COPY settings.local.json /opt/claude-settings/
+
 # Create setup script and claude wrapper
 COPY setup-workspace.sh /usr/local/bin/
 COPY claude-wrapper.sh /usr/local/bin/claude-wrapper
