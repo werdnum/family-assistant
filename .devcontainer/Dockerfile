@@ -113,7 +113,8 @@ COPY settings.local.json /opt/claude-settings/
 # Create setup script and claude wrapper
 COPY setup-workspace.sh /usr/local/bin/
 COPY claude-wrapper.sh /usr/local/bin/claude-wrapper
-RUN chmod +x /usr/local/bin/setup-workspace.sh /usr/local/bin/claude-wrapper
+COPY throttle_backspaces.py /usr/local/bin/
+RUN chmod +x /usr/local/bin/setup-workspace.sh /usr/local/bin/claude-wrapper /usr/local/bin/throttle_backspaces.py
 
 # Create symlink for claude command that uses the wrapper
 RUN ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude
