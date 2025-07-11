@@ -47,6 +47,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Install jq for JSON processing and PostgreSQL client
 RUN apt-get update && apt-get install -y jq postgresql-client && rm -rf /var/lib/apt/lists/*
 
+# Download and install claude-code-webui binary
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        WEBUI_ARCH="linux-amd64"; \
+    elif [ "$ARCH" = "arm64" ]; then \
+        WEBUI_ARCH="linux-arm64"; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    curl -sSL "https://github.com/sugyan/claude-code-webui/releases/latest/download/claude-code-webui-${WEBUI_ARCH}" \
+    -o /usr/local/bin/claude-code-webui && \
+    chmod +x /usr/local/bin/claude-code-webui
+
 # Create claude user with UID 1001 to match Kubernetes deployment
 RUN useradd -m -s /bin/bash -u 1001 claude && \
     mkdir -p /home/claude/.cache/uv && \

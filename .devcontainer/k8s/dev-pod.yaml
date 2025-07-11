@@ -16,6 +16,9 @@ spec:
     - name: postgres
       port: 5432
       targetPort: 5432
+    - name: claude-webui
+      port: 8080
+      targetPort: 8080
   type: NodePort  # Or LoadBalancer if available
 ---
 apiVersion: apps/v1
@@ -191,6 +194,8 @@ spec:
         workingDir: /workspace
         tty: true
         stdin: true
+        ports:
+        - containerPort: 8080
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -212,10 +217,10 @@ spec:
             # CLAUDE.md is now in /home/claude/.claude/CLAUDE.md (mounted volume)
             
             echo "Claude Code environment ready!"
-            echo "Connect with: kubectl exec -it deployment/family-assistant-dev -c claude -- claude"
+            echo "Starting claude-code-webui on port 8080..."
             
-            # Keep container running
-            tail -f /dev/null
+            # Start claude-code-webui
+            exec claude-code-webui --port 8080 --host 0.0.0.0
         env:
         - name: DATABASE_URL
           value: "postgresql+asyncpg://test:test@localhost:5432/test"
