@@ -6,5 +6,5 @@ if [ -f "/workspace/.venv/bin/activate" ]; then
     source /workspace/.venv/bin/activate
 fi
 
-# Execute the real claude command with all arguments
-exec /home/claude/.npm-global/bin/claude "$@"
+# Execute the real claude command with throttle_backspaces wrapper
+exec /usr/local/bin/throttle_backspaces.py /home/claude/.npm-global/bin/claude "$@"
