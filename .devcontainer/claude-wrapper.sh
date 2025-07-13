@@ -5,6 +5,9 @@
 if [ -d "/workspace/.git" ]; then
     cd /workspace
     
+    # Save current commit to restore if needed
+    ORIG_HEAD=$(git rev-parse HEAD)
+    
     # Fetch first to minimize critical period
     git fetch origin >/dev/null 2>&1
     
@@ -25,8 +28,10 @@ if [ -d "/workspace/.git" ]; then
     # Restore stashed changes
     if [ "$stashed" = true ]; then
         if ! git stash pop -q 2>/dev/null; then
-            echo "⚠️  Couldn't restore local changes due to conflicts"
-            echo "   Your changes are saved in stash. Run 'git stash list' to see them."
+            # If stash pop fails, reset to original state
+            git reset --hard "$ORIG_HEAD" >/dev/null 2>&1
+            git stash pop -q 2>/dev/null || true
+            echo "⚠️  Update skipped due to conflicts with local changes"
         fi
     fi
 fi
