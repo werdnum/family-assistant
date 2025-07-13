@@ -174,7 +174,10 @@ UVX_PATH=$(which uvx 2>/dev/null || echo "uvx")
 NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 
 # Configure MCP servers with full paths
-claude mcp list | cut -d: -f1 | xargs -I: claude mcp remove --scope user : || true
+# Remove existing servers one by one to avoid xargs quote issues
+for server in $(claude mcp list | cut -d: -f1); do
+    claude mcp remove --scope user "$server" || true
+done
 claude mcp add --scope user context7 $(which npx) -- -y -q @upstash/context7-mcp
 claude mcp add --scope user scraper /workspace-bin/scrape_mcp
 claude mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
