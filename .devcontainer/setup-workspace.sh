@@ -6,6 +6,24 @@ export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.l
 
 echo "Starting workspace setup..."
 
+# Create claude user with UID 1001 if needed
+if ! id -u claude >/dev/null 2>&1; then
+    useradd -m -u 1001 -g 1001 -s /bin/bash claude
+fi
+
+# Fix permissions on persistent directories
+# The claude-home volume is mounted at /home/claude
+mkdir -p /home/claude/.claude
+chown claude:claude /home/claude
+chown -R claude:claude /home/claude/.claude
+chmod 755 /home/claude
+chmod -R 755 /home/claude/.claude || true
+
+# Fix postgres data directory permissions
+mkdir -p /var/lib/postgresql/data
+chown -R 999:999 /var/lib/postgresql/data
+chmod 700 /var/lib/postgresql/data
+
 # Check if /home/claude is a mount point
 HOME_IS_MOUNTED=false
 if mountpoint -q /home/claude 2>/dev/null || [ -n "$(findmnt -n -o SOURCE --target /home/claude 2>/dev/null)" ]; then
