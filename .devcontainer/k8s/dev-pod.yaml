@@ -54,7 +54,7 @@ spec:
       initContainers:
       # Setup workspace and fix permissions
       - name: setup-workspace
-        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_084103
+        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_101058
         imagePullPolicy: Always
         command: ["/usr/local/bin/setup-workspace.sh"]
         securityContext:
@@ -104,7 +104,7 @@ spec:
       
       # Backend service container
       - name: backend
-        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_084103
+        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_101058
         imagePullPolicy: Always
         workingDir: /workspace
         command: ["/bin/bash", "-c"]
@@ -163,7 +163,7 @@ spec:
           periodSeconds: 10
       # Claude Code container
       - name: claude
-        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_084103
+        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_101058
         imagePullPolicy: Always
         workingDir: /workspace
         tty: true
@@ -178,17 +178,6 @@ spec:
             
             # Ensure NPM_CONFIG_PREFIX is set
             export NPM_CONFIG_PREFIX=/home/claude/.npm-global
-            
-            # Configure MCP servers
-            echo "Configuring MCP servers..."
-            claude mcp list | cut -d: -f1 | xargs -I: claude mcp remove --scope user : || true
-            claude mcp add --scope user context7 $(which npx) -- -y -q @upstash/context7-mcp
-            claude mcp add --scope user scraper /workspace-bin/scrape_mcp
-            claude mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
-            claude mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@latest --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org" --headless --isolated --browser chromium
-            echo "MCP servers configured!"
-            
-            # CLAUDE.md is now in /home/claude/.claude/CLAUDE.md (mounted volume)
             
             echo "Claude Code environment ready!"
             echo "Starting claude-code-webui on port 8080..."
