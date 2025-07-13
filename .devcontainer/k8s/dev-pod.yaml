@@ -4,6 +4,7 @@ metadata:
   name: family-assistant-dev
   namespace: family-assistant-dev
 spec:
+  clusterIP: None # This makes the service "headless", which is required for StatefulSets
   selector:
     app: family-assistant-dev
   ports:
@@ -19,17 +20,15 @@ spec:
     - name: claude-webui
       port: 8080
       targetPort: 8080
-  type: NodePort  # Or LoadBalancer if available
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: family-assistant-dev
   namespace: family-assistant-dev
-  labels:
-    app: family-assistant-dev
 spec:
-  replicas: 1
+  serviceName: "family-assistant-dev"
+  replicas: 1 # You can scale this up later
   selector:
     matchLabels:
       app: family-assistant-dev
@@ -45,7 +44,7 @@ spec:
       initContainers:
       # Setup workspace and fix permissions
       - name: setup-workspace
-        image: containers.alexsmith.dev/family-assistant-devcontainer:latest
+        image: containers.alexsmith.dev/family-assistant-devcontainer:20250711_100358
         imagePullPolicy: Always
         command: ["/bin/bash", "-c"]
         args:
@@ -130,7 +129,7 @@ spec:
       
       # Backend service container
       - name: backend
-        image: containers.alexsmith.dev/family-assistant-devcontainer:latest
+        image: containers.alexsmith.dev/family-assistant-devcontainer:20250711_100358
         imagePullPolicy: Always
         workingDir: /workspace
         command: ["/bin/bash", "-c"]
@@ -189,7 +188,7 @@ spec:
           periodSeconds: 10
       # Claude Code container
       - name: claude
-        image: containers.alexsmith.dev/family-assistant-devcontainer:latest
+        image: containers.alexsmith.dev/family-assistant-devcontainer:20250711_100358
         imagePullPolicy: Always
         workingDir: /workspace
         tty: true
@@ -242,22 +241,28 @@ spec:
           limits:
             memory: "4Gi"
             cpu: "2"
-      
-      volumes:
-      # Shared workspace - ephemeral within pod
-      - name: workspace
-        emptyDir:
-          sizeLimit: 20Gi
-      
-      # Claude home directory - persistent on host
-      - name: claude-home
-        hostPath:
-          path: /data/ssd/sync/workspace/k8s-storage/family-assistant-dev/claude-home
-          type: DirectoryOrCreate
-      
-      # PostgreSQL data - persistent on host  
-      - name: postgres-data
-        hostPath:
-          path: /data/ssd/sync/workspace/k8s-storage/family-assistant-dev/postgres-data
-          type: DirectoryOrCreate
-      
+  volumeClaimTemplates:
+  - metadata:
+      name: workspace
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "shared-hostpath-storage"
+      resources:
+        requests:
+          storage: 20Gi
+  - metadata:
+      name: claude-home
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "shared-hostpath-storage"
+      resources:
+        requests:
+          storage: 5Gi
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "shared-hostpath-storage"
+      resources:
+        requests:
+          storage: 5Gi
