@@ -87,9 +87,7 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
     
     # Ensure claude owns the workspace if running as root
     if [ "$RUNNING_AS_ROOT" = "true" ]; then
-        # Just chown the top level and .git, not all files
-        chown claude:claude /workspace
-        chown -R claude:claude /workspace/.git
+        chown -R claude:claude /workspace
     fi
 elif [ -d ".git" ]; then
     echo "Workspace already exists, updating dependencies..."
@@ -188,11 +186,8 @@ $CLAUDE_BIN mcp add --scope user playwright $(which npx) -- -y -q @playwright/mc
 
 # Ensure proper ownership if running as root
 if [ "$RUNNING_AS_ROOT" = "true" ]; then
-    # Only chown key directories, not entire workspace to avoid slow recursive operations
-    chown claude:claude /workspace
-    [ -d "/workspace/.git" ] && chown -R claude:claude /workspace/.git
-    [ -d "/workspace/.venv" ] && chown claude:claude /workspace/.venv
-    [ -d "/workspace/.claude" ] && chown -R claude:claude /workspace/.claude
+    # Ensure claude owns the entire workspace
+    chown -R claude:claude /workspace
 fi
 
 echo "Workspace setup complete!"
