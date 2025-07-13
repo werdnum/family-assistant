@@ -45,9 +45,14 @@ if [ "${TAG}" != "latest" ]; then
     echo "Also pushed as: ${REGISTRY}/${IMAGE_NAME}:latest"
 fi
 echo ""
-echo "Updating Kubernetes deployment..."
-kubectl set image deployment/family-assistant-dev claude="${REGISTRY}/${IMAGE_NAME}:${TAG}" -n family-assistant-dev
-echo "Kubernetes deployment updated successfully!"
+echo "Updating Kubernetes statefulset..."
+# Update all containers that use the devcontainer image
+kubectl set image statefulset/family-assistant-dev \
+    setup-workspace="${REGISTRY}/${IMAGE_NAME}:${TAG}" \
+    backend="${REGISTRY}/${IMAGE_NAME}:${TAG}" \
+    claude="${REGISTRY}/${IMAGE_NAME}:${TAG}" \
+    -n family-assistant-dev
+echo "Kubernetes statefulset updated successfully!"
 echo ""
 echo "To manually update the image in the future, use:"
-echo "  kubectl set image deployment/family-assistant-dev claude=${REGISTRY}/${IMAGE_NAME}:${TAG} -n family-assistant-dev"
+echo "  kubectl set image statefulset/family-assistant-dev setup-workspace=${REGISTRY}/${IMAGE_NAME}:${TAG} backend=${REGISTRY}/${IMAGE_NAME}:${TAG} claude=${REGISTRY}/${IMAGE_NAME}:${TAG} -n family-assistant-dev"
