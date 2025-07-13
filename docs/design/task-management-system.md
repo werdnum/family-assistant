@@ -444,12 +444,23 @@ Waiting for contractor quotes
 
 #### Logic Layer: Starlark Scripts
 
-Instead of APIs, use scripts that directly manipulate notes:
+**Important Note**: Scripts in this system are not stored in a central repository. Instead, they are:
+- Generated inline by the LLM when needed
+- Stored as part of event listener or scheduled task configurations  
+- Executed directly via the `execute_script` tool
 
-- `task_add.star` - Parses natural language, adds to appropriate list/note
-- `task_complete.star` - Marks tasks complete, logs completion
-- `task_list.star` - Queries tasks by various criteria
-- `task_remind.star` - Checks for due tasks and sends reminders
+The LLM would generate and execute scripts on-demand for task operations. Example scripts:
+
+- **Task Add**: Parse natural language, append to TODO.md
+- **Task Complete**: Find and mark tasks with [x], log completion
+- **Task List**: Read and filter tasks by criteria
+- **Task Remind**: Check for due tasks and send notifications
+
+Scripts have access to tools like:
+- `add_or_update_note()` - Modify task lists
+- `search_notes()` - Find specific tasks
+- `send_telegram_message()` - Send reminders
+- `wake_llm()` - Request LLM attention for complex decisions
 
 #### Automation Layer: Event Listeners
 
@@ -458,49 +469,96 @@ Leverage existing event system for all automation:
 **Recurring Tasks**:
 
 ```python
-# Event listener configuration
+# Event listener configuration (created by LLM)
 {
     "name": "ac_filter_reminder",
     "type": "scheduled",
     "schedule": "0 9 1 */3 *",  # First day of every 3rd month at 9am
-    "action": "script",
-    "script": "task_remind.star",
-    "args": {"task_pattern": "AC filter"}
+    "action_type": "script",
+    "action_config": {
+        "script_code": """
+# Check if AC filter task needs reminder
+notes = search_notes("AC filter TODO")
+if notes and len(notes) > 0:
+    # Parse the task to check last completion
+    content = notes[0]["content"]
+    if "[ ]" in content and "AC filter" in content:
+        send_telegram_message(
+            chat_id=config["telegram_chat_id"],
+            text="🔧 Reminder: Time to change the AC filter!"
+        )
+""",
+        "timeout": 60
+    }
 }
 ```
 
 **Contextual Reminders**:
 
 ```python
-# Triggered when user arrives at store
+# Triggered when user arrives at store (created by LLM)
 {
     "name": "shopping_reminder",
-    "type": "state_changed",
-    "entity_id": "zone.grocery_store",
-    "condition": "person.user in zone.grocery_store",
-    "action": "script", 
-    "script": "task_context_remind.star",
-    "args": {"tag": "shopping"}
+    "event_type": "state_changed",
+    "entity_id": "person.user",
+    "conditions": [
+        {"field": "new_state.state", "operator": "in", "value": ["Grocery Store", "zone.grocery_store"]}
+    ],
+    "action_type": "script",
+    "action_config": {
+        "script_code": """
+# Find shopping tasks when user arrives at store
+todo_note = get_note("Family TODO")
+if todo_note:
+    lines = todo_note["content"].split("\\n")
+    shopping_items = []
+    in_shopping = False
+    
+    for line in lines:
+        if "## Shopping" in line:
+            in_shopping = True
+        elif "##" in line and in_shopping:
+            break
+        elif in_shopping and "[ ]" in line:
+            item = line.replace("- [ ]", "").strip()
+            shopping_items.append(item)
+    
+    if shopping_items:
+        msg = "🛒 Shopping list:\\n" + "\\n".join(["• " + item for item in shopping_items])
+        send_telegram_message(chat_id=config["telegram_chat_id"], text=msg)
+""",
+        "timeout": 30
+    }
 }
 ```
 
 #### Conversational Interface
 
-The LLM translates natural language into script calls:
+The LLM translates natural language into inline script execution:
 
 ```
 User: "Add buy milk to the shopping list"
-Assistant: [Calls task_add.star with {list: "shopping", task: "buy milk"}]
-"Added to shopping list"
+Assistant: [Executes script via execute_script tool]
+Script:
+  note = get_note("Family TODO")
+  # Find shopping section and append item
+  # ... script to modify note ...
+  add_or_update_note("Family TODO", updated_content)
+"Added 'buy milk' to shopping list"
 
 User: "What do I need to do today?"  
-Assistant: [Calls task_list.star with {filter: "today"}]
+Assistant: [Executes script to read and filter tasks]
+Script:
+  note = get_note("Family TODO") 
+  # Parse tasks, check for @today tags or deadlines
+  # ... filtering logic ...
+  return today_tasks
 "Here's what's on your list for today:
 - Call plumber about leak (urgent)
 - Buy milk (when you're at the store)"
 
 User: "Remind me to pack when I get home"
-Assistant: [Creates event listener for zone.home + calls task_add.star]
+Assistant: [Creates event listener with inline script + adds task]
 "I'll remind you to pack when you get home"
 ```
 
@@ -546,7 +604,7 @@ Assistant: [Creates event listener for zone.home + calls task_add.star]
 **Concurrent Edits**:
 
 - For single-node deployment: Use file locking in scripts (`flock`)
-- For Kubernetes/distributed environment: 
+- For Kubernetes/distributed environment:
   - Option 1: Ensure scripts run on single pod (e.g., leader election)
   - Option 2: Use atomic file operations (write to temp file, then rename)
   - Option 3: For high concurrency, consider Redis/etcd for distributed locking
@@ -587,3 +645,30 @@ Instead of "data integrity" or "query performance", measure:
 
 This revised design embraces the assistant's conversational nature while providing practical task
 management for a real family's needs.
+
+### Script System Extensions Needed
+
+While the current script system is quite capable, a few minor extensions would make task management smoother:
+
+1. **File Locking for Note Updates**
+   - Current scripts don't have built-in file locking
+   - Could add a `with_lock()` wrapper or use atomic operations
+   - Alternative: Rely on atomic note updates at the API level
+
+2. **Enhanced Note Parsing Tools**
+   - Helper functions for parsing markdown checklists
+   - Utilities for finding/modifying specific sections
+   - Could be implemented as pure Starlark functions within scripts
+
+3. **Task-Specific Tool Wrappers**
+   - `append_to_checklist(note_name, section, item)` 
+   - `mark_task_complete(note_name, task_pattern)`
+   - `get_tasks_by_tag(note_name, tag)`
+   - These could be implemented as reusable Starlark functions
+
+4. **Recurring Task Support**
+   - Scripts need to track "last completed" dates
+   - Could use note metadata or a separate tracking note
+   - Alternative: Use event listener state storage (if available)
+
+**Key Insight**: Most extensions can be implemented as Starlark utility functions within the scripts themselves, rather than requiring core system changes. This maintains the simplicity of the design while adding convenience.
