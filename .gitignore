@@ -11,7 +11,7 @@ scratch
 .coverage
 coverage_annotated/
 logs.log
-.serena/
+.serena/cache/
 local-logs.txt
 
 # Kubernetes secrets (contains sensitive tokens)
