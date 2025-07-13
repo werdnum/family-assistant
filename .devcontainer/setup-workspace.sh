@@ -175,10 +175,12 @@ NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 
 # Configure MCP servers with full paths (bypass wrapper to avoid git pull)
 CLAUDE_BIN="/home/claude/.npm-global/bin/claude"
-# Remove existing servers one by one to avoid xargs quote issues
-for server in $($CLAUDE_BIN mcp list | cut -d: -f1); do
-    $CLAUDE_BIN mcp remove --scope user "$server" || true
-done
+# Remove existing servers if any exist
+if $CLAUDE_BIN mcp list 2>/dev/null | grep -q ":"; then
+    for server in $($CLAUDE_BIN mcp list | cut -d: -f1); do
+        $CLAUDE_BIN mcp remove --scope user "$server" || true
+    done
+fi
 $CLAUDE_BIN mcp add --scope user context7 $(which npx) -- -y -q @upstash/context7-mcp
 $CLAUDE_BIN mcp add --scope user scraper /workspace-bin/scrape_mcp
 $CLAUDE_BIN mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
