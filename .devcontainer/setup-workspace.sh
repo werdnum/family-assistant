@@ -35,9 +35,11 @@ if [ "$HOME_IS_MOUNTED" = "true" ] && [ ! -f "/home/claude/.npm-global/bin/claud
     export PATH="/home/claude/.local/bin:$PATH"
     uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
     
-    # Ensure proper ownership of installed tools
-    chown -R claude:claude /home/claude/.npm-global
-    chown -R claude:claude /home/claude/.local
+    # Ensure proper ownership of installed tools (avoid recursive chown on large dirs)
+    # Only chown the bin directory and key files, not the entire node_modules
+    chown claude:claude /home/claude/.npm-global
+    chown -R claude:claude /home/claude/.npm-global/bin
+    [ -d "/home/claude/.local" ] && chown -R claude:claude /home/claude/.local
     
     echo "npm tools installation complete"
 fi
@@ -64,7 +66,9 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
     
     # Ensure claude owns the workspace if running as root
     if [ "$RUNNING_AS_ROOT" = "true" ]; then
-        chown -R claude:claude /workspace
+        # Just chown the top level and .git, not all files
+        chown claude:claude /workspace
+        chown -R claude:claude /workspace/.git
     fi
 fi
 
@@ -155,7 +159,11 @@ claude mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@lat
 
 # Ensure proper ownership if running as root
 if [ "$RUNNING_AS_ROOT" = "true" ]; then
-    chown -R claude:claude /workspace
+    # Only chown key directories, not entire workspace to avoid slow recursive operations
+    chown claude:claude /workspace
+    [ -d "/workspace/.git" ] && chown -R claude:claude /workspace/.git
+    [ -d "/workspace/.venv" ] && chown claude:claude /workspace/.venv
+    [ -d "/workspace/.claude" ] && chown -R claude:claude /workspace/.claude
 fi
 
 echo "Workspace setup complete!"
