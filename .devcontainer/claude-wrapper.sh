@@ -1,6 +1,36 @@
 #!/bin/bash
 # Wrapper script to ensure virtual environment is activated when running claude
 
+# Auto-pull latest changes
+if [ -d "/workspace/.git" ]; then
+    cd /workspace
+    
+    # Fetch first to minimize critical period
+    git fetch origin >/dev/null 2>&1
+    
+    # Stash any local changes
+    stashed=false
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        git stash push -q -m "auto-stash-$$"
+        stashed=true
+    fi
+    
+    # Try to pull with rebase
+    if ! git pull --rebase --quiet 2>/dev/null; then
+        # If rebase fails, abort and restore
+        git rebase --abort 2>/dev/null || true
+        echo "⚠️  Couldn't pull latest changes due to conflicts"
+    fi
+    
+    # Restore stashed changes
+    if [ "$stashed" = true ]; then
+        if ! git stash pop -q 2>/dev/null; then
+            echo "⚠️  Couldn't restore local changes due to conflicts"
+            echo "   Your changes are saved in stash. Run 'git stash list' to see them."
+        fi
+    fi
+fi
+
 # Activate the virtual environment if it exists
 if [ -f "/workspace/.venv/bin/activate" ]; then
     source /workspace/.venv/bin/activate
