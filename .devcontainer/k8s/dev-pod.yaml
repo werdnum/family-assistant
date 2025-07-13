@@ -54,7 +54,7 @@ spec:
       initContainers:
       # Setup workspace and fix permissions
       - name: setup-workspace
-        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_102035
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_103705
         imagePullPolicy: Always
         command: ["/usr/local/bin/setup-workspace.sh"]
         securityContext:
@@ -104,7 +104,7 @@ spec:
       
       # Backend service container
       - name: backend
-        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_102035
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_103705
         imagePullPolicy: Always
         workingDir: /workspace
         command: ["/bin/bash", "-c"]
@@ -163,7 +163,7 @@ spec:
           periodSeconds: 10
       # Claude Code container
       - name: claude
-        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_102035
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_103705
         imagePullPolicy: Always
         workingDir: /workspace
         tty: true
