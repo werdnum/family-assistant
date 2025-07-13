@@ -68,7 +68,10 @@ if [ "$(id -u)" = "0" ]; then
     RUNNING_AS_ROOT=true
 fi
 
-# Clone repository if CLAUDE_PROJECT_REPO is set
+# Change to workspace directory
+cd /workspace
+
+# Clone repository if CLAUDE_PROJECT_REPO is set and .git doesn't exist
 if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
     echo "Cloning repository from $CLAUDE_PROJECT_REPO..."
     
@@ -88,6 +91,8 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
         chown claude:claude /workspace
         chown -R claude:claude /workspace/.git
     fi
+elif [ -d ".git" ]; then
+    echo "Workspace already exists, updating dependencies..."
 fi
 
 # Check if we're in a Python project
