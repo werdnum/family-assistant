@@ -41,10 +41,20 @@ spec:
         runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
+      volumes:
+      # Claude home directory - persistent on host
+      - name: claude-home
+        hostPath:
+          path: /data/ssd/sync/workspace/k8s-storage/family-assistant-dev/claude-home
+          type: DirectoryOrCreate
+      
+      # PostgreSQL data - ephemeral within pod
+      - name: postgres-data
+        emptyDir: {}
       initContainers:
       # Setup workspace and fix permissions
       - name: setup-workspace
-        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250711_100358
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_084103
         imagePullPolicy: Always
         command: ["/usr/local/bin/setup-workspace.sh"]
         securityContext:
@@ -94,7 +104,7 @@ spec:
       
       # Backend service container
       - name: backend
-        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250711_100358
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_084103
         imagePullPolicy: Always
         workingDir: /workspace
         command: ["/bin/bash", "-c"]
@@ -153,7 +163,7 @@ spec:
           periodSeconds: 10
       # Claude Code container
       - name: claude
-        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250711_100358
+        image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_084103
         imagePullPolicy: Always
         workingDir: /workspace
         tty: true
@@ -215,19 +225,3 @@ spec:
       resources:
         requests:
           storage: 20Gi
-  - metadata:
-      name: claude-home
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      storageClassName: "shared-hostpath-storage"
-      resources:
-        requests:
-          storage: 5Gi
-  - metadata:
-      name: postgres-data
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      storageClassName: "shared-hostpath-storage"
-      resources:
-        requests:
-          storage: 5Gi
