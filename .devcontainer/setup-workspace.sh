@@ -117,8 +117,8 @@ if [ -f "pyproject.toml" ]; then
     echo "Installing pytest-xdist..."
     uv pip install pytest-xdist
     
-    # Install pre-commit hooks if available
-    if [ -f ".pre-commit-config.yaml" ]; then
+    # Install pre-commit hooks if available (skip if running as root to avoid git issues)
+    if [ -f ".pre-commit-config.yaml" ] && [ "$RUNNING_AS_ROOT" != "true" ]; then
         echo "Installing pre-commit hooks..."
         .venv/bin/pre-commit install || true
     fi
