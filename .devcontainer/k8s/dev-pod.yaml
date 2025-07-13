@@ -46,42 +46,7 @@ spec:
       - name: setup-workspace
         image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250711_100358
         imagePullPolicy: Always
-        command: ["/bin/bash", "-c"]
-        args:
-          - |
-            echo "Setting up workspace..."
-            
-            # Create claude user with UID 1001 if needed
-            if ! id -u claude >/dev/null 2>&1; then
-                useradd -m -u 1001 -g 1001 -s /bin/bash claude
-            fi
-            
-            # Fix permissions on persistent directories
-            # The claude-home volume is mounted at /home/claude
-            mkdir -p /home/claude/.claude
-            chown -R 1001:1001 /home/claude
-            chmod 755 /home/claude
-            chmod -R 755 /home/claude/.claude || true
-            
-            # Fix postgres data directory permissions
-            mkdir -p /var/lib/postgresql/data
-            chown -R 999:999 /var/lib/postgresql/data
-            chmod 700 /var/lib/postgresql/data
-            
-            # Clone repository if not present
-            cd /workspace
-            if [ ! -d .git ]; then
-                /usr/local/bin/setup-workspace.sh
-            else
-                echo "Workspace already exists, skipping clone"
-                # Just install/update dependencies
-                cd /workspace
-                source .venv/bin/activate || (uv venv .venv && source .venv/bin/activate)
-                uv pip install -e .[dev]
-            fi
-            
-            # Ensure ownership
-            chown -R 1001:1001 /workspace
+        command: ["/usr/local/bin/setup-workspace.sh"]
         securityContext:
           runAsUser: 0  # Run as root for setup
         env:
