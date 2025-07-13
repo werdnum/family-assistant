@@ -173,15 +173,16 @@ DENO_PATH=$(which deno 2>/dev/null || echo "/home/claude/.deno/bin/deno")
 UVX_PATH=$(which uvx 2>/dev/null || echo "uvx")
 NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 
-# Configure MCP servers with full paths
+# Configure MCP servers with full paths (bypass wrapper to avoid git pull)
+CLAUDE_BIN="/home/claude/.npm-global/bin/claude"
 # Remove existing servers one by one to avoid xargs quote issues
-for server in $(claude mcp list | cut -d: -f1); do
-    claude mcp remove --scope user "$server" || true
+for server in $($CLAUDE_BIN mcp list | cut -d: -f1); do
+    $CLAUDE_BIN mcp remove --scope user "$server" || true
 done
-claude mcp add --scope user context7 $(which npx) -- -y -q @upstash/context7-mcp
-claude mcp add --scope user scraper /workspace-bin/scrape_mcp
-claude mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
-claude mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@latest --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org" --headless --isolated --browser chromium
+$CLAUDE_BIN mcp add --scope user context7 $(which npx) -- -y -q @upstash/context7-mcp
+$CLAUDE_BIN mcp add --scope user scraper /workspace-bin/scrape_mcp
+$CLAUDE_BIN mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
+$CLAUDE_BIN mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@latest --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org" --headless --isolated --browser chromium
 
 # Ensure proper ownership if running as root
 if [ "$RUNNING_AS_ROOT" = "true" ]; then
