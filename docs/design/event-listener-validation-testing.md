@@ -2,7 +2,8 @@
 
 ## Testing Approach
 
-Following the existing test patterns in the codebase, we'll create a single functional test file that covers all validation scenarios with mocked Home Assistant dependencies.
+Following the existing test patterns in the codebase, we'll create a single functional test file
+that covers all validation scenarios with mocked Home Assistant dependencies.
 
 ### Test File Structure
 
@@ -389,22 +390,26 @@ class TestValidationPerformance:
 ### Key Testing Patterns
 
 1. **Mock Home Assistant Client**
+
    - Create `MockHomeAssistantClient` class with predefined entities and zones
    - Mock `async_get_states()` and `async_get_zones()` methods
    - Control exactly which entities exist for testing
 
 2. **Fixture Hierarchy**
+
    - `mock_ha_source` - Home Assistant source with mocked client
    - `mock_event_processor` - Event processor with all sources
    - `exec_context_with_validation` - Full execution context
 
 3. **Test Organization**
+
    - Group by source type (TestHomeAssistantValidation, TestIndexingSourceValidation)
    - Test both success and failure cases
    - Test backward compatibility
    - Test performance/caching
 
 4. **Assertion Patterns**
+
    - Parse JSON responses and check structure
    - Look for specific error fields and messages
    - Verify suggestions are provided
@@ -459,4 +464,5 @@ VALIDATION_TEST_CASES = [
 ]
 ```
 
-This testing approach ensures comprehensive coverage while following the established patterns in the codebase.
+This testing approach ensures comprehensive coverage while following the established patterns in the
+codebase.

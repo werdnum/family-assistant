@@ -12,7 +12,7 @@ import homeassistant_api as ha_api
 import janus
 from homeassistant_api import WebsocketClient
 
-from family_assistant.events.sources import EventSource
+from family_assistant.events.sources import BaseEventSource, EventSource
 from family_assistant.storage.events import EventSourceType
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class HomeAssistantSource(EventSource):
+class HomeAssistantSource(BaseEventSource, EventSource):
     """Event source for Home Assistant state changes."""
 
     def __init__(

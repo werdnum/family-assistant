@@ -8,7 +8,7 @@ import logging
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.events.sources import EventSource
+from family_assistant.events.sources import BaseEventSource, EventSource
 from family_assistant.storage.events import EventSourceType
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ class IndexingEventType(str, Enum):
     INDEXING_FAILED = "indexing_failed"
 
 
-class IndexingSource(EventSource):
+class IndexingSource(BaseEventSource, EventSource):
     """Event source for document indexing events."""
 
     def __init__(self) -> None:
