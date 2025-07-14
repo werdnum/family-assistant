@@ -29,7 +29,8 @@ The LLM frequently creates event listeners with invalid configurations that will
 
 ### Source-Specific Validation
 
-Each event source will implement its own validation logic, as validation rules are inherently source-specific.
+Each event source will implement its own validation logic, as validation rules are inherently
+source-specific.
 
 #### Protocol Extension
 
@@ -428,18 +429,21 @@ async def test_event_listener_tool(
 ### Phase 1: Core Infrastructure (Days 1-3)
 
 1. **Day 1: Protocol and Base Classes**
+
    - [ ] Add `validate_match_conditions` to EventSource protocol
    - [ ] Create ValidationResult and ValidationError dataclasses
    - [ ] Add default implementation (returns valid=True)
    - [ ] Write unit tests for data structures
 
 2. **Day 2: Tool Integration**
+
    - [ ] Modify create_event_listener_tool to call validation
    - [ ] Update test_event_listener_tool to show validation in analysis
    - [ ] Add validation error formatting helpers
    - [ ] Update tool response documentation
 
 3. **Day 3: Testing Framework**
+
    - [ ] Create validation test fixtures
    - [ ] Add integration tests for tool validation flow
    - [ ] Test backward compatibility (sources without validation)
@@ -448,30 +452,35 @@ async def test_event_listener_tool(
 ### Phase 2: Home Assistant Validation (Days 4-8)
 
 4. **Day 4: Entity Validation**
+
    - [ ] Implement entity format validation (regex)
    - [ ] Add entity existence checking via HA API
    - [ ] Implement entity cache with TTL
    - [ ] Create fuzzy matching for entity suggestions
 
 5. **Day 5: State Validation - Basic**
+
    - [ ] Implement state validation for binary domains
    - [ ] Add person/device_tracker zone validation
    - [ ] Query and cache Home Assistant zones
    - [ ] Handle case-sensitivity issues
 
 6. **Day 6: State Validation - Advanced**
+
    - [ ] Add historical state analysis
    - [ ] Implement state validation for numeric sensors
    - [ ] Add attribute validation support
    - [ ] Create suggestion engine for states
 
 7. **Day 7: Caching and Performance**
+
    - [ ] Implement efficient caching layer
    - [ ] Add cache warming on startup
    - [ ] Optimize API calls with batching
    - [ ] Add cache metrics and logging
 
 8. **Day 8: Home Assistant Testing**
+
    - [ ] Unit tests with mocked HA client
    - [ ] Integration tests with test HA instance
    - [ ] Performance tests with large entity counts
@@ -479,19 +488,22 @@ async def test_event_listener_tool(
 
 ### Phase 3: Other Sources (Days 9-11)
 
-9. **Day 9: Indexing Source**
-   - [ ] Implement event type validation
-   - [ ] Add document_id format validation
-   - [ ] Validate interface_type values
-   - [ ] Write comprehensive tests
+09. **Day 9: Indexing Source**
+
+    - [ ] Implement event type validation
+    - [ ] Add document_id format validation
+    - [ ] Validate interface_type values
+    - [ ] Write comprehensive tests
 
 10. **Day 10: Webhook Source**
+
     - [ ] Implement webhook_id validation
     - [ ] Add webhook registry integration
     - [ ] Validate payload schema paths
     - [ ] Create webhook-specific tests
 
 11. **Day 11: Integration Testing**
+
     - [ ] End-to-end validation testing
     - [ ] Multi-source validation scenarios
     - [ ] Performance testing across sources
@@ -500,18 +512,21 @@ async def test_event_listener_tool(
 ### Phase 4: LLM Integration (Days 12-14)
 
 12. **Day 12: LLM Context Enhancement**
+
     - [ ] Add validation examples to CLAUDE.md
     - [ ] Create validation best practices guide
     - [ ] Update tool descriptions with validation info
     - [ ] Add common error patterns to context
 
 13. **Day 13: Feedback Loop**
+
     - [ ] Implement validation metrics collection
     - [ ] Create validation success tracking
     - [ ] Add telemetry for common errors
     - [ ] Build error pattern analysis
 
 14. **Day 14: Polish and Release**
+
     - [ ] Final testing and bug fixes
     - [ ] Performance optimization
     - [ ] Documentation completion
@@ -519,94 +534,75 @@ async def test_event_listener_tool(
 
 ## Testing Strategy
 
-### Unit Tests
+We'll create a single comprehensive functional test file (`tests/functional/test_event_listener_validation.py`) that follows the existing test patterns in the codebase, with mocked Home Assistant dependencies.
+
+### Key Testing Components
+
+1. **Mock Home Assistant Client**
+   - `MockHomeAssistantClient` class with predefined entities and zones
+   - Controls exactly which entities exist for testing scenarios
+   - Mocks API methods like `async_get_states()` and `async_get_zones()`
+
+2. **Test Organization**
+   - Grouped by source type (Home Assistant, Indexing, Webhook)
+   - Tests both success and failure cases
+   - Includes backward compatibility tests
+   - Performance and caching tests
+
+3. **Mock Data Sets**
+   ```python
+   TEST_ENTITIES = ["person.alex", "person.bob", "light.living_room", ...]
+   TEST_ZONES = ["home", "work", "northtown", "grocery_store"]
+   ```
+
+### Example Test Structure
 
 ```python
-# Test validation result construction
-def test_validation_result_serialization():
-    result = ValidationResult(
-        valid=False,
-        errors=[ValidationError(
-            field="entity_id",
-            value="person.invalid",
-            error="Entity does not exist",
-            suggestion="Did you mean 'person.valid'?"
-        )]
-    )
-    assert result.to_dict()["errors"][0]["suggestion"] == "Did you mean 'person.valid'?"
-
-# Test entity format validation
-@pytest.mark.parametrize("entity_id,expected", [
-    ("light.living_room", True),
-    ("sensor.temperature_2", True),
-    ("Light.Living Room", False),  # Wrong case and space
-    ("light", False),  # Missing object_id
-    ("light.", False),  # Empty object_id
-])
-def test_entity_format_validation(entity_id, expected):
-    assert is_valid_entity_format(entity_id) == expected
+class TestHomeAssistantValidation:
+    """Test Home Assistant source validation."""
+    
+    @pytest.mark.asyncio
+    async def test_valid_entity_and_state(self, exec_context_with_validation):
+        """Test creating listener with valid entity and state."""
+        result = await create_event_listener_tool(
+            exec_context=exec_context_with_validation,
+            name="Valid Motion Detector",
+            source="home_assistant",
+            listener_config={
+                "match_conditions": {
+                    "entity_id": "binary_sensor.motion",
+                    "new_state.state": "on",
+                }
+            },
+        )
+        
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "listener_id" in data
 ```
 
-### Integration Tests
-
-```python
-# Test with real Home Assistant
-async def test_home_assistant_validation_integration():
-    ha_source = HomeAssistantSource(ha_client)
-    
-    # Test invalid entity
-    result = await ha_source.validate_match_conditions({
-        "entity_id": "person.nonexistent",
-        "new_state.state": "home"
-    })
-    assert not result.valid
-    assert any(e.field == "entity_id" for e in result.errors)
-    
-    # Test invalid state
-    result = await ha_source.validate_match_conditions({
-        "entity_id": "person.alex",  # Assuming exists
-        "new_state.state": "InvalidZone"
-    })
-    assert not result.valid
-    assert any(e.field == "new_state.state" for e in result.errors)
-```
-
-### Performance Tests
-
-```python
-# Test caching effectiveness
-async def test_validation_cache_performance():
-    ha_source = HomeAssistantSource(ha_client)
-    
-    # First call - should hit API
-    start = time.time()
-    await ha_source.validate_match_conditions({"entity_id": "light.test"})
-    first_call = time.time() - start
-    
-    # Second call - should use cache
-    start = time.time()
-    await ha_source.validate_match_conditions({"entity_id": "light.test"})
-    cached_call = time.time() - start
-    
-    assert cached_call < first_call * 0.1  # 10x faster
-```
+For the complete testing implementation, see [Event Listener Validation - Testing Strategy](./event-listener-validation-testing.md).
 
 ## Success Metrics
 
-1. **Validation Coverage**: 
+1. **Validation Coverage**:
+
    - 100% of event sources implement validation
    - 95% of created listeners pass validation
 
 2. **Error Reduction**:
+
    - 80% reduction in "never matching" listeners
    - 90% reduction in case-sensitivity errors
 
 3. **Performance**:
-   - <50ms validation time with warm cache
-   - <200ms validation time with cold cache
-   - <1% overhead on event processing
+
+   - \<50ms validation time with warm cache
+   - \<200ms validation time with cold cache
+   - \<1% overhead on event processing
 
 4. **LLM Adoption**:
+
    - LLM successfully uses validation feedback in 95% of retry attempts
    - 70% reduction in validation-related user complaints
 
@@ -627,21 +623,25 @@ async def test_validation_cache_performance():
 ## Future Enhancements
 
 1. **Machine Learning**:
+
    - Learn common state patterns per entity
    - Predict likely states based on entity name
    - Auto-suggest corrections based on history
 
 2. **Advanced Validation**:
+
    - Template validation for Jinja2 conditions
    - Complex condition support (OR, NOT, regex)
    - Time-based validation (e.g., "sun.sun" states)
 
 3. **Developer Experience**:
+
    - Visual validation UI
    - Real-time validation in web interface
    - Validation playground for testing
 
 4. **Smart Suggestions**:
+
    - Context-aware suggestions based on other listeners
    - Common pattern library
    - Auto-fix for simple errors
