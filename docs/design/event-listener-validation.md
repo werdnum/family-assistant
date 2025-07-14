@@ -32,11 +32,18 @@ The LLM frequently creates event listeners with invalid configurations that will
 Each event source will implement its own validation logic, as validation rules are inherently
 source-specific.
 
+**Implementation Note**: We use a `BaseEventSource` class approach rather than adding methods directly
+to the Protocol. This provides:
+- Default implementation for backward compatibility
+- Clear inheritance path for event sources
+- Ability to add shared functionality in the future
+- Type safety while maintaining protocol compliance
+
 #### Protocol Extension
 
 ```python
-from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
 
 @dataclass
 class ValidationError:
@@ -44,15 +51,15 @@ class ValidationError:
     value: Any
     error: str
     suggestion: Optional[str] = None
-    similar_values: Optional[List[str]] = None
+    similar_values: Optional[list[str]] = None
 
 @dataclass
 class ValidationResult:
     valid: bool
-    errors: List[ValidationError] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    errors: list[ValidationError] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "valid": self.valid,
             "errors": [
@@ -69,10 +76,14 @@ class ValidationResult:
         }
 
 class EventSource(Protocol):
-    """Extended event source protocol with validation."""
+    """Event source protocol (unchanged)."""
+    # ... existing protocol methods ...
+
+class BaseEventSource:
+    """Base class for event sources with default validation implementation."""
     
     async def validate_match_conditions(
-        self, match_conditions: Dict[str, Any]
+        self, match_conditions: dict[str, Any]
     ) -> ValidationResult:
         """
         Validate match conditions for this source type.
@@ -87,7 +98,7 @@ class EventSource(Protocol):
 #### Home Assistant Source Validation
 
 ```python
-class HomeAssistantSource(EventSource):
+class HomeAssistantSource(BaseEventSource, EventSource):
     """Home Assistant event source with comprehensive validation."""
     
     def __init__(self, client: ha_api.Client, ...):
@@ -233,7 +244,7 @@ class HomeAssistantSource(EventSource):
 #### Indexing Source Validation
 
 ```python
-class IndexingSource(EventSource):
+class IndexingSource(BaseEventSource, EventSource):
     """Indexing event source with validation."""
     
     VALID_EVENT_TYPES = {"DOCUMENT_READY", "INDEXING_FAILED"}
@@ -283,7 +294,7 @@ class IndexingSource(EventSource):
 #### Webhook Source Validation
 
 ```python
-class WebhookSource(EventSource):
+class WebhookSource(BaseEventSource, EventSource):
     """Webhook event source with validation."""
     
     def __init__(self, webhook_registry: WebhookRegistry):
@@ -428,12 +439,13 @@ async def test_event_listener_tool(
 
 ### Phase 1: Core Infrastructure (Days 1-3)
 
-1. **Day 1: Protocol and Base Classes**
+1. **Day 1: Protocol and Base Classes** ✅ COMPLETED
 
-   - [ ] Add `validate_match_conditions` to EventSource protocol
-   - [ ] Create ValidationResult and ValidationError dataclasses
-   - [ ] Add default implementation (returns valid=True)
-   - [ ] Write unit tests for data structures
+   - [x] Add `validate_match_conditions` via BaseEventSource class
+   - [x] Create ValidationResult and ValidationError dataclasses
+   - [x] Add default implementation (returns valid=True)
+   - [x] Write unit tests for data structures
+   - [x] Update existing event sources to extend BaseEventSource
 
 2. **Day 2: Tool Integration**
 
