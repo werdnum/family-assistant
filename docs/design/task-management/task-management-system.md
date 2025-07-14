@@ -687,11 +687,13 @@ while adding convenience.
 
 ### Overview
 
-Instead of building task management internally, the LLM could integrate with external family-oriented task management systems via API tools.
+Instead of building task management internally, the LLM could integrate with external
+family-oriented task management systems via API tools.
 
 ### Potential External Systems
 
 **Family-Oriented Options:**
+
 - **Todoist** - Family sharing, natural language input, location reminders
 - **Any.do** - Family lists, location-based reminders, integrations
 - **Microsoft To Do** - Free, shared lists, good mobile apps
@@ -699,6 +701,7 @@ Instead of building task management internally, the LLM could integrate with ext
 - **Cozi** - Family calendar + tasks + shopping lists
 
 **Technical Options:**
+
 - **Notion** - Flexible databases, API access
 - **Airtable** - API-first, highly customizable
 - **Trello** - Visual boards, automation
@@ -706,6 +709,7 @@ Instead of building task management internally, the LLM could integrate with ext
 ### Integration Approach
 
 The LLM would use tools to interact with external APIs:
+
 ```python
 # Hypothetical tool definitions
 - create_task(title, list, due_date, assignee, tags)
@@ -717,42 +721,46 @@ The LLM would use tools to interact with external APIs:
 
 ### Trade-offs Analysis
 
-| Aspect | Internal (Shopping List) | External System |
-|--------|-------------------------|-----------------|
-| **Setup Complexity** | Near zero - just create a note | Medium - API keys, account setup |
-| **Maintenance** | None - it's just text files | Ongoing - API changes, service reliability |
-| **Cost** | Free forever | Free tier limits, then $5-15/month |
-| **Features** | Only what you build | Full-featured from day 1 |
-| **Customization** | Infinite - it's your code | Limited to API capabilities |
-| **Data Control** | Complete - local files | External service owns your data |
-| **Offline Access** | Works perfectly | Depends on sync/cache |
-| **Mobile Experience** | Via Telegram only | Native mobile apps |
-| **Non-LLM Access** | Edit text files | Full GUI/apps |
-| **Conversational Flow** | Natural - direct text manipulation | Impedance mismatch with APIs |
+| Aspect                  | Internal (Shopping List)           | External System                            |
+| ----------------------- | ---------------------------------- | ------------------------------------------ |
+| **Setup Complexity**    | Near zero - just create a note     | Medium - API keys, account setup           |
+| **Maintenance**         | None - it's just text files        | Ongoing - API changes, service reliability |
+| **Cost**                | Free forever                       | Free tier limits, then $5-15/month         |
+| **Features**            | Only what you build                | Full-featured from day 1                   |
+| **Customization**       | Infinite - it's your code          | Limited to API capabilities                |
+| **Data Control**        | Complete - local files             | External service owns your data            |
+| **Offline Access**      | Works perfectly                    | Depends on sync/cache                      |
+| **Mobile Experience**   | Via Telegram only                  | Native mobile apps                         |
+| **Non-LLM Access**      | Edit text files                    | Full GUI/apps                              |
+| **Conversational Flow** | Natural - direct text manipulation | Impedance mismatch with APIs               |
 
 ### Why External Systems Fall Short
 
 1. **Loss of Conversational Fluidity**
+
    ```
    Internal: "Add milk to shopping list"
    → Directly modifies text
-   
+
    External: "Add milk to shopping list"
    → API call → Handle auth → Map to list ID → Handle errors
    → "Sorry, Todoist API is down right now"
    ```
 
 2. **The Impedance Mismatch Problem**
+
    - LLMs think in natural language, APIs want structured data
    - "Remind me about that thing for the kitchen before the party" needs complex translation
    - Each translation is a potential failure point
 
 3. **Philosophical Misalignment**
+
    - External systems optimize for visual interfaces and direct manipulation
    - Your assistant optimizes for conversational interaction
    - Adding Todoist is like "using the thing we were trying to replace"
 
 4. **Hidden Complexity Costs**
+
    - Each external dependency adds failure modes
    - API changes break integrations
    - Auth tokens expire, rate limits hit
@@ -760,9 +768,12 @@ The LLM would use tools to interact with external APIs:
 
 ### The Deeper Insight
 
-The family assistant is creating a **domain-specific language** for your family's life. Task management isn't a separate system to integrate - it's just another vocabulary within your conversational OS.
+The family assistant is creating a **domain-specific language** for your family's life. Task
+management isn't a separate system to integrate - it's just another vocabulary within your
+conversational OS.
 
 **The Antifragility Argument:**
+
 - Text files can't have API outages
 - Markdown survives company bankruptcies
 - Skills transfer between any text-based system
@@ -772,18 +783,23 @@ The family assistant is creating a **domain-specific language** for your family'
 
 **Strongly prefer the internal "shopping list" approach** because:
 
-1. **It's not a limitation, it's the innovation** - Tasks as text is the digital equivalent of shared physical spaces families naturally use
+1. **It's not a limitation, it's the innovation** - Tasks as text is the digital equivalent of
+   shared physical spaces families naturally use
 
-2. **Zero friction is the killer feature** - No API translation, no auth failures, no external dependencies
+2. **Zero friction is the killer feature** - No API translation, no auth failures, no external
+   dependencies
 
-3. **Perfect evolutionary fit** - Your task system will evolve exactly with your family's needs, not the average of millions of users
+3. **Perfect evolutionary fit** - Your task system will evolve exactly with your family's needs, not
+   the average of millions of users
 
 4. **Philosophical coherence** - Maintains the conversational-first approach throughout
 
 **Consider external systems only if:**
+
 - Native mobile apps become absolutely critical
 - Visual project management is required
 - Multiple family members refuse to use conversational interface
 - Complex multi-user permissions are needed (unlikely for 2-person household)
 
-The "shopping list on the fridge" remains the most elegant solution for a conversational assistant serving a small household.
+The "shopping list on the fridge" remains the most elegant solution for a conversational assistant
+serving a small household.
