@@ -2,7 +2,9 @@
 
 ## Overview
 
-This document details the tool design for implementing task management within the family assistant. Based on the analysis in `task-management-analysis-summary.md`, we're implementing a markdown-based approach with carefully designed tools that balance simplicity with functionality.
+This document details the tool design for implementing task management within the family assistant.
+Based on the analysis in `task-management-analysis-summary.md`, we're implementing a markdown-based
+approach with carefully designed tools that balance simplicity with functionality.
 
 ## Design Principles
 
@@ -17,6 +19,7 @@ This document details the tool design for implementing task management within th
 ### Storage Architecture
 
 Tasks are stored in topic-based notes:
+
 - `TODO: Shopping` - Shopping lists
 - `TODO: Home` - Home maintenance and chores
 - `TODO: Projects` - Multi-step projects
@@ -26,6 +29,7 @@ Tasks are stored in topic-based notes:
 ### Core Task Operations
 
 #### 1. add_task
+
 ```python
 @tool
 async def add_task(
@@ -36,12 +40,14 @@ async def add_task(
     """Add a single task without requiring script generation"""
 ```
 
-**Rationale**: 
+**Rationale**:
+
 - Covers 60% of operations with zero cognitive load
 - Natural conversation: "Add milk to shopping list"
 - Auto-creates sections and categories as needed
 
 #### 2. complete_task
+
 ```python
 @tool
 async def complete_task(
@@ -52,11 +58,13 @@ async def complete_task(
 ```
 
 **Rationale**:
+
 - Most common operation after adding
 - Pattern matching more forgiving than exact match
 - Returns clear success/failure
 
 #### 3. find_tasks
+
 ```python
 @tool
 async def find_tasks(
@@ -68,11 +76,13 @@ async def find_tasks(
 ```
 
 **Rationale**:
+
 - Composable - results can be formatted or acted upon
 - Covers most query needs without complex syntax
 - Returns structured data for further processing
 
 #### 4. move_tasks
+
 ```python
 @tool
 async def move_tasks(
@@ -84,6 +94,7 @@ async def move_tasks(
 ```
 
 **Rationale**:
+
 - Common reorganization operation
 - Batch operations without scripts
 - Preserves task metadata
@@ -91,6 +102,7 @@ async def move_tasks(
 ### Complex Operations Support
 
 #### task_script
+
 ```python
 @tool
 async def task_script(
@@ -101,11 +113,13 @@ async def task_script(
 ```
 
 **Use cases**:
+
 - Creating recurring task templates
 - Cross-note task dependencies
 - Custom workflow automation
 
 **Safety features**:
+
 - Validates dangerous operations
 - Requires confirmation for deletions
 - Clear description for audit trail
@@ -115,12 +129,14 @@ async def task_script(
 ### Problem Statement
 
 Current note operations are too coarse:
+
 - `add_or_update_note()` - Replaces entire note (conflict-prone)
 - `append_to_note()` - Only adds to end (limited flexibility)
 
 ### Proposed Granular Tools
 
 #### 1. update_note_section
+
 ```python
 @tool
 async def update_note_section(
@@ -133,11 +149,13 @@ async def update_note_section(
 ```
 
 **Benefits**:
+
 - Updates only relevant part of note
 - Understands markdown hierarchy
 - Reduces merge conflicts
 
 #### 2. update_note_lines
+
 ```python
 @tool
 async def update_note_lines(
@@ -151,11 +169,13 @@ async def update_note_lines(
 ```
 
 **Benefits**:
+
 - Surgical precision for edits
 - Pattern matching more LLM-friendly than line numbers
 - Handles single lines or ranges
 
 #### 3. insert_in_note
+
 ```python
 @tool
 async def insert_in_note(
@@ -168,6 +188,7 @@ async def insert_in_note(
 ```
 
 **Benefits**:
+
 - Maintains document structure
 - Auto-handles indentation
 - Clear position semantics
@@ -175,6 +196,7 @@ async def insert_in_note(
 ### Task-Specific Edit Operations
 
 #### modify_task
+
 ```python
 @tool
 async def modify_task(
@@ -188,11 +210,13 @@ async def modify_task(
 ```
 
 **Implementation**:
+
 - Built on top of `update_note_lines`
 - Preserves checkbox syntax and metadata
 - Atomic operations on single tasks
 
 #### move_task
+
 ```python
 @tool
 async def move_task(
@@ -206,6 +230,7 @@ async def move_task(
 ```
 
 **Features**:
+
 - Atomic operation prevents task loss
 - Creates destination section if needed
 - Preserves all task metadata
@@ -213,6 +238,7 @@ async def move_task(
 ### Section Management Tools
 
 #### organize_note_section
+
 ```python
 @tool
 async def organize_note_section(
@@ -224,11 +250,13 @@ async def organize_note_section(
 ```
 
 **Use cases**:
+
 - Alphabetize shopping lists
 - Group tasks by assignee
 - Sort by priority tags
 
 #### archive_completed_tasks
+
 ```python
 @tool
 async def archive_completed_tasks(
@@ -240,6 +268,7 @@ async def archive_completed_tasks(
 ```
 
 **Features**:
+
 - Maintains task history
 - Can be scheduled monthly
 - Keeps active lists clean
@@ -270,6 +299,7 @@ async def archive_completed_tasks(
 ## Usage Examples
 
 ### Simple Daily Flow
+
 ```python
 # Morning: Add tasks
 await add_task("Buy milk", "Shopping", "@sarah")
@@ -287,6 +317,7 @@ await archive_completed_tasks("TODO: Shopping", older_than_days=7)
 ```
 
 ### Complex Scenarios
+
 ```python
 # Bulk reassignment
 tasks = await find_tasks("person", "mike")
@@ -334,4 +365,6 @@ await task_script(
 
 ## Conclusion
 
-This tool design provides the right balance of simplicity and power for a family task management system. By avoiding both the "replace entire note" bluntness and the "generate Starlark for everything" complexity, we achieve a system that is both LLM-friendly and family-friendly.
+This tool design provides the right balance of simplicity and power for a family task management
+system. By avoiding both the "replace entire note" bluntness and the "generate Starlark for
+everything" complexity, we achieve a system that is both LLM-friendly and family-friendly.
