@@ -68,6 +68,7 @@ EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "Each matched event contains: event_id, timestamp (ISO format), event_data. "
                 "If no events to test, returns similar structure with 'message' explaining no events found. "
                 "If match_conditions empty, returns {'error': 'match_conditions cannot be empty', 'message': 'Please provide at least one condition to test'}. "
+                "When no events match and validation is available, analysis will include validation errors and suggestions. "
                 "On other errors, returns {'error': 'Failed to test event listener: [error details]', 'match_conditions': [conditions used]}."
             ),
             "parameters": {
@@ -333,6 +334,20 @@ async def test_event_listener_tool(
                             )
             except Exception:
                 pass
+
+            # Get validation results
+            event_processor = exec_context.assistant.event_processor
+            event_source = event_processor.sources.get(source)
+
+            if event_source and hasattr(event_source, "validate_match_conditions"):
+                from family_assistant.events.validation import format_validation_errors
+
+                validation = await event_source.validate_match_conditions(
+                    match_conditions
+                )
+                validation_messages = format_validation_errors(validation)
+                if validation_messages:
+                    analysis.extend(validation_messages)
 
         return json.dumps(
             {

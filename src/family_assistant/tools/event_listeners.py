@@ -36,7 +36,9 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "before adding a listener. If there are no results, consider whether the event just hasn't happened yet or the listener might be wrong.\n\n"
                 "Returns: A JSON string with the operation result as a dict. "
                 "On success, returns {'success': true, 'listener_id': [id], 'message': 'Created listener [name] with ID [id]'}. "
-                "On validation error, returns {'success': false, 'message': [error details]} for invalid source, action_type, missing script_code, missing match_conditions, or duplicate name."
+                "On validation error, returns {'success': false, 'message': [error details]} for invalid source, action_type, missing script_code, missing match_conditions, or duplicate name. "
+                "On match condition validation failure, returns {'success': false, 'message': 'Validation failed', 'validation_errors': [array of error objects], 'warnings': [array of warnings]}. "
+                "Each validation error contains: field, value, error, suggestion (optional), similar_values (optional)."
             ),
             "parameters": {
                 "type": "object",
@@ -289,6 +291,38 @@ async def create_event_listener_tool(
                 "success": False,
                 "message": "listener_config must contain 'match_conditions'",
             })
+
+        # Get the event source for validation
+        event_processor = exec_context.assistant.event_processor
+        event_source = event_processor.sources.get(source)
+
+        # Validate match conditions if source supports it
+        if event_source and hasattr(event_source, "validate_match_conditions"):
+            validation = await event_source.validate_match_conditions(match_conditions)
+
+            if not validation.valid:
+                return json.dumps({
+                    "success": False,
+                    "message": "Validation failed",
+                    "validation_errors": [
+                        {
+                            "field": e.field,
+                            "value": e.value,
+                            "error": e.error,
+                            "suggestion": e.suggestion,
+                            "similar_values": e.similar_values,
+                        }
+                        for e in validation.errors
+                    ],
+                    "warnings": validation.warnings,
+                })
+
+            # Log warnings but allow creation
+            if validation.warnings:
+                logger.warning(
+                    f"Validation warnings for listener '{name}': "
+                    f"{', '.join(validation.warnings)}"
+                )
 
         # Build action_config based on action_type
         if action_type == "script":
