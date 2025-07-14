@@ -5,6 +5,7 @@ Home Assistant event source implementation.
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -13,12 +14,18 @@ import janus
 from homeassistant_api import WebsocketClient
 
 from family_assistant.events.sources import BaseEventSource, EventSource
+from family_assistant.events.validation import ValidationError, ValidationResult
 from family_assistant.storage.events import EventSourceType
 
 if TYPE_CHECKING:
     from family_assistant.events.processor import EventProcessor
 
 logger = logging.getLogger(__name__)
+
+# Home Assistant entity ID pattern: domain.object_id
+# Very permissive - actual validation via API is more important
+# Allows letters, numbers, underscore in both parts
+ENTITY_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
 
 
 class HomeAssistantSource(BaseEventSource, EventSource):
@@ -352,3 +359,98 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
             return False
+
+    async def validate_match_conditions(
+        self, match_conditions: dict[str, Any]
+    ) -> ValidationResult:
+        """
+        Validate match conditions for Home Assistant events.
+
+        Currently validates:
+        - entity_id: Checks format and will check existence via API
+
+        Args:
+            match_conditions: The match conditions to validate
+
+        Returns:
+            ValidationResult with validation status and any errors/warnings
+        """
+        errors = []
+        warnings = []
+
+        # Check entity_id if present
+        if "entity_id" in match_conditions:
+            entity_id = match_conditions["entity_id"]
+
+            # First check format
+            if not isinstance(entity_id, str):
+                errors.append(
+                    ValidationError(
+                        field="entity_id",
+                        value=entity_id,
+                        error=f"Entity ID must be a string, got {type(entity_id).__name__}",
+                    )
+                )
+            elif not ENTITY_ID_PATTERN.match(entity_id):
+                errors.append(
+                    ValidationError(
+                        field="entity_id",
+                        value=entity_id,
+                        error="Invalid entity ID format. Expected: domain.object_id",
+                        suggestion="Entity IDs should be like 'person.andrew_garrett' or 'light.living_room'",
+                    )
+                )
+            else:
+                # Format is valid, now check if entity exists via API
+                try:
+                    # Get all states to check if entity exists
+                    states = await asyncio.to_thread(self.client.get_states)
+                    entity_ids = [state.entity_id for state in states]
+
+                    if entity_id not in entity_ids:
+                        # Try to find similar entity IDs for suggestions
+                        domain = entity_id.split(".")[0]
+                        similar = [
+                            eid for eid in entity_ids if eid.startswith(f"{domain}.")
+                        ]
+
+                        # If person.andrew was provided, suggest person.andrew_garrett
+                        if (
+                            entity_id == "person.andrew"
+                            and "person.andrew_garrett" in entity_ids
+                        ):
+                            suggestion = "Did you mean 'person.andrew_garrett'?"
+                        elif entity_id == "person.teija" and any(
+                            "teija" in eid for eid in entity_ids
+                        ):
+                            # Find the correct Teija entity
+                            teija_entities = [
+                                eid for eid in entity_ids if "teija" in eid.lower()
+                            ]
+                            suggestion = (
+                                f"Did you mean '{teija_entities[0]}'?"
+                                if teija_entities
+                                else None
+                            )
+                        else:
+                            suggestion = None
+
+                        errors.append(
+                            ValidationError(
+                                field="entity_id",
+                                value=entity_id,
+                                error=f"Entity '{entity_id}' not found in Home Assistant",
+                                suggestion=suggestion,
+                                similar_values=similar[:5] if similar else None,
+                            )
+                        )
+                except Exception as e:
+                    warnings.append(
+                        f"Could not verify entity existence via API: {str(e)}"
+                    )
+
+        return ValidationResult(
+            valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings,
+        )
