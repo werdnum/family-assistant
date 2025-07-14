@@ -25,229 +25,623 @@ The LLM frequently creates event listeners with invalid configurations that will
 - **Entity ID Format**: `domain.object_id` (e.g., `person.andrew`, `light.living_room`)
 - **State Values**: Strings, case-sensitive
 
-## Validation System Design
+## Architecture Design
 
-### Phase 1: Entity ID Validation (Priority: High)
+### Source-Specific Validation
 
-#### 1.1 Entity Existence Check
+Each event source will implement its own validation logic, as validation rules are inherently source-specific.
 
-- **When**: During event listener creation
-- **How**: Query Home Assistant for entity existence
-- **Implementation**:
-  ```python
-  async def validate_entity_exists(ha_client, entity_id: str) -> bool:
-      """Check if entity exists in Home Assistant."""
-      try:
-          states = await ha_client.async_get_states()
-          return any(state.entity_id == entity_id for state in states)
-      except Exception:
-          return False  # Fail closed - assume invalid if can't check
-  ```
+#### Protocol Extension
 
-#### 1.2 Entity ID Format Validation
+```python
+from dataclasses import dataclass
+from typing import List, Optional, Dict, Any
 
-- **Pattern**: `^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`
-- **Rules**:
-  - Must contain exactly one dot
-  - Domain and object_id must start with lowercase letter
-  - Can contain lowercase letters, numbers, underscores
-  - No spaces or uppercase allowed
+@dataclass
+class ValidationError:
+    field: str
+    value: Any
+    error: str
+    suggestion: Optional[str] = None
+    similar_values: Optional[List[str]] = None
 
-### Phase 2: State Validation (Priority: High)
+@dataclass
+class ValidationResult:
+    valid: bool
+    errors: List[ValidationError] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    
+    def to_dict(self) -> dict:
+        return {
+            "valid": self.valid,
+            "errors": [
+                {
+                    "field": e.field,
+                    "value": e.value,
+                    "error": e.error,
+                    "suggestion": e.suggestion,
+                    "similar_values": e.similar_values
+                }
+                for e in self.errors
+            ],
+            "warnings": self.warnings
+        }
 
-#### 2.1 Person Entity State Validation
+class EventSource(Protocol):
+    """Extended event source protocol with validation."""
+    
+    async def validate_match_conditions(
+        self, match_conditions: Dict[str, Any]
+    ) -> ValidationResult:
+        """
+        Validate match conditions for this source type.
+        
+        Default implementation returns valid=True for backward compatibility.
+        """
+        return ValidationResult(valid=True)
+```
 
-- **Valid States**:
-  - Zone names from Home Assistant (fetch dynamically)
-  - Special states: `home`, `not_home`, `unknown`
-- **Implementation**:
-  ```python
-  async def get_valid_person_states(ha_client) -> set[str]:
-      """Get valid states for person entities."""
-      zones = await ha_client.async_get_zones()
-      zone_names = {zone.name.lower() for zone in zones}
-      zone_names.update({'home', 'not_home', 'unknown'})
-      return zone_names
-  ```
+### Source Implementations
 
-#### 2.2 Binary Sensor State Validation
+#### Home Assistant Source Validation
 
-- **Valid States**: `on`, `off`, `unavailable`, `unknown`
+```python
+class HomeAssistantSource(EventSource):
+    """Home Assistant event source with comprehensive validation."""
+    
+    def __init__(self, client: ha_api.Client, ...):
+        self.client = client
+        self._entity_cache: Dict[str, EntityInfo] = {}
+        self._zone_cache: Optional[Set[str]] = None
+        self._cache_timestamp = 0
+        self._cache_ttl = 300  # 5 minutes
+        
+    async def validate_match_conditions(
+        self, match_conditions: Dict[str, Any]
+    ) -> ValidationResult:
+        """Validate Home Assistant specific conditions."""
+        errors = []
+        warnings = []
+        
+        # Refresh cache if needed
+        await self._refresh_cache_if_needed()
+        
+        # Extract and validate entity_id
+        entity_id = None
+        for field in ["entity_id", "data.entity_id"]:
+            if field in match_conditions:
+                entity_id = match_conditions[field]
+                validation = await self._validate_entity_id(entity_id, field)
+                if not validation.valid:
+                    errors.extend(validation.errors)
+                break
+        
+        # Validate state values
+        state_fields = [
+            ("new_state.state", "new state"),
+            ("old_state.state", "old state"),
+            ("state", "state"),
+            ("to_state.state", "to state"),
+            ("from_state.state", "from state")
+        ]
+        
+        for field, description in state_fields:
+            if field in match_conditions:
+                state_value = match_conditions[field]
+                if entity_id:
+                    validation = await self._validate_state_for_entity(
+                        entity_id, state_value, field, description
+                    )
+                    if not validation.valid:
+                        errors.extend(validation.errors)
+                else:
+                    warnings.append(
+                        f"Cannot validate {description} without entity_id"
+                    )
+        
+        # Validate attributes
+        attribute_fields = self._extract_attribute_fields(match_conditions)
+        for field, attr_name in attribute_fields:
+            validation = await self._validate_attribute(
+                entity_id, attr_name, match_conditions[field], field
+            )
+            if not validation.valid:
+                errors.extend(validation.errors)
+        
+        # Event type specific validation
+        if "event_type" in match_conditions:
+            event_type = match_conditions["event_type"]
+            if event_type == "state_changed" and not entity_id:
+                errors.append(ValidationError(
+                    field="entity_id",
+                    value=None,
+                    error="state_changed events require entity_id",
+                    suggestion="Add entity_id to match_conditions"
+                ))
+        
+        return ValidationResult(
+            valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings
+        )
+    
+    async def _validate_entity_id(
+        self, entity_id: str, field: str
+    ) -> ValidationResult:
+        """Validate entity ID format and existence."""
+        errors = []
+        
+        # Format validation
+        if not self._is_valid_entity_format(entity_id):
+            errors.append(ValidationError(
+                field=field,
+                value=entity_id,
+                error="Invalid entity ID format",
+                suggestion="Format: domain.object_id (lowercase, no spaces)"
+            ))
+            return ValidationResult(valid=False, errors=errors)
+        
+        # Existence check
+        if entity_id not in self._entity_cache:
+            similar = self._find_similar_entities(entity_id)
+            errors.append(ValidationError(
+                field=field,
+                value=entity_id,
+                error="Entity does not exist",
+                suggestion=f"Did you mean '{similar[0]}'?" if similar else None,
+                similar_values=similar[:5]
+            ))
+        
+        return ValidationResult(valid=len(errors) == 0, errors=errors)
+    
+    async def _validate_state_for_entity(
+        self, entity_id: str, state: str, field: str, description: str
+    ) -> ValidationResult:
+        """Validate state value for specific entity type."""
+        errors = []
+        domain = entity_id.split(".")[0]
+        
+        # Get valid states based on domain
+        valid_states = await self._get_valid_states_for_domain(domain, entity_id)
+        
+        if valid_states is not None and state not in valid_states:
+            # Try case-insensitive match for suggestion
+            lower_state = state.lower()
+            case_matches = [s for s in valid_states if s.lower() == lower_state]
+            
+            suggestion = None
+            if case_matches:
+                suggestion = f"Use '{case_matches[0]}' (case-sensitive)"
+            else:
+                # Find similar states
+                similar = self._find_similar_strings(state, list(valid_states))
+                if similar:
+                    suggestion = f"Did you mean '{similar[0]}'?"
+            
+            errors.append(ValidationError(
+                field=field,
+                value=state,
+                error=f"Invalid {description} for {domain} entity",
+                suggestion=suggestion,
+                similar_values=list(valid_states)[:10]  # Limit size
+            ))
+        
+        return ValidationResult(valid=len(errors) == 0, errors=errors)
+```
 
-#### 2.3 Generic State Validation
+#### Indexing Source Validation
 
-- **Approach**: Query current valid states for the specific entity
-- **Cache Strategy**: Cache valid states for 5 minutes per entity
+```python
+class IndexingSource(EventSource):
+    """Indexing event source with validation."""
+    
+    VALID_EVENT_TYPES = {"DOCUMENT_READY", "INDEXING_FAILED"}
+    
+    async def validate_match_conditions(
+        self, match_conditions: Dict[str, Any]
+    ) -> ValidationResult:
+        """Validate indexing event conditions."""
+        errors = []
+        
+        # Validate event_type
+        if "event_type" in match_conditions:
+            event_type = match_conditions["event_type"]
+            if event_type not in self.VALID_EVENT_TYPES:
+                errors.append(ValidationError(
+                    field="event_type",
+                    value=event_type,
+                    error=f"Invalid event type for indexing source",
+                    suggestion=f"Must be one of: {', '.join(self.VALID_EVENT_TYPES)}"
+                ))
+        
+        # Validate document_id format if present
+        if "document_id" in match_conditions:
+            doc_id = match_conditions["document_id"]
+            if not isinstance(doc_id, str) or not doc_id:
+                errors.append(ValidationError(
+                    field="document_id",
+                    value=doc_id,
+                    error="document_id must be a non-empty string"
+                ))
+        
+        # Validate interface_type if present
+        if "interface_type" in match_conditions:
+            interface = match_conditions["interface_type"]
+            valid_interfaces = {"api", "discord"}
+            if interface not in valid_interfaces:
+                errors.append(ValidationError(
+                    field="interface_type",
+                    value=interface,
+                    error="Invalid interface type",
+                    suggestion=f"Must be one of: {', '.join(valid_interfaces)}"
+                ))
+        
+        return ValidationResult(valid=len(errors) == 0, errors=errors)
+```
 
-### Phase 3: Advanced Validation (Priority: Medium)
+#### Webhook Source Validation
 
-#### 3.1 State History Analysis
+```python
+class WebhookSource(EventSource):
+    """Webhook event source with validation."""
+    
+    def __init__(self, webhook_registry: WebhookRegistry):
+        self.webhook_registry = webhook_registry
+    
+    async def validate_match_conditions(
+        self, match_conditions: Dict[str, Any]
+    ) -> ValidationResult:
+        """Validate webhook event conditions."""
+        errors = []
+        
+        # Validate webhook_id
+        if "webhook_id" in match_conditions:
+            webhook_id = match_conditions["webhook_id"]
+            if not await self.webhook_registry.exists(webhook_id):
+                registered = await self.webhook_registry.list_webhooks()
+                errors.append(ValidationError(
+                    field="webhook_id",
+                    value=webhook_id,
+                    error="Webhook ID not registered",
+                    suggestion="Register webhook first or use existing ID",
+                    similar_values=[w.id for w in registered]
+                ))
+        
+        # Validate payload structure expectations
+        payload_fields = [k for k in match_conditions.keys() 
+                         if k.startswith("payload.")]
+        if payload_fields and "webhook_id" in match_conditions:
+            webhook = await self.webhook_registry.get(match_conditions["webhook_id"])
+            if webhook and webhook.schema:
+                for field in payload_fields:
+                    path = field.split(".")[1:]  # Remove 'payload.' prefix
+                    if not self._path_exists_in_schema(path, webhook.schema):
+                        errors.append(ValidationError(
+                            field=field,
+                            value=match_conditions[field],
+                            error="Field not defined in webhook schema"
+                        ))
+        
+        return ValidationResult(valid=len(errors) == 0, errors=errors)
+```
 
-- Analyze recent states for an entity to suggest valid values
-- Warn if attempting to match a state never seen before
+### Tool Integration
 
-#### 3.2 Event Type Validation
+#### Enhanced create_event_listener_tool
 
-- Ensure event_type exists in Home Assistant
-- For `state_changed` events, ensure entity_id is in match_conditions
+```python
+async def create_event_listener_tool(
+    exec_context: ToolExecutionContext,
+    name: str,
+    source: str,
+    listener_config: dict[str, Any],
+    action_type: str = "wake_llm",
+    script_code: str | None = None,
+    script_config: dict[str, Any] | None = None,
+    one_time: bool = False,
+) -> str:
+    """Create a new event listener with validation."""
+    try:
+        # Get the event source
+        event_processor = exec_context.assistant.event_processor
+        event_source = event_processor.sources.get(source)
+        
+        if not event_source:
+            return json.dumps({
+                "success": False,
+                "message": f"Event source '{source}' not found"
+            })
+        
+        # Extract match conditions
+        match_conditions = listener_config.get("match_conditions", {})
+        
+        # Validate match conditions if source supports it
+        if hasattr(event_source, 'validate_match_conditions'):
+            validation = await event_source.validate_match_conditions(match_conditions)
+            
+            if not validation.valid:
+                return json.dumps({
+                    "success": False,
+                    "message": "Validation failed",
+                    "validation_errors": [
+                        {
+                            "field": e.field,
+                            "value": e.value,
+                            "error": e.error,
+                            "suggestion": e.suggestion,
+                            "similar_values": e.similar_values
+                        }
+                        for e in validation.errors
+                    ],
+                    "warnings": validation.warnings
+                })
+            
+            # Log warnings but allow creation
+            if validation.warnings:
+                logger.warning(
+                    f"Validation warnings for listener '{name}': "
+                    f"{', '.join(validation.warnings)}"
+                )
+        
+        # Continue with existing creation logic...
+```
 
-#### 3.3 Attribute Validation
+#### Enhanced test_event_listener_tool
 
-- Validate nested attributes exist (e.g., `new_state.attributes.brightness`)
-- Check attribute types match expected values
+```python
+async def test_event_listener_tool(
+    exec_context: ToolExecutionContext,
+    source: str,
+    match_conditions: dict[str, Any],
+    hours: int = 24,
+    limit: int = 10,
+) -> str:
+    """Test event listener with validation feedback."""
+    # ... existing code ...
+    
+    # After checking matches, add validation info to analysis
+    if total_tested > 0 and len(matched_events) == 0:
+        # Get validation results
+        event_processor = exec_context.assistant.event_processor
+        event_source = event_processor.sources.get(source)
+        
+        if event_source and hasattr(event_source, 'validate_match_conditions'):
+            validation = await event_source.validate_match_conditions(match_conditions)
+            
+            if not validation.valid:
+                analysis.append("VALIDATION ISSUES FOUND:")
+                for error in validation.errors:
+                    analysis.append(f"- {error.field}: {error.error}")
+                    if error.suggestion:
+                        analysis.append(f"  Suggestion: {error.suggestion}")
+                    if error.similar_values and len(error.similar_values) <= 5:
+                        analysis.append(f"  Valid values: {error.similar_values}")
+            
+            if validation.warnings:
+                analysis.append("WARNINGS:")
+                for warning in validation.warnings:
+                    analysis.append(f"- {warning}")
+```
 
 ## Implementation Plan
 
-### 1. Core Validation Module
+### Phase 1: Core Infrastructure (Days 1-3)
 
-Create `/workspace/src/family_assistant/events/validation.py`:
+1. **Day 1: Protocol and Base Classes**
+   - [ ] Add `validate_match_conditions` to EventSource protocol
+   - [ ] Create ValidationResult and ValidationError dataclasses
+   - [ ] Add default implementation (returns valid=True)
+   - [ ] Write unit tests for data structures
 
-```python
-class EventListenerValidator:
-    def __init__(self, ha_client):
-        self.ha_client = ha_client
-        self._entity_cache = {}  # TTL cache
-        self._zone_cache = None
-        
-    async def validate_match_conditions(
-        self,
-        match_conditions: dict,
-        source_id: str
-    ) -> ValidationResult:
-        """Validate all match conditions."""
-        
-    async def validate_entity_id(self, entity_id: str) -> ValidationResult:
-        """Validate entity ID format and existence."""
-        
-    async def validate_state_value(
-        self,
-        entity_id: str,
-        state: str
-    ) -> ValidationResult:
-        """Validate state is valid for entity."""
-```
+2. **Day 2: Tool Integration**
+   - [ ] Modify create_event_listener_tool to call validation
+   - [ ] Update test_event_listener_tool to show validation in analysis
+   - [ ] Add validation error formatting helpers
+   - [ ] Update tool response documentation
 
-### 2. Integration Points
+3. **Day 3: Testing Framework**
+   - [ ] Create validation test fixtures
+   - [ ] Add integration tests for tool validation flow
+   - [ ] Test backward compatibility (sources without validation)
+   - [ ] Performance benchmarks for validation
 
-#### 2.1 Event Listener Creation
+### Phase 2: Home Assistant Validation (Days 4-8)
 
-Modify `create_event_listener_tool()` to:
+4. **Day 4: Entity Validation**
+   - [ ] Implement entity format validation (regex)
+   - [ ] Add entity existence checking via HA API
+   - [ ] Implement entity cache with TTL
+   - [ ] Create fuzzy matching for entity suggestions
 
-1. Extract entity_id from match_conditions
-2. Validate entity exists
-3. Validate states are plausible
-4. Return specific validation errors
+5. **Day 5: State Validation - Basic**
+   - [ ] Implement state validation for binary domains
+   - [ ] Add person/device_tracker zone validation
+   - [ ] Query and cache Home Assistant zones
+   - [ ] Handle case-sensitivity issues
 
-#### 2.2 Test Tools Enhancement
+6. **Day 6: State Validation - Advanced**
+   - [ ] Add historical state analysis
+   - [ ] Implement state validation for numeric sensors
+   - [ ] Add attribute validation support
+   - [ ] Create suggestion engine for states
 
-Enhance `test_event_listener()` to:
+7. **Day 7: Caching and Performance**
+   - [ ] Implement efficient caching layer
+   - [ ] Add cache warming on startup
+   - [ ] Optimize API calls with batching
+   - [ ] Add cache metrics and logging
 
-1. Show validation warnings
-2. Suggest corrections for common mistakes
-3. List valid states for entities
+8. **Day 8: Home Assistant Testing**
+   - [ ] Unit tests with mocked HA client
+   - [ ] Integration tests with test HA instance
+   - [ ] Performance tests with large entity counts
+   - [ ] Edge case testing (offline HA, etc.)
 
-### 3. Validation Rules by Entity Type
+### Phase 3: Other Sources (Days 9-11)
 
-| Entity Domain  | Valid States                        | Validation Method    |
-| -------------- | ----------------------------------- | -------------------- |
-| person         | Zone names, home, not_home, unknown | Dynamic zone query   |
-| light          | on, off, unavailable, unknown       | Static list          |
-| switch         | on, off, unavailable, unknown       | Static list          |
-| binary_sensor  | on, off, unavailable, unknown       | Static list          |
-| sensor         | Any string/number                   | Recent history check |
-| device_tracker | Zone names, home, not_home          | Dynamic zone query   |
-| input_boolean  | on, off                             | Static list          |
-| automation     | on, off                             | Static list          |
-| scene          | N/A (timestamp of last activation)  | Existence check only |
-| script         | on, off                             | Static list          |
+9. **Day 9: Indexing Source**
+   - [ ] Implement event type validation
+   - [ ] Add document_id format validation
+   - [ ] Validate interface_type values
+   - [ ] Write comprehensive tests
 
-### 4. Error Messages and Suggestions
+10. **Day 10: Webhook Source**
+    - [ ] Implement webhook_id validation
+    - [ ] Add webhook registry integration
+    - [ ] Validate payload schema paths
+    - [ ] Create webhook-specific tests
 
-#### Example Validation Response:
+11. **Day 11: Integration Testing**
+    - [ ] End-to-end validation testing
+    - [ ] Multi-source validation scenarios
+    - [ ] Performance testing across sources
+    - [ ] Documentation updates
 
-```json
-{
-  "valid": false,
-  "errors": [
-    {
-      "field": "entity_id",
-      "value": "person.teija",
-      "error": "Entity does not exist",
-      "suggestion": "Did you mean 'person.teja'?",
-      "similar_entities": ["person.teja", "person.teresa"]
-    },
-    {
-      "field": "new_state.state",
-      "value": "Chatswood",
-      "error": "Invalid state for person entity",
-      "suggestion": "Use lowercase 'chatswood'",
-      "valid_states": ["home", "not_home", "chatswood", "work", "unknown"]
-    }
-  ]
-}
-```
+### Phase 4: LLM Integration (Days 12-14)
 
-### 5. Implementation Phases
+12. **Day 12: LLM Context Enhancement**
+    - [ ] Add validation examples to CLAUDE.md
+    - [ ] Create validation best practices guide
+    - [ ] Update tool descriptions with validation info
+    - [ ] Add common error patterns to context
 
-#### Phase 1: Basic Validation (Week 1)
+13. **Day 13: Feedback Loop**
+    - [ ] Implement validation metrics collection
+    - [ ] Create validation success tracking
+    - [ ] Add telemetry for common errors
+    - [ ] Build error pattern analysis
 
-- [ ] Create validation module
-- [ ] Add entity existence check
-- [ ] Add entity ID format validation
-- [ ] Integrate with create_event_listener_tool
-
-#### Phase 2: State Validation (Week 2)
-
-- [ ] Implement person state validation
-- [ ] Add binary sensor validation
-- [ ] Create state suggestion system
-- [ ] Add validation to test tools
-
-#### Phase 3: Advanced Features (Week 3)
-
-- [ ] Implement caching layer
-- [ ] Add fuzzy matching for suggestions
-- [ ] Create validation report tool
-- [ ] Add attribute validation
-
-#### Phase 4: LLM Integration (Week 4)
-
-- [ ] Create pre-creation validation tool
-- [ ] Add validation examples to LLM context
-- [ ] Implement auto-correction suggestions
-- [ ] Create validation feedback loop
+14. **Day 14: Polish and Release**
+    - [ ] Final testing and bug fixes
+    - [ ] Performance optimization
+    - [ ] Documentation completion
+    - [ ] Release notes and migration guide
 
 ## Testing Strategy
 
 ### Unit Tests
 
-- Test each validation method independently
-- Mock Home Assistant API responses
-- Test edge cases (offline HA, malformed entities)
+```python
+# Test validation result construction
+def test_validation_result_serialization():
+    result = ValidationResult(
+        valid=False,
+        errors=[ValidationError(
+            field="entity_id",
+            value="person.invalid",
+            error="Entity does not exist",
+            suggestion="Did you mean 'person.valid'?"
+        )]
+    )
+    assert result.to_dict()["errors"][0]["suggestion"] == "Did you mean 'person.valid'?"
+
+# Test entity format validation
+@pytest.mark.parametrize("entity_id,expected", [
+    ("light.living_room", True),
+    ("sensor.temperature_2", True),
+    ("Light.Living Room", False),  # Wrong case and space
+    ("light", False),  # Missing object_id
+    ("light.", False),  # Empty object_id
+])
+def test_entity_format_validation(entity_id, expected):
+    assert is_valid_entity_format(entity_id) == expected
+```
 
 ### Integration Tests
 
-- Test full listener creation flow with validation
-- Test with real Home Assistant instance
-- Verify performance with caching
+```python
+# Test with real Home Assistant
+async def test_home_assistant_validation_integration():
+    ha_source = HomeAssistantSource(ha_client)
+    
+    # Test invalid entity
+    result = await ha_source.validate_match_conditions({
+        "entity_id": "person.nonexistent",
+        "new_state.state": "home"
+    })
+    assert not result.valid
+    assert any(e.field == "entity_id" for e in result.errors)
+    
+    # Test invalid state
+    result = await ha_source.validate_match_conditions({
+        "entity_id": "person.andrew",  # Assuming exists
+        "new_state.state": "InvalidZone"
+    })
+    assert not result.valid
+    assert any(e.field == "new_state.state" for e in result.errors)
+```
 
-### LLM Testing
+### Performance Tests
 
-- Test common mistake patterns
-- Verify LLM uses validation feedback
-- Measure reduction in invalid listeners
+```python
+# Test caching effectiveness
+async def test_validation_cache_performance():
+    ha_source = HomeAssistantSource(ha_client)
+    
+    # First call - should hit API
+    start = time.time()
+    await ha_source.validate_match_conditions({"entity_id": "light.test"})
+    first_call = time.time() - start
+    
+    # Second call - should use cache
+    start = time.time()
+    await ha_source.validate_match_conditions({"entity_id": "light.test"})
+    cached_call = time.time() - start
+    
+    assert cached_call < first_call * 0.1  # 10x faster
+```
 
 ## Success Metrics
 
-1. **Validation Coverage**: 95% of event listeners validated
-2. **Error Reduction**: 80% reduction in invalid listeners
-3. **Performance**: \<100ms validation time (with cache)
-4. **LLM Adoption**: LLM uses validation in 90% of cases
+1. **Validation Coverage**: 
+   - 100% of event sources implement validation
+   - 95% of created listeners pass validation
+
+2. **Error Reduction**:
+   - 80% reduction in "never matching" listeners
+   - 90% reduction in case-sensitivity errors
+
+3. **Performance**:
+   - <50ms validation time with warm cache
+   - <200ms validation time with cold cache
+   - <1% overhead on event processing
+
+4. **LLM Adoption**:
+   - LLM successfully uses validation feedback in 95% of retry attempts
+   - 70% reduction in validation-related user complaints
+
+## Migration Guide
+
+### For Existing Event Sources
+
+1. Validation is optional - sources without the method continue to work
+2. Add validation incrementally - start with most common errors
+3. Use warnings for non-critical issues to avoid breaking changes
+
+### For Tool Users
+
+1. Existing tools continue to work - validation is additive
+2. New error responses include structured validation data
+3. test_event_listener now shows validation issues in analysis
 
 ## Future Enhancements
 
-1. **Machine Learning**: Learn common state patterns per entity
-2. **Template Validation**: Validate Jinja2 templates in conditions
-3. **Complex Conditions**: Support for OR, NOT, regex matching
-4. **Visual Builder**: UI for creating validated listeners
-5. **Dry Run Mode**: Test listener with historical events
+1. **Machine Learning**:
+   - Learn common state patterns per entity
+   - Predict likely states based on entity name
+   - Auto-suggest corrections based on history
+
+2. **Advanced Validation**:
+   - Template validation for Jinja2 conditions
+   - Complex condition support (OR, NOT, regex)
+   - Time-based validation (e.g., "sun.sun" states)
+
+3. **Developer Experience**:
+   - Visual validation UI
+   - Real-time validation in web interface
+   - Validation playground for testing
+
+4. **Smart Suggestions**:
+   - Context-aware suggestions based on other listeners
+   - Common pattern library
+   - Auto-fix for simple errors
