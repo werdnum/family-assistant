@@ -534,22 +534,27 @@ async def test_event_listener_tool(
 
 ## Testing Strategy
 
-We'll create a single comprehensive functional test file (`tests/functional/test_event_listener_validation.py`) that follows the existing test patterns in the codebase, with mocked Home Assistant dependencies.
+We'll create a single comprehensive functional test file
+(`tests/functional/test_event_listener_validation.py`) that follows the existing test patterns in
+the codebase, with mocked Home Assistant dependencies.
 
 ### Key Testing Components
 
 1. **Mock Home Assistant Client**
+
    - `MockHomeAssistantClient` class with predefined entities and zones
    - Controls exactly which entities exist for testing scenarios
    - Mocks API methods like `async_get_states()` and `async_get_zones()`
 
 2. **Test Organization**
+
    - Grouped by source type (Home Assistant, Indexing, Webhook)
    - Tests both success and failure cases
    - Includes backward compatibility tests
    - Performance and caching tests
 
 3. **Mock Data Sets**
+
    ```python
    TEST_ENTITIES = ["person.andrew", "person.bob", "light.living_room", ...]
    TEST_ZONES = ["home", "work", "chatswood", "grocery_store"]
@@ -581,7 +586,8 @@ class TestHomeAssistantValidation:
         assert "listener_id" in data
 ```
 
-For the complete testing implementation, see [Event Listener Validation - Testing Strategy](./event-listener-validation-testing.md).
+For the complete testing implementation, see
+[Event Listener Validation - Testing Strategy](./event-listener-validation-testing.md).
 
 ## Success Metrics
 
