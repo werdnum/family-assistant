@@ -26,6 +26,18 @@ class NotesPage(BasePage):
         await self.navigate_to("/")
         await self.wait_for_load()
 
+    async def ensure_on_notes_list(self) -> None:
+        """Navigate to notes list only if not already there."""
+        current_url = self.page.url
+        base_url_without_slash = self.base_url.rstrip("/")
+        if not (
+            current_url == self.base_url
+            or current_url == f"{self.base_url}/"
+            or current_url == base_url_without_slash
+            or current_url == f"{base_url_without_slash}/"
+        ):
+            await self.navigate_to_notes_list()
+
     async def navigate_to_add_note(self) -> None:
         """Navigate to the add note form."""
         await self.navigate_to("/notes/add")
@@ -110,7 +122,7 @@ class NotesPage(BasePage):
         Args:
             title: The title of the note to delete
         """
-        await self.navigate_to_notes_list()
+        await self.ensure_on_notes_list()
 
         # Set up dialog handler before clicking delete
         self.page.on("dialog", lambda dialog: dialog.accept())
@@ -133,7 +145,7 @@ class NotesPage(BasePage):
         Args:
             query: The search query
         """
-        await self.navigate_to_notes_list()
+        await self.ensure_on_notes_list()
         search_input = await self.page.wait_for_selector(self.SEARCH_INPUT)
         if search_input:
             await search_input.fill(query)
@@ -147,7 +159,7 @@ class NotesPage(BasePage):
         Returns:
             The number of notes visible
         """
-        await self.navigate_to_notes_list()
+        await self.ensure_on_notes_list()
         # Count table rows, excluding the "No notes found" row
         note_rows = await self.page.query_selector_all(self.NOTE_ROW)
         # Check if it's the empty state
@@ -166,7 +178,7 @@ class NotesPage(BasePage):
         Returns:
             True if the note is found, False otherwise
         """
-        await self.navigate_to_notes_list()
+        await self.ensure_on_notes_list()
         try:
             # Look for a table cell containing the exact title
             await self.page.wait_for_selector(f"td:text-is('{title}')", timeout=5000)
@@ -180,7 +192,7 @@ class NotesPage(BasePage):
         Returns:
             List of note titles
         """
-        await self.navigate_to_notes_list()
+        await self.ensure_on_notes_list()
         # Get all first cells in table rows (which contain titles)
         title_elements = await self.page.query_selector_all("tbody tr td:first-child")
         titles = []
@@ -196,7 +208,7 @@ class NotesPage(BasePage):
         Args:
             title: The title of the note to edit
         """
-        await self.navigate_to_notes_list()
+        await self.ensure_on_notes_list()
         # Find the row containing the title
         note_row = await self.page.wait_for_selector(f"tr:has(td:text-is('{title}'))")
         if note_row:
@@ -212,7 +224,7 @@ class NotesPage(BasePage):
         Returns:
             True if the empty state is shown, False otherwise
         """
-        await self.navigate_to_notes_list()
+        await self.ensure_on_notes_list()
         return await self.is_element_visible(self.NO_NOTES_MESSAGE)
 
     async def get_note_content_from_edit_page(self, title: str) -> dict[str, Any]:

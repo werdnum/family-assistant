@@ -32,9 +32,17 @@ class BasePage:
         await self.wait_for_load()
         return response
 
-    async def wait_for_load(self) -> None:
-        """Wait for the page to fully load."""
-        await self.page.wait_for_load_state("networkidle")
+    async def wait_for_load(self, wait_for_network: bool = False) -> None:
+        """Wait for the page to load.
+
+        Args:
+            wait_for_network: If True, waits for network idle (slower but more thorough).
+                            If False, only waits for DOM content loaded (faster).
+        """
+        if wait_for_network:
+            await self.page.wait_for_load_state("networkidle")
+        else:
+            await self.page.wait_for_load_state("domcontentloaded")
 
     async def wait_for_element(self, selector: str, timeout: int = 30000) -> None:
         """Wait for an element to be present on the page.
@@ -45,14 +53,17 @@ class BasePage:
         """
         await self.page.wait_for_selector(selector, timeout=timeout)
 
-    async def click_and_wait(self, selector: str) -> None:
+    async def click_and_wait(
+        self, selector: str, wait_for_network: bool = False
+    ) -> None:
         """Click an element and wait for navigation or network activity to complete.
 
         Args:
             selector: CSS selector or text selector for the element to click
+            wait_for_network: If True, waits for network idle after click
         """
         await self.page.click(selector)
-        await self.wait_for_load()
+        await self.wait_for_load(wait_for_network=wait_for_network)
 
     async def fill_form_field(self, selector: str, value: str) -> None:
         """Fill a form field with the specified value.
