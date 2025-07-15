@@ -102,8 +102,14 @@ class DocumentsPage(BasePage):
 
         # Submit the form
         await self.page.click(self.UPLOAD_BUTTON)
-        # Wait for form submission to process
-        await self.page.wait_for_timeout(2000)  # Give server time to respond
+        # Wait for either success or error message
+        try:
+            await self.page.wait_for_selector(
+                f"{self.SUCCESS_MESSAGE}, {self.ERROR_MESSAGE}", timeout=5000
+            )
+        except Exception:
+            # Fallback to checking for any response
+            await self.page.wait_for_load_state("domcontentloaded")
 
     async def upload_document_with_content(
         self,
@@ -148,8 +154,14 @@ class DocumentsPage(BasePage):
 
         # Submit the form
         await self.page.click(self.UPLOAD_BUTTON)
-        # Wait for form submission to process
-        await self.page.wait_for_timeout(2000)  # Give server time to respond
+        # Wait for either success or error message
+        try:
+            await self.page.wait_for_selector(
+                f"{self.SUCCESS_MESSAGE}, {self.ERROR_MESSAGE}", timeout=5000
+            )
+        except Exception:
+            # Fallback to checking for any response
+            await self.page.wait_for_load_state("domcontentloaded")
 
     async def get_success_message(self) -> str | None:
         """Get the success message after upload.
@@ -381,7 +393,7 @@ class DocumentsPage(BasePage):
             return True
         return False
 
-    async def wait_for_upload_complete(self, timeout: int = 15000) -> bool:
+    async def wait_for_upload_complete(self, timeout: int = 5000) -> bool:
         """Wait for document upload to complete.
 
         Args:

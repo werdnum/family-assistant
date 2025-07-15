@@ -5,7 +5,7 @@ Tests for TaskWorker resilience features including timeout and health monitoring
 import asyncio
 import contextlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
 

@@ -3,6 +3,7 @@ Playwright-based tests for UI endpoint accessibility.
 Migrated from test_ui_endpoints.py to use real browser testing.
 """
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -46,41 +47,32 @@ BASE_UI_ENDPOINTS = [
 ]
 
 
-@pytest.mark.asyncio
-async def test_ui_endpoint_accessibility_playwright(
-    web_test_fixture: Any,
-    console_error_checker: Any,
-) -> None:
-    """
-    Test that all UI endpoints are accessible via Playwright and render without errors.
-    This single test checks all endpoints to avoid the overhead of setting up
-    fixtures multiple times.
-    """
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
-
-    # Create page object for common operations
-    base_page = BasePage(page, base_url)
-
+async def check_endpoint(
+    browser: Any, base_url: str, endpoint_info: tuple[str, str, list[str]]
+) -> tuple[list[str], list[str]]:
+    """Check a single endpoint and return failures and warnings."""
+    path, description, expected_elements = endpoint_info
     failures = []
     warnings = []
 
-    for path, description, expected_elements in BASE_UI_ENDPOINTS:
+    # Create a new page for this endpoint check
+    page = await browser.new_page()
+    try:
+        base_page = BasePage(page, base_url)
+
         # Navigate to the endpoint
         print(f"Test: Navigating to {base_url}{path}")
         response = await base_page.navigate_to(path)
         print(f"Response status: {response.status if response else 'None'}")
-        print(f"Current URL: {page.url}")
 
         # Check response status
         if response is None:
             failures.append(f"Failed to navigate to {path}")
-            continue
+            return failures, warnings
 
-        # Log the response for debugging
+        # Log error responses for debugging
         if response.status >= 400:
             print(f"Error Response status: {response.status}")
-            print(f"Error Response URL: {response.url}")
             page_content = await page.content()
             print(f"Error Page content preview: {page_content[:500]}...")
 
@@ -89,9 +81,9 @@ async def test_ui_endpoint_accessibility_playwright(
                 f"UI endpoint '{description}' at '{path}' returned server error: "
                 f"{response.status}"
             )
-            continue
+            return failures, warnings
 
-        # Wait for page to load
+        # Wait for page to load (using fast DOM load by default)
         await base_page.wait_for_load()
 
         # Check for expected elements
@@ -101,13 +93,49 @@ async def test_ui_endpoint_accessibility_playwright(
                 warnings.append(
                     f"Expected element '{selector}' not found on {description} at {path}"
                 )
+    finally:
+        await page.close()
+
+    return failures, warnings
+
+
+@pytest.mark.asyncio
+async def test_ui_endpoint_accessibility_playwright(
+    web_test_fixture: Any,
+    console_error_checker: Any,
+) -> None:
+    """
+    Test that all UI endpoints are accessible via Playwright and render without errors.
+    Uses parallel execution to speed up testing of multiple endpoints.
+    """
+    browser = web_test_fixture.page.context.browser
+    base_url = web_test_fixture.base_url
+
+    # Split endpoints into batches for parallel processing
+    # Process 5 endpoints at a time to avoid overwhelming the server
+    batch_size = 5
+    all_failures = []
+    all_warnings = []
+
+    for i in range(0, len(BASE_UI_ENDPOINTS), batch_size):
+        batch = BASE_UI_ENDPOINTS[i : i + batch_size]
+
+        # Run endpoint checks in parallel for this batch
+        results = await asyncio.gather(*[
+            check_endpoint(browser, base_url, endpoint_info) for endpoint_info in batch
+        ])
+
+        # Collect results
+        for failures, warnings in results:
+            all_failures.extend(failures)
+            all_warnings.extend(warnings)
 
     # Report all failures and warnings
-    if failures:
-        pytest.fail("The following endpoints failed:\n" + "\n".join(failures))
+    if all_failures:
+        pytest.fail("The following endpoints failed:\n" + "\n".join(all_failures))
 
-    if warnings:
-        print("Warnings encountered:\n" + "\n".join(warnings))
+    if all_warnings:
+        print("Warnings encountered:\n" + "\n".join(all_warnings))
 
 
 @pytest.mark.asyncio
