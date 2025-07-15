@@ -7,6 +7,14 @@ import pytest
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 
 
+def _create_ha_client_with_api_attrs(client: Mock) -> Mock:
+    """Add required HomeAssistantSource attributes to a mock client."""
+    client.api_url = "http://test:8123/api"
+    client.token = "test_token"
+    client.verify_ssl = True
+    return client
+
+
 class TestHomeAssistantValidation:
     """Test Home Assistant event source validation."""
 
@@ -14,6 +22,8 @@ class TestHomeAssistantValidation:
     def mock_client(self) -> Mock:
         """Create a mock Home Assistant client."""
         client = Mock()
+        _create_ha_client_with_api_attrs(client)
+
         # Mock get_states to return some test entities
         mock_states = [
             Mock(entity_id="person.alex_smith"),
@@ -31,6 +41,13 @@ class TestHomeAssistantValidation:
     def ha_source(self, mock_client: Mock) -> HomeAssistantSource:
         """Create a Home Assistant source with mock client."""
         return HomeAssistantSource(mock_client)
+
+    @pytest.fixture
+    def basic_mock_client(self) -> Mock:
+        """Create a basic mock Home Assistant client for state validation tests."""
+        client = Mock()
+        _create_ha_client_with_api_attrs(client)
+        return client
 
     @pytest.mark.asyncio
     async def test_valid_entity_id(self, ha_source: HomeAssistantSource) -> None:
@@ -208,3 +225,111 @@ class TestHomeAssistantValidation:
         error = result.errors[0]
         assert error.similar_values is not None
         assert len(error.similar_values) == 5  # Should be limited to 5
+
+    @pytest.mark.asyncio
+    async def test_state_validation_with_valid_state(
+        self, basic_mock_client: Mock
+    ) -> None:
+        """Test validation when entity has been in the specified state."""
+        # Mock entity exists
+        mock_states = [Mock(entity_id="person.test")]
+        basic_mock_client.get_states = Mock(return_value=mock_states)
+
+        # Mock history with the state we're checking for
+        mock_history_record = Mock()
+        mock_history_record.state = "home"
+        basic_mock_client.get_entity_histories = Mock(
+            return_value={"person.test": [mock_history_record]}
+        )
+
+        source = HomeAssistantSource(basic_mock_client)
+
+        result = await source.validate_match_conditions({
+            "entity_id": "person.test",
+            "new_state.state": "home",
+        })
+
+        assert result.valid is True
+        assert len(result.errors) == 0
+        assert len(result.warnings) == 0
+
+    @pytest.mark.asyncio
+    async def test_state_validation_with_unknown_state(
+        self, basic_mock_client: Mock
+    ) -> None:
+        """Test validation when entity has never been in the specified state."""
+        # Mock entity exists
+        mock_states = [Mock(entity_id="person.test")]
+        basic_mock_client.get_states = Mock(return_value=mock_states)
+
+        # Mock history without the state we're checking for
+        mock_history_record1 = Mock()
+        mock_history_record1.state = "home"
+        mock_history_record2 = Mock()
+        mock_history_record2.state = "away"
+        basic_mock_client.get_entity_histories = Mock(
+            return_value={"person.test": [mock_history_record1, mock_history_record2]}
+        )
+
+        source = HomeAssistantSource(basic_mock_client)
+
+        result = await source.validate_match_conditions({
+            "entity_id": "person.test",
+            "new_state.state": "vacation",  # State that doesn't exist in history
+        })
+
+        assert result.valid is True  # Still valid, just warnings
+        assert len(result.errors) == 0
+        assert len(result.warnings) == 2
+        assert "never been recorded" in result.warnings[0]
+        assert "vacation" in result.warnings[0]
+        # Check that both states are mentioned (order not guaranteed)
+        assert "Most common states for 'person.test':" in result.warnings[1]
+        assert "home" in result.warnings[1]
+        assert "away" in result.warnings[1]
+
+    @pytest.mark.asyncio
+    async def test_state_validation_no_history(self, basic_mock_client: Mock) -> None:
+        """Test validation when no history is available for entity."""
+        # Mock entity exists
+        mock_states = [Mock(entity_id="person.test")]
+        basic_mock_client.get_states = Mock(return_value=mock_states)
+
+        # Mock no history
+        basic_mock_client.get_entity_histories = Mock(return_value={})
+
+        source = HomeAssistantSource(basic_mock_client)
+
+        result = await source.validate_match_conditions({
+            "entity_id": "person.test",
+            "old_state.state": "home",
+        })
+
+        assert result.valid is True
+        assert len(result.errors) == 0
+        assert len(result.warnings) == 1
+        assert "No history found" in result.warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_state_validation_api_error(self, basic_mock_client: Mock) -> None:
+        """Test that history API errors return warnings."""
+        # Mock entity exists
+        mock_states = [Mock(entity_id="person.test")]
+        basic_mock_client.get_states = Mock(return_value=mock_states)
+
+        # Mock history API error
+        basic_mock_client.get_entity_histories = Mock(
+            side_effect=Exception("History API Error")
+        )
+
+        source = HomeAssistantSource(basic_mock_client)
+
+        result = await source.validate_match_conditions({
+            "entity_id": "person.test",
+            "new_state.state": "home",
+        })
+
+        assert result.valid is True
+        assert len(result.errors) == 0
+        assert len(result.warnings) == 1
+        assert "Could not verify state history" in result.warnings[0]

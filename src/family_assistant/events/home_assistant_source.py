@@ -7,6 +7,8 @@ import contextlib
 import logging
 import re
 import time
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import homeassistant_api as ha_api
@@ -366,8 +368,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         """
         Validate match conditions for Home Assistant events.
 
-        Currently validates:
-        - entity_id: Checks format and will check existence via API
+        Validates:
+        - entity_id: Checks format and existence via API
+        - new_state.state / old_state.state: Checks if entity has ever been in that state
 
         Args:
             match_conditions: The match conditions to validate
@@ -446,7 +449,78 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                         )
                 except Exception as e:
                     warnings.append(
-                        f"Could not verify entity existence via API: {str(e)}"
+                        f"Could not verify entity existence via API due to {type(e).__name__}: {str(e)}"
+                    )
+
+        # Validate state values if entity_id is valid and present
+        if "entity_id" in match_conditions and len(errors) == 0:
+            entity_id = match_conditions["entity_id"]
+            state_fields_to_check = []
+
+            # Check for state conditions
+            if "new_state.state" in match_conditions:
+                state_fields_to_check.append((
+                    "new_state.state",
+                    match_conditions["new_state.state"],
+                ))
+            if "old_state.state" in match_conditions:
+                state_fields_to_check.append((
+                    "old_state.state",
+                    match_conditions["old_state.state"],
+                ))
+
+            if state_fields_to_check:
+                try:
+                    # Get entity history for the last 7 days (typical HA history retention)
+                    end_time = datetime.now(timezone.utc)
+                    start_time = end_time - timedelta(days=7)
+
+                    # Get entity histories
+                    histories = await asyncio.to_thread(
+                        self.client.get_entity_histories,
+                        entities=[entity_id],
+                        start_timestamp=start_time,
+                        end_timestamp=end_time,
+                    )
+
+                    # Check if entity has ever been in the specified states
+                    if histories and entity_id in histories:
+                        entity_history = histories[entity_id]
+                        state_counter = Counter()
+
+                        for state_record in entity_history:
+                            if hasattr(state_record, "state") and state_record.state:
+                                state_counter[state_record.state] += 1
+
+                        historical_states = set(state_counter.keys())
+
+                        # Validate each state condition
+                        for _field_name, state_value in state_fields_to_check:
+                            if state_value not in historical_states:
+                                # State has never been seen - warning, not error
+                                warnings.append(
+                                    f"State '{state_value}' has never been recorded for entity '{entity_id}' "
+                                    f"in the last 7 days. This condition may never trigger."
+                                )
+
+                                # Provide most common states as suggestions
+                                if state_counter:
+                                    # Get the 5 most common states
+                                    most_common = state_counter.most_common(5)
+                                    common_states = [
+                                        state for state, _count in most_common
+                                    ]
+                                    warnings.append(
+                                        f"Most common states for '{entity_id}': {', '.join(common_states)}"
+                                    )
+                    else:
+                        warnings.append(
+                            f"No history found for entity '{entity_id}'. Cannot validate state conditions."
+                        )
+
+                except Exception as e:
+                    warnings.append(
+                        f"Could not verify state history via API due to {type(e).__name__}: {str(e)}"
                     )
 
         return ValidationResult(
