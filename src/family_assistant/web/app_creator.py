@@ -136,6 +136,21 @@ app.state.templates = templates
 app.state.server_url = SERVER_URL
 app.state.docs_user_dir = docs_user_dir
 
+# Initialize tool_definitions for development mode
+# This will be populated by Assistant.setup_dependencies() in production
+# For development, we load them directly here
+if not hasattr(app.state, "tool_definitions"):
+    try:
+        from family_assistant.tools import TOOLS_DEFINITION
+
+        app.state.tool_definitions = TOOLS_DEFINITION
+        logger.info(
+            f"Loaded {len(TOOLS_DEFINITION)} tool definitions for development mode"
+        )
+    except ImportError as e:
+        app.state.tool_definitions = []
+        logger.warning(f"Could not import tool definitions for development: {e}")
+
 
 def configure_app_debug(debug: bool = True) -> None:
     """Configure the FastAPI app debug mode. Useful for tests to get detailed error messages."""
