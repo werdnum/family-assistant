@@ -336,8 +336,11 @@ async def test_event_listener_tool(
                 pass
 
             # Get validation results
-            event_processor = exec_context.assistant.event_processor
-            event_source = event_processor.sources.get(source)
+            event_source = None
+
+            # Look up the event source from the event_sources map
+            if exec_context.event_sources and source in exec_context.event_sources:
+                event_source = exec_context.event_sources[source]
 
             if event_source and hasattr(event_source, "validate_match_conditions"):
                 from family_assistant.events.validation import format_validation_errors

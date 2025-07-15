@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
+    from family_assistant.events.sources import EventSource
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
@@ -39,6 +40,7 @@ class ToolExecutionContext:
         embedding_generator: Optional generator for creating text embeddings.
         clock: Optional clock instance for managing time.
         indexing_source: Optional indexing event source for emitting document indexing events.
+        event_sources: Optional map of event source ID to source instance for validation.
         tools_provider: Optional tools provider for direct access (used by execute_script from API).
     """
 
@@ -73,6 +75,9 @@ class ToolExecutionContext:
     clock: Optional["Clock"] = None  # Add clock
     indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
     home_assistant_client: Any | None = None  # Add home_assistant_client
+    event_sources: dict[str, "EventSource"] | None = (
+        None  # Map of event source ID to source instance
+    )
     tools_provider: Optional["ToolsProvider"] = (
         None  # Add tools_provider for API access
     )

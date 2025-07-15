@@ -11,7 +11,7 @@ import tempfile  # Add tempfile import
 import uuid
 from collections.abc import AsyncGenerator  # Add missing typing imports
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 from unittest.mock import MagicMock  # Import MagicMock
 
 import httpx  # Import httpx
@@ -30,35 +30,29 @@ from family_assistant.embeddings import (
 from family_assistant.indexing.document_indexer import (
     DocumentIndexer,
 )
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
-
-if TYPE_CHECKING:
-    from family_assistant.processing import ProcessingService
-# Import test helpers
-from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.storage.vector import (
-    query_vectors,
-)  # Import Document protocol
+from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
-from family_assistant.tools.types import ToolExecutionContext  # Added
-from family_assistant.utils.scraping import (  # Assuming MockScraper is here
-    MockScraper,
-    ScrapeResult,
-)
-
-# Import the FastAPI app directly from app_creator
-from family_assistant.web.app_creator import (
-    app as fastapi_app,
-)
+from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.utils.scraping import MockScraper, ScrapeResult
+from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import (  # Added
-    LLMOutput as MockLLMOutputForClient,  # Aliased for clarity
+from tests.mocks.mock_llm import (
+    LLMOutput as MockLLMOutputForClient,
 )
 from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+
+
+def _create_mock_processing_service() -> MagicMock:
+    """Create a mock ProcessingService with required attributes."""
+    mock = MagicMock()
+    return mock
+
 
 logger = logging.getLogger(__name__)
 
@@ -348,9 +342,7 @@ async def test_document_indexing_and_query_e2e(
     mock_chat_interface = MagicMock()  # Create a mock ChatInterface
 
     worker = TaskWorker(
-        processing_service=cast(
-            "ProcessingService", None
-        ),  # No processing service needed for this handler
+        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface,  # Pass mock ChatInterface
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
@@ -777,7 +769,7 @@ async def test_document_indexing_with_llm_summary_e2e(
     mock_chat_interface_summary = MagicMock()
 
     worker = TaskWorker(
-        processing_service=cast("ProcessingService", None),
+        processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_summary,
         calendar_config={},
         timezone_str="UTC",
@@ -1040,7 +1032,7 @@ async def test_url_indexing_e2e(
     mock_chat_interface_url = MagicMock()
 
     worker = TaskWorker(
-        processing_service=cast("ProcessingService", None),
+        processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_url,
         calendar_config={},
         timezone_str="UTC",
@@ -1318,7 +1310,7 @@ async def test_url_indexing_e2e(
         mock_chat_interface_auto_title = MagicMock()
 
         worker = TaskWorker(
-            processing_service=cast("ProcessingService", None),
+            processing_service=_create_mock_processing_service(),
             chat_interface=mock_chat_interface_auto_title,
             calendar_config={},
             timezone_str="UTC",

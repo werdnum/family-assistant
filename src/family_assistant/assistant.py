@@ -642,6 +642,9 @@ class Assistant:
                 context_providers=context_providers,
                 server_url=self.config["server_url"],
                 app_config=self.config,
+                event_sources=self.event_processor.sources
+                if self.event_processor
+                else None,
             )
             # Set the home_assistant_client if available for this profile
             if profile_id in self.home_assistant_clients:
@@ -823,6 +826,9 @@ class Assistant:
             indexing_source=getattr(
                 self, "indexing_source", None
             ),  # Pass indexing source if available
+            event_sources=self.event_processor.sources
+            if self.event_processor
+            else None,
         )
         self.task_worker_instance.register_task_handler(
             "log_message", task_wrapper_handle_log_message

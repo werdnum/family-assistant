@@ -48,7 +48,6 @@ from family_assistant.indexing.tasks import handle_embed_and_store_batch
 # Import components needed for the E2E test
 # Import test helpers
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.processing import ProcessingService  # Added for spec
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.tasks import (
@@ -72,6 +71,13 @@ from tests.mocks.mock_llm import (  # Added
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _create_mock_processing_service() -> MagicMock:
+    """Create a mock ProcessingService with required attributes."""
+    mock = MagicMock()
+    return mock
+
 
 # --- Test Configuration ---
 # Use constants consistent with test_vector_storage if applicable, or define new ones
@@ -416,9 +422,7 @@ async def test_email_indexing_and_query_e2e(
     mock_chat_interface_e2e = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event early
     worker = TaskWorker(
-        processing_service=MagicMock(
-            spec=ProcessingService
-        ),  # No processing service needed for this handler
+        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_e2e,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config,
@@ -638,9 +642,7 @@ async def test_vector_ranking(
     mock_chat_interface_kw = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker = TaskWorker(
-        processing_service=MagicMock(
-            spec=ProcessingService
-        ),  # No processing service needed for this handler
+        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,
@@ -832,9 +834,7 @@ async def test_metadata_filtering(
     mock_chat_interface_meta = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker = TaskWorker(
-        processing_service=MagicMock(
-            spec=ProcessingService
-        ),  # No processing service needed for this handler
+        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_meta,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_meta,
@@ -1017,9 +1017,7 @@ async def test_keyword_filtering(
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
 
     worker = TaskWorker(
-        processing_service=MagicMock(
-            spec=ProcessingService
-        ),  # No processing service needed for this handler
+        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_keyword_test,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_kw,  # Now defined
@@ -1274,7 +1272,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     mock_chat_interface_pdf = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event early
     worker = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),
+        processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_pdf,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=dummy_calendar_config_pdf,
@@ -1559,7 +1557,7 @@ async def test_email_indexing_with_llm_summary_e2e(
     mock_chat_interface_summary = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker_email_summary = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),
+        processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_summary,
         embedding_generator=current_embedder,  # Use the updated embedder
         calendar_config={},
@@ -1836,7 +1834,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     mock_chat_interface_link_ext = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker_link_ext = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),
+        processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_link_ext,
         embedding_generator=current_embedder,
         calendar_config={},
