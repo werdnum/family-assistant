@@ -293,8 +293,11 @@ async def create_event_listener_tool(
             })
 
         # Get the event source for validation
-        event_processor = exec_context.assistant.event_processor
-        event_source = event_processor.sources.get(source)
+        event_source = None
+
+        # Look up the event source from the event_sources map
+        if exec_context.event_sources and source in exec_context.event_sources:
+            event_source = exec_context.event_sources[source]
 
         # Validate match conditions if source supports it
         if event_source and hasattr(event_source, "validate_match_conditions"):

@@ -7,11 +7,8 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 from unittest.mock import MagicMock
-
-if TYPE_CHECKING:
-    from family_assistant.processing import ProcessingService
 
 import numpy as np
 import pytest
@@ -19,19 +16,23 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-# storage functions now accessed via DatabaseContext
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
-
-# notes functions now accessed via DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
+
+
+def _create_mock_processing_service() -> MagicMock:
+    """Create a mock ProcessingService with required attributes."""
+    mock = MagicMock()
+    return mock
+
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +191,7 @@ async def test_notes_indexing_e2e(
     mock_chat_interface = MagicMock()
 
     worker = TaskWorker(
-        processing_service=cast("ProcessingService", None),
+        processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface,
         calendar_config={},
         timezone_str="UTC",
@@ -495,7 +496,7 @@ async def test_note_update_reindexing_e2e(
     mock_chat_interface = MagicMock()
 
     worker = TaskWorker(
-        processing_service=cast("ProcessingService", None),
+        processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface,
         calendar_config={},
         timezone_str="UTC",
@@ -733,7 +734,7 @@ async def test_notes_indexing_graceful_degradation(
     mock_chat_interface = MagicMock()
 
     worker = TaskWorker(
-        processing_service=cast("ProcessingService", None),
+        processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface,
         calendar_config={},
         timezone_str="UTC",

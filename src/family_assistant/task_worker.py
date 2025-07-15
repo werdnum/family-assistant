@@ -395,6 +395,7 @@ class TaskWorker:
         indexing_source: "IndexingSource | None" = None,
         engine: AsyncEngine
         | None = None,  # Add engine parameter for dependency injection
+        event_sources: dict[str, Any] | None = None,  # Add event sources
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -412,6 +413,7 @@ class TaskWorker:
             clock if clock is not None else SystemClock()
         )  # Store the clock instance
         self.indexing_source = indexing_source
+        self.event_sources = event_sources  # Store event sources
         self.engine = engine  # Store the engine for database operations
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
@@ -524,6 +526,7 @@ class TaskWorker:
                 embedding_generator=self.embedding_generator,
                 clock=self.clock,  # Pass the clock instance
                 indexing_source=self.indexing_source,  # Pass the indexing source
+                event_sources=self.event_sources,  # Pass event sources directly
             )
             # --- Execute Handler with Context ---
             logger.debug(

@@ -73,6 +73,7 @@ class ProcessingService:
         server_url: str | None,
         app_config: dict[str, Any],  # Keep app_config for now
         clock: Clock | None = None,
+        event_sources: dict[str, Any] | None = None,  # Add event sources
     ) -> None:
         """
         Initializes the ProcessingService.
@@ -84,6 +85,8 @@ class ProcessingService:
             context_providers: A list of initialized context provider objects.
             server_url: The base URL of the web server.
             app_config: The main application configuration dictionary (global settings).
+            clock: Clock instance for time operations.
+            event_sources: Dictionary mapping event source IDs to EventSource instances.
         """
         self.llm_client = (
             llm_client  # This client should be instantiated with fallback info
@@ -101,6 +104,7 @@ class ProcessingService:
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
         self.home_assistant_client: Any | None = None  # Store HA client if available
+        self.event_sources = event_sources  # Store event sources for validation
 
     # The LiteLLMClient passed to __init__ should already be configured
     # with primary and fallback model details by the caller (e.g., main.py)
@@ -459,6 +463,13 @@ class ProcessingService:
                         processing_service=self,
                         clock=self.clock,  # Pass the clock from ProcessingService
                         home_assistant_client=self.home_assistant_client,  # Pass HA client
+                        event_sources=self.event_sources,  # Pass event sources map
+                        # Also pass indexing_source directly for backward compatibility
+                        indexing_source=(
+                            self.event_sources.get("indexing")
+                            if self.event_sources
+                            else None
+                        ),
                     )
 
                     tool_response_content_val = None  # Renamed to avoid conflict

@@ -9,8 +9,11 @@ import pytest
 
 from family_assistant.events.validation import ValidationError, ValidationResult
 from family_assistant.tools.event_listeners import create_event_listener_tool
-from family_assistant.tools.events import test_event_listener_tool
+from family_assistant.tools.events import test_event_listener_tool as test_listener_tool
 from family_assistant.tools.types import ToolExecutionContext
+
+# Tell pytest to not collect test_listener_tool as a test
+test_listener_tool.__test__ = False
 
 
 class TestCreateEventListenerValidation:
@@ -46,10 +49,8 @@ class TestCreateEventListenerValidation:
             )
         )
 
-        # Setup the mock hierarchy
-        exec_context.assistant = MagicMock()
-        exec_context.assistant.event_processor = MagicMock()
-        exec_context.assistant.event_processor.sources = {"home_assistant": mock_source}
+        # Setup the event sources
+        exec_context.event_sources = {"home_assistant": mock_source}
 
         # Test the tool
         result = await create_event_listener_tool(
@@ -98,10 +99,8 @@ class TestCreateEventListenerValidation:
             )
         )
 
-        # Setup the mock hierarchy
-        exec_context.assistant = MagicMock()
-        exec_context.assistant.event_processor = MagicMock()
-        exec_context.assistant.event_processor.sources = {"home_assistant": mock_source}
+        # Setup the event sources
+        exec_context.event_sources = {"home_assistant": mock_source}
 
         # Mock the database creation
         with patch(
@@ -132,13 +131,11 @@ class TestCreateEventListenerValidation:
         exec_context.interface_type = "test"
 
         # Mock event processor with source that doesn't have validate_match_conditions
-        mock_source = MagicMock()
-        # Don't add validate_match_conditions method
+        # Use object() as spec to ensure no methods are available
+        mock_source = MagicMock(spec=object())
 
-        # Setup the mock hierarchy
-        exec_context.assistant = MagicMock()
-        exec_context.assistant.event_processor = MagicMock()
-        exec_context.assistant.event_processor.sources = {"home_assistant": mock_source}
+        # Setup the event sources
+        exec_context.event_sources = {"home_assistant": mock_source}
 
         # Mock the database creation
         with patch(
@@ -186,10 +183,8 @@ class TestEventListenerTestValidation:
             )
         )
 
-        # Setup the mock hierarchy
-        exec_context.assistant = MagicMock()
-        exec_context.assistant.event_processor = MagicMock()
-        exec_context.assistant.event_processor.sources = {"home_assistant": mock_source}
+        # Setup the event sources
+        exec_context.event_sources = {"home_assistant": mock_source}
 
         # Mock database query result (no events)
         with patch("family_assistant.tools.events.get_db_context") as mock_db:
@@ -197,7 +192,7 @@ class TestEventListenerTestValidation:
             mock_db_context.fetch_all = AsyncMock(return_value=[])
             mock_db.return_value.__aenter__.return_value = mock_db_context
 
-            result = await test_event_listener_tool(
+            result = await test_listener_tool(
                 exec_context=exec_context,
                 source="home_assistant",
                 match_conditions={"entity_id": "invalid.entity"},

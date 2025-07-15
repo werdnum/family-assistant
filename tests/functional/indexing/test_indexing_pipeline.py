@@ -39,7 +39,14 @@ from family_assistant.storage.vector import (
 )
 from family_assistant.task_worker import TaskWorker  # For running the task worker
 from family_assistant.tools.types import ToolExecutionContext
-from tests.helpers import wait_for_tasks_to_complete  # pylint: disable=import-error
+from tests.helpers import wait_for_tasks_to_complete
+
+
+def _create_mock_processing_service() -> MagicMock:
+    """Create a mock ProcessingService with required attributes."""
+    mock = MagicMock()
+    return mock
+
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +136,7 @@ async def indexing_task_worker(
     mock_chat_interface_for_worker = MagicMock()
 
     worker = TaskWorker(
-        processing_service=MagicMock(),  # Use MagicMock for ProcessingService
+        processing_service=_create_mock_processing_service(),  # Use MagicMock for ProcessingService
         chat_interface=mock_chat_interface_for_worker,
         embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
