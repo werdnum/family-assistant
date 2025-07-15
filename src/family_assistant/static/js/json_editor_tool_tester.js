@@ -67,7 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Use html theme as it requires no external CSS framework
         const argsEditorInstance = new JSONEditor(editorContainer, {
             schema: schema,
-            theme: 'bootstrap4', // Use basic HTML theme
+            theme: 'html', // Use basic HTML theme that requires no external CSS
             iconlib: null, // No icons needed
             disable_edit_json: true,
             disable_properties: true,
