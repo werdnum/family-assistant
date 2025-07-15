@@ -45,20 +45,11 @@ if AUTH_ENABLED:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path, description", ALL_UI_ENDPOINTS_TO_TEST)
-async def test_ui_endpoint_accessibility(
-    path: str, description: str, web_only_assistant: Assistant
-) -> None:
+async def test_ui_endpoint_accessibility(web_only_assistant: Assistant) -> None:
     """
-    Tests that a given UI endpoint is accessible and does not return a server error.
-    It follows redirects and asserts that the final status code is less than 500.
-
-    Uses the web_only_assistant fixture which properly sets up the database and app.
-
-    TODO: Investigate why these tests pass in the container even though it uses
-    the old version from GitHub with app_fixture instead of web_only_assistant.
-    The container's version imports the app directly which might bypass proper
-    database setup, yet tests still pass. Need to understand what's happening.
+    Tests that all UI endpoints are accessible and do not return server errors.
+    This single test checks all endpoints to avoid the overhead of setting up
+    the web_only_assistant fixture multiple times.
     """
     # Use the fastapi app directly - the web_only_assistant fixture ensures it's properly configured
     # with database setup and all dependencies
@@ -66,9 +57,14 @@ async def test_ui_endpoint_accessibility(
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        response = await client.get(path)
-        assert response.status_code < 500, (
-            f"UI endpoint '{description}' at '{path}' should be accessible "
-            f"(status < 500), but got {response.status_code}. "
-            f"Response text (first 500 chars): {response.text[:500]}"
-        )
+        failures = []
+        for path, description in ALL_UI_ENDPOINTS_TO_TEST:
+            response = await client.get(path)
+            if response.status_code >= 500:
+                failures.append(
+                    f"UI endpoint '{description}' at '{path}' returned {response.status_code}. "
+                    f"Response text (first 500 chars): {response.text[:500]}"
+                )
+
+        if failures:
+            pytest.fail("The following endpoints failed:\n" + "\n".join(failures))

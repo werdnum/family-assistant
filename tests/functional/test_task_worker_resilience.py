@@ -5,7 +5,7 @@ Tests for TaskWorker resilience features including timeout and health monitoring
 import asyncio
 import contextlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -39,18 +39,19 @@ async def test_task_handler_timeout(db_engine: AsyncEngine) -> None:
     async def hanging_handler(
         exec_context: ToolExecutionContext, payload: dict[str, Any]
     ) -> None:
-        logger.info("Hanging handler started, will sleep for 10 seconds")
-        await asyncio.sleep(10.0)  # Much longer than timeout
+        logger.info("Hanging handler started, will sleep for 2 seconds")
+        await asyncio.sleep(2.0)  # Longer than the 1 second timeout we'll set
         logger.info("Hanging handler finished (should not reach here)")
 
     worker.register_task_handler("hang", hanging_handler)
 
-    # Create a task
+    # Create a task with 0 retries allowed to avoid retry delays
     async with DatabaseContext(engine=db_engine) as db_context:
         await db_context.tasks.enqueue(
             task_id="timeout_test",
             task_type="hang",
             payload={},
+            max_retries_override=0,  # No retries to avoid retry delays in test
         )
         logger.info("Created test task with ID: timeout_test")
 
@@ -76,10 +77,10 @@ async def test_task_handler_timeout(db_engine: AsyncEngine) -> None:
         # Wake up the worker again in case it missed the first event
         wake_up_event.set()
 
-        # Wait for task to be processed (it should timeout and eventually fail)
+        # Wait for task to be processed (it should timeout and fail immediately with no retries)
         await wait_for_tasks_to_complete(
             engine=db_engine,
-            timeout_seconds=60.0,  # Long timeout to allow for all retries
+            timeout_seconds=5.0,  # Very short timeout since no retries
             task_ids={"timeout_test"},
             allow_failures=True,
         )
@@ -101,12 +102,10 @@ async def test_task_handler_timeout(db_engine: AsyncEngine) -> None:
         task = tasks[0] if tasks else None
 
         assert task is not None
-        # Task should either be pending with retries or failed after max retries
-        if task["status"] == "failed":
-            assert task["retry_count"] == 3  # Max retries reached
-        else:
-            assert task["status"] == "pending"
-            assert task["retry_count"] >= 1
+        # Task should have failed immediately since max_retries=0
+        assert task["status"] == "failed"
+        assert task["retry_count"] == 0  # No retries were allowed
+        assert "TimeoutError" in (task["error"] or "")
 
 
 @pytest.mark.asyncio
@@ -191,7 +190,7 @@ async def test_retry_exhaustion_leads_to_failure(db_engine: AsyncEngine) -> None
         async def timeout_handler(
             exec_context: ToolExecutionContext, payload: dict[str, Any]
         ) -> None:
-            await asyncio.sleep(10.0)
+            await asyncio.sleep(1.0)  # Longer than the 0.1s timeout
 
         worker.register_task_handler("timeout", timeout_handler)
 

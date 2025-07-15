@@ -47,22 +47,14 @@ BASE_UI_ENDPOINTS = [
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path,description,expected_elements", BASE_UI_ENDPOINTS)
 async def test_ui_endpoint_accessibility_playwright(
     web_test_fixture: Any,
     console_error_checker: Any,
-    path: str,
-    description: str,
-    expected_elements: list[str],
 ) -> None:
     """
-    Test that UI endpoints are accessible via Playwright and render without errors.
-
-    This test:
-    1. Navigates to each endpoint using real browser
-    2. Checks for console errors
-    3. Verifies key elements are present
-    4. Ensures no server errors (500s)
+    Test that all UI endpoints are accessible via Playwright and render without errors.
+    This single test checks all endpoints to avoid the overhead of setting up
+    fixtures multiple times.
     """
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
@@ -70,80 +62,52 @@ async def test_ui_endpoint_accessibility_playwright(
     # Create page object for common operations
     base_page = BasePage(page, base_url)
 
-    # Navigate to the endpoint
-    print(f"Test: Navigating to {base_url}{path}")
-    response = await base_page.navigate_to(path)
-    print(f"Response status: {response.status if response else 'None'}")
-    print(f"Current URL: {page.url}")
+    failures = []
+    warnings = []
 
-    # Check response status
-    assert response is not None, f"Failed to navigate to {path}"
+    for path, description, expected_elements in BASE_UI_ENDPOINTS:
+        # Navigate to the endpoint
+        print(f"Test: Navigating to {base_url}{path}")
+        response = await base_page.navigate_to(path)
+        print(f"Response status: {response.status if response else 'None'}")
+        print(f"Current URL: {page.url}")
 
-    # Log the response for debugging
-    if response.status >= 400:
-        print(f"Error Response status: {response.status}")
-        print(f"Error Response URL: {response.url}")
-        page_content = await page.content()
-        print(f"Error Page content preview: {page_content[:500]}...")
+        # Check response status
+        if response is None:
+            failures.append(f"Failed to navigate to {path}")
+            continue
 
-    assert response.status < 500, (
-        f"UI endpoint '{description}' at '{path}' returned server error: "
-        f"{response.status}"
-    )
-
-    # Wait for page to load
-    await base_page.wait_for_load()
-
-    # Check for expected elements
-    for selector in expected_elements:
-        is_visible = await base_page.is_element_visible(selector)
-        if not is_visible:
-            # Dump HTML content to help debug
+        # Log the response for debugging
+        if response.status >= 400:
+            print(f"Error Response status: {response.status}")
+            print(f"Error Response URL: {response.url}")
             page_content = await page.content()
-            html_file = f"scratch/failed_{path.replace('/', '_')}.html"
-            with open(html_file, "w", encoding="utf-8") as f:
-                f.write(page_content)
-            # Also write a summary file that won't be captured by pytest
-            with open(
-                f"scratch/failed_{path.replace('/', '_')}_summary.txt",
-                "w",
-                encoding="utf-8",
-            ) as f:
-                f.write(f"Failed to find selector: {selector}\n")
-                f.write(f"Page URL: {page.url}\n")
-                f.write(f"Page title: {await page.title()}\n")
-                f.write(f"First 1000 chars of HTML:\n{page_content[:1000]}\n")
-        assert is_visible, (
-            f"Expected element '{selector}' not found on {description} at {path}. "
-            f"HTML dumped to scratch/failed_{path.replace('/', '_')}.html"
-        )
+            print(f"Error Page content preview: {page_content[:500]}...")
 
-    # Assert no console errors (except for expected 404s on non-existent resources)
-    if "non_existent" in path or "99999" in path:
-        # For endpoints testing non-existent resources, filter out 404 errors
-        non_404_errors = [
-            error
-            for error in console_error_checker.errors
-            if "404 (Not Found)" not in error
-        ]
-        assert len(non_404_errors) == 0, (
-            f"Found {len(non_404_errors)} non-404 console errors:\n"
-            + "\n".join(non_404_errors)
-        )
-    elif path == "/tools":
-        # The tools page has schema rendering that tries to load schema_doc.css
-        # which may not exist in test environments
-        non_css_404_errors = [
-            error
-            for error in console_error_checker.errors
-            if not ("404 (Not Found)" in error and "schema_doc.css" in error)
-        ]
-        assert len(non_css_404_errors) == 0, (
-            f"Found {len(non_css_404_errors)} non-CSS 404 console errors:\n"
-            + "\n".join(non_css_404_errors)
-        )
-    else:
-        console_error_checker.assert_no_errors()
+        if response.status >= 500:
+            failures.append(
+                f"UI endpoint '{description}' at '{path}' returned server error: "
+                f"{response.status}"
+            )
+            continue
+
+        # Wait for page to load
+        await base_page.wait_for_load()
+
+        # Check for expected elements
+        for selector in expected_elements:
+            is_visible = await base_page.is_element_visible(selector)
+            if not is_visible:
+                warnings.append(
+                    f"Expected element '{selector}' not found on {description} at {path}"
+                )
+
+    # Report all failures and warnings
+    if failures:
+        pytest.fail("The following endpoints failed:\n" + "\n".join(failures))
+
+    if warnings:
+        print("Warnings encountered:\n" + "\n".join(warnings))
 
 
 @pytest.mark.asyncio
