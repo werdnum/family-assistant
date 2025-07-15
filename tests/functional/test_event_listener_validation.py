@@ -25,6 +25,11 @@ class TestEventListenerValidationFunctional:
     async def mock_ha_client(self) -> Mock:
         """Create a mock Home Assistant client with test entities."""
         client = Mock()
+        # Set attributes required by HomeAssistantSource constructor (extracted via getattr)
+        client.api_url = "http://test:8123/api"
+        client.token = "test_token"
+        client.verify_ssl = True
+
         # Mock get_states to return known entities
         mock_states = [
             Mock(entity_id="person.andrew_garrett"),
@@ -292,3 +297,59 @@ class TestEventListenerValidationFunctional:
             assert data["success"] is True
             assert "listener_id" in data
             # The warning might be logged but not necessarily in the response
+
+    @pytest.mark.asyncio
+    async def test_create_listener_with_state_validation(
+        self, db_engine: AsyncEngine, mock_ha_client: Mock
+    ) -> None:
+        """Test creating a listener with state conditions triggers state validation."""
+        # Mock entity history
+        mock_history_record1 = Mock()
+        mock_history_record1.state = "home"
+        mock_history_record2 = Mock()
+        mock_history_record2.state = "away"
+        mock_ha_client.get_entity_histories = Mock(
+            return_value={
+                "person.andrew_garrett": [mock_history_record1, mock_history_record2]
+            }
+        )
+
+        # Create processor with mock client
+        ha_source = HomeAssistantSource(mock_ha_client)
+        processor = EventProcessor(sources={"home_assistant": ha_source})
+
+        async with DatabaseContext(engine=db_engine) as db_ctx:
+            # Create execution context
+            exec_context = ToolExecutionContext(
+                interface_type="telegram",
+                conversation_id="test_validation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_ctx,
+            )
+
+            # Set event sources for validation
+            exec_context.event_sources = processor.sources
+
+            # Create listener with state that hasn't been seen
+            result = await create_event_listener_tool(
+                exec_context=exec_context,
+                name="State Validation Test",
+                source="home_assistant",
+                listener_config={
+                    "match_conditions": {
+                        "entity_id": "person.andrew_garrett",
+                        "new_state.state": "vacation",  # State not in history
+                    }
+                },
+            )
+
+            # Parse result - should succeed but with warnings
+            data = json.loads(result)
+            assert data["success"] is True
+            assert "listener_id" in data
+
+            # Verify history was queried
+            mock_ha_client.get_entity_histories.assert_called_once()
+            call_args = mock_ha_client.get_entity_histories.call_args
+            assert "person.andrew_garrett" in call_args[1]["entities"]
