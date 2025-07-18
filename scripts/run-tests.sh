@@ -36,6 +36,18 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# Auto-select SQLite backend when PostgreSQL isn't available
+if ! echo " $PYTEST_ARGS " | grep -Eq ' --db(=| )| --postgres '; then
+    if command -v docker >/dev/null 2>&1 || \
+       command -v podman >/dev/null 2>&1 || \
+       [ -n "$TEST_DATABASE_URL" ]; then
+        :
+    else
+        echo "${YELLOW}PostgreSQL not detected - running SQLite-only tests${NC}"
+        PYTEST_ARGS="--db sqlite $PYTEST_ARGS"
+    fi
+fi
+
 # Default pytest arguments if none provided
 if [ -z "$PYTEST_ARGS" ]; then
     PYTEST_ARGS="tests"
