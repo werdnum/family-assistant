@@ -44,6 +44,14 @@ This script runs:
 
 **IMPORTANT**: `scripts/format-and-lint.sh` MUST pass before committing. NEVER use
 `git commit --no-verify` -- all lint failures must be fixed or properly disabled.
+### Using the `llm` CLI
+
+- `cat myscript.py | llm 'explain this code'` - Analyze a script
+- `git diff | llm -s 'Describe these changes'` - Understand code changes
+- `llm -f error.log 'debug this error'` - Debug from log files
+- `cat file1.py file2.py | llm 'how do these interact?'` - Analyze multiple files
+- Use `llm chat` for multi-line inputs (paste errors/tracebacks with `!multi` and `!end`)
+
 
 ### Testing
 
@@ -814,3 +822,36 @@ When adding new web UI endpoints that serve HTML pages:
 
 - Put temporary files in the repo somewhere. scratch/ is available for truly temporary files but
   files of historical interest can go elsewhere
+
+## DevContainer
+
+The development environment runs in Kubernetes using a StatefulSet with persistent volumes for:
+
+- `/workspace` - The project code (20Gi)
+- `/home/claude` - Claude's home directory with settings and cache (5Gi)
+- PostgreSQL data (5Gi)
+
+### Building and Deploying
+
+- To build and push the development container, use: `.devcontainer/build-and-push.sh [tag]`
+- If no tag is provided, it defaults to timestamp format: `YYYYMMDD_HHMMSS`
+- Example: `.devcontainer/build-and-push.sh` (uses timestamp tag)
+- Example: `.devcontainer/build-and-push.sh v1.2.3` (uses custom tag)
+- This script builds the container with podman, pushes to the registry, and updates the Kubernetes StatefulSet
+
+### Automatic Git Synchronization
+
+The dev container automatically pulls the latest changes from git when Claude is invoked:
+
+- Runs `git fetch` and `git pull --rebase` on startup
+- Safely stashes and restores any local uncommitted changes
+- If conflicts occur, reverts to the original state to avoid breaking the workspace
+- This ensures the persistent workspace stays synchronized with the remote repository
+
+### Container Architecture
+
+The StatefulSet runs three containers:
+
+1. **postgres** - PostgreSQL with pgvector extension for local development
+2. **backend** - Runs the backend server and frontend dev server via `poe dev`
+3. **claude** - Runs claude-code-webui on port 8080 with MCP servers configured
