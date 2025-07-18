@@ -1,5 +1,6 @@
 # Code Reference
 
+**Updated: July 2025**
 \*\*Note:\*\*This document is periodically generated and may be slightly out of date. It should be
 updated when making significant changes to the codebase.
 
@@ -24,6 +25,10 @@ The core architecture consists of:
 - \*\*Indexing (`src/family_assistant/indexing`):\*\*Handles the ingestion and processing of
   documents and emails into a searchable format, including text extraction, chunking, and embedding
   generation.
+- **Events (`src/family_assistant/events`):** Streams data from sources like Home Assistant and the indexing pipeline.
+- **Context Providers (`src/family_assistant/context_providers.py`):** Inject dynamic context such as notes, calendar events, known users, weather, and home automation state.
+- **Task Worker (`src/family_assistant/task_worker.py`):** Executes queued tasks and handles background processing.
+
 - \*\*LLM & Embeddings (`src/family_assistant/llm.py`,
   `src/family_assistant/embeddings.py`):\*\*Provides interfaces and implementations for interacting
   with Large Language Models and generating vector embeddings.

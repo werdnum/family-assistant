@@ -281,6 +281,7 @@ graph TD
   provided by `KnownUsersContextProvider`.
 
 - \*\*Weather Context Provider:\*\*Fetches and formats weather information from the WillyWeather API
+- **Home Assistant Context Provider (`HomeAssistantContextProvider`):** Provides context from a running Home Assistant instance if configured.
   (requires `WILLYWEATHER_API_KEY` and `WILLYWEATHER_LOCATION_ID` in `.env`).
 
 - **(Future) Reminders:** \*Set reminders via natural language (stored on a dedicated 'Reminders'
@@ -396,7 +397,7 @@ timestamp, role, content, tool_calls_info).
   system tasks.
 - **Utilities:**`uuid` for generating unique IDs (e.g., task IDs).
 
-## 9. Current Implementation Status (as of 2025-05-28)
+## 9. Current Implementation Status (as of 2025-07-18)
 
 The following features from the specification are currently implemented:
 
@@ -482,6 +483,7 @@ The following features from the specification are currently implemented:
 - \*\*Known Users Context Provider (`KnownUsersContextProvider`):\*\*As previously specified.
 
 - \*\*Weather Context Provider (`WeatherContextProvider`):\*\*New provider using WillyWeather API.
+- **Home Assistant Context Provider (`HomeAssistantContextProvider`):** Provides context from a running Home Assistant instance if configured.
 
 - \*\*Processing Profiles with LLM Models:\*\*As previously specified.
 
