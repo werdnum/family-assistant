@@ -296,7 +296,7 @@ def check_container_runtime() -> bool:
     for cmd in ["docker", "podman"]:
         try:
             result = subprocess.run(
-                [cmd, "version"], capture_output=True, text=True, timeout=5
+                [cmd, "version"], capture_output=True, text=True, timeout=5, check=False
             )
             if result.returncode == 0:
                 logger.info(f"Container runtime '{cmd}' is available")
@@ -319,7 +319,11 @@ def check_postgres_available() -> tuple[bool, str | None]:
     for pg_ctl in pg_ctl_paths:
         try:
             result = subprocess.run(
-                [pg_ctl, "--version"], capture_output=True, text=True, timeout=5
+                [pg_ctl, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
             )
             if result.returncode == 0 and "17" in result.stdout:
                 logger.info(f"Found PostgreSQL 17 at: {pg_ctl}")
@@ -369,19 +373,20 @@ class SubprocessPostgresContainer:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Failed to initialize PostgreSQL: {result.stderr}")
 
         # Update postgresql.conf to listen on the specific port
         conf_path = os.path.join(self.data_dir, "postgresql.conf")
-        with open(conf_path, "a") as f:
+        with open(conf_path, "a", encoding="utf-8") as f:
             f.write(f"\nport = {self.port}\n")
             f.write("shared_preload_libraries = 'vector'\n")
 
         # Update pg_hba.conf for password authentication
         hba_path = os.path.join(self.data_dir, "pg_hba.conf")
-        with open(hba_path, "w") as f:
+        with open(hba_path, "w", encoding="utf-8") as f:
             f.write(
                 "local   all             all                                     trust\n"
             )
@@ -406,6 +411,7 @@ class SubprocessPostgresContainer:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Failed to start PostgreSQL: {result.stderr}")
@@ -426,6 +432,7 @@ class SubprocessPostgresContainer:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Failed to set user password: {result.stderr}")
@@ -443,6 +450,7 @@ class SubprocessPostgresContainer:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Failed to create database: {result.stderr}")
@@ -462,6 +470,7 @@ class SubprocessPostgresContainer:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Failed to create pgvector extension: {result.stderr}")
@@ -475,6 +484,7 @@ class SubprocessPostgresContainer:
             subprocess.run(
                 [self.pg_ctl, "stop", "-D", self.data_dir, "-m", "fast"],
                 capture_output=True,
+                check=False,
             )
 
             # Clean up the data directory
