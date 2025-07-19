@@ -476,12 +476,16 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                     start_time = end_time - timedelta(days=7)
 
                     # Get entity histories
-                    histories = await asyncio.to_thread(
+                    histories_gen = await asyncio.to_thread(
                         self.client.get_entity_histories,
-                        entities=[entity_id],
+                        entities=(entity_id,),
                         start_timestamp=start_time,
                         end_timestamp=end_time,
                     )
+                    histories = {
+                        history.entity_id: list(history.states)
+                        for history in histories_gen
+                    }
 
                     # Check if entity has ever been in the specified states
                     if histories and entity_id in histories:
