@@ -22,6 +22,6 @@ jobs:
     - name: Set up virtual environment
       run: |
         uv venv .venv
-        uv sync --python .venv --group dev --locked
+        uv pip install --python .venv '.[dev]'
     - name: Run tests
       run: .venv/bin/poe test
