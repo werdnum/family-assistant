@@ -44,6 +44,7 @@ This script runs:
 
 **IMPORTANT**: `scripts/format-and-lint.sh` MUST pass before committing. NEVER use
 `git commit --no-verify` -- all lint failures must be fixed or properly disabled.
+
 ### Using the `llm` CLI
 
 - `cat myscript.py | llm 'explain this code'` - Analyze a script
@@ -51,7 +52,6 @@ This script runs:
 - `llm -f error.log 'debug this error'` - Debug from log files
 - `cat file1.py file2.py | llm 'how do these interact?'` - Analyze multiple files
 - Use `llm chat` for multi-line inputs (paste errors/tracebacks with `!multi` and `!end`)
-
 
 ### Testing
 
@@ -837,7 +837,8 @@ The development environment runs in Kubernetes using a StatefulSet with persiste
 - If no tag is provided, it defaults to timestamp format: `YYYYMMDD_HHMMSS`
 - Example: `.devcontainer/build-and-push.sh` (uses timestamp tag)
 - Example: `.devcontainer/build-and-push.sh v1.2.3` (uses custom tag)
-- This script builds the container with podman, pushes to the registry, and updates the Kubernetes StatefulSet
+- This script builds the container with podman, pushes to the registry, and updates the Kubernetes
+  StatefulSet
 
 ### Automatic Git Synchronization
 

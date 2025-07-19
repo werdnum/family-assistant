@@ -1,8 +1,7 @@
 # Code Reference
 
-**Updated: July 2025**
-\*\*Note:\*\*This document is periodically generated and may be slightly out of date. It should be
-updated when making significant changes to the codebase.
+**Updated: July 2025** \*\*Note:\*\*This document is periodically generated and may be slightly out
+of date. It should be updated when making significant changes to the codebase.
 
 ## High-Level Overview
 
@@ -16,23 +15,35 @@ The core architecture consists of:
 - \*\*User Interfaces (`src/family_assistant/web/routers`,
   `src/family_assistant/telegram_bot.py`):\*\*Handles user interaction via web UI, Telegram, and
   email webhooks.
+
 - \*\*Processing Layer (`src/family_assistant/processing.py`):\*\*Orchestrates LLM calls, tool
   execution, and context management.
+
 - \*\*Tools (`src/family_assistant/tools`):\*\*Defines and implements functions the LLM can call,
   including local Python functions and external MCP (Model Context Protocol) tools.
+
 - \*\*Storage (`src/family_assistant/storage`):\*\*Manages all database interactions, including
   message history, notes, tasks, emails, and vector embeddings for documents.
+
 - \*\*Indexing (`src/family_assistant/indexing`):\*\*Handles the ingestion and processing of
   documents and emails into a searchable format, including text extraction, chunking, and embedding
   generation.
-- **Events (`src/family_assistant/events`):** Streams data from sources like Home Assistant and the indexing pipeline.
-- **Context Providers (`src/family_assistant/context_providers.py`):** Inject dynamic context such as notes, calendar events, known users, weather, and home automation state.
-- **Task Worker (`src/family_assistant/task_worker.py`):** Executes queued tasks and handles background processing.
+
+- **Events (`src/family_assistant/events`):** Streams data from sources like Home Assistant and the
+  indexing pipeline.
+
+- **Context Providers (`src/family_assistant/context_providers.py`):** Inject dynamic context such
+  as notes, calendar events, known users, weather, and home automation state.
+
+- **Task Worker (`src/family_assistant/task_worker.py`):** Executes queued tasks and handles
+  background processing.
 
 - \*\*LLM & Embeddings (`src/family_assistant/llm.py`,
   `src/family_assistant/embeddings.py`):\*\*Provides interfaces and implementations for interacting
   with Large Language Models and generating vector embeddings.
+
 - \*\*Utilities (`src/family_assistant/utils`):\*\*Common helper functions like web scraping.
+
 - \*\*Configuration (`src/family_assistant/__main__.py`):\*\*Centralized loading and management of
   application settings.
 
