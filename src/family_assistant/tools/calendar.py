@@ -703,10 +703,12 @@ async def modify_calendar_event_tool(
                     new_vevent = new_cal.add("vevent")
                     new_vevent.add("uid").value = uid  # Keep the same UID
                     new_vevent.add("summary").value = current_summary
-                    new_vevent.add("dtstart").value = current_start
-                    new_vevent.add("dtend").value = current_end
-                    new_vevent.add("dtstamp").value = datetime.now(ZoneInfo("UTC"))
-                    new_vevent.add("last-modified").value = datetime.now(
+                    new_vevent.add("dtstart").value = current_start  # type: ignore[union-attr]
+                    new_vevent.add("dtend").value = current_end  # type: ignore[union-attr]
+                    new_vevent.add("dtstamp").value = datetime.now(  # type: ignore[union-attr]
+                        ZoneInfo("UTC")
+                    )
+                    new_vevent.add("last-modified").value = datetime.now(  # type: ignore[union-attr]
                         ZoneInfo("UTC")
                     )
 
