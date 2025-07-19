@@ -342,15 +342,20 @@ async def test_event_listener_tool(
             if exec_context.event_sources and source in exec_context.event_sources:
                 event_source = exec_context.event_sources[source]
 
-            if event_source and hasattr(event_source, "validate_match_conditions"):
-                from family_assistant.events.validation import format_validation_errors
-
-                validation = await event_source.validate_match_conditions(
-                    match_conditions
+            if event_source:
+                from family_assistant.events.validation import (
+                    format_validation_errors,
                 )
-                validation_messages = format_validation_errors(validation)
-                if validation_messages:
-                    analysis.extend(validation_messages)
+
+                validate_fn = getattr(event_source, "validate_match_conditions", None)
+                if validate_fn:
+                    validation = await validate_fn(match_conditions)
+                else:
+                    validation = None
+                if validation:
+                    validation_messages = format_validation_errors(validation)
+                    if validation_messages:
+                        analysis.extend(validation_messages)
 
         return json.dumps(
             {

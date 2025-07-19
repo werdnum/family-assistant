@@ -171,7 +171,7 @@ class TestHomeAssistantValidation:
     ) -> None:
         """Test that API errors become warnings, not validation failures."""
         # Make get_states raise an exception
-        ha_source.client.get_states.side_effect = Exception("API connection failed")
+        ha_source.client.get_states.side_effect = Exception("API connection failed")  # type: ignore[attr-defined]
 
         result = await ha_source.validate_match_conditions({
             "entity_id": "person.alex_smith"
@@ -213,7 +213,7 @@ class TestHomeAssistantValidation:
     async def test_similar_values_limit(self, ha_source: HomeAssistantSource) -> None:
         """Test that similar values are limited to 5."""
         # Add many light entities
-        ha_source.client.get_states.return_value.extend([
+        ha_source.client.get_states.return_value.extend([  # type: ignore[attr-defined]
             Mock(entity_id=f"light.room_{i}") for i in range(10)
         ])
 
