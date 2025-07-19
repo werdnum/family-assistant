@@ -90,7 +90,7 @@ USER claude
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
 
 # Add uv tools to PATH before installing - maintaining /usr/local/bin first
-ENV PATH="/usr/local/bin:/home/claude/.local/bin:$PATH"
+ENV PATH="/usr/local/bin:/home/claude/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
 
 # Install Claude Code CLI as claude user
 RUN npm install -g @anthropic-ai/claude-code
