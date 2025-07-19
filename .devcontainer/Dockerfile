@@ -44,8 +44,19 @@ RUN apt-get update && apt-get install -y \
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install jq for JSON processing and PostgreSQL client
-RUN apt-get update && apt-get install -y jq postgresql-client && rm -rf /var/lib/apt/lists/*
+# Install PostgreSQL 17 with pgvector extension and jq for JSON processing
+RUN apt-get update && apt-get install -y wget ca-certificates lsb-release gnupg && \
+    # Add PostgreSQL APT repository with modern key management
+    wget -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/postgres.gpg && \
+    sh -c 'echo "deb [signed-by=/etc/apt/keyrings/postgres.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' && \
+    apt-get update && \
+    # Install PostgreSQL and other utilities
+    apt-get install -y \
+        jq \
+        postgresql-client-17 \
+        postgresql-17 \
+        postgresql-17-pgvector \
+    && rm -rf /var/lib/apt/lists/*
 
 # Download and install claude-code-webui binary
 RUN ARCH=$(dpkg --print-architecture) && \
