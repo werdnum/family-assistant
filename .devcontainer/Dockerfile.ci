@@ -1,0 +1,31 @@
+# CI-optimized version of the devcontainer
+# Pre-installs project dependencies for faster CI runs
+FROM ghcr.io/werdnum/family-assistant-devcontainer:latest
+
+# Switch to root for setup
+USER root
+
+# Copy project files needed for dependency installation
+COPY pyproject.toml /tmp/
+COPY README.md /tmp/
+
+# Pre-install project dependencies
+# This way they're already in the image and uv just needs to verify/link them
+RUN cd /tmp && \
+    # Create a temporary venv to pre-download all dependencies
+    uv venv /opt/deps-cache && \
+    UV_CACHE_DIR=/opt/uv-cache uv pip install --python /opt/deps-cache -e ".[dev]" && \
+    # Keep the cache but remove the venv (we'll create it fresh in workspace)
+    rm -rf /opt/deps-cache && \
+    # Clean up temp files
+    rm -rf /tmp/pyproject.toml /tmp/README.md && \
+    # Ensure cache is accessible
+    chown -R claude:claude /opt/uv-cache
+
+# Set cache directory for faster installs
+ENV UV_CACHE_DIR=/opt/uv-cache
+
+# Switch back to claude user
+USER claude
+
+# The entrypoint and cmd are inherited from the base image
