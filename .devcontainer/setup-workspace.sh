@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Ensure uv is in PATH and include user paths
-export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/root/.local/bin:$PATH"
+# Ensure uv is in PATH and include user paths and PostgreSQL binaries
+export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/root/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
 
 echo "Starting workspace setup..."
 
@@ -19,10 +19,9 @@ chown -R claude:claude /home/claude/.claude
 chmod 755 /home/claude
 chmod -R 755 /home/claude/.claude || true
 
-# Fix postgres data directory permissions
-mkdir -p /var/lib/postgresql/data
-chown -R 999:999 /var/lib/postgresql/data
-chmod 700 /var/lib/postgresql/data
+# PostgreSQL data directory setup not needed
+# - In Kubernetes: PostgreSQL container manages its own data
+# - In standalone: Subprocess PostgreSQL uses temporary directories
 
 # Check if /home/claude is a mount point
 HOME_IS_MOUNTED=false

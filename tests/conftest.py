@@ -291,14 +291,217 @@ class ContainerProtocol(Protocol):
     def get_container_host_ip(self) -> str: ...
 
 
+def check_container_runtime() -> bool:
+    """Check if Docker or Podman is available."""
+    for cmd in ["docker", "podman"]:
+        try:
+            result = subprocess.run(
+                [cmd, "version"], capture_output=True, text=True, timeout=5, check=False
+            )
+            if result.returncode == 0:
+                logger.info(f"Container runtime '{cmd}' is available")
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+    return False
+
+
+def check_postgres_available() -> tuple[bool, str | None]:
+    """Check if PostgreSQL is available locally and return path to pg_ctl."""
+    # Try common PostgreSQL 17 paths
+    pg_ctl_paths = [
+        "/usr/lib/postgresql/17/bin/pg_ctl",  # Debian/Ubuntu
+        "/usr/pgsql-17/bin/pg_ctl",  # RHEL/CentOS
+        "/usr/local/pgsql/bin/pg_ctl",  # Source install
+        "pg_ctl",  # In PATH
+    ]
+
+    for pg_ctl in pg_ctl_paths:
+        try:
+            result = subprocess.run(
+                [pg_ctl, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if result.returncode == 0 and "17" in result.stdout:
+                logger.info(f"Found PostgreSQL 17 at: {pg_ctl}")
+                return True, pg_ctl
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+
+    return False, None
+
+
+class SubprocessPostgresContainer:
+    """Mock container that manages a subprocess PostgreSQL instance."""
+
+    def __init__(self, port: int, data_dir: str, pg_ctl: str) -> None:
+        self.port = port
+        self.data_dir = data_dir
+        self.pg_ctl = pg_ctl
+        self.process = None
+        self.db_name = "test"
+        self.user = "test"
+        self.password = "test"
+
+    def get_connection_url(
+        self, host: str | None = None, driver: str | None = None
+    ) -> str:
+        # Parameters kept for compatibility with ContainerProtocol
+        return f"postgresql://{self.user}:{self.password}@127.0.0.1:{self.port}/{self.db_name}"
+
+    def get_container_host_ip(self) -> str:
+        return "127.0.0.1"
+
+    def start(self) -> None:
+        """Initialize and start PostgreSQL."""
+        # Initialize the database cluster
+        initdb_path = self.pg_ctl.replace("pg_ctl", "initdb")
+        logger.info(f"Initializing PostgreSQL database in {self.data_dir}")
+
+        result = subprocess.run(
+            [
+                initdb_path,
+                "-D",
+                self.data_dir,
+                "-U",
+                self.user,
+                "--auth-local=trust",
+                "--auth-host=md5",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to initialize PostgreSQL: {result.stderr}")
+
+        # Update postgresql.conf to listen on the specific port
+        conf_path = os.path.join(self.data_dir, "postgresql.conf")
+        with open(conf_path, "a", encoding="utf-8") as f:
+            f.write(f"\nport = {self.port}\n")
+            f.write("shared_preload_libraries = 'vector'\n")
+
+        # Update pg_hba.conf for password authentication
+        hba_path = os.path.join(self.data_dir, "pg_hba.conf")
+        with open(hba_path, "w", encoding="utf-8") as f:
+            f.write(
+                "local   all             all                                     trust\n"
+            )
+            f.write(
+                "host    all             all             127.0.0.1/32            md5\n"
+            )
+            f.write(
+                "host    all             all             ::1/128                 md5\n"
+            )
+
+        # Start PostgreSQL
+        logger.info(f"Starting PostgreSQL on port {self.port}")
+        result = subprocess.run(
+            [
+                self.pg_ctl,
+                "start",
+                "-D",
+                self.data_dir,
+                "-l",
+                os.path.join(self.data_dir, "logfile"),
+                "-w",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to start PostgreSQL: {result.stderr}")
+
+        # Set up the test database and user
+        psql_path = self.pg_ctl.replace("pg_ctl", "psql")
+
+        # Create user with password
+        result = subprocess.run(
+            [
+                psql_path,
+                "-U",
+                self.user,
+                "-p",
+                str(self.port),
+                "-c",
+                f"ALTER USER {self.user} PASSWORD '{self.password}';",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to set user password: {result.stderr}")
+
+        # Create test database
+        result = subprocess.run(
+            [
+                psql_path,
+                "-U",
+                self.user,
+                "-p",
+                str(self.port),
+                "-c",
+                f"CREATE DATABASE {self.db_name};",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to create database: {result.stderr}")
+
+        # Create pgvector extension
+        result = subprocess.run(
+            [
+                psql_path,
+                "-U",
+                self.user,
+                "-p",
+                str(self.port),
+                "-d",
+                self.db_name,
+                "-c",
+                "CREATE EXTENSION IF NOT EXISTS vector;",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to create pgvector extension: {result.stderr}")
+
+        logger.info("PostgreSQL started and configured successfully")
+
+    def stop(self) -> None:
+        """Stop PostgreSQL and clean up."""
+        if self.pg_ctl and os.path.exists(self.data_dir):
+            logger.info("Stopping PostgreSQL subprocess...")
+            subprocess.run(
+                [self.pg_ctl, "stop", "-D", self.data_dir, "-m", "fast"],
+                capture_output=True,
+                check=False,
+            )
+
+            # Clean up the data directory
+            shutil.rmtree(self.data_dir, ignore_errors=True)
+            logger.info("PostgreSQL subprocess stopped and cleaned up")
+
+
 @pytest.fixture(scope="session")
 def postgres_container() -> Generator[ContainerProtocol, None, None]:
     """
     Starts and manages a PostgreSQL container for the test session.
-    Respects DOCKER_HOST environment variable.
 
-    If TEST_DATABASE_URL is set, returns a mock container that provides that URL
-    instead of starting a real testcontainer.
+    Priority order:
+    1. If TEST_DATABASE_URL is set, use that external database
+    2. If Docker/Podman is available, use testcontainers
+    3. If PostgreSQL 17 is installed locally, use subprocess
+    4. Otherwise, fail with helpful error message
     """
     # Check for external PostgreSQL first
     test_database_url = os.getenv("TEST_DATABASE_URL")
@@ -324,40 +527,59 @@ def postgres_container() -> Generator[ContainerProtocol, None, None]:
         logger.info("External PostgreSQL usage completed.")
         return
 
-    # Original testcontainer logic
-    # Use an image that includes postgresql-contrib for extensions like pgvector
-    # Note: pgvector might need explicit installation depending on the base image.
-    # If using a standard postgres image, you might need to execute
-    # `CREATE EXTENSION IF NOT EXISTS vector;` after connection.
-    # Using a dedicated pgvector image simplifies this.
-    image = "pgvector/pgvector:0.8.0-pg17"  # Image with pgvector pre-installed
-    logger.info(f"Attempting to start PostgreSQL container with image: {image}")
-    logger.info(
-        f"Using Docker configuration from environment (DOCKER_HOST={os.getenv('DOCKER_HOST', 'Not Set')})"
-    )
-    try:
-        # Specify the asyncpg driver directly
-        with PostgresContainer(image=image, driver="asyncpg") as container:
-            # Attempt to connect to check readiness early
-            container.get_container_host_ip()
-            logger.info(
-                "PostgreSQL container started successfully with asyncpg driver configuration."
+    # Check if Docker/Podman is available
+    if check_container_runtime():
+        # Original testcontainer logic
+        image = "pgvector/pgvector:0.8.0-pg17"  # Image with pgvector pre-installed
+        logger.info(f"Attempting to start PostgreSQL container with image: {image}")
+        logger.info(
+            f"Using Docker configuration from environment (DOCKER_HOST={os.getenv('DOCKER_HOST', 'Not Set')})"
+        )
+        try:
+            # Specify the asyncpg driver directly
+            with PostgresContainer(image=image, driver="asyncpg") as container:
+                # Attempt to connect to check readiness early
+                container.get_container_host_ip()
+                logger.info(
+                    "PostgreSQL container started successfully with asyncpg driver configuration."
+                )
+                yield container
+            logger.info("PostgreSQL container stopped.")
+            return
+        except (DockerException, Exception) as e:
+            logger.warning(
+                f"Failed to start PostgreSQL container: {e}. "
+                f"Will try subprocess PostgreSQL if available."
             )
+
+    # Check if PostgreSQL is available locally
+    postgres_available, pg_ctl = check_postgres_available()
+    if postgres_available and pg_ctl:
+        logger.info("Docker/Podman not available, using subprocess PostgreSQL")
+
+        # Create temporary directory for PostgreSQL data
+        temp_dir = tempfile.mkdtemp(prefix="pytest_postgres_")
+        port = find_free_port()
+
+        container = SubprocessPostgresContainer(port, temp_dir, pg_ctl)
+        try:
+            container.start()
             yield container
-        logger.info("PostgreSQL container stopped.")
-    except DockerException as e:  # Use the directly imported DockerException
-        # Catch errors during container startup (e.g., connection refused, image not found)
-        pytest.fail(
-            f"Failed to start PostgreSQL container. Docker error: {e}. "
-            f"Check Docker daemon status and DOCKER_HOST ({os.getenv('DOCKER_HOST', 'default')}).",
-            pytrace=False,
-        )
-    except Exception as e:
-        # Catch other potential errors during setup
-        pytest.fail(
-            f"An unexpected error occurred during PostgreSQL container setup: {e}",
-            pytrace=False,
-        )
+        finally:
+            container.stop()
+        return
+
+    # No PostgreSQL available
+    pytest.fail(
+        "PostgreSQL tests require either:\n"
+        "1. Docker or Podman to be installed and running\n"
+        "2. PostgreSQL 17 with pgvector to be installed locally\n"
+        "3. TEST_DATABASE_URL environment variable pointing to an existing database\n"
+        "\nTo install PostgreSQL locally on Ubuntu/Debian:\n"
+        "  sudo apt-get install postgresql-17 postgresql-17-pgvector\n"
+        "\nTo skip PostgreSQL tests, use: pytest --db sqlite",
+        pytrace=False,
+    )
 
 
 @pytest_asyncio.fixture(

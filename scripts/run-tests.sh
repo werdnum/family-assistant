@@ -50,7 +50,7 @@ fi
 
 # Default pytest arguments if none provided
 if [ -z "$PYTEST_ARGS" ]; then
-    PYTEST_ARGS="tests"
+    PYTEST_ARGS="tests --ignore=scratch"
 fi
 
 # Overall timer
@@ -111,7 +111,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Start pytest
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    pytest --json-report --json-report-file=.report.json --disable-warnings -q $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PYTEST_ARGS &
     TEST_PID=$!
     TEST_START=$START_TIME
 
@@ -125,7 +125,7 @@ else
     # Just run pytest when linting is skipped
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    pytest --json-report --json-report-file=.report.json --disable-warnings -q $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PYTEST_ARGS &
     TEST_PID=$!
     TEST_START=$START_TIME
 fi
