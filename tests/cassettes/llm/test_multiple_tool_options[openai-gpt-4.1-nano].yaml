@@ -1,113 +1,105 @@
 interactions:
-- request:
-    body: '{"messages":[{"role":"user","content":"What is 25 times 4?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get
-      the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
-      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
-      temperature unit"}},"required":["location"]}}},{"type":"function","function":{"name":"calculate","description":"Perform
-      basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The
-      mathematical expression to evaluate"}},"required":["expression"]}}}]}'
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '749'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
-      user-agent:
-      - AsyncOpenAI/Python 1.76.0
-      x-stainless-arch:
-      - arm64
-      x-stainless-async:
-      - async:asyncio
-      x-stainless-lang:
-      - python
-      x-stainless-os:
-      - Linux
-      x-stainless-package-version:
-      - 1.76.0
-      x-stainless-read-timeout:
-      - '600'
-      x-stainless-retry-count:
-      - '0'
-      x-stainless-runtime:
-      - CPython
-      x-stainless-runtime-version:
-      - 3.13.0
-    method: POST
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    body:
-      string: !!binary |
-        H4sIAAAAAAAAA4xTTW/bMAy9+1cIPA5x4ThOl/i2XYYB6zA0KLB2KQxVph2tsqRJdD8W5L8XthPb
-        STNgPhgCHx/5+ChtA8ZA5pAyEBtOorIq/Fz9eZ7TtLi9xtXfubx19Qq/ivImfq79CiYNwzz8RkEH
-        1oUwlVVI0ugOFg45YVN1+nEeLRfxMl62QGVyVA2ttBQmF9NQc23COIrnYZSE02RP3xgp0EPKfgWM
-        MbZt/41QneMLpCyaHCIVes9LhLRPYgycUU0EuPfSE9cEkwEURhPqRruulRoBZIzKBFdqaNx929F5
-        cIsrlcVfbp5ms++P0eXtFX5yP+/w+uru2+bHqF9X+tW2gopai96lEd7H05NmjIHmFe4bilpxwhMy
-        Y8BdWVeoqREO2zXgi3XovTR6Deka4jn7wJI17OCIuAvOne9Hjjgsas/Ve6u41oZ4o7j16n6P7Pq1
-        KFNaZx78CRUKqaXfZA65b6cdmx4chLQSoD7aK1hnKksZmUdsm06jRVcVhss3Qi/3IBniahSPk8mZ
-        elmOxGW7+P6uCS42mA/U4c7xOpdmBASj2d+rOVe7m1/q8n/KD4AQaAnzzDrMpTieeEhz2LzNf6X1
-        LreCwaN7kgIzkuiafeRY8Fp1Dwb8qyesskLqEp11sn01UNhstpglMx4XiwKCXfAGAAD//wMAj6rs
-        MEQEAAA=
-    headers:
-      CF-RAY:
-      - 9560b64d6e8880f2-SYD
-      Connection:
-      - keep-alive
-      Content-Encoding:
-      - gzip
-      Content-Type:
-      - application/json
-      Date:
-      - Fri, 27 Jun 2025 00:08:49 GMT
-      Server:
-      - cloudflare
-      Set-Cookie:
-      - __cf_bm=xfE3RuFgO9Kqc5TALLMibsX4dvvR748myFknEJyQY5w-1750982929-1.0.1.1-UfkYDI7sPy0ef66mlmfuxn5ZpIe_HiBnUalli_z7L8A0sou39RLqB2rZ1nfnsWVmBUMRxSvw671sVkbYSyBtDZ0sTkVCbKvEo_OJ.0Oa1Dc;
-        path=/; expires=Fri, 27-Jun-25 00:38:49 GMT; domain=.api.openai.com; HttpOnly;
-        Secure; SameSite=None
-      - _cfuvid=0etLgYfp3wZQ5DwHjw6bLFKyDQrW8Aj29x9OuRKPpbk-1750982929959-0.0.1.1-604800000;
-        path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
-      Transfer-Encoding:
-      - chunked
-      X-Content-Type-Options:
-      - nosniff
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      cf-cache-status:
-      - DYNAMIC
-      openai-organization:
-      - REDACTED
-      openai-processing-ms:
-      - '227'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      x-envoy-upstream-service-time:
-      - '231'
-      x-ratelimit-limit-requests:
-      - '500'
-      x-ratelimit-limit-tokens:
-      - '200000'
-      x-ratelimit-remaining-requests:
-      - '499'
-      x-ratelimit-remaining-tokens:
-      - '199993'
-      x-ratelimit-reset-requests:
-      - 120ms
-      x-ratelimit-reset-tokens:
-      - 2ms
-      x-request-id:
-      - req_8e4ff8518b3632ec9490c962654092d9
-    status:
-      code: 200
-      message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"What is 25 times 4?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}},{"type":"function","function":{"name":"calculate","description":"Perform basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '749'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.76.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.76.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.0
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4xTTW/bMAy9+1cIPA5x4ThOl/i2XYYB6zA0KLB2KQxVph2tsqRJdD8W5L8XthPb
+          STNgPhgCHx/5+ChtA8ZA5pAyEBtOorIq/Fz9eZ7TtLi9xtXfubx19Qq/ivImfq79CiYNwzz8RkEH
+          1oUwlVVI0ugOFg45YVN1+nEeLRfxMl62QGVyVA2ttBQmF9NQc23COIrnYZSE02RP3xgp0EPKfgWM
+          MbZt/41QneMLpCyaHCIVes9LhLRPYgycUU0EuPfSE9cEkwEURhPqRruulRoBZIzKBFdqaNx929F5
+          cIsrlcVfbp5ms++P0eXtFX5yP+/w+uru2+bHqF9X+tW2gopai96lEd7H05NmjIHmFe4bilpxwhMy
+          Y8BdWVeoqREO2zXgi3XovTR6Deka4jn7wJI17OCIuAvOne9Hjjgsas/Ve6u41oZ4o7j16n6P7Pq1
+          KFNaZx78CRUKqaXfZA65b6cdmx4chLQSoD7aK1hnKksZmUdsm06jRVcVhss3Qi/3IBniahSPk8mZ
+          elmOxGW7+P6uCS42mA/U4c7xOpdmBASj2d+rOVe7m1/q8n/KD4AQaAnzzDrMpTieeEhz2LzNf6X1
+          LreCwaN7kgIzkuiafeRY8Fp1Dwb8qyesskLqEp11sn01UNhstpglMx4XiwKCXfAGAAD//wMAj6rs
+          MEQEAAA=
+      headers:
+        CF-RAY:
+          - 9560b64d6e8880f2-SYD
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 27 Jun 2025 00:08:49 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=xfE3RuFgO9Kqc5TALLMibsX4dvvR748myFknEJyQY5w-1750982929-1.0.1.1-UfkYDI7sPy0ef66mlmfuxn5ZpIe_HiBnUalli_z7L8A0sou39RLqB2rZ1nfnsWVmBUMRxSvw671sVkbYSyBtDZ0sTkVCbKvEo_OJ.0Oa1Dc; path=/; expires=Fri, 27-Jun-25 00:38:49 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=0etLgYfp3wZQ5DwHjw6bLFKyDQrW8Aj29x9OuRKPpbk-1750982929959-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '227'
+        openai-version:
+          - '2020-10-01'
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        x-envoy-upstream-service-time:
+          - '231'
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199993'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 2ms
+        x-request-id:
+          - req_8e4ff8518b3632ec9490c962654092d9
+      status:
+        code: 200
+        message: OK
 version: 1
