@@ -9,8 +9,6 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
-  # PostgreSQL connection string for tests
-  DB_URL: postgresql://postgres:postgres@postgres:5432/postgres
 
 permissions:
   contents: read
@@ -19,21 +17,6 @@ permissions:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: pgvector/pgvector:0.8.0-pg17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
     
     steps:
     - name: Checkout code
@@ -70,10 +53,10 @@ jobs:
     - name: Run tests in devcontainer
       run: |
         # Run the container with the just-built image
+        # PostgreSQL will be started as a subprocess inside the container
         docker run \
           --rm \
           -v ${{ github.workspace }}:/workspace \
-          -e DATABASE_URL="${{ env.DB_URL }}" \
           --user root \
           ${{ steps.tag.outputs.image }} \
           bash -c '
@@ -95,15 +78,18 @@ jobs:
               .venv/bin/playwright install chromium
               
               # Run linting
+              echo \"Running linting...\"
               scripts/format-and-lint.sh
               
               # Run tests with SQLite
               echo \"Running SQLite tests...\"
               .venv/bin/pytest -xq
               
-              # Run tests with PostgreSQL
-              echo \"Running PostgreSQL tests...\"
-              DATABASE_URL=\"$DATABASE_URL\" .venv/bin/pytest --postgres -xq
+              # Run tests with PostgreSQL using subprocess
+              echo \"Running PostgreSQL tests with subprocess...\"
+              # The tests will automatically use SubprocessPostgresContainer when
+              # PostgreSQL is installed but no external PostgreSQL is available
+              .venv/bin/pytest --postgres -xq
             "
           '
     
