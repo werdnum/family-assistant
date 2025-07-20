@@ -16,6 +16,10 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}  # This will be owner/repo format
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
