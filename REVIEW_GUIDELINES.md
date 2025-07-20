@@ -200,3 +200,61 @@ This project follows the patterns defined in CLAUDE.md:
 - All code must pass linting (ruff, basedpyright, pylint)
 - Use virtualenv in .venv
 - Follow existing code conventions in the codebase
+
+## Auto-Formatting Tools
+
+This project uses automatic code formatting tools. **The reviewer should NOT suggest style changes
+that conflict with these tools**:
+
+### Python Formatting
+
+- **Tool**: `ruff format --preview`
+- **Configuration**: Automatic formatting with preview features enabled
+- **What it handles**: Indentation, spacing, line breaks, import ordering, quote consistency
+- **Important**: Do NOT flag Python style issues that ruff would automatically fix
+
+### Python Linting
+
+- **Tool**: `ruff check --fix --preview --ignore=E501`
+- **Configuration**: Auto-fixes enabled, line length (E501) ignored
+- **What it handles**: Code style violations, unused imports, common errors
+- **Important**: The reviewer should focus on logic and design issues, not style
+
+### Markdown Formatting
+
+- **Tool**: `mdformat --wrap 100`
+- **Configuration**: `.mdformat.toml` with 100-character line wrap
+- **What it handles**:
+  - Consistent heading styles
+  - List formatting and indentation
+  - Line wrapping at 100 characters
+  - Code block formatting
+  - Table formatting
+- **Important**: Do NOT flag Markdown style issues that mdformat would automatically fix
+
+### Pre-commit Hooks
+
+The project uses pre-commit hooks that run these formatters automatically:
+
+- Python files: `ruff check --fix --preview` and `ruff format --preview`
+- Markdown files: `mdformat --wrap 100`
+
+### Review Focus
+
+Given the auto-formatting tools in place, the reviewer should focus on:
+
+1. **Logic errors** and algorithmic correctness
+2. **Security vulnerabilities** and safety issues
+3. **Design patterns** and architecture decisions
+4. **Performance issues** and efficiency concerns
+5. **Missing error handling** or edge cases
+6. **Documentation completeness** (not formatting)
+7. **Test coverage** and quality
+
+The reviewer should **NOT** focus on:
+
+1. Code formatting (handled by ruff)
+2. Markdown formatting (handled by mdformat)
+3. Import ordering (handled by ruff)
+4. Line length in Python (explicitly ignored with E501)
+5. Whitespace or indentation issues
