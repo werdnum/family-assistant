@@ -3,6 +3,8 @@ name: Build and Push Containers
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -54,7 +56,7 @@ jobs:
       with:
         context: .devcontainer
         file: .devcontainer/Dockerfile
-        push: true
+        push: ${{ github.event_name != 'pull_request' }}
         tags: |
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${{ needs.prepare.outputs.tag }}
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:latest
@@ -86,7 +88,7 @@ jobs:
       with:
         context: .
         file: Dockerfile
-        push: true
+        push: ${{ github.event_name != 'pull_request' }}
         tags: |
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ needs.prepare.outputs.tag }}
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
