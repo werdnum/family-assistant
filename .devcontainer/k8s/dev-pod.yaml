@@ -42,175 +42,173 @@ spec:
         runAsGroup: 1001
         fsGroup: 1001
       volumes:
-      # Claude home directory - persistent on host
-      - name: claude-home
-        hostPath:
-          path: /data/ssd/sync/workspace/k8s-storage/family-assistant-dev/claude-home
-          type: DirectoryOrCreate
-      
-      # PostgreSQL data - ephemeral within pod
-      - name: postgres-data
-        emptyDir: {}
+        # Claude home directory - persistent on host
+        - name: claude-home
+          hostPath:
+            path: /data/ssd/sync/workspace/k8s-storage/family-assistant-dev/claude-home
+            type: DirectoryOrCreate
+        # PostgreSQL data - ephemeral within pod
+        - name: postgres-data
+          emptyDir: {}
       initContainers:
-      # Setup workspace and fix permissions
-      - name: setup-workspace
-        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_103705
-        imagePullPolicy: Always
-        command: ["/usr/local/bin/setup-workspace.sh"]
-        securityContext:
-          runAsUser: 0  # Run as root for setup
-        env:
-        - name: CLAUDE_PROJECT_REPO
-          value: "https://github.com/werdnum/family-assistant.git"
-        - name: GITHUB_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: github-token
-              key: token
-        volumeMounts:
-        - name: workspace
-          mountPath: /workspace
-        - name: claude-home
-          mountPath: /home/claude
-        - name: postgres-data
-          mountPath: /var/lib/postgresql/data
+        # Setup workspace and fix permissions
+        - name: setup-workspace
+          image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_103705
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/setup-workspace.sh"]
+          securityContext:
+            runAsUser: 0 # Run as root for setup
+          env:
+            - name: CLAUDE_PROJECT_REPO
+              value: "https://github.com/werdnum/family-assistant.git"
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: claude-home
+              mountPath: /home/claude
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
       containers:
-      # PostgreSQL container
-      - name: postgres
-        image: pgvector/pgvector:0.8.0-pg17
-        ports:
-        - containerPort: 5432
-        securityContext:
-          runAsUser: 999  # postgres user in the container
-          runAsGroup: 999
-          allowPrivilegeEscalation: false
-        env:
-        - name: POSTGRES_USER
-          value: "test"
-        - name: POSTGRES_PASSWORD
-          value: "test"
-        - name: POSTGRES_DB
-          value: "test"
-        - name: PGDATA
-          value: "/var/lib/postgresql/data/pgdata"
-        volumeMounts:
-        - name: postgres-data
-          mountPath: /var/lib/postgresql/data
-        livenessProbe:
-          exec:
-            command: ["pg_isready", "-U", "test"]
-          initialDelaySeconds: 30
-          periodSeconds: 10
-      
-      # Backend service container
-      - name: backend
-        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_103705
-        imagePullPolicy: Always
-        workingDir: /workspace
-        command: ["/bin/bash", "-c"]
-        args:
-          - |
-            cd /workspace
-            source .venv/bin/activate
-            
-            
-            # Wait for postgres
-            echo "Waiting for PostgreSQL..."
-            for i in {1..30}; do
-              if pg_isready -h localhost -U test; then
-                echo "PostgreSQL is ready!"
-                break
-              fi
-              sleep 1
-            done
-            
-            # Start backend in full development mode
-            # This runs both the backend server AND the frontend dev server
-            exec poe dev
-        ports:
-        - containerPort: 8000
-        - containerPort: 5173
-        env:
-        - name: DATABASE_URL
-          value: "postgresql+asyncpg://test:test@localhost:5432/test"
-        - name: TEST_DATABASE_URL
-          value: "postgresql+asyncpg://test:test@localhost:5432/test"
-        - name: DEV_MODE
-          value: "true"
-        - name: HOME
-          value: "/home/claude"
-        volumeMounts:
-        - name: workspace
-          mountPath: /workspace
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "250m"
-          limits:
-            memory: "2Gi"
-            cpu: "1"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 60
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-      # Claude Code container
-      - name: claude
-        image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_103705
-        imagePullPolicy: Always
-        workingDir: /workspace
-        tty: true
-        stdin: true
-        ports:
-        - containerPort: 8080
-        command: ["/bin/bash", "-c"]
-        args:
-          - |
-            cd /workspace
-            source .venv/bin/activate
-            
-            # Ensure NPM_CONFIG_PREFIX is set
-            export NPM_CONFIG_PREFIX=/home/claude/.npm-global
-            
-            echo "Claude Code environment ready!"
-            echo "Starting claude-code-webui on port 8080..."
-            
-            # Start claude-code-webui
-            exec claude-code-webui --port 8080 --host 0.0.0.0
-        env:
-        - name: DATABASE_URL
-          value: "postgresql+asyncpg://test:test@localhost:5432/test"
-        - name: TEST_DATABASE_URL  
-          value: "postgresql+asyncpg://test:test@localhost:5432/test"
-        - name: DEV_MODE
-          value: "true"
-        - name: HOME
-          value: "/home/claude"
-        volumeMounts:
-        - name: workspace
-          mountPath: /workspace
-        - name: claude-home
-          mountPath: /home/claude
-        resources:
-          requests:
-            memory: "128Mi"
-            cpu: "1"
-          limits:
-            memory: "4Gi"
-            cpu: "2"
+        # PostgreSQL container
+        - name: postgres
+          image: pgvector/pgvector:0.8.0-pg17
+          ports:
+            - containerPort: 5432
+          securityContext:
+            runAsUser: 999 # postgres user in the container
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+          env:
+            - name: POSTGRES_USER
+              value: "test"
+            - name: POSTGRES_PASSWORD
+              value: "test"
+            - name: POSTGRES_DB
+              value: "test"
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "test"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+        # Backend service container
+        - name: backend
+          image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_103705
+          imagePullPolicy: Always
+          workingDir: /workspace
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              cd /workspace
+              source .venv/bin/activate
+
+
+              # Wait for postgres
+              echo "Waiting for PostgreSQL..."
+              for i in {1..30}; do
+                if pg_isready -h localhost -U test; then
+                  echo "PostgreSQL is ready!"
+                  break
+                fi
+                sleep 1
+              done
+
+              # Start backend in full development mode
+              # This runs both the backend server AND the frontend dev server
+              exec poe dev
+          ports:
+            - containerPort: 8000
+            - containerPort: 5173
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://test:test@localhost:5432/test"
+            - name: TEST_DATABASE_URL
+              value: "postgresql+asyncpg://test:test@localhost:5432/test"
+            - name: DEV_MODE
+              value: "true"
+            - name: HOME
+              value: "/home/claude"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+        # Claude Code container
+        - name: claude
+          image: containers.alexsmith.dev/family-assistant-devcontainer:20250713_103705
+          imagePullPolicy: Always
+          workingDir: /workspace
+          tty: true
+          stdin: true
+          ports:
+            - containerPort: 8080
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              cd /workspace
+              source .venv/bin/activate
+
+              # Ensure NPM_CONFIG_PREFIX is set
+              export NPM_CONFIG_PREFIX=/home/claude/.npm-global
+
+              echo "Claude Code environment ready!"
+              echo "Starting claude-code-webui on port 8080..."
+
+              # Start claude-code-webui
+              exec claude-code-webui --port 8080 --host 0.0.0.0
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://test:test@localhost:5432/test"
+            - name: TEST_DATABASE_URL
+              value: "postgresql+asyncpg://test:test@localhost:5432/test"
+            - name: DEV_MODE
+              value: "true"
+            - name: HOME
+              value: "/home/claude"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: claude-home
+              mountPath: /home/claude
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "1"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
   volumeClaimTemplates:
-  - metadata:
-      name: workspace
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      storageClassName: "shared-hostpath-storage"
-      resources:
-        requests:
-          storage: 20Gi
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "shared-hostpath-storage"
+        resources:
+          requests:
+            storage: 20Gi

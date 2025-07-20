@@ -11,17 +11,17 @@ metadata:
     # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   tls:
-  - hosts:
-    - assistant.alexsmith.dev
-    secretName: family-assistant-web-tls # cert-manager will create this secret
+    - hosts:
+        - assistant.alexsmith.dev
+      secretName: family-assistant-web-tls # cert-manager will create this secret
   rules:
-  - host: assistant.alexsmith.dev
-    http:
-      paths:
-      - path: / # Target all paths for the web UI
-        pathType: Prefix
-        backend:
-          service:
-            name: family-assistant # Name of the existing Service
-            port:
-              number: 80 # Port exposed by the Service
+    - host: assistant.alexsmith.dev
+      http:
+        paths:
+          - path: / # Target all paths for the web UI
+            pathType: Prefix
+            backend:
+              service:
+                name: family-assistant # Name of the existing Service
+                port:
+                  number: 80 # Port exposed by the Service

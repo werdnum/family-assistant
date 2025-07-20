@@ -9,25 +9,24 @@ check-model-accepts-settings: false
 #edit-format: udiff-simple
 gitignore: false
 commit-prompt: |-
-    Write a detailed Git commit message based on the provided diffs.
+  Write a detailed Git commit message based on the provided diffs.
 
-    Review the provided context and diffs which are about to be committed to a git repo.
-    Review the diffs carefully.
+  Review the provided context and diffs which are about to be committed to a git repo.
+  Review the diffs carefully.
 
-    Ensure the commit message:
-    - Starts with a short one-line summary, followed by two line breaks and then any relevant explanation.
-    - Is in the imperative mood (e.g., "add feature" not "adds feature", "added feature" or "adding feature" and especially not "This commit adds")
-    - Does not contain redundant fluff like "This commit..."
-    - Does not explain things that are obvious. You do not need to explain why it's good to make tests pass or run faster.
-    - Describes not only _what_ was changed, but _why_ and to what end.
-    - Does not needlessly reiterate precise details of the code changes themselves (it is OK and encouraged to briefly describe them, but at more of a function-by-function level rather than a line-by-line level).
+  Ensure the commit message:
+  - Starts with a short one-line summary, followed by two line breaks and then any relevant explanation.
+  - Is in the imperative mood (e.g., "add feature" not "adds feature", "added feature" or "adding feature" and especially not "This commit adds")
+  - Does not contain redundant fluff like "This commit..."
+  - Does not explain things that are obvious. You do not need to explain why it's good to make tests pass or run faster.
+  - Describes not only _what_ was changed, but _why_ and to what end.
+  - Does not needlessly reiterate precise details of the code changes themselves (it is OK and encouraged to briefly describe them, but at more of a function-by-function level rather than a line-by-line level).
 
-    It's OK to use 'conventional commit' prefixes like 'feat' and 'fix' if they add clarity, but they are not required in this project.
+  It's OK to use 'conventional commit' prefixes like 'feat' and 'fix' if they add clarity, but they are not required in this project.
 
-    Reply only with the commit message, without any additional text, explanations, or line breaks.
+  Reply only with the commit message, without any additional text, explanations, or line breaks.
 lint-cmd:
   - "python: scripts/format-and-lint.sh"
-
 read:
   - docs/SPECIFICATION.md
   - docs/STYLE_GUIDE.md

@@ -15,48 +15,48 @@ spec:
         app: family-assistant
     spec:
       containers:
-      - name: family-assistant
-        image: containers.alexsmith.dev/family-assistant:latest # Your specified image
-        imagePullPolicy: Always # Or IfNotPresent, depending on your tagging strategy
-        ports:
-        - containerPort: 8000 # Port exposed by the application
-        envFrom:
-        - secretRef:
-            name: family-assistant # Reference the renamed secret
-        env: # Inject DB credentials and construct the URL
-        - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: ml-bot.mlbot.storage-cluster.credentials.postgresql.acid.zalan.do # Zalando secret
-              key: username
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: ml-bot.mlbot.storage-cluster.credentials.postgresql.acid.zalan.do # Zalando secret
-              key: password
-        - name: DATABASE_URL # Construct the final URL
-          value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@storage-cluster.postgres.svc.cluster.local/mlbot"
-        - name: TIMEZONE # Add the timezone variable
-          value: "Australia/Sydney" # Set the desired timezone for the deployment
-        livenessProbe:
-          httpGet:
-            path: /health # The endpoint added to web_server.py
-            port: 8000    # The port the application listens on inside the container
-          initialDelaySeconds: 15 # Wait 15 seconds before the first probe
-          periodSeconds: 20     # Probe every 20 seconds
-          timeoutSeconds: 5       # Wait 5 seconds for a response
-          failureThreshold: 3   # Consider it failed after 3 consecutive failures
-        # volumeMounts: # Removed volume mount for SQLite
-        # - name: data-volume
-        #   mountPath: /data
-        # Optional: Define resource requests and limits
-        # resources:
-        #   requests:
-        #     memory: "256Mi"
-        #     cpu: "250m"
-        #   limits:
-        #     memory: "512Mi"
-        #     cpu: "500m"
+        - name: family-assistant
+          image: containers.alexsmith.dev/family-assistant:latest # Your specified image
+          imagePullPolicy: Always # Or IfNotPresent, depending on your tagging strategy
+          ports:
+            - containerPort: 8000 # Port exposed by the application
+          envFrom:
+            - secretRef:
+                name: family-assistant # Reference the renamed secret
+          env: # Inject DB credentials and construct the URL
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ml-bot.mlbot.storage-cluster.credentials.postgresql.acid.zalan.do # Zalando secret
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ml-bot.mlbot.storage-cluster.credentials.postgresql.acid.zalan.do # Zalando secret
+                  key: password
+            - name: DATABASE_URL # Construct the final URL
+              value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@storage-cluster.postgres.svc.cluster.local/mlbot"
+            - name: TIMEZONE # Add the timezone variable
+              value: "Australia/Sydney" # Set the desired timezone for the deployment
+          livenessProbe:
+            httpGet:
+              path: /health # The endpoint added to web_server.py
+              port: 8000 # The port the application listens on inside the container
+            initialDelaySeconds: 15 # Wait 15 seconds before the first probe
+            periodSeconds: 20 # Probe every 20 seconds
+            timeoutSeconds: 5 # Wait 5 seconds for a response
+            failureThreshold: 3 # Consider it failed after 3 consecutive failures
+            # volumeMounts: # Removed volume mount for SQLite
+            # - name: data-volume
+            #   mountPath: /data
+            # Optional: Define resource requests and limits
+            # resources:
+            #   requests:
+            #     memory: "256Mi"
+            #     cpu: "250m"
+            #   limits:
+            #     memory: "512Mi"
+            #     cpu: "500m"
       # volumes: # Removed volume definition for SQLite
       # - name: data-volume
       #   emptyDir: {}
