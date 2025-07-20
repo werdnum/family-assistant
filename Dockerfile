@@ -31,7 +31,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # --- Install Deno ---
 ARG DENO_VERSION=v2.2.11
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 # Select the correct Deno binary based on architecture
 RUN ARCHITECTURE="" && \
     if [ "$TARGETARCH" = "amd64" ]; then \
