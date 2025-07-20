@@ -80,8 +80,10 @@ jobs:
             # Set up workspace permissions
             chown -R claude:claude /workspace
             
-            # Switch to claude user for all operations
-            su - claude -c "
+            # Switch to claude user for all operations (preserve environment)
+            su --preserve-environment claude -c "
+              export PATH=/home/claude/.local/bin:/usr/local/bin:\$PATH
+              export TEST_DATABASE_URL=\"$TEST_DATABASE_URL\"
               cd /workspace
               
               # Configure git
