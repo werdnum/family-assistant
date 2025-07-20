@@ -27,5 +27,5 @@ jobs:
     - name: Run tests (SQLite only)
       run: .venv/bin/poe test
   
-  # Note: For PostgreSQL tests, see .github/workflows/ci-devcontainer.yml
-  # which runs tests inside the dev container with full PostgreSQL support
+  # Note: For PostgreSQL tests, see .github/workflows/ci-with-devcontainer.yml
+  # which builds the dev container and runs tests with full PostgreSQL support
