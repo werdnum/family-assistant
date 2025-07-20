@@ -12,6 +12,10 @@ env:
   # PostgreSQL connection string for tests
   DB_URL: postgresql://postgres:postgres@postgres:5432/postgres
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   test-in-devcontainer:
     runs-on: ubuntu-latest
