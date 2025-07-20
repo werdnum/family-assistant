@@ -8,8 +8,8 @@ spec:
   ingressClassName: tailscale # Use the Tailscale Ingress controller
   tls:
     - hosts:
-      - assistant-webhooks.bishop-dorian.ts.net # Your desired Tailscale hostname
-      # secretName: is not needed, Tailscale handles TLS automatically
+        - assistant-webhooks.bishop-dorian.ts.net # Your desired Tailscale hostname
+        # secretName: is not needed, Tailscale handles TLS automatically
   rules:
     - host: assistant-webhooks.bishop-dorian.ts.net
       http:
