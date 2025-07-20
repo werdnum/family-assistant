@@ -96,10 +96,22 @@ fi
 if [ -f "pyproject.toml" ]; then
     echo "Python project detected. Setting up virtual environment..."
     
-    # Always create fresh virtual environment in isolated workspace
-    echo "Creating fresh virtual environment..."
-    rm -rf .venv
-    uv venv .venv
+    # Create virtual environment if it doesn't exist
+    if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
+        echo "Creating fresh virtual environment..."
+        rm -rf .venv
+        uv venv .venv
+    else
+        echo "Virtual environment already exists, checking if it's valid..."
+        # Verify the venv works
+        if .venv/bin/python --version >/dev/null 2>&1; then
+            echo "Existing virtual environment is valid"
+        else
+            echo "Existing virtual environment is broken, recreating..."
+            rm -rf .venv
+            uv venv .venv
+        fi
+    fi
     
     # Activate the virtual environment
     source .venv/bin/activate

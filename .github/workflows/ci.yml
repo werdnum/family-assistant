@@ -24,5 +24,8 @@ jobs:
         uv venv .venv
         uv pip install --python .venv '.[dev]'
         .venv/bin/playwright install --with-deps chromium
-    - name: Run tests
+    - name: Run tests (SQLite only)
       run: .venv/bin/poe test
+  
+  # Note: For PostgreSQL tests, see .github/workflows/ci-with-devcontainer.yml
+  # which builds the dev container and runs tests with full PostgreSQL support
