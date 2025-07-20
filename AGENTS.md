@@ -16,6 +16,10 @@ repository.
 ```bash
 # Install the project in development mode with all dependencies
 uv pip install -e '.[dev]'
+
+# Optional: Install local embedding model support (adds ~450MB of dependencies)
+# Only needed if you want to use local sentence transformer models instead of cloud APIs
+uv pip install -e '.[dev,local-embeddings]'
 ```
 
 ## Development Commands
@@ -559,6 +563,39 @@ assert result == 4
 assert is_active
 assert value is None
 ```
+
+## Embedding Models
+
+Family Assistant supports multiple embedding model backends:
+
+### Cloud-based Embeddings (Default)
+
+The default configuration uses cloud-based embedding models via LiteLLM (e.g.,
+`gemini/gemini-embedding-exp-03-07`). These require no additional dependencies and provide
+high-quality embeddings with minimal setup.
+
+### Local Embeddings (Optional)
+
+For privacy or offline use cases, you can use local sentence transformer models. These require the
+`local-embeddings` optional dependency group:
+
+```bash
+# Install with local embedding support
+uv pip install -e '.[dev,local-embeddings]'
+```
+
+Local models are identified by:
+
+- Paths starting with `/` (e.g., `/path/to/model`)
+- Known model names like `all-MiniLM-L6-v2`
+
+Note: The `local-embeddings` extra adds ~450MB of dependencies (torch, transformers,
+sentence-transformers).
+
+### Hashing-based Embeddings
+
+For testing or lightweight deployments, a deterministic hashing-based embedding generator is
+available (`hashing-word-v1`) that requires no external dependencies.
 
 ## Architecture Overview
 

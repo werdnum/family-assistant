@@ -968,7 +968,6 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "starlark-pyo3" },
     { name = "telegramify-markdown" },
-    { name = "torch" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "vobject" },
 ]
@@ -1006,7 +1005,6 @@ dev = [
     { name = "pytype" },
     { name = "radicale" },
     { name = "ruff" },
-    { name = "sentence-transformers" },
     { name = "symbex" },
     { name = "testcontainers" },
     { name = "types-aiofiles" },
@@ -1017,6 +1015,10 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-vobject" },
     { name = "vcrpy" },
+]
+local-embeddings = [
+    { name = "sentence-transformers" },
+    { name = "torch" },
 ]
 
 [package.dev-dependencies]
@@ -1090,13 +1092,13 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "radicale", marker = "extra == 'dev'", specifier = ">=3" },
     { name = "ruff", marker = "extra == 'dev'" },
-    { name = "sentence-transformers", marker = "extra == 'dev'", specifier = ">=2.7.0" },
+    { name = "sentence-transformers", marker = "extra == 'local-embeddings'", specifier = ">=2.7.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "starlark-pyo3", specifier = ">=0.1.0" },
     { name = "symbex", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "telegramify-markdown", specifier = ">=0.5.1" },
     { name = "testcontainers", extras = ["postgres"], marker = "extra == 'dev'", specifier = ">=3.7.1" },
-    { name = "torch", specifier = ">=2.0.0" },
+    { name = "torch", marker = "extra == 'local-embeddings'", specifier = ">=2.0.0" },
     { name = "types-aiofiles", marker = "extra == 'dev'" },
     { name = "types-assertpy", marker = "extra == 'dev'" },
     { name = "types-passlib", marker = "extra == 'dev'" },

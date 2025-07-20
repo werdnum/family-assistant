@@ -28,7 +28,7 @@ SENTENCE_TRANSFORMERS_AVAILABLE: bool  # Will be set in the try/except block
 try:
     # sentence-transformers returns numpy arrays or torch tensors, need numpy for conversion
     import numpy  # pyright: ignore[reportMissingTypeStubs]
-    from sentence_transformers import (  # pyright: ignore[reportMissingTypeStubs]
+    from sentence_transformers import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports]
         SentenceTransformer as ActualSentenceTransformer,
     )
 
