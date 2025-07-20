@@ -75,8 +75,9 @@ jobs:
           -v ${{ github.workspace }}:/workspace \
           -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
           --user root \
+          --entrypoint /bin/bash \
           ${{ steps.tag.outputs.image }} \
-          bash -c '
+          -c '
             # Set up workspace permissions
             chown -R claude:claude /workspace
             
