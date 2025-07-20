@@ -18,6 +18,21 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -51,12 +66,17 @@ jobs:
         load: false
     
     - name: Run tests in devcontainer
+      env:
+        # Use host network to access the PostgreSQL service
+        TEST_DATABASE_URL: postgresql://test:test@postgres:5432/test
       run: |
         # Run the container with the just-built image
-        # PostgreSQL will be started as a subprocess inside the container
+        # Use the external PostgreSQL service for tests
         docker run \
           --rm \
+          --network host \
           -v ${{ github.workspace }}:/workspace \
+          -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
           --user root \
           ${{ steps.tag.outputs.image }} \
           bash -c '
@@ -85,11 +105,9 @@ jobs:
               echo \"Running SQLite tests...\"
               .venv/bin/pytest -xq
               
-              # Run tests with PostgreSQL using subprocess
-              echo \"Running PostgreSQL tests with subprocess...\"
-              # The tests will automatically use SubprocessPostgresContainer when
-              # PostgreSQL is installed but no external PostgreSQL is available
-              .venv/bin/pytest --postgres -xq
+              # Run tests with PostgreSQL using external service
+              echo \"Running PostgreSQL tests with external service...\"
+              TEST_DATABASE_URL=\"postgresql://test:test@localhost:5432/test\" .venv/bin/pytest --postgres -xq
             "
           '
     
