@@ -9,6 +9,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
+  # PostgreSQL connection string for tests
+  DB_URL: postgresql://postgres:postgres@postgres:5432/postgres
 
 jobs:
   test-in-devcontainer:
@@ -69,9 +71,6 @@ jobs:
         su - claude -c "cd /workspace && .venv/bin/pytest -xq"
         
     - name: Run tests with PostgreSQL
-      env:
-        # Use the service container name as hostname
-        DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
       run: |
         # Pass the DATABASE_URL to the claude user's environment
-        su - claude -c "cd /workspace && DATABASE_URL='postgresql://postgres:postgres@postgres:5432/postgres' .venv/bin/pytest --postgres -xq"
+        su - claude -c "cd /workspace && DATABASE_URL='${{ env.DB_URL }}' .venv/bin/pytest --postgres -xq"
