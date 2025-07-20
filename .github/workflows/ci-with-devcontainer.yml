@@ -54,6 +54,9 @@ jobs:
         echo "tag=${TAG}" >> $GITHUB_OUTPUT
         echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${TAG}" >> $GITHUB_OUTPUT
     
+    - name: Create cache directory
+      run: mkdir -p ${{ runner.temp }}/uv-cache
+    
     - name: Build devcontainer image
       uses: docker/build-push-action@v5
       with:
@@ -68,48 +71,31 @@ jobs:
     - name: Run tests in devcontainer
       run: |
         # Run the container with the just-built image
-        # Use the external PostgreSQL service for tests
+        # Let the dev container's entrypoint handle setup
+        # Override CMD to run our tests instead of claude
         docker run \
           --rm \
           --network host \
           -v ${{ github.workspace }}:/workspace \
+          -v ${{ runner.temp }}/uv-cache:/home/claude/.cache/uv \
           -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
-          --user root \
-          --entrypoint /bin/bash \
+          -e CLAUDE_PROJECT_REPO="" \
+          -e UV_CACHE_DIR=/home/claude/.cache/uv \
+          -u claude \
           ${{ steps.tag.outputs.image }} \
-          -c '
-            # Set up workspace permissions
-            chown -R claude:claude /workspace
+          bash -c '
+            cd /workspace
             
-            # Switch to claude user for all operations 
-            # Use su - to get a proper login shell, then export needed vars
-            su - claude -c "
-              export PATH=/home/claude/.local/bin:/usr/local/bin:\$PATH
-              export TEST_DATABASE_URL=\"$TEST_DATABASE_URL\"
-              cd /workspace
-              
-              # Configure git
-              git config --global --add safe.directory /workspace
-              
-              # Create virtual environment and install dependencies
-              uv venv .venv
-              uv pip install --python .venv \".[dev]\"
-              
-              # Install playwright browsers
-              .venv/bin/playwright install chromium
-              
-              # Run linting
-              echo \"Running linting...\"
-              scripts/format-and-lint.sh
-              
-              # Run tests with SQLite
-              echo \"Running SQLite tests...\"
-              .venv/bin/pytest -xq
-              
-              # Run tests with PostgreSQL using external service
-              echo \"Running PostgreSQL tests with external service...\"
-              .venv/bin/pytest --postgres -xq
-            "
+            # The entrypoint has already set up the environment
+            # Just run our tests
+            echo "Running linting..."
+            scripts/format-and-lint.sh
+            
+            echo "Running SQLite tests..."
+            .venv/bin/pytest -xq
+            
+            echo "Running PostgreSQL tests with external service..."
+            .venv/bin/pytest --postgres -xq
           '
     
     # Note: Test images with unique tags will be cleaned up by GHCR retention policies
