@@ -1,3 +1,7 @@
+# Build stage for shpool
+FROM rust:latest AS shpool-builder
+RUN cargo install shpool
+
 FROM ubuntu:24.04
 
 # Prevent interactive prompts during package installation
@@ -12,6 +16,9 @@ RUN apt-get update && apt-get install -y \
 
 # Create symbolic link for fd (fd-find installs as fdfind)
 RUN ln -s /usr/bin/fdfind /usr/bin/fd
+
+# Copy shpool binary from builder stage
+COPY --from=shpool-builder /usr/local/cargo/bin/shpool /usr/local/bin/shpool
 
 # Development tools not in pyproject.toml
 # ast-grep is required by CLAUDE.md instructions
