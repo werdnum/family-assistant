@@ -2,17 +2,15 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import cast
+from datetime import datetime, timezone
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]
 from assertpy import assert_that, soft_assertions
-from telegram import Message
-from telegram.test_telegram_handler import (
-    create_mock_context,
-    create_mock_update,
-)
+from telegram import Chat, Message, Update, User
+from telegram.ext import ContextTypes
 
 # Import mock LLM helpers
 from family_assistant.llm import ToolCallFunction, ToolCallItem
@@ -37,6 +35,48 @@ USER_CHAT_ID = 123
 USER_ID = 12345
 # Use add_or_update_note, but configure it dynamically in tests
 TOOL_NAME_SENSITIVE = "add_or_update_note"
+
+
+# --- Test Helper Functions ---
+
+
+def create_mock_context(
+    mock_application: AsyncMock,  # Pass the application mock
+    bot_data: dict[Any, Any] | None = None,
+) -> ContextTypes.DEFAULT_TYPE:
+    """Creates a mock CallbackContext."""
+    # Use the provided application mock, which should have .bot set
+    context = ContextTypes.DEFAULT_TYPE(
+        application=mock_application, chat_id=123, user_id=12345
+    )
+    # The bot should be automatically set from mock_application.bot
+    # Do not reassign bot_data, update it instead
+    if bot_data:
+        context.bot_data.update(bot_data)
+    # Mock other attributes if needed
+    return context
+
+
+def create_mock_update(
+    message_text: str,
+    chat_id: int = 123,
+    user_id: int = 12345,
+    message_id: int = 101,
+    reply_to_message: Message | None = None,
+) -> Update:
+    """Creates a mock Telegram Update object for a text message."""
+    user = User(id=user_id, first_name="TestUser", is_bot=False)
+    chat = Chat(id=chat_id, type="private")
+    message = Message(
+        message_id=message_id,
+        date=datetime.now(timezone.utc),
+        chat=chat,
+        from_user=user,
+        text=message_text,
+        reply_to_message=reply_to_message,
+    )
+    update = Update(update_id=1, message=message)
+    return update
 
 
 @pytest.mark.asyncio

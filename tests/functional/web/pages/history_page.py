@@ -1,6 +1,6 @@
 """Page object for the message history UI."""
 
-from web.pages.base_page import BasePage
+from .base_page import BasePage
 
 
 class HistoryPage(BasePage):

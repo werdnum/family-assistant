@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 from playwright.async_api import expect
-from web.pages.documents_page import DocumentsPage
 
 from .conftest import WebTestFixture
+from .pages.documents_page import DocumentsPage
 
 
 @pytest.mark.asyncio

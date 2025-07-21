@@ -2,9 +2,9 @@
 
 import pytest
 from playwright.async_api import expect
-from web.pages.notes_page import NotesPage
 
 from .conftest import WebTestFixture
+from .pages.notes_page import NotesPage
 
 
 @pytest.mark.asyncio

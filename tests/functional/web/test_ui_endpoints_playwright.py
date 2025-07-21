@@ -7,7 +7,8 @@ import asyncio
 from typing import Any
 
 import pytest
-from web.pages import BasePage
+
+from .pages import BasePage
 
 # Base UI endpoints accessible regardless of auth state
 # For pages that expect data (e.g., editing a specific note), we test with a
