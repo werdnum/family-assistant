@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from web.pages.history_page import HistoryPage
 
 from family_assistant.storage.message_history import add_message_to_history
-from tests.functional.web.pages.history_page import HistoryPage
 
 
 @pytest.fixture

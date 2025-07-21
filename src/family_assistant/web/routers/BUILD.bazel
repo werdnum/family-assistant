@@ -1,0 +1,20 @@
+"""BUILD file for web routers"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "routers",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("fastapi"),
+        requirement("pydantic"),
+        requirement("jinja2"),
+        requirement("markdown-it-py"),
+        "//src/family_assistant/storage",
+        "//src/family_assistant/tools",
+        "//src/family_assistant/indexing",
+    ],
+)

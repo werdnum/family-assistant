@@ -18,7 +18,11 @@ from family_assistant.indexing.processors.llm_processors import (
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface as RealLLMInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
-from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
+from family_assistant.testing.mocks.mock_llm import (
+    LLMOutput,
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+)
 
 logger = logging.getLogger(__name__)
 

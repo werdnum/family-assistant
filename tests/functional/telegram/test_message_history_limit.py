@@ -8,7 +8,7 @@ import pytest
 from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
-from tests.mocks.mock_llm import LLMOutput
+from family_assistant.testing.mocks.mock_llm import LLMOutput
 
 from .conftest import TelegramHandlerTestFixture
 

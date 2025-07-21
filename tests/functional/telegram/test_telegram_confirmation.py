@@ -9,23 +9,23 @@ import pytest
 import telegramify_markdown  # type: ignore[import-untyped]
 from assertpy import assert_that, soft_assertions
 from telegram import Message
-
-# Import mock LLM helpers
-from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.tools import ConfirmingToolsProvider  # Import confirming provider
-from tests.functional.telegram.test_telegram_handler import (
+from telegram.test_telegram_handler import (
     create_mock_context,
     create_mock_update,
 )
-from tests.mocks.mock_llm import (
+
+# Import mock LLM helpers
+from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.testing.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Use alias for clarity
 )
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     MatcherArgs,
     Rule,
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from family_assistant.tools import ConfirmingToolsProvider  # Import confirming provider
 
 # Import the test fixture and helper functions
 from .conftest import TelegramHandlerTestFixture

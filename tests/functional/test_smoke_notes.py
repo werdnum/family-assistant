@@ -1,28 +1,27 @@
 import asyncio
-import json  # Added json import
+import json
 import logging
-import uuid  # Added for turn_id
+import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import text  # To query DB directly for assertion
-from sqlalchemy.ext.asyncio import AsyncEngine  # Added for type hints
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-# Import ContextProvider and NotesContextProvider
-from family_assistant.context_providers import (
-    NotesContextProvider,
-)
-
-if TYPE_CHECKING:
-    from family_assistant.llm import LLMInterface  # Keep Interface
-
-# Import necessary classes for instantiation
-# _generate_llm_response_for_chat was moved to ProcessingService
-# Import DatabaseContext and getter
+from family_assistant.context_providers import NotesContextProvider
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.testing.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,
+)
+from family_assistant.testing.mocks.mock_llm import (
+    MatcherArgs,
+    Rule,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -35,16 +34,8 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 
-# Import the rule-based mock
-from tests.mocks.mock_llm import (
-    LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
-)
-from tests.mocks.mock_llm import (
-    MatcherArgs,  # Added import
-    Rule,
-    RuleBasedMockLLMClient,
-    get_last_message_text,
-)
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMInterface
 
 logger = logging.getLogger(__name__)
 

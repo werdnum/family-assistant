@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import TaskWorker
+from family_assistant.testing.helpers import wait_for_tasks_to_complete
 from family_assistant.tools import ToolExecutionContext
-from tests.helpers import wait_for_tasks_to_complete
 
 logger = logging.getLogger(__name__)
 

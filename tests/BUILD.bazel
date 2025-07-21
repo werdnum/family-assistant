@@ -1,0 +1,8 @@
+"""Root test BUILD file"""
+
+# This target is deprecated - use //src/family_assistant/testing instead
+alias(
+    name = "test_utils",
+    actual = "//src/family_assistant/testing",
+    visibility = ["//visibility:public"],
+)

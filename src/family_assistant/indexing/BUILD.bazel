@@ -1,0 +1,19 @@
+"""BUILD file for indexing package"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "indexing",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("pydantic"),
+        requirement("markitdown"),
+        requirement("filetype"),
+        "//src/family_assistant/indexing/processors",
+        "//src/family_assistant/storage",
+        "//src/family_assistant/utils",
+    ],
+)

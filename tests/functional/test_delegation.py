@@ -1,5 +1,7 @@
 import json
 import logging
+
+# Import mock classes - handle Bazel environment
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -20,6 +22,14 @@ from family_assistant.llm import (
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import message_history_table  # Updated import
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.testing.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,
+)
+from family_assistant.testing.mocks.mock_llm import (
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations_map,
 )
@@ -32,14 +42,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
     ToolsProvider,
-)
-from tests.mocks.mock_llm import (
-    LLMOutput as MockLLMOutput,
-)
-from tests.mocks.mock_llm import (
-    MatcherArgs,
-    RuleBasedMockLLMClient,
-    get_last_message_text,
 )
 
 logger = logging.getLogger(__name__)

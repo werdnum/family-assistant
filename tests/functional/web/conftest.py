@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.storage.context import DatabaseContext
-from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
+from family_assistant.testing.mocks.mock_llm import LLMOutput as MockLLMOutput
+from family_assistant.testing.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 class WebTestFixture(NamedTuple):

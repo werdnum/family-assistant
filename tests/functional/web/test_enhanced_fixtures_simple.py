@@ -3,8 +3,7 @@
 from typing import Any
 
 import pytest
-
-from tests.functional.web.pages import BasePage
+from web.pages import BasePage
 
 
 @pytest.mark.asyncio

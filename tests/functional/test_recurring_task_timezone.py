@@ -18,6 +18,14 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import TaskWorker, handle_llm_callback
+from family_assistant.testing.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,
+)
+from family_assistant.testing.mocks.mock_llm import (
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -30,14 +38,6 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 from family_assistant.utils.clock import MockClock
-from tests.mocks.mock_llm import (
-    LLMOutput as MockLLMOutput,
-)
-from tests.mocks.mock_llm import (
-    MatcherArgs,
-    RuleBasedMockLLMClient,
-    get_last_message_text,
-)
 
 logger = logging.getLogger(__name__)
 

@@ -4,6 +4,8 @@ Functional tests for the event listener system.
 
 import asyncio
 import json
+
+# Import mock classes - handle Bazel environment
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -16,6 +18,12 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
 from family_assistant.storage import get_db_context
 from family_assistant.storage.events import EventSourceType
+from family_assistant.testing.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,
+)
+from family_assistant.testing.mocks.mock_llm import (
+    RuleBasedMockLLMClient,
+)
 from family_assistant.tools.events import query_recent_events_tool
 from family_assistant.tools.events import (
     test_event_listener_tool as event_listener_test_tool,
@@ -692,12 +700,6 @@ async def test_end_to_end_event_listener_wakes_llm(db_engine: AsyncEngine) -> No
         CompositeToolsProvider,
         LocalToolsProvider,
         MCPToolsProvider,
-    )
-    from tests.mocks.mock_llm import (
-        LLMOutput as MockLLMOutput,
-    )
-    from tests.mocks.mock_llm import (
-        RuleBasedMockLLMClient,
     )
 
     # Setup mock LLM that will handle the callback

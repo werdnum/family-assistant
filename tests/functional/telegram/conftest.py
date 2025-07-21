@@ -14,11 +14,11 @@ from family_assistant.telegram_bot import (
     TelegramChatInterface,  # For type hinting mock_confirmation_manager
     TelegramUpdateHandler,
 )
+from family_assistant.testing.mocks.mock_llm import LLMOutput as MockLLMOutput
+from family_assistant.testing.mocks.mock_llm import RuleBasedMockLLMClient
 from family_assistant.tools import (
     ToolsProvider,  # Changed from CompositeToolsProvider for generality
 )
-from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 # Define a named tuple to hold the fixture results for easier access

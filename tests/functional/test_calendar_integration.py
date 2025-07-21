@@ -35,15 +35,15 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
 
 # RADICALE_TEST_CALENDAR_NAME is no longer needed as direct URL is provided by fixture
-from family_assistant.utils.clock import MockClock
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from family_assistant.utils.clock import MockClock
 
 logger = logging.getLogger(__name__)
 

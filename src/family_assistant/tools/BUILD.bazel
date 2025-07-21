@@ -1,0 +1,23 @@
+"""BUILD file for tools package"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "tools",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("pydantic"),
+        requirement("caldav"),
+        requirement("httpx"),
+        requirement("mcp"),
+        requirement("homeassistant-api"),
+        requirement("starlark-pyo3"),
+        requirement("python-telegram-bot"),
+        "//src/family_assistant/storage",
+        "//src/family_assistant/utils",
+        "//src/family_assistant/scripting",
+    ],
+)

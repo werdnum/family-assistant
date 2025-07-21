@@ -20,6 +20,13 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 
 # Import necessary components from the application
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.testing.mocks.mock_llm import (
+    LLMOutput,  # Use LLMOutput from mocks for rules
+    MatcherArgs,
+    Rule,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -30,13 +37,6 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
-)
-from tests.mocks.mock_llm import (
-    LLMOutput,  # Use LLMOutput from mocks for rules
-    MatcherArgs,
-    Rule,
-    RuleBasedMockLLMClient,
-    get_last_message_text,
 )
 
 logger = logging.getLogger(__name__)

@@ -1,0 +1,220 @@
+"""Functional tests BUILD file"""
+
+load("@rules_python//python:defs.bzl", "py_test", "py_library")
+load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+
+# Common environment for all functional tests
+COMMON_ENV = {
+    "PYTEST_CURRENT_TEST": "bazel_test",
+    "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING": "1",
+}
+
+
+# Common dependencies for functional tests
+COMMON_DEPS = [
+    "//src/family_assistant",
+    "//src/family_assistant/testing",
+    "//src/family_assistant/testing/mocks",
+    dev_requirement("pytest"),
+    dev_requirement("pytest-asyncio"),
+    dev_requirement("aiosqlite"),
+]
+
+# Smoke test for notes functionality
+py_test(
+    name = "test_smoke_notes",
+    srcs = ["test_smoke_notes.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Note tools test
+py_test(
+    name = "test_note_tools",
+    srcs = ["test_note_tools.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Smoke callback test
+py_test(
+    name = "test_smoke_callback",
+    srcs = ["test_smoke_callback.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Event system tests
+py_test(
+    name = "test_event_system",
+    srcs = ["test_event_system.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+py_test(
+    name = "test_event_listener_crud",
+    srcs = ["test_event_listener_crud.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+py_test(
+    name = "test_event_listener_validation",
+    srcs = ["test_event_listener_validation.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Task worker tests
+py_test(
+    name = "test_task_worker_resilience",
+    srcs = ["test_task_worker_resilience.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+py_test(
+    name = "test_task_error_column",
+    srcs = ["test_task_error_column.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Error logging test
+py_test(
+    name = "test_error_logging",
+    srcs = ["test_error_logging.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Script execution tests
+py_test(
+    name = "test_script_execution_handler",
+    srcs = ["test_script_execution_handler.py"],
+    deps = COMMON_DEPS + [
+        dev_requirement("starlark-pyo3"),
+    ],
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+py_test(
+    name = "test_script_wake_llm",
+    srcs = ["test_script_wake_llm.py"],
+    deps = COMMON_DEPS + [
+        dev_requirement("starlark-pyo3"),
+    ],
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+py_test(
+    name = "test_scheduled_script_execution",
+    srcs = ["test_scheduled_script_execution.py"],
+    deps = COMMON_DEPS + [
+        dev_requirement("starlark-pyo3"),
+    ],
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+py_test(
+    name = "test_event_listener_script_tools",
+    srcs = ["test_event_listener_script_tools.py"],
+    deps = COMMON_DEPS + [
+        dev_requirement("starlark-pyo3"),
+    ],
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+py_test(
+    name = "test_event_script_integration",
+    srcs = ["test_event_script_integration.py"],
+    deps = COMMON_DEPS + [
+        dev_requirement("starlark-pyo3"),
+    ],
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Delegation test
+py_test(
+    name = "test_delegation",
+    srcs = ["test_delegation.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Notes context and prompt tests
+py_test(
+    name = "test_notes_context_provider",
+    srcs = ["test_notes_context_provider.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+py_test(
+    name = "test_notes_prompt_inclusion",
+    srcs = ["test_notes_prompt_inclusion.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Vector storage test
+py_test(
+    name = "test_vector_storage",
+    srcs = ["test_vector_storage.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Recurring task timezone test
+py_test(
+    name = "test_recurring_task_timezone",
+    srcs = ["test_recurring_task_timezone.py"],
+    deps = COMMON_DEPS,
+    tags = ["functional", "sqlite"],
+    env = COMMON_ENV,
+)
+
+# Test suite for all SQLite functional tests
+test_suite(
+    name = "sqlite",
+    tests = [
+        ":test_smoke_notes",
+        ":test_note_tools",
+        ":test_smoke_callback",
+        ":test_delegation",
+        ":test_event_system",
+        ":test_event_listener_crud",
+        ":test_event_listener_validation",
+        ":test_task_worker_resilience",
+        ":test_task_error_column",
+        ":test_error_logging",
+        ":test_script_execution_handler",
+        ":test_script_wake_llm",
+        ":test_scheduled_script_execution",
+        ":test_event_listener_script_tools",
+        ":test_event_script_integration",
+        ":test_notes_context_provider",
+        ":test_notes_prompt_inclusion",
+        ":test_vector_storage",
+        ":test_recurring_task_timezone",
+    ],
+)

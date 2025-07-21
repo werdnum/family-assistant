@@ -2,8 +2,7 @@
 
 import pytest
 from playwright.async_api import expect
-
-from tests.functional.web.pages.notes_page import NotesPage
+from web.pages.notes_page import NotesPage
 
 from .conftest import WebTestFixture
 

@@ -1,0 +1,22 @@
+"""BUILD file for web package"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "web",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("fastapi"),
+        requirement("pydantic"),
+        requirement("authlib"),
+        requirement("itsdangerous"),
+        requirement("jinja2"),
+        requirement("passlib"),
+        "//src/family_assistant/web/routers",
+        "//src/family_assistant/storage",
+        "//src/family_assistant/tools",
+    ],
+)

@@ -1,8 +1,7 @@
 """Basic Playwright tests to verify the web UI loads correctly."""
 
 import pytest
-
-from tests.functional.web.conftest import WebTestFixture
+from web.conftest import WebTestFixture
 
 
 @pytest.mark.asyncio

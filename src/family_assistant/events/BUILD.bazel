@@ -1,0 +1,19 @@
+"""BUILD file for events package"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "events",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("pydantic"),
+        requirement("sqlalchemy"),
+        requirement("homeassistant-api"),
+        requirement("janus"),
+        "//src/family_assistant/storage",
+        "//src/family_assistant/utils",
+    ],
+)

@@ -1,0 +1,18 @@
+"""BUILD file for indexing processors"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "processors",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("pydantic"),
+        requirement("markitdown"),
+        requirement("playwright"),
+        "//src/family_assistant/llm",
+        "//src/family_assistant/utils",
+    ],
+)

@@ -20,6 +20,8 @@ from family_assistant.task_worker import (
     handle_llm_callback,
     handle_script_execution,
 )
+from family_assistant.testing.helpers import wait_for_tasks_to_complete
+from family_assistant.testing.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -28,8 +30,6 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
-from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
 

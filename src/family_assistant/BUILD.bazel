@@ -1,0 +1,81 @@
+"""BUILD file for family_assistant package"""
+
+load("@rules_python//python:defs.bzl", "py_library", "py_binary")
+load("@pip//:requirements.bzl", "requirement")
+
+package(default_visibility = ["//visibility:public"])
+
+# Core family_assistant library
+py_library(
+    name = "family_assistant",
+    srcs = glob(["*.py"]),
+    data = glob([
+        "templates/**/*",
+        "static/**/*",
+    ]) + [
+        "py.typed",
+    ],
+    imports = [".."],
+    deps = [
+        # Core dependencies
+        requirement("aiofiles"),
+        requirement("aiosqlite"),
+        requirement("alembic"),
+        requirement("asyncpg"),
+        requirement("authlib"),
+        requirement("caldav"),
+        requirement("fastapi"),
+        requirement("filetype"),
+        requirement("google-genai"),
+        requirement("homeassistant-api"),
+        requirement("httpx"),
+        requirement("itsdangerous"),
+        requirement("jinja2"),
+        requirement("json-schema-for-humans"),
+        requirement("litellm"),
+        requirement("markdown-it-py"),
+        requirement("markitdown"),
+        requirement("mcp"),
+        requirement("numpy"),
+        requirement("openai"),
+        requirement("passlib"),
+        requirement("pgvector"),
+        requirement("playwright"),
+        requirement("pydantic"),
+        requirement("python-dateutil"),
+        requirement("python-dotenv"),
+        requirement("python-multipart"),
+        requirement("python-telegram-bot"),
+        requirement("pytz"),
+        requirement("pyyaml"),
+        requirement("sqlalchemy"),
+        requirement("starlark-pyo3"),
+        requirement("telegramify-markdown"),
+        requirement("uvicorn"),
+        requirement("vobject"),
+        # Sub-packages
+        "//src/family_assistant/events",
+        "//src/family_assistant/indexing",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/scripting",
+        "//src/family_assistant/storage",
+        "//src/family_assistant/tools",
+        "//src/family_assistant/utils",
+        "//src/family_assistant/web",
+    ],
+)
+
+# Main application binary
+py_binary(
+    name = "main",
+    srcs = ["__main__.py"],
+    main = "__main__.py",
+    deps = [":family_assistant"],
+    data = [
+        "//:config.yaml",
+        "//:logging.conf",
+        "//:prompts.yaml",
+        "//:alembic.ini",
+        "//:mcp_config.json",
+    ],
+)

@@ -35,17 +35,17 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
-from family_assistant.tools.types import ToolExecutionContext
-from family_assistant.utils.scraping import MockScraper, ScrapeResult
-from family_assistant.web.app_creator import app as fastapi_app
-from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import (
+from family_assistant.testing.helpers import wait_for_tasks_to_complete
+from family_assistant.testing.mocks.mock_llm import (
     LLMOutput as MockLLMOutputForClient,
 )
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.utils.scraping import MockScraper, ScrapeResult
+from family_assistant.web.app_creator import app as fastapi_app
 
 
 def _create_mock_processing_service() -> MagicMock:

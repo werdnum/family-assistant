@@ -2,6 +2,8 @@
 
 import json
 import logging
+
+# Import mock classes - handle Bazel environment
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -14,6 +16,15 @@ from family_assistant.context_providers import NotesContextProvider
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.testing.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,
+)
+from family_assistant.testing.mocks.mock_llm import (
+    MatcherArgs,
+    Rule,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -24,15 +35,6 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
-)
-from tests.mocks.mock_llm import (
-    LLMOutput as MockLLMOutput,
-)
-from tests.mocks.mock_llm import (
-    MatcherArgs,
-    Rule,
-    RuleBasedMockLLMClient,
-    get_last_message_text,
 )
 
 if TYPE_CHECKING:

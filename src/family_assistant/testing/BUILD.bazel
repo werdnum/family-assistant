@@ -1,0 +1,30 @@
+"""Testing utilities BUILD file"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+
+package(default_visibility = ["//visibility:public"])
+
+# Testing utilities library
+py_library(
+    name = "testing",
+    srcs = [
+        "__init__.py",
+        "conftest.py",
+        "helpers.py",
+    ],
+    imports = ["../../.."],
+    deps = [
+        "//src/family_assistant",
+        "//src/family_assistant/testing/mocks",
+        dev_requirement("pytest"),
+        dev_requirement("pytest-asyncio"),
+        dev_requirement("pytest-mock"),
+        dev_requirement("aiosqlite"),
+        dev_requirement("asyncpg"),
+        dev_requirement("testcontainers"),
+        dev_requirement("passlib"),
+        dev_requirement("caldav"),
+        dev_requirement("radicale"),
+    ],
+)

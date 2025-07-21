@@ -1,0 +1,51 @@
+"""Root BUILD file for Family Assistant"""
+
+load("@rules_uv//uv:pip.bzl", "pip_compile")
+load("@rules_multirun//:defs.bzl", "command", "multirun")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+# Package visibility
+package(default_visibility = ["//visibility:public"])
+
+# Compile main dependencies from pyproject.toml
+pip_compile(
+    name = "requirements",
+    requirements_in = "//:pyproject.toml",
+    requirements_txt = "//:requirements.txt",
+)
+
+# Compile dev dependencies 
+pip_compile(
+    name = "requirements_dev",
+    requirements_in = "//:pyproject.toml",
+    requirements_txt = "//:requirements-dev.txt",
+    extra_args = ["--extra", "dev"],
+)
+
+# Compile local-embeddings dependencies (optional)
+pip_compile(
+    name = "requirements_local_embeddings", 
+    requirements_in = "//:pyproject.toml",
+    requirements_txt = "//:requirements-local-embeddings.txt",
+    extra_args = ["--extra", "local-embeddings"],
+)
+
+# Multi-platform dependency compilation
+multirun(
+    name = "compile_deps",
+    commands = [
+        ":requirements",
+        ":requirements_dev",
+    ],
+)
+
+# Python path setup
+exports_files([
+    "pyproject.toml",
+    "pytest.ini",
+    "prompts.yaml",
+    "config.yaml",
+    "logging.conf",
+    "alembic.ini",
+    "mcp_config.json",
+])

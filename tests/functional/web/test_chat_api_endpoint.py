@@ -25,6 +25,7 @@ from family_assistant.llm import (
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.testing.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -40,7 +41,6 @@ from family_assistant.tools import (
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.models import ChatMessageResponse  # Updated import
-from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
 

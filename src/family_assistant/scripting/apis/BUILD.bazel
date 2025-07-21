@@ -1,0 +1,10 @@
+"""BUILD file for scripting APIs"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "apis",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+)

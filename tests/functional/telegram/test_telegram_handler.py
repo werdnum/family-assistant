@@ -27,7 +27,7 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 
 # Import mock LLM helpers
 # CHANGED: LLMOutput and RuleBasedMockLLMClient added here
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     LLMOutput,  # This is the one for Rules
     MatcherArgs,
     Rule,

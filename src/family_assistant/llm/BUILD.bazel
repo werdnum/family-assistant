@@ -1,0 +1,19 @@
+"""BUILD file for LLM package"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "llm",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("litellm"),
+        requirement("openai"),
+        requirement("google-genai"),
+        requirement("pydantic"),
+        "//src/family_assistant/llm/providers",
+        "//src/family_assistant/llm/utils",
+    ],
+)

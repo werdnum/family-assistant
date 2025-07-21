@@ -1,0 +1,41 @@
+# Bazel configuration for Family Assistant
+
+# Build options
+build --enable_platform_specific_config
+build --incompatible_strict_action_env
+build --action_env=PYTHONPATH
+
+# Test options
+test --test_output=errors
+test --test_summary=detailed
+test --test_env=HOME
+test --test_env=USER
+test --test_env=PYTHONPATH
+test --test_env=PYTEST_CURRENT_TEST
+
+# Python options
+build --action_env=PYTHONDONTWRITEBYTECODE=1
+test --test_env=PYTHONDONTWRITEBYTECODE=1
+build --incompatible_default_to_explicit_init_py
+
+# Coverage options
+coverage --combined_report=lcov
+coverage --instrumentation_filter="//src/family_assistant/..."
+
+# Platform-specific Python interpreter settings
+build:linux --action_env=PYTHON_BIN_PATH=/usr/bin/python3
+build:macos --action_env=PYTHON_BIN_PATH=/usr/bin/python3
+build:windows --action_env=PYTHON_BIN_PATH=python.exe
+
+# Convenience aliases
+build:dev --compilation_mode=fastbuild
+build:opt --compilation_mode=opt
+
+# Test filtering for SQLite-only tests (excluding postgres)
+test:sqlite --test_tag_filters=-postgres
+
+# Strict mode for CI
+build:ci --disk_cache=~/.cache/bazel
+build:ci --repository_cache=~/.cache/bazel-repo
+test:ci --test_tag_filters=-postgres,-manual
+test:ci --flaky_test_attempts=2

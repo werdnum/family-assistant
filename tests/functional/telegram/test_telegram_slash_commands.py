@@ -25,7 +25,7 @@ from family_assistant.llm import (
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 
 # Import mock LLM helpers
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
     get_last_message_text,

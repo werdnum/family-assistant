@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # LLMOutput removed
 # Import select for direct DB queries
+
+# Import mock classes - handle Bazel environment
+
 from sqlalchemy.sql import select  # Import text
 
 # Import necessary components from the application
@@ -28,6 +31,15 @@ from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
 )
+from family_assistant.testing.mocks.mock_llm import (
+    LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
+)
+from family_assistant.testing.mocks.mock_llm import (
+    MatcherArgs,  # Added import
+    Rule,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -40,15 +52,6 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 from family_assistant.utils.clock import MockClock
-from tests.mocks.mock_llm import (
-    LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
-)
-from tests.mocks.mock_llm import (
-    MatcherArgs,  # Added import
-    Rule,
-    RuleBasedMockLLMClient,
-    get_last_message_text,
-)
 
 logger = logging.getLogger(__name__)
 

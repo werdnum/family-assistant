@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 from playwright.async_api import expect
-
-from tests.functional.web.pages.documents_page import DocumentsPage
+from web.pages.documents_page import DocumentsPage
 
 from .conftest import WebTestFixture
 

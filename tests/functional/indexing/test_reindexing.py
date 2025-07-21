@@ -20,10 +20,10 @@ from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.task_worker import TaskWorker, handle_reindex_document
+from family_assistant.testing.helpers import wait_for_tasks_to_complete
+from family_assistant.testing.mocks.mock_llm import RuleBasedMockLLMClient
 from family_assistant.utils.scraping import MockScraper, ScrapeResult
 from family_assistant.web.app_creator import app as fastapi_app
-from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext

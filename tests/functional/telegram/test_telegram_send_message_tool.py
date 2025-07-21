@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 
 from family_assistant.context_providers import KnownUsersContextProvider
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     LLMOutput,
     MatcherArgs,
     Rule,

@@ -27,10 +27,10 @@ from family_assistant.tools import (
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
 
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
-from tests.mocks.mock_llm import (
+from family_assistant.testing.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
     get_last_message_text,

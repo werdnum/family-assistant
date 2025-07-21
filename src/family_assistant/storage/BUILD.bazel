@@ -1,0 +1,22 @@
+"""BUILD file for storage package"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "storage",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("sqlalchemy"),
+        requirement("aiosqlite"),
+        requirement("asyncpg"),
+        requirement("pgvector"),
+        requirement("alembic"),
+        requirement("numpy"),
+        requirement("pydantic"),
+        "//src/family_assistant/storage/repositories",
+        "//src/family_assistant/utils",
+    ],
+)

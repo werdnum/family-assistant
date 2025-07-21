@@ -25,7 +25,7 @@ async def mock_exec_context(
 ) -> AsyncGenerator[ToolExecutionContext, None]:
     """Create a mock execution context for tool testing."""
     # Import here to avoid issues during collection
-    from tests.mocks.mock_tools_provider import MockToolsProvider
+    from family_assistant.testing.mocks.mock_tools_provider import MockToolsProvider
 
     mock_tools_provider = MockToolsProvider()
 

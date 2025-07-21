@@ -38,8 +38,8 @@ from family_assistant.storage.vector import (
     query_vectors,
 )
 from family_assistant.task_worker import TaskWorker  # For running the task worker
+from family_assistant.testing.helpers import wait_for_tasks_to_complete
 from family_assistant.tools.types import ToolExecutionContext
-from tests.helpers import wait_for_tasks_to_complete
 
 
 def _create_mock_processing_service() -> MagicMock:

@@ -59,16 +59,16 @@ from family_assistant.storage.vector import (
     query_vectors,
 )  # Added imports
 from family_assistant.task_worker import TaskWorker
-from family_assistant.utils.scraping import MockScraper  # Added
-
-# Import the FastAPI app directly for the test client
-from family_assistant.web.app_creator import app as fastapi_app
-from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import (  # Added
+from family_assistant.testing.helpers import wait_for_tasks_to_complete
+from family_assistant.testing.mocks.mock_llm import (  # Added
     LLMOutput,
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from family_assistant.utils.scraping import MockScraper  # Added
+
+# Import the FastAPI app directly for the test client
+from family_assistant.web.app_creator import app as fastapi_app
 
 logger = logging.getLogger(__name__)
 

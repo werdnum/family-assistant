@@ -1,0 +1,15 @@
+"""BUILD file for scripting package"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+load("@pip//:requirements.bzl", "requirement")
+
+py_library(
+    name = "scripting",
+    srcs = glob(["*.py"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("starlark-pyo3"),
+        "//src/family_assistant/scripting/apis",
+    ],
+)
